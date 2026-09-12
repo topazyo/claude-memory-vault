@@ -1,0 +1,50 @@
+# ── Claude Code ──────────────────────────────────────────────
+# Local, machine-specific settings — never commit. This file carries
+# per-machine permission grants and MCP trust decisions.
+.claude/settings.local.json
+# Hook / agent run logs written on this machine
+.claude/logs/
+
+# ── Agent scratch state ──────────────────────────────────────
+# Scratch/session state written by assorted agent tooling. Harmless if you use
+# none of it; these directories simply never appear.
+.omc/
+.aider*
+
+# ── Obsidian ─────────────────────────────────────────────────
+# Per-machine UI/workspace state (churny). The rest of .obsidian/
+# is kept so plugin + appearance config travels with the vault.
+.obsidian/workspace.json
+.obsidian/workspace-mobile.json
+.obsidian/workspace.json.bak
+
+# Obsidian local trash
+.trash/
+
+# ── Your notes ───────────────────────────────────────────────
+# This repo is a FRAMEWORK, not a notebook. If you use it as your own
+# private vault, keep it private. If you fork it to contribute back,
+# uncomment these so your own notes never land in a pull request.
+#
+# 01-inbox/*.md
+# 10-daily/*.md
+# 20-projects/_logs/*.md
+# 30-knowledge/research/*.md
+# 31-standards/*.md
+# 40-llm-wiki/raw/*.md
+# 40-llm-wiki/wiki/*.md
+# 90-auto-memory/**
+# 99-archive/**
+
+# ── OS cruft ─────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Secrets (defense-in-depth; should never exist in a vault) ─
+.env
+.env.*
+*.key
+*.pem
+*.pfx
+secrets/

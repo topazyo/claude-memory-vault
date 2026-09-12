@@ -1,0 +1,18 @@
+# Catch-all FIRST. In .gitattributes the LAST matching line wins, so a trailing
+# `* text=auto` would silently override every specific rule below it — and a CR
+# smuggled into a shell script's shebang gives "bad interpreter" on Linux.
+* text=auto
+
+# Shell scripts must keep LF endings even when checked out on Windows, or the
+# hooks fail on any machine that actually runs bash.
+*.sh text eol=lf
+
+# Windows batch files are the mirror image: they need CRLF.
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Markdown, JSON and YAML are normalised to LF in the repository.
+*.md   text eol=lf
+*.json text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
