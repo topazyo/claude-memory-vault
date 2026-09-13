@@ -7,8 +7,8 @@ costs to move a fact upward, and why several tempting conveniences (auto-resolvi
 contradictions, auto-repairing notes, letting an unattended agent edit your knowledge) are
 deliberately absent.
 
-For the other half of the story — why this exists at all instead of adopting GBrain, COG, or
-another memory system — see [`why.md`](why.md).
+For the other half of the story — why this exists at all instead of adopting one of the many
+existing agent-memory systems — see [`why.md`](why.md).
 
 ---
 
