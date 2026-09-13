@@ -20,6 +20,79 @@ knowledge.
 then run the two verification commands. [`docs/setup.md`](docs/setup.md) has the long version,
 and coding agents should read [`AGENTS.md`](AGENTS.md) first.
 
+**Contents:** [Why build this](#why-build-this-instead-of-using-gbrain-or-cog) ·
+[What you get](#what-you-get) · [Layout](#repository-layout) ·
+[How memory moves](#how-memory-moves) · [Quickstart](#quickstart) ·
+[Frontmatter contract](#the-frontmatter-contract) · [Design principles](#design-principles) ·
+[Requirements](#requirements--platform-notes) · [Customizing](#customizing) ·
+[Documentation](#documentation)
+
+---
+
+## Why build this instead of using GBrain or COG?
+
+I didn't set out to build a memory system. I set out to *adopt* one. Over two research passes in
+July and August 2026 I evaluated nine Claude Code and Obsidian "second brain" repositories in
+depth, surveyed 77 memory projects more broadly, and took Garry Tan's
+[GBrain](https://github.com/garrytan/gbrain) apart from a pinned clone. Each finding went through
+an independent verification pass before it counted — which mattered, because one research agent
+invented a security flaw in a candidate that verification showed did not exist.
+
+None of them could be adopted without giving up something I needed. Every one of them had ideas
+worth taking.
+
+**[GBrain](https://github.com/garrytan/gbrain)** is the most impressive engineering in the space. It
+shares this vault's core thesis — markdown in git is the source of truth, and the database is a
+rebuildable cache — and enforces it in CI more strictly than this repo does. On top of that it adds
+hybrid vector and keyword retrieval, reranking, and cited synthesis that lists what it *doesn't*
+know. I didn't adopt it for three reasons:
+
+- **Runtime.** When I read it in August 2026 it ran on Bun, with release builds only for macOS and
+  Linux, Ubuntu-only CI, no Windows Task Scheduler path, and a Unix-socket lock. My Claude Code
+  runs natively on Windows.
+- **Weight.** It needs a database and a daemon, and optionally embedding and reranker keys. That
+  earns its keep at thousands of notes. At the size of a personal engineering vault, the hard
+  problem is whether a note is still true, not whether I can find it.
+- **Who writes.** Its background cycle has LLM phases that write into your notes. I wanted
+  automation that proposes and never rewrites.
+
+**[COG](https://github.com/huytieu/COG-second-brain)** is the closest neighbour in spirit: plain
+markdown, git, no database, and an explicit verification-first stance (sources required, a freshness
+window, confidence levels). It's a complete agentic operating system, with a large skill library,
+worker agents, integrations, and support for many coding agents. That breadth is exactly why I
+didn't adopt it:
+
+- **Structure.** Taking it on means taking its folder layout and workflow as the organizing
+  principle, and that breaks the fixed `tier`/`type` schema this vault's checks depend on.
+- **Self-evolving vs. propose-only.** Its agents organize content for you. This vault's scheduled
+  consolidator writes exactly one proposal file, and its runner fails the pass if anything else
+  changed.
+- **Freshness.** Time-window freshness can't see a claim that was refuted yesterday but stamped last
+  week. Here, `last_reviewed` (re-read it) and `last_verified` (re-tested it) are separate fields for
+  exactly that reason.
+
+What I needed — and couldn't find all in one place — was:
+
+- native Windows;
+- no services or keys;
+- unattended automation that is fenced and revertible;
+- a small, earned long tier;
+- refuted beliefs kept as linked, superseded notes rather than deleted;
+- checkers that prove they scanned something.
+
+The part I found nowhere else is the trust discipline: *re-read* kept separate from *re-tested*,
+withheld freshness stamps, and mark-superseded-never-delete.
+
+This vault is weaker in some places, and it's worth being plain about them. It has no semantic
+search, nothing prunes the store, and capture only happens when someone chooses to save. If you're
+on macOS or Linux and want serious retrieval, use GBrain. If you want a batteries-included personal
+OS across many agents, use COG. They aren't mutually exclusive: this vault is plain markdown, and
+either one can sit on top of it.
+
+**The full reasoning** is in [`docs/why.md`](docs/why.md): the requirements, how each project was
+evaluated, what this repo borrowed from GBrain, COG and others, the documented failures elsewhere
+that shaped the design, and a decision rule for choosing between them.
+
 ---
 
 ## What you get
@@ -409,6 +482,7 @@ the most expensive.
 
 | Document | What it covers |
 | --- | --- |
+| [`docs/why.md`](docs/why.md) | Why this exists instead of GBrain, COG or another memory system: requirements, evaluation, what was borrowed, known weaknesses, and when to choose something else |
 | [`docs/setup.md`](docs/setup.md) | Longer-form setup walkthrough, graph and template configuration, scheduling on cron, launchd, and Task Scheduler, and removing it all again |
 | [`docs/concepts.md`](docs/concepts.md) | The tier model, the promotion path, and why each boundary sits where it does |
 | [`docs/reference.md`](docs/reference.md) | Full reference: frontmatter keys, the C1–C5 invariants, the hooks, the skills, and the agents |
