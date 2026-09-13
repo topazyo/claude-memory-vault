@@ -1,7 +1,10 @@
 # AGENTS.md
 
-Guidance for coding agents (Claude Code, Cursor, Codex, Aider, and others) working in this
-repository.
+The instructions for every coding agent working in this repository, whichever harness runs it.
+Claude Code reaches this file through `CLAUDE.md`, which imports it. Most other harnesses read
+`AGENTS.md` on their own. If yours reads neither, point it at this file.
+
+<!-- Replace this line with a sentence about what YOUR vault is for. -->
 
 ## 1. What this repo is
 
@@ -17,18 +20,32 @@ note filed in the right tier with correct frontmatter, not a code change.
 
 Read in this order, before your first write:
 
-1. **`CLAUDE.md`** — the tier map and the four non-negotiables, in one page.
-2. **`.claude/rules/*.md`** — the conventions themselves. `vault-notes.md` and `verification.md`
-   are path-scoped to the six content tiers; `untrusted-captures.md` covers `01-inbox/**` and
-   `40-llm-wiki/raw/**`; `security.md` has no frontmatter and is always in force.
+1. **This file** — the tier map, the frontmatter contract, the rules that must not be broken, and
+   the commands.
+2. **`.claude/rules/*.md`** — the conventions themselves. **Read all four before your first
+   write, whatever harness you run in.** Claude Code loads them automatically; other harnesses do
+   not, so the instruction to read them is this line. `vault-notes.md` and `verification.md` apply
+   to the six content tiers (their `paths:` frontmatter lists them); `untrusted-captures.md` covers
+   `01-inbox/**` and `40-llm-wiki/raw/**`; `security.md` has no frontmatter and is always in force.
+   The folder is called `.claude/` because Claude Code requires that location. The files are plain
+   Markdown, and they bind every harness equally.
 3. **`30-knowledge/moc/ARCH-INDEX.md`** — the map of content, and the entry point to whatever the
    vault already knows. `VAULT-INDEX.md` holds the Dataview health queries; `PROJECT-INDEX.md`
    lists wired projects.
 
-Read the rules *first* because they are the contract the PostToolUse lint hook
+Read the rules *first* because they are the contract the lint hook
 (`.claude/hooks/vault-lint.sh`) and the `vault-check.sh` script check. A note written before you
 have read them will usually violate something, and the lint hook is advisory. It warns and
-**always exits 0**, so a violation will not stop you. It is on you not to create one.
+**always exits 0**, and it only runs where someone has wired it (§8), so a violation will not stop
+you. It is on you not to create one.
+
+### Standards every session reads
+
+<!-- List any 31-standards/ note every session must read, as a relative path, e.g.
+     - `31-standards/<your-standard>.md`
+     Keep it short. Mirror the list as @-imports in CLAUDE.md for Claude Code. -->
+
+None yet beyond the rules above.
 
 Four `EXAMPLE-` notes plus one wiki entity tell a single fictional story (an `example-api` service
 that double-charged customers because its retries carried no idempotency key). They are the
@@ -128,8 +145,9 @@ vault-check: 0 violation(s) across 9 file(s) checked (as of 2026-01-15).
 ```
 
 `0 violations across 0 files` is not a pass, and the script exits 1 with a `VACUOUS` message when
-it happens. It means the scan matched nothing — wrong working directory, wrong
-`CLAUDE_PROJECT_DIR`, or a vault path the invocation could not resolve. Read the file count before
+it happens. It means the scan matched nothing — wrong working directory, a wrong
+`CLAUDE_PROJECT_DIR` (the optional root override, which Claude Code sets and no other harness
+needs), or a vault path the invocation could not resolve. Read the file count before
 you believe the violation count; an absence claim needs a positive control.
 
 ## 7. Commands
@@ -140,6 +158,8 @@ you believe the violation count; an absence claim needs a positive control.
 | `bash .claude/scripts/run-tests.sh` | Control suite for the hooks and runners — known-bad inputs that must be flagged, known-good inputs that must stay silent — in a temp dir | `=== N passed, 0 failed ===`; exit 0 |
 | `bash .claude/scripts/dream-pass.sh` | Nightly consolidation pass (`.cmd` wrapper for Task Scheduler) | One dated journal in `20-projects/_logs/`; exit 0 |
 | `bash .claude/scripts/promotion-pass.sh` | Weekly medium → long promotion (`.cmd` wrapper) | A `PROMOTION-SUMMARY:` line or long-tier notes; exit 0 |
+| `bash .claude/hooks/vault-lint.sh <file>...` | Advisory lint of the named notes: frontmatter and invisible characters | Silence for a clean note; always exit 0 |
+| `git config core.hooksPath .claude/githooks` | Opt-in pre-commit gate that runs `vault-check.sh` | A commit with a violating note is refused |
 
 The two scheduled passes run the `dream-agent` and `promotion-agent` definitions in
 `.claude/agents/`. The dream agent **proposes only**: its single write is one dated journal, and it
@@ -148,14 +168,40 @@ allowed folders (exit 2) and kill one that hangs (exit 124); see `docs/reference
 
 The five skills in `.claude/skills/` cover the session lifecycle: `resume` (start),
 `obsidian-save` and `wrap-up` (end of a working block), `preserve` (medium → long promotion),
-and `onboard-project` (wiring a new codebase into the vault).
+and `onboard-project` (wiring a new codebase into the vault). Claude Code offers them as slash
+commands. In any other harness, open the skill's `SKILL.md` and follow it as a checklist. Its
+body is the procedure, and frontmatter keys your harness does not recognise can be ignored.
 
 `run-tests.sh` runs every test whether or not `jq` and `perl` are installed: the hooks are
 written to degrade loudly, and the suite checks that they say so. It exercises the no-jq code path
 with `VAULT_FORCE_NO_JQ=1`, which forces the fallback even on a machine that has `jq`. Its closing
 section prints which optional dependencies were found.
 
-## 8. What NOT to do
+## 8. Harness support
+
+The contract above is the same in every harness. What differs is which parts a harness enforces
+mechanically and which parts rest on you following this file. Know which case you are in: a
+control you believe is enforced, but is not, is worse than one you know you must apply yourself.
+
+| Mechanism | Claude Code | Any other harness |
+| --- | --- | --- |
+| These instructions | `CLAUDE.md` imports this file | Read `AGENTS.md` natively, or point the harness at it |
+| Rules in `.claude/rules/` | Loaded automatically, path-scoped | Read them yourself before the first write (§2) |
+| Lint after each write | PostToolUse hook in `.claude/settings.json` | Call `bash .claude/hooks/vault-lint.sh <file>` from the harness's post-write hook if it has one, or rely on the commit gate |
+| Commit gate | Opt-in: `git config core.hooksPath .claude/githooks` | The same |
+| Compaction stub | PostCompact hook | A harness with a compaction event can pipe JSON carrying `session_id` into `.claude/hooks/postcompact-wrap-up.sh` |
+| Read deny for `.env`, `secrets/**` | Enforced by `.claude/settings.json` | **Guidance only**, unless the harness has its own ignore or deny list |
+| Skills | Slash commands | Follow `SKILL.md` as a checklist |
+| Scheduled passes | `VAULT_AGENT=claude` (default); the agents' `tools:` allowlists are enforced | `VAULT_AGENT=command` with your own wrapper. **Refused** (exit 3) until `VAULT_ALLOW_UNENFORCED_TOOLS=1`, which you set only after sandboxing the wrapper: no shell and no network for the dream pass, `git` and no network for the promotion pass |
+
+The runners' snapshot fence works the same under every harness, but it only sees files that change
+inside the vault. It cannot see a shell command, network traffic, or a write outside the vault.
+That is why command mode refuses to start until someone confirms a sandbox exists. A harness that
+keeps its own state files inside the vault fails the fence (exit 2) and names those files. Point
+the harness's state somewhere else rather than widening the fence. Setup details are in
+`docs/setup.md`.
+
+## 9. What NOT to do
 
 - **Do not delete notes.** Archive to `99-archive/` or mark `status: superseded`.
 - **Do not auto-resolve a contradiction**, merge two disagreeing notes, or pick a winner. Record

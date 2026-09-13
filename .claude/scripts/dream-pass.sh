@@ -16,15 +16,21 @@
 #   0 23 * * * /path/to/your-vault/.claude/scripts/dream-pass.sh
 #
 # Environment:
+#   VAULT_AGENT         claude (default) or command; see lib/runner-common.sh
 #   CLAUDE_BIN          path to the claude binary (schedulers get a minimal PATH)
+#   VAULT_AGENT_CMD     command mode: your wrapper around another harness
+#   VAULT_ALLOW_UNENFORCED_TOOLS  command mode: set to 1 once the wrapper is
+#                       sandboxed (no shell, no network), or the run is refused
 #   DREAM_PASS_TIMEOUT  seconds before a hung run is killed (default 3600)
 #
 # Exit codes:
 #   0    the pass changed a dream journal and nothing else
 #   1    NO-ARTIFACT: exited 0 but no dream journal was added or changed
 #   2    VIOLATION: files outside the dream journals changed during the run
+#   3    REFUSED: command mode without VAULT_ALLOW_UNENFORCED_TOOLS=1
+#   64   VAULT_AGENT is not claude or command
 #   124  TIMEOUT: the watchdog killed a run that exceeded DREAM_PASS_TIMEOUT
-#   127  the claude binary was not found
+#   127  the claude binary or the VAULT_AGENT_CMD wrapper was not found
 #   *    any other non-zero status is the agent's own
 
 set -u
@@ -40,11 +46,25 @@ LOG="$LOG_DIR/dream-agent.log"
 RUN_OUT="$LOG_DIR/dream-agent.run.log"
 TIMEOUT="${DREAM_PASS_TIMEOUT:-3600}"
 
-CLAUDE_BIN="${CLAUDE_BIN:-claude}"
-if ! command -v "$CLAUDE_BIN" >/dev/null 2>&1; then
-  printf '[%s] ERROR: claude binary not found (tried "%s"). Set CLAUDE_BIN.\n' \
-    "$(ts)" "$CLAUDE_BIN" >> "$LOG"
-  exit 127
+agent_preflight "$LOG"
+preflight_rc=$?
+[ "$preflight_rc" -eq 0 ] || exit "$preflight_rc"
+
+TASK="Run tonight's dream/consolidation pass and write today's dream journal per your instructions. The repository state recorded before this run is in .claude/logs/dream-pass.git-state.txt."
+PROMPT_REL=".claude/logs/dream-pass.prompt.md"
+if [ "$AGENT_KIND" = command ]; then
+  DEF="$ROOT/.claude/agents/dream-agent.md"
+  if [ ! -f "$DEF" ]; then
+    printf '[%s] ERROR: agent definition not found: %s\n' "$(ts)" "$DEF" >> "$LOG"
+    exit 1
+  fi
+  # Remove any earlier prompt first, so a failed write can never leave the
+  # agent reading a stale one.
+  rm -f "$ROOT/$PROMPT_REL"
+  if ! write_agent_prompt "$DEF" "$TASK" "$ROOT/$PROMPT_REL"; then
+    printf '[%s] ERROR: could not write the prompt file %s\n' "$(ts)" "$PROMPT_REL" >> "$LOG"
+    exit 1
+  fi
 fi
 
 SNAP_DIR="$(mktemp -d 2>/dev/null || mktemp -d -t dreampass)" || {
@@ -55,8 +75,8 @@ trap 'rm -rf "$SNAP_DIR"' EXIT
 trap 'rm -rf "$SNAP_DIR"; exit 130' INT
 trap 'rm -rf "$SNAP_DIR"; exit 143' TERM
 
-# The agent has no Bash tool, so it cannot run git itself. Record the repository
-# state here for it to read, instead of widening its tool list.
+# The agent is given no shell, so it cannot run git itself. Record the
+# repository state here for it to read, instead of widening its tool list.
 {
   printf 'Recorded by dream-pass.sh at %s, before the agent started.\n\n' "$(ts)"
   if git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
@@ -67,20 +87,13 @@ trap 'rm -rf "$SNAP_DIR"; exit 143' TERM
   fi
 } > "$LOG_DIR/dream-pass.git-state.txt" 2>/dev/null
 
-snapshot_tree "$ROOT" "$SNAP_DIR/before"
+snapshot_tree "$ROOT" "$SNAP_DIR/before" "$AGENT_KIND"
 
-printf '[%s] starting dream-agent (timeout %ss)\n' "$(ts)" "$TIMEOUT" >> "$LOG"
+printf '[%s] starting dream-agent via %s (timeout %ss)\n' "$(ts)" "$AGENT_KIND" "$TIMEOUT" >> "$LOG"
 
-# -p is REQUIRED. Without it, `claude --agent X` starts an INTERACTIVE session;
-# under a scheduler there is no TTY, so it either reads EOF and exits 0 having
-# done nothing, or waits on input that never arrives. Both look like success to
-# the scheduler, which is why the artifact assertion below exists.
-run_with_watchdog "$TIMEOUT" "$RUN_OUT" \
-  "$CLAUDE_BIN" -p "Run tonight's dream/consolidation pass and write today's dream journal per your instructions. The repository state recorded before this run is in .claude/logs/dream-pass.git-state.txt." \
-  --agent dream-agent \
-  --permission-mode acceptEdits
+run_agent "$TIMEOUT" "$RUN_OUT" dream-agent "$TASK" "$PROMPT_REL"
 
-snapshot_tree "$ROOT" "$SNAP_DIR/after"
+snapshot_tree "$ROOT" "$SNAP_DIR/after" "$AGENT_KIND"
 changed_paths "$SNAP_DIR/before" "$SNAP_DIR/after" > "$SNAP_DIR/changed"
 
 if [ "$RUN_TIMED_OUT" -eq 1 ]; then

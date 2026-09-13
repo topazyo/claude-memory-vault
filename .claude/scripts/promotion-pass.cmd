@@ -13,7 +13,8 @@ REM
 REM  Register with Task Scheduler, e.g.:
 REM    schtasks /create /tn "Vault-PromotionAgent" /tr "\"C:\path\to\vault\.claude\scripts\promotion-pass.cmd\"" /sc weekly /d SAT /st 20:00
 REM
-REM  Environment passed through to the script: CLAUDE_BIN, PROMOTION_PASS_TIMEOUT.
+REM  Environment passed through to the script: VAULT_AGENT, CLAUDE_BIN, VAULT_AGENT_CMD,
+REM  VAULT_ALLOW_UNENFORCED_TOOLS, PROMOTION_PASS_TIMEOUT.
 REM  Set BASH_EXE if Git Bash is not in a standard location.
 REM
 REM  The three Windows traps documented in dream-pass.cmd apply here: never

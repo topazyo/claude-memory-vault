@@ -150,6 +150,40 @@ else
   win=$(printf '%s' "$WORK/31-standards/bad.md" | sed 's|/|\\|g')
   expect_match  "Windows backslash path normalises"   "$win" "missing 'tier'"
 
+  # Argument mode: how a git hook, an editor, CI or any other harness calls it.
+  lint_args() { CLAUDE_PROJECT_DIR="$WORK" bash "$HOOK" "$@" </dev/null 2>&1; }
+
+  out_args=$(lint_args "$WORK/31-standards/bad.md" "$WORK/10-daily/nofm.md" | strip_notices)
+  if printf '%s' "$out_args" | grep -q "bad.md.*missing 'tier'" \
+     && printf '%s' "$out_args" | grep -q "nofm.md.*missing YAML frontmatter"; then
+    ok "argument mode lints every file named on the command line"
+  else
+    bad "argument mode -- got: ${out_args:-<silence>}"
+  fi
+
+  out_args=$(lint_args -- "$WORK/31-standards/clean.md" | strip_notices)
+  if [ -z "$out_args" ]; then ok "argument mode: conformant note after -- stays silent"
+  else bad "argument mode: conformant note -- expected silence, got: $out_args"; fi
+
+  # With arguments present, stdin must never be read. Feed hook JSON naming a
+  # BAD note while the argument names a clean one: any output means stdin won.
+  esc_bad=$(printf '%s' "$WORK/31-standards/bad.md" | sed 's|\\|\\\\|g')
+  out_args=$(printf '{"tool_input":{"file_path":"%s"}}' "$esc_bad" \
+    | CLAUDE_PROJECT_DIR="$WORK" bash "$HOOK" "$WORK/31-standards/clean.md" 2>&1 | strip_notices)
+  if [ -z "$out_args" ]; then ok "argument mode ignores stdin, so an open stdin cannot hang it"
+  else bad "argument mode read stdin -- got: $out_args"; fi
+
+  # A lone -- (an empty file list expanded after it) is still argument mode.
+  out_args=$(printf '{"tool_input":{"file_path":"%s"}}' "$esc_bad" \
+    | CLAUDE_PROJECT_DIR="$WORK" bash "$HOOK" -- 2>&1 | strip_notices)
+  if [ -z "$out_args" ]; then ok "a lone -- lints nothing and never falls through to stdin"
+  else bad "a lone -- read stdin -- got: $out_args"; fi
+
+  # Hook JSON with the path at the top level, not under tool_input.
+  out_top=$(printf '{"file_path":"%s"}' "$esc_bad" | CLAUDE_PROJECT_DIR="$WORK" bash "$HOOK" 2>&1 | strip_notices)
+  if printf '%s' "$out_top" | grep -q "missing 'tier'"; then ok "hook JSON with a top-level file_path is linted"
+  else bad "top-level file_path -- got: ${out_top:-<silence>}"; fi
+
   if [ -f "$WORK/.claude/logs/vault-lint.log" ]; then
     ok "audit log written to .claude/logs/vault-lint.log"
   else
@@ -238,12 +272,34 @@ else
   bad "vault-lint no-jq path -- got: ${out_nojq:-<silence>}"
 fi
 
+out_nojq=$(printf '{"file_path":"%s"}' "$win2" \
+  | VAULT_FORCE_NO_JQ=1 CLAUDE_PROJECT_DIR="$WORK" bash "$HOOK" 2>&1)
+if printf '%s' "$out_nojq" | grep -q 'jq not found' \
+   && printf '%s' "$out_nojq" | grep -q "missing 'tier'"; then
+  ok "vault-lint no-jq path also reads a top-level file_path"
+else
+  bad "vault-lint no-jq top-level file_path -- got: ${out_nojq:-<silence>}"
+fi
+
 printf 'steering file with a hidden character:\342\200\213\n' > "$WORK/AGENTS.md"
 out_steer=$(lint "$WORK/AGENTS.md" | strip_notices)
 if printf '%s' "$out_steer" | grep -q "U+200B"; then
   ok "invisible-char scan covers AGENTS.md, an always-loaded steering file"
 else
   bad "AGENTS.md was not scanned -- got: ${out_steer:-<silence>}"
+fi
+
+# Other harnesses load their own instruction files at startup; those are
+# steering files too. Plain lint(), so this runs on whichever branch jq allows.
+printf 'steering file with a hidden character:\342\200\213\n' > "$WORK/GEMINI.md"
+mkdir -p "$WORK/.github"
+printf 'steering file with a hidden character:\342\200\256\n' > "$WORK/.github/copilot-instructions.md"
+out_steer=$(lint "$WORK/GEMINI.md" | strip_notices)
+out_steer2=$(lint "$WORK/.github/copilot-instructions.md" | strip_notices)
+if printf '%s' "$out_steer" | grep -q "U+200B" && printf '%s' "$out_steer2" | grep -q "U+202E"; then
+  ok "invisible-char scan covers GEMINI.md and .github/copilot-instructions.md"
+else
+  bad "harness instruction files not scanned -- got: ${out_steer:-<silence>} / ${out_steer2:-<silence>}"
 fi
 
 # ------------------------------------------------ postcompact-wrap-up.sh --
@@ -309,17 +365,26 @@ fi
 printf '\n=== scheduled runners (fake claude) ===\n'
 
 RV="$TMP/runnervault"
-mkdir -p "$RV/.claude/scripts/lib" "$RV/20-projects/_logs" "$RV/31-standards" "$RV/40-llm-wiki/wiki"
+mkdir -p "$RV/.claude/scripts/lib" "$RV/.claude/agents" "$RV/20-projects/_logs" "$RV/31-standards" "$RV/40-llm-wiki/wiki"
 cp "$ROOT/.claude/scripts/dream-pass.sh" "$ROOT/.claude/scripts/promotion-pass.sh" "$RV/.claude/scripts/" 2>/dev/null
 cp "$ROOT/.claude/scripts/lib/runner-common.sh" "$RV/.claude/scripts/lib/" 2>/dev/null
+cp "$ROOT/.claude/agents/dream-agent.md" "$ROOT/.claude/agents/promotion-agent.md" "$RV/.claude/agents/" 2>/dev/null
 printf -- '---\ntier: long\ntype: standard\n---\n\nexisting\n' > "$RV/31-standards/existing.md"
 printf '# vault\n' > "$RV/CLAUDE.md"
 
 FAKE="$TMP/fake-claude"
 cat > "$FAKE" <<'FAKE_EOF'
 #!/usr/bin/env bash
+# FAKE_RECORD=<path> keeps the evidence of how the agent was started: every
+# argument on its own line, and a copy of the prompt file when one was passed.
+if [ -n "${FAKE_RECORD:-}" ]; then
+  printf '%s\n' "$@" > "$FAKE_RECORD.argv"
+  [ -f "${1:-}" ] && cp "$1" "$FAKE_RECORD.prompt"
+fi
 case "${FAKE_MODE:-nothing}" in
   journal)        printf 'journal\n' >> "20-projects/_logs/dream-$(date +%F).md" ;;
+  memory)         printf 'journal\n' >> "20-projects/_logs/dream-$(date +%F).md"
+                  mkdir -p 90-auto-memory && printf 'planted\n' >> "90-auto-memory/note.md" ;;
   stray)          printf 'journal\n' >> "20-projects/_logs/dream-$(date +%F).md"
                   printf 'tampered\n' >> "31-standards/existing.md" ;;
   hang)           exec sleep 60 ;;
@@ -337,7 +402,11 @@ chmod +x "$FAKE"
 runner() {  # runner <script> <mode> [extra env...]
   local script="$1" mode="$2"
   shift 2
-  env CLAUDE_BIN="$FAKE" FAKE_MODE="$mode" WATCHDOG_POLL=1 WATCHDOG_GRACE=2 "$@" \
+  # The harness variables are reset first so an exported VAULT_AGENT on the
+  # machine running the suite cannot change which path a test exercises. Extra
+  # assignments passed in "$@" come later, and env lets the later one win.
+  env CLAUDE_BIN="$FAKE" FAKE_MODE="$mode" WATCHDOG_POLL=1 WATCHDOG_GRACE=2 \
+    VAULT_AGENT=claude VAULT_AGENT_CMD= VAULT_ALLOW_UNENFORCED_TOOLS= FAKE_RECORD= "$@" \
     bash "$RV/.claude/scripts/$script" >/dev/null 2>&1
   echo $?
 }
@@ -355,6 +424,125 @@ expect_rc "promotion-pass: summary line, no change -> OK"      0   "$(runner pro
 expect_rc "promotion-pass: new long-tier note -> OK"           0   "$(runner promotion-pass.sh promote)"
 expect_rc "promotion-pass: error output only -> NO-ARTIFACT"   1   "$(runner promotion-pass.sh errors)"
 expect_rc "promotion-pass: writes CLAUDE.md -> VIOLATION"      2   "$(runner promotion-pass.sh promote-stray)"
+
+# --- which harness runs the agent (VAULT_AGENT) ---
+#
+# A representative subset, not every mode twice: the fence, the watchdog and the
+# artifact checks do not depend on how the agent was started, and each runner
+# test costs several process starts on Windows.
+
+printf '\n=== scheduled runners: harness selection ===\n'
+
+REC="$TMP/record"
+rm -f "$REC.argv" "$REC.prompt"
+expect_rc "claude mode (default): journal written -> OK" 0 "$(runner dream-pass.sh journal FAKE_RECORD="$REC")"
+if grep -qx -- '--agent' "$REC.argv" 2>/dev/null && grep -qx 'dream-agent' "$REC.argv" \
+   && grep -qx 'acceptEdits' "$REC.argv" && grep -qx -- '-p' "$REC.argv"; then
+  ok "claude mode starts claude -p --agent dream-agent --permission-mode acceptEdits"
+else
+  bad "claude mode argv -- got: $(tr '\n' ' ' < "$REC.argv" 2>/dev/null)"
+fi
+
+rm -f "$REC.argv" "$REC.prompt"
+expect_rc "command mode without VAULT_ALLOW_UNENFORCED_TOOLS -> REFUSED" 3 \
+  "$(runner dream-pass.sh journal VAULT_AGENT=command VAULT_AGENT_CMD="$FAKE" FAKE_RECORD="$REC")"
+if [ ! -f "$REC.argv" ]; then ok "a refused run never starts the agent"
+else bad "a refused run started the agent anyway"; fi
+
+expect_rc "command mode, opted in: journal written -> OK" 0 \
+  "$(runner dream-pass.sh journal VAULT_AGENT=command VAULT_AGENT_CMD="$FAKE" VAULT_ALLOW_UNENFORCED_TOOLS=1 FAKE_RECORD="$REC")"
+if [ "$(cat "$REC.argv" 2>/dev/null)" = ".claude/logs/dream-pass.prompt.md" ]; then
+  ok "command mode passes exactly one argument, the relative prompt-file path"
+else
+  bad "command mode argv -- got: $(tr '\n' ' ' < "$REC.argv" 2>/dev/null)"
+fi
+if grep -q 'READ-AND-PROPOSE ONLY' "$REC.prompt" 2>/dev/null \
+   && grep -q "write today's dream journal" "$REC.prompt" \
+   && ! grep -q '^tools:' "$REC.prompt"; then
+  ok "the prompt file holds the agent's instructions and the task, without frontmatter"
+else
+  bad "prompt file content is wrong or missing"
+fi
+if grep -q 'WARNING: command mode' "$RV/.claude/logs/dream-agent.log" 2>/dev/null; then
+  ok "an opted-in command run logs that the tool allowlist is not enforced"
+else
+  bad "no allowlist warning in dream-agent.log"
+fi
+
+expect_rc "command mode: agent touches another note -> VIOLATION" 2 \
+  "$(runner dream-pass.sh stray VAULT_AGENT=command VAULT_AGENT_CMD="$FAKE" VAULT_ALLOW_UNENFORCED_TOOLS=1)"
+printf -- '---\ntier: long\ntype: standard\n---\n\nexisting\n' > "$RV/31-standards/existing.md"
+
+# Machine-managed memory is pruned from the fence for Claude Code, which may
+# legitimately update it mid-run. A wrapper has no such reason, and memory is
+# loaded into later sessions, so in command mode a write there is a violation.
+expect_rc "command mode: agent writes into 90-auto-memory -> VIOLATION" 2 \
+  "$(runner dream-pass.sh memory VAULT_AGENT=command VAULT_AGENT_CMD="$FAKE" VAULT_ALLOW_UNENFORCED_TOOLS=1)"
+rm -rf "$RV/90-auto-memory"
+expect_rc "claude mode: a write into 90-auto-memory stays outside the fence -> OK" 0 \
+  "$(runner dream-pass.sh memory)"
+rm -rf "$RV/90-auto-memory"
+
+expect_rc "command mode with no VAULT_AGENT_CMD -> 127" 127 \
+  "$(runner dream-pass.sh journal VAULT_AGENT=command VAULT_ALLOW_UNENFORCED_TOOLS=1)"
+expect_rc "claude mode with a missing claude binary -> 127" 127 \
+  "$(runner dream-pass.sh journal CLAUDE_BIN="$TMP/no-such-claude")"
+
+# CLAUDE_BIN still names the working fake here, so an unknown kind that fell
+# through to claude mode would start it and leave a record behind.
+rm -f "$REC.argv" "$REC.prompt"
+expect_rc "unknown VAULT_AGENT -> 64" 64 "$(runner dream-pass.sh journal VAULT_AGENT=bogus FAKE_RECORD="$REC")"
+if [ ! -f "$REC.argv" ]; then ok "an unknown VAULT_AGENT never starts the agent"
+else bad "an unknown VAULT_AGENT started the agent anyway"; fi
+
+rm -f "$REC.argv" "$REC.prompt"
+expect_rc "promotion-pass command mode, opted in: summary line -> OK" 0 \
+  "$(runner promotion-pass.sh summary VAULT_AGENT=command VAULT_AGENT_CMD="$FAKE" VAULT_ALLOW_UNENFORCED_TOOLS=1 FAKE_RECORD="$REC")"
+if grep -q 'The promotion bar' "$REC.prompt" 2>/dev/null && grep -q 'PROMOTION-SUMMARY:' "$REC.prompt"; then
+  ok "promotion-pass prompt file holds the promotion-agent's instructions and the summary contract"
+else
+  bad "promotion-pass prompt file content is wrong or missing"
+fi
+
+# The runners resolve the vault from their own location and nothing else. A
+# CLAUDE_PROJECT_DIR exported by a harness session, or a stale VAULT_ROOT in a
+# scheduler, must not redirect an unattended pass - or this suite - into
+# another vault, where the fence would then be checking the wrong tree.
+DECOY="$TMP/decoy"
+mkdir -p "$DECOY/20-projects/_logs" "$DECOY/31-standards"
+expect_rc "runner with CLAUDE_PROJECT_DIR and VAULT_ROOT set to a decoy -> OK" 0 \
+  "$(runner dream-pass.sh journal CLAUDE_PROJECT_DIR="$DECOY" VAULT_ROOT="$DECOY")"
+if [ -z "$(find "$DECOY" -type f 2>/dev/null)" ]; then
+  ok "the decoy vault is untouched: runners ignore inherited root variables"
+else
+  bad "a runner wrote into the decoy vault: $(find "$DECOY" -type f | tr '\n' ' ')"
+fi
+
+# ---------------------------------------------- githooks/pre-commit ---------
+
+printf '\n=== githooks/pre-commit (opt-in commit gate) ===\n'
+
+PRE="$ROOT/.claude/githooks/pre-commit"
+if [ ! -f "$PRE" ]; then
+  bad "pre-commit not found at $PRE"
+else
+  GV="$TMP/gatevault"
+  mkdir -p "$GV/.claude/scripts" "$GV/.claude/githooks" "$GV/31-standards"
+  cp "$CHECK" "$GV/.claude/scripts/"
+  cp "$PRE" "$GV/.claude/githooks/"
+  printf -- '---\ntier: long\ntype: standard\n---\n\nfine\n' > "$GV/31-standards/fine.md"
+
+  # $WORK is full of violations. Pointing the inherited variable at it proves
+  # the hook judges its own vault, not whatever CLAUDE_PROJECT_DIR names.
+  CLAUDE_PROJECT_DIR="$WORK" bash "$GV/.claude/githooks/pre-commit" >/dev/null 2>&1
+  rc_gate=$?
+  expect_rc "pre-commit on a conformant vault allows the commit" 0 "$rc_gate"
+
+  printf 'no frontmatter\n' > "$GV/31-standards/broken.md"
+  bash "$GV/.claude/githooks/pre-commit" >/dev/null 2>&1
+  rc_gate=$?
+  expect_rc "pre-commit on a vault with a violation refuses the commit" 1 "$rc_gate"
+fi
 
 # ------------------------------------------------------------ dependencies --
 

@@ -10,7 +10,8 @@ REM
 REM  Register with Task Scheduler, e.g.:
 REM    schtasks /create /tn "Vault-DreamAgent" /tr "\"C:\path\to\vault\.claude\scripts\dream-pass.cmd\"" /sc daily /st 23:00
 REM
-REM  Environment passed through to the script: CLAUDE_BIN, DREAM_PASS_TIMEOUT.
+REM  Environment passed through to the script: VAULT_AGENT, CLAUDE_BIN, VAULT_AGENT_CMD,
+REM  VAULT_ALLOW_UNENFORCED_TOOLS, DREAM_PASS_TIMEOUT.
 REM  Set BASH_EXE if Git Bash is not in a standard location.
 REM
 REM  WINDOWS TRAPS ENCODED BELOW - do not "simplify" them away:

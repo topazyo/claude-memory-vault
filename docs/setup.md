@@ -1,8 +1,8 @@
 # Setup
 
-This guide takes you from a fresh clone to a working vault: Obsidian open, Claude Code wired to
-the hooks, and (the part that matters) a verified install, where you have proof the checkers ran
-rather than a reassuring silence.
+This guide takes you from a fresh clone to a working vault: Obsidian open, your coding-agent
+harness wired in (Claude Code in § 6, any other harness in § 6a), and (the part that matters) a
+verified install, where you have proof the checkers ran rather than a reassuring silence.
 
 The whole thing takes about fifteen minutes. Steps 1–3 and 6–7 are required. Steps 4, 5 and 8 are
 optional and can be skipped without breaking anything.
@@ -13,11 +13,11 @@ optional and can be skipped without breaking anything.
 
 | Tool | What it is for | Required? | Check it is present |
 | --- | --- | --- | --- |
-| **Obsidian** | Reads the vault, renders the Dataview dashboards, draws the graph | Required to *use* the vault as a human; Claude Code alone does not need it | Launch it; Help → About shows the version |
-| **Claude Code** | Runs the hooks, skills and agents that write and promote notes | Required | `claude --version` |
+| **Obsidian** | Reads the vault, renders the Dataview dashboards, draws the graph | Required to *use* the vault as a human; an agent alone does not need it | Launch it; Help → About shows the version |
+| **A coding-agent harness** | Writes and promotes notes. Claude Code runs the hooks, skills and subagents automatically; any other harness that reads `AGENTS.md` follows the same contract (§ 6a) | Required | e.g. `claude --version` |
 | **bash** | Every hook and script is a bash script. macOS and Linux have it; on Windows it comes with Git for Windows | Required | `bash --version` |
 | **git** | Cloning the template, and the git snapshot the promotion-agent takes before writing, which is what makes its writes revertible | Required | `git --version` |
-| **jq** | Parses the JSON that Claude Code pipes into the lint hook | Strongly recommended | `command -v jq` |
+| **jq** | Parses the JSON a harness pipes into the lint hook | Strongly recommended | `command -v jq` |
 | **perl** | Runs the invisible-character (zero-width / bidi) scan in the lint hook | Strongly recommended | `command -v perl` |
 
 ### About jq on Windows
@@ -211,7 +211,7 @@ claude
 
 | Hook | Fires on | What it does | Can it block you? |
 | --- | --- | --- | --- |
-| `vault-lint.sh` | `PostToolUse`, matcher `Write` or `Edit` | Checks the just-written note for the mandatory `tier:` and `type:` frontmatter, and scans it for zero-width / bidi codepoints. The character scan is widened to `.claude/rules/`, `.claude/agents/`, `.claude/skills/`, and any `CLAUDE.md` or `AGENTS.md`, which are exactly what a rules-file backdoor targets. Logs to `.claude/logs/vault-lint.log`. | No — advisory, **always exits 0** |
+| `vault-lint.sh` | `PostToolUse`, matcher `Write` or `Edit` | Checks the just-written note for the mandatory `tier:` and `type:` frontmatter, and scans it for zero-width / bidi codepoints. The character scan is widened to `.claude/rules/`, `.claude/agents/`, `.claude/skills/`, and any `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` or `.github/copilot-instructions.md`, which are exactly what a rules-file backdoor targets. Logs to `.claude/logs/vault-lint.log`. | No — advisory, **always exits 0** |
 | `postcompact-wrap-up.sh` | `PostCompact` | Writes one idempotent, size-capped stub per session into `20-projects/_logs/compaction-<session>.md`, so the material in a compacted context is still recoverable afterwards. Caps at 50 entries, and sanitizes the session id before building a path. | No |
 | `instructions-loaded-log.sh` | `InstructionsLoaded`, session start only | Appends which instruction files loaded, to `.claude/logs/instructions-loaded.log`. This is how you answer "was that rule actually in context?" instead of guessing. | No |
 
@@ -224,6 +224,64 @@ registration step.
 
 `.claude/settings.json` also carries `permissions.deny` rules for `Read(./.env)`, `Read(./.env.*)`
 and `Read(./secrets/**)`. They apply immediately, without a trust prompt.
+
+---
+
+## 6a. Wiring any other harness
+
+Everything the vault asks of an agent is in `AGENTS.md`, and every checker is a bash script that
+does not care which harness wrote the note. What a non-Claude harness does not get for free is the
+automation: nothing loads the rules for it, nothing runs the lint after it writes, and nothing
+enforces a Read deny. Wire in what your harness supports, then rely on the commit gate for the
+rest. [`AGENTS.md` § 8](../AGENTS.md#8-harness-support) is the side-by-side table.
+
+1. **Load `AGENTS.md`.** Start the harness with `<your-vault>` as its working directory. Many
+   harnesses read a root `AGENTS.md` on their own. If yours reads a different file by default,
+   point its context-file setting at `AGENTS.md`, or put a one-line pointer to `AGENTS.md` in the
+   file it does read. Check the harness's own documentation for the setting name; it varies
+   between tools and between versions. Confirm it worked by asking the agent what the four
+   non-negotiable rules are before it writes anything.
+
+2. **Rules.** `AGENTS.md` instructs the agent to read all four `.claude/rules/*.md` files before
+   its first write. Nothing loads them automatically outside Claude Code, so this instruction is
+   the control. If your harness has its own always-loaded rules mechanism, pointing it at
+   `.claude/rules/security.md` and `.claude/rules/untrusted-captures.md` is worthwhile.
+
+3. **The commit gate.** This is the one mechanical check that works in every harness, and with no
+   harness at all:
+
+   ```bash
+   git config core.hooksPath .claude/githooks
+   ```
+
+   Every commit then runs `vault-check.sh` and is refused if any note violates C1–C5. Two cautions:
+   `core.hooksPath` replaces `.git/hooks`, so copy any hook you already depend on (git-lfs installs
+   several) into `.claude/githooks/` first; and the gate reads the working tree, so an unstaged bad
+   note blocks a commit too.
+
+4. **The lint, if your harness has a post-write hook.** `vault-lint.sh` takes file paths as
+   arguments and never reads stdin when it has them, so it can be called from any hook, editor
+   task or script:
+
+   ```bash
+   bash .claude/hooks/vault-lint.sh path/to/note.md [more.md ...]
+   ```
+
+   If the harness pipes JSON instead, the hook reads a `file_path` (or `path`) field, either
+   nested under `tool_input` or at the top level. It always exits 0 and logs to
+   `.claude/logs/vault-lint.log`.
+
+5. **Skills.** The five skills are Markdown procedures. Where your harness supports the Agent
+   Skills `SKILL.md` format, point it at `.claude/skills/`; otherwise ask the agent to open
+   `.claude/skills/<name>/SKILL.md` and follow it. Frontmatter keys such as `allowed-tools` are
+   Claude Code's and can be ignored elsewhere.
+
+6. **Secrets.** The Read deny in `.claude/settings.json` is enforced by Claude Code alone. If your
+   harness has an ignore or deny list, add `.env`, `.env.*` and `secrets/**` to it. If it has
+   none, `.claude/rules/security.md` is guidance only, and you should know that.
+
+Scheduling the dream and promotion passes under another harness is covered in § 8, under
+*Running the passes with another harness*.
 
 ---
 
@@ -325,7 +383,8 @@ Use the shipped runners. They resolve the vault from their own location, guard f
 binary that a scheduler's minimal PATH cannot see, log to `.claude/logs/`, kill a pass that hangs,
 fail a pass that writes outside its allowed folders, and (the part that matters) assert that the
 pass actually produced something. Exit codes are `0` OK, `1` no artifact, `2` write outside the
-fence, `124` timeout, `127` no `claude`; `docs/reference.md` § 4.3 has the full table.
+fence, `3` refused (see below), `64` unknown `VAULT_AGENT`, `124` timeout, `127` no `claude` or
+wrapper; `docs/reference.md` § 4.3 has the full table.
 
 ```cron
 # dream pass, nightly at 02:30
@@ -345,6 +404,61 @@ longer.
 easy to get subtly wrong. And a direct call has no artifact assertion: the runners exit 1 when a
 pass exits 0 having written nothing, which is the only thing that distinguishes "ran and had
 nothing to do" from "did not run at all". Without it, a broken schedule looks green indefinitely.
+
+### Running the passes with another harness
+
+The runners start Claude Code by default (`VAULT_AGENT=claude`). To use any other harness, write a
+small wrapper script and select command mode:
+
+```bash
+VAULT_AGENT=command
+VAULT_AGENT_CMD=/path/to/your-vault-agent-wrapper.sh
+VAULT_ALLOW_UNENFORCED_TOOLS=1   # only after the sandbox below exists
+```
+
+The runner calls the wrapper from the vault root with **one argument**: the relative path of a
+prompt file (`.claude/logs/dream-pass.prompt.md` or `.claude/logs/promotion-pass.prompt.md`). The
+file holds the agent's instructions, taken from `.claude/agents/<name>.md` without its frontmatter,
+followed by this run's task. The wrapper's job is to run your harness non-interactively on that
+prompt and exit. Start the harness with `exec`, as the skeleton does: the watchdog signals the
+wrapper's own process, so a harness left running as a child would survive a timeout and keep
+writing after the fence has been checked. A skeleton, with the harness line left for you to fill
+from its documentation:
+
+```bash
+#!/usr/bin/env bash
+# your-vault-agent-wrapper.sh <prompt-file>
+set -u
+prompt_file="$1"
+# Replace with your harness's one-shot, non-interactive invocation. It must not wait for input
+# (stdin is /dev/null), and it must run inside the sandbox described below.
+exec your-harness-cli <its-non-interactive-flag> "$(cat "$prompt_file")"
+```
+
+A Windows batch wrapper receives the same forward-slash relative path, which cmd built-ins such
+as `type` read as a switch. Expand it to an absolute path first, with `%~f1`.
+
+Do not use `CLAUDE_BIN` to run another harness. It must name the Claude Code binary: pointing it
+at a different CLI keeps claude mode, which skips the refusal below while enforcing nothing.
+
+**Why command mode refuses to run until you opt in.** Under Claude Code, each agent's `tools:`
+list is enforced: the dream agent has no shell at all, and the promotion agent has a shell but no
+web tools. A wrapper cannot enforce that list, and the runner's snapshot fence only sees files that
+change inside the vault. It cannot see a shell command, network traffic, or a write outside the
+vault. So until `VAULT_ALLOW_UNENFORCED_TOOLS=1` is set, a command-mode run is refused with exit
+`3` and a `REFUSED` line in the log, and the agent never starts. Set the variable only after you
+have configured your harness's own sandbox or approval settings so that:
+
+- the **dream pass** cannot run shell commands or reach the network, and can write only inside
+  the vault;
+- the **promotion pass** can run `git` but cannot reach the network, and can write only inside
+  the vault.
+
+Once opted in, every run still logs a `WARNING` line saying the allowlist is not enforced by the
+runner. The write fence, the watchdog and the artifact assertion work exactly as they do under
+Claude Code. One consequence of the fence: a harness that keeps its own session or state files
+inside the working directory fails every run with exit `2`, naming those files. Configure the
+harness to keep that state elsewhere. Do not widen the fence to make it pass.
 
 ### macOS — launchd (use this, not cron)
 
@@ -550,8 +664,9 @@ schtasks /delete /tn "Vault-DreamAgent" /f
 schtasks /delete /tn "Vault-PromotionAgent" /f
 ```
 
-To stop Claude Code using the vault's hooks, skills, agents and rules, delete the `.claude/`
-folder. That also removes `.claude/logs/`. Your notes are plain Markdown and are untouched.
+To stop any harness using the vault's hooks, skills, agents and rules, delete the `.claude/`
+folder, and run `git config --unset core.hooksPath` if you enabled the commit gate. That also
+removes `.claude/logs/`. Your notes are plain Markdown and are untouched.
 
 ---
 
@@ -561,6 +676,9 @@ folder. That also removes `.claude/logs/`. Your notes are plain Markdown and are
 | --- | --- | --- |
 | Hooks never fire; `.claude/logs/` stays empty or absent | Claude Code was started outside the vault, so `${CLAUDE_PROJECT_DIR}` points elsewhere | `cd <your-vault>` and start Claude Code there; confirm the three hooks are listed under `/hooks` |
 | Hooks still silent, on Windows | No bash on `PATH` for the `"shell": "bash"` invocation | Install Git for Windows and confirm `bash --version` works in the shell you launch Claude Code from |
+| Runner exits 3 and the log says `REFUSED` | `VAULT_AGENT=command` without `VAULT_ALLOW_UNENFORCED_TOOLS=1` | Sandbox the wrapper first (§ 8, *Running the passes with another harness*), then set the variable. The refusal is the intended behaviour |
+| Runner exits 64 | `VAULT_AGENT` is set to something other than `claude` or `command` | Fix the value; unset it to use Claude Code |
+| Commits refused with `pre-commit: vault-check exited 1` | The commit gate found a note that violates C1–C5, anywhere in the working tree | Fix the notes it lists. The gate never repairs anything |
 | `vault-lint: jq not found; path parsing is degraded` | `jq` is missing — expected on a stock Git for Windows | Install jq (step 1). The hook keeps working, less reliably, until you do |
 | `INVISIBLE-CHAR SCAN DID NOT RUN (no perl, no grep -P)` | Neither scanner is available on this machine | Install perl. Do **not** treat earlier "clean" lint lines from that machine as evidence — they were unscanned |
 | Dataview tables in `VAULT-INDEX.md` show as code blocks or raw text | Dataview installed but not enabled, or not installed at all | Settings → Community plugins → enable **Dataview**, then reload Obsidian |

@@ -287,7 +287,7 @@ real, and you should weigh them before choosing this template:
 | want a markdown memory whose agents actively maintain lessons and search for you | **eugeniughelbur/obsidian-second-brain** or **Basic Memory** |
 | want capture to happen automatically with no discipline required | **claude-mem**, alongside or instead of this vault |
 | want semantic search over notes you already have | **Smart Connections** or **Khoj** |
-| use Claude Code (including natively on Windows), want no services or keys, and care most that the few notes steering your agent are verified, dated and revertible | **this template** |
+| use Claude Code or any other harness that reads `AGENTS.md` (including natively on Windows), want no services or keys, and care most that the few notes steering your agent are verified, dated and revertible | **this template** |
 
 For GBrain specifically, the research reached a concrete threshold. It becomes the better choice
 when your Claude Code runtime is Linux, macOS or WSL2, your curated content passes roughly five

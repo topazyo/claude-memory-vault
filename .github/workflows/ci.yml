@@ -90,7 +90,8 @@ jobs:
       - name: Every shell script parses
         run: |
           rc=0
-          for f in $(git ls-files '*.sh'); do
+          # Git hooks have no .sh extension, so they are listed separately.
+          for f in $(git ls-files '*.sh' '.claude/githooks/*'); do
             bash -n "$f" || { echo "::error file=$f::syntax error"; rc=1; }
           done
           exit $rc
@@ -104,7 +105,7 @@ jobs:
         continue-on-error: true
         run: |
           shellcheck --version
-          for f in $(git ls-files '*.sh'); do
+          for f in $(git ls-files '*.sh' '.claude/githooks/*'); do
             echo "--- $f"
             shellcheck --severity=warning "$f" || true
           done
@@ -123,7 +124,7 @@ jobs:
       - name: Shell scripts are executable in the index
         run: |
           rc=0
-          for f in $(git ls-files '*.sh'); do
+          for f in $(git ls-files '*.sh' '.claude/githooks/*'); do
             mode=$(git ls-files -s "$f" | cut -d' ' -f1)
             [ "$mode" = "100755" ] || { echo "::error file=$f::mode $mode, expected 100755"; rc=1; }
           done

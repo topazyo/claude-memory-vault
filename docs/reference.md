@@ -15,7 +15,7 @@ to that root; all dates are ISO `YYYY-MM-DD`.
 ## 1. Frontmatter keys
 
 Every note in a content tier opens with a YAML frontmatter block. `tier` and `type` are the only
-two keys that are *checked* — the PostToolUse lint warns on a missing one and `vault-check.sh`
+two keys that are *checked* — the lint hook warns on a missing one and `vault-check.sh`
 exits non-zero. Everything else is a convention the dashboard queries rely on: a note missing
 `last_reviewed` is not an error, it never appears in the review queues.
 
@@ -64,13 +64,13 @@ that names a type.
 | --- | --- | --- | --- | --- |
 | `01-inbox/` | short | Raw captures: clippings, pasted LLM output, anything unprocessed. **Untrusted.** | none | usually `reference` or `daily` |
 | `10-daily/` | short | Daily notes; scratch and decisions of the day. High volume, disposable. | `10-daily/templates/short-term-daily.md` | `daily` |
-| `20-projects/_logs/` | medium | Per-project session logs. Each carries a **Promotion candidates (for long-term)** section, the input to the long tier. Also where the PostCompact hook writes `compaction-*.md` stubs and the dream-agent writes `dream-<date>.md`. | `20-projects/_logs/templates/medium-term-project-log.md` | `project-log` |
+| `20-projects/_logs/` | medium | Per-project session logs. Each carries a **Promotion candidates (for long-term)** section, the input to the long tier. Also where the compaction hook writes `compaction-*.md` stubs and the dream-agent writes `dream-<date>.md`. | `20-projects/_logs/templates/medium-term-project-log.md` | `project-log` |
 | `30-knowledge/moc/` | long | Maps of content — index notes. `ARCH-INDEX.md` is the hub, `VAULT-INDEX.md` the Dataview dashboard, `PROJECT-INDEX.md` the per-project table. | none | `moc` |
 | `30-knowledge/research/` | long | Durable reference material that is deliberately *not* an enforced standard. Ships empty. | none | `reference` |
 | `31-standards/` | long | Durable standards — the notes that actually steer future sessions. Small, verified, high-value. | `31-standards/templates/long-term-standard.md` | `standard` |
 | `40-llm-wiki/raw/` | short | Ingested raw source material for the wiki. **Untrusted**, same boundary as `01-inbox/`. Ships empty. | none | usually `reference` |
 | `40-llm-wiki/wiki/` | long | Concept entities — one note per concept, with relationships and contradictions. | `40-llm-wiki/wiki/templates/llm-wiki-entity.md` | `wiki-entity` |
-| `90-auto-memory/` | — | Claude Code's own auto-memory directory, machine-managed under its own schema. **Out of scope** for `vault-check.sh` and for the frontmatter contract. Ships empty. | none | n/a |
+| `90-auto-memory/` | — | A harness's own auto-memory directory (Claude Code's, for example), machine-managed under that harness's schema. **Out of scope** for `vault-check.sh` and for the frontmatter contract. Ships empty. | none | n/a |
 | `99-archive/` | — | Retired notes. Prefer moving here over deleting. Not scanned by the checker. Ships empty. | none | preserved from the original |
 | `docs/` | — | This documentation set: `setup.md`, `concepts.md`, `customizing.md`, and this file. | n/a | n/a |
 
@@ -98,7 +98,7 @@ inside each tier, so any single value would point somewhere wrong. Set the folde
 Templater.
 
 **Renaming a tier folder is a multi-file edit.** The folder names are hardcoded independently in,
-**at minimum**: `CLAUDE.md`, `.claude/hooks/vault-lint.sh`, `.claude/scripts/vault-check.sh` (its
+**at minimum**: `AGENTS.md`, `.claude/hooks/vault-lint.sh`, `.claude/scripts/vault-check.sh` (its
 `TIERS=` line), `.claude/hooks/postcompact-wrap-up.sh`, `.claude/agents/dream-agent.md`,
 `.claude/agents/promotion-agent.md`, all four `.claude/rules/*.md`, all five skills,
 `30-knowledge/moc/VAULT-INDEX.md` (every Dataview query names folders), `dream-pass.sh` and
@@ -110,19 +110,23 @@ before you believe you are done. See [`customizing.md`](customizing.md) § 2 for
 
 ## 3. Hooks
 
-All three are registered in `.claude/settings.json` with `"shell": "bash"`, so they run on
-Windows through Git Bash as well as on macOS and Linux. **All three always exit 0**, so none can
-block a tool call or fail a session. Their output is advisory: stderr text that Claude Code
-surfaces, plus an append-only log under `.claude/logs/` (gitignored).
+All three are registered for Claude Code in `.claude/settings.json` with `"shell": "bash"`, so
+they run on Windows through Git Bash as well as on macOS and Linux. Two of them are not tied to
+Claude Code: any harness can call `vault-lint.sh` and `postcompact-wrap-up.sh` (see
+[`AGENTS.md` § 8](../AGENTS.md#8-harness-support)). `instructions-loaded-log.sh` reads a
+Claude-Code-only event. **All three always exit 0**, so none can block a tool call or fail a
+session. Their output is advisory: stderr text that the harness surfaces, plus an append-only log
+under `.claude/logs/` (gitignored).
 
-### 3.1 `vault-lint.sh` — PostToolUse advisory lint
+### 3.1 `vault-lint.sh` — advisory lint
 
 | | |
 | --- | --- |
-| Event | `PostToolUse` |
+| Event (Claude Code) | `PostToolUse` |
 | Matcher | `Write\|Edit` |
 | Timeout | 15 s |
-| stdin | Hook JSON; reads `.tool_input.file_path`, falling back to `.tool_input.path` |
+| Arguments | `vault-lint.sh [--] <file>...` lints each named file and **never reads stdin**, so a git hook, editor task, CI step or another harness's hook can call it with an open stdin |
+| stdin (no arguments) | Hook JSON only; reads `file_path`, then `path`, under `tool_input` or at the top level. With a terminal on stdin it prints usage instead of waiting, but an open pipe that never closes is read until the caller's timeout, so anything that is not a JSON hook should pass paths as arguments |
 | Writes | Nothing. Read-only against the note. |
 | Logs | `.claude/logs/vault-lint.log` — one `OK:` or `CONFORMANCE:` line per checked file |
 | Exit | Always 0 |
@@ -130,10 +134,11 @@ surfaces, plus an append-only log under `.claude/logs/` (gitignored).
 
 **Two scope limits, stated up front, because both are easy to over-read.** `PostToolUse` fires
 *after* the write has already landed on disk. No exit code could prevent it, which is why the hook
-does not try. And it only ever sees files that **Claude Code** writes: a note you type directly in
-Obsidian, or a file you drop into `01-inbox/` by hand, is never linted at all. The lint is a
-tripwire on one path into the vault, not a gate on the vault. `vault-check.sh` (§4.1) is what sees
-everything.
+does not try. And it only ever sees files that a harness running it writes (Claude Code, out of
+the box): a note you type directly in Obsidian, or a file you drop into `01-inbox/` by hand, is
+never linted at all. The lint is a tripwire on one path into the vault, not a gate on the vault.
+`vault-check.sh` (§4.1) is what sees everything, and the opt-in pre-commit gate (§4.4) runs it
+before each commit.
 
 What it does, in order:
 
@@ -151,7 +156,8 @@ What it does, in order:
    and the block must contain `tier:` and `type:`. The closing fence is found with the same
    anchored pattern `vault-check.sh` uses, so the two cannot disagree about where frontmatter ends.
 4. **Invisible-character scan** (content tiers **plus** `.claude/rules/`, `.claude/agents/`,
-   `.claude/skills/`, and any `CLAUDE.md` or `AGENTS.md`): flags zero-width `U+200B`–`U+200D`,
+   `.claude/skills/`, and any `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` or
+   `.github/copilot-instructions.md`): flags zero-width `U+200B`–`U+200D`,
    `U+FEFF`, and bidi controls `U+202A`–`U+202E`, `U+2066`–`U+2069`. This is the "Rules File
    Backdoor" class (steering files carrying instructions no reviewer can see), which is why the
    scan reaches the files that steer the agent, including the always-loaded ones the frontmatter
@@ -288,8 +294,11 @@ a lint that does nothing and a lint that found nothing wrong print the same thin
   those fixtures are malformed; the run exits non-zero; a scan of zero notes exits non-zero and
   says `VACUOUS`.
 - **Vacuity guard** — the suite fails if the checker reports `across 0 file`.
+- **Lint argument mode** — every named file is linted, a conformant file after `--` stays silent,
+  stdin is ignored when arguments are present, and hook JSON with a top-level `file_path` is read.
 - **No-jq fallback** — with `VAULT_FORCE_NO_JQ=1`, `vault-lint.sh` still parses an escaped Windows
-  path and lints it; the invisible-character scan covers `AGENTS.md`.
+  path and lints it; the invisible-character scan covers `AGENTS.md`, `GEMINI.md` and
+  `.github/copilot-instructions.md`.
 - **postcompact-wrap-up.sh** — two compactions of one session append to one stub, with and without
   `jq`; a `../` session id stays inside `20-projects/_logs/`; the 50-entry cap writes
   `CAP REACHED` exactly once.
@@ -297,6 +306,14 @@ a lint that does nothing and a lint that found nothing wrong print the same thin
   `claude`: `dream-pass.sh` returns OK, NO-ARTIFACT, VIOLATION and TIMEOUT; `promotion-pass.sh`
   returns OK for a summary line and for a new long-tier note, NO-ARTIFACT for error output only,
   and VIOLATION for a write to `CLAUDE.md`.
+- **Harness selection** — claude mode passes `-p`, `--agent` and `--permission-mode acceptEdits`;
+  command mode without the opt-in exits 3 and never starts the agent; opted in, it passes one
+  relative prompt-file path whose content is the agent's body plus the task, logs the allowlist
+  warning, and still trips the fence; a missing wrapper exits 127 and an unknown `VAULT_AGENT`
+  exits 64. A runner given `CLAUDE_PROJECT_DIR` and `VAULT_ROOT` pointing at a decoy vault leaves
+  the decoy untouched.
+- **Pre-commit gate** — allows a commit on a conformant vault even with an inherited
+  `CLAUDE_PROJECT_DIR` pointing at a broken one, and refuses it once a note violates C1.
 - **Dependency report** (informational, never fails the run) — whether `jq`, `perl`, or `grep -P`
   are present, and what degrades without each.
 
@@ -321,8 +338,20 @@ WSL; set `BASH_EXE` if Git Bash lives elsewhere. Scheduling is optional and enti
 nothing is installed for you, and neither runner contains an absolute path (each resolves the vault
 root from its own location).
 
-Both invoke Claude Code as `claude -p "<prompt>" --agent <name> --permission-mode acceptEdits`.
-Two details there are load-bearing:
+`VAULT_AGENT` chooses how the agent is started:
+
+- **`claude`** (default): `claude -p "<prompt>" --agent <name> --permission-mode acceptEdits`. The
+  agent definition's `tools:` allowlist is enforced by Claude Code.
+- **`command`**: `$VAULT_AGENT_CMD <prompt-file>`, run from the vault root, where `<prompt-file>` is
+  the relative path `.claude/logs/<pass>.prompt.md`. The runner writes that file first: the agent
+  definition's body without its frontmatter, then this run's task. A file rather than an argument,
+  because kilobytes of Markdown full of quotes would be mangled by a `.cmd` wrapper, and stdin is
+  `/dev/null`. **Refused with exit 3** unless `VAULT_ALLOW_UNENFORCED_TOOLS=1`, because no wrapper
+  can enforce the allowlist and the fence below cannot see a shell command, network traffic or a
+  write outside the vault. Opted-in runs log a `WARNING` line on every run. Set up the harness's
+  own sandbox before opting in; `docs/setup.md` § 8 lists what each pass must be denied.
+
+Two details of claude mode are load-bearing:
 
 - The agent is selected with the **`--agent <name>` flag**. There is no `/agent` slash command to
   call from a script.
@@ -335,12 +364,15 @@ Around that call, each runner does three things an exit code cannot:
 - **Watchdog.** The agent runs with stdin from `/dev/null` under a timer. A run that exceeds its
   timeout gets `TERM`, then `KILL` after a grace period, and the runner exits **124**.
 - **Write fence.** The runner checksums every file in the vault before and after the run (pruning
-  `.git`, `.obsidian`, `.claude/logs`, `.claude/agent-memory*` and `90-auto-memory`) and exits
+  `.git`, `.obsidian` and `.claude/logs`, plus, in claude mode only, `.claude/agent-memory*` and
+  `90-auto-memory`, which Claude Code may update mid-run; in command mode a write to either is a
+  violation, because memory files load into later sessions) and exits
   **2** with the offending paths logged if anything changed outside the allowed areas. For
   `dream-pass` that is `20-projects/_logs/dream-*.md`. For `promotion-pass` it is `31-standards/`
   and `40-llm-wiki/wiki/` (never their `templates/`) plus `20-projects/_logs/promotion-*.md`. Both
-  tolerate a `compaction-*.md` stub written by the PostCompact hook. Another writer active during
-  the run, such as a sync client, trips the fence too; the logged paths tell you which.
+  tolerate a `compaction-*.md` stub written by the compaction hook. Another writer active during
+  the run, such as a sync client, or a harness that keeps state files in its working directory,
+  trips the fence too; the logged paths tell you which.
 - **Artifact assertion.** A pass that exits 0 but left no evidence it ran exits **1**
   (NO-ARTIFACT). For `dream-pass` a `dream-*.md` journal must have been added or changed during
   this run; matching any date rather than today's keeps a run that crosses midnight valid. For
@@ -349,21 +381,30 @@ Around that call, each runner does three things an exit code cannot:
   which an error dump does not contain.
 
 `dream-pass.sh` also writes `git log --oneline -5` and `git status --short` to
-`.claude/logs/dream-pass.git-state.txt` before the run, because the dream-agent has no Bash tool
+`.claude/logs/dream-pass.git-state.txt` before the run, because the dream-agent is given no shell
 to read them itself.
+
+Both runners resolve the vault from their own location **only**. They ignore
+`CLAUDE_PROJECT_DIR` and any other inherited root variable, so a stale value in a scheduler or a
+harness session cannot point an unattended pass, and its fence, at a different vault.
 
 | Exit | Meaning (both runners) |
 | --- | --- |
 | `0` | OK: the artifact assertion held and nothing outside the fence changed |
-| `1` | NO-ARTIFACT, or the runner could not create its temporary directory |
+| `1` | NO-ARTIFACT, the runner could not create its temporary directory, or (command mode) the agent definition file is missing |
 | `2` | VIOLATION: a file outside the allowed write areas changed during the run |
+| `3` | REFUSED: `VAULT_AGENT=command` without `VAULT_ALLOW_UNENFORCED_TOOLS=1`; the agent was not started |
+| `64` | `VAULT_AGENT` is neither `claude` nor `command` |
 | `124` | TIMEOUT: the watchdog killed the run |
-| `127` | the `claude` binary (or, from a `.cmd`, Git Bash) was not found |
+| `127` | the `claude` binary, the `VAULT_AGENT_CMD` wrapper, or (from a `.cmd`) Git Bash was not found |
 | other | the agent's own non-zero status, when nothing above applies |
 
 | Environment variable | Default | Used by |
 | --- | --- | --- |
-| `CLAUDE_BIN` | `claude` | both runners; set it when the scheduler's minimal `PATH` lacks `claude` |
+| `VAULT_AGENT` | `claude` | both runners: `claude` or `command` |
+| `CLAUDE_BIN` | `claude` | both runners in claude mode; set it when the scheduler's minimal `PATH` lacks `claude`. It must name Claude Code itself: another CLI here would run without the refusal and without an enforced allowlist |
+| `VAULT_AGENT_CMD` | unset | both runners in command mode: the executable wrapper around your harness |
+| `VAULT_ALLOW_UNENFORCED_TOOLS` | unset | both runners in command mode: `1` confirms the wrapper is sandboxed; anything else refuses the run |
 | `DREAM_PASS_TIMEOUT` | `3600` seconds | `dream-pass.sh` |
 | `PROMOTION_PASS_TIMEOUT` | `5400` seconds | `promotion-pass.sh` |
 | `WATCHDOG_POLL` | `5` seconds | `lib/runner-common.sh`: how often the watchdog checks the clock |
@@ -372,7 +413,9 @@ to read them itself.
 | `VAULT_FORCE_NO_JQ` | unset | `vault-lint.sh` and `postcompact-wrap-up.sh`: take the no-jq branch even when `jq` is installed |
 
 `lib/runner-common.sh` holds the shared pieces: `ts` (timestamps), `run_with_watchdog`,
-`snapshot_tree` (the checksum listing) and `changed_paths` (the diff of two listings).
+`snapshot_tree` (the checksum listing), `changed_paths` (the diff of two listings),
+`agent_preflight` (the `VAULT_AGENT` decision and the refusal), `write_agent_prompt` and
+`run_agent`.
 
 Three Windows traps worth stating plainly, since each fails in the healthy-looking direction:
 
@@ -384,11 +427,27 @@ Three Windows traps worth stating plainly, since each fails in the healthy-looki
 - Task health is `LastTaskResult` **plus a log on disk**, never `State`. A task can sit `Ready`
   for weeks while every run dies at startup.
 
+### 4.4 `githooks/pre-commit` — opt-in commit gate
+
+Enable it per clone with `git config core.hooksPath .claude/githooks`. It runs `vault-check.sh`
+against the vault it lives in (it passes its own root explicitly, so an inherited
+`CLAUDE_PROJECT_DIR` cannot redirect it) and exits with the checker's status, so a violation or a
+vacuous scan refuses the commit. It is the one mechanical gate that works under every harness,
+and with none.
+
+Two limits: `core.hooksPath` replaces `.git/hooks`, so hooks installed there stop running until
+you copy them into `.claude/githooks/`; and the checker reads the working tree, not the index, so
+an unstaged bad note blocks a commit too. `.gitattributes` pins the folder to LF endings, because
+the hook has no `.sh` extension and a CR in its shebang would break it.
+
 ---
 
 ## 5. Skills
 
-Skills live in `.claude/skills/<name>/SKILL.md` and are invoked as `/<name>`.
+Skills live in `.claude/skills/<name>/SKILL.md`. Claude Code invokes them as `/<name>`. They are
+plain Agent Skills files, so in any other harness you can point its skills support at that folder
+or ask the agent to follow a `SKILL.md` as a checklist; keys such as `disable-model-invocation`
+and `allowed-tools` only mean something to Claude Code.
 
 | Skill | What it does | Tier hop | Model-invocable |
 | --- | --- | --- | --- |
@@ -579,8 +638,9 @@ while a note under `40-llm-wiki/wiki/` is covered by the six-tier rules only.
 | `.claude/hooks/instructions-loaded-log.sh` | always `0` | `.claude/logs/instructions-loaded.log` |
 | `.claude/scripts/vault-check.sh` | `0` notes scanned, no violations · `1` one or more violations (including a malformed date), no content-tier folder found, or zero notes scanned (`VACUOUS`) | stdout, plus the `VACUOUS` line on stderr — never writes to a note |
 | `.claude/scripts/run-tests.sh` | `0` all controls passed · `1` at least one failed · `130` SIGINT · `143` SIGTERM | stdout only; fixtures in a temp dir, removed on exit |
-| `.claude/scripts/dream-pass.sh` / `.cmd` | `0` OK · `1` NO-ARTIFACT · `2` VIOLATION · `124` TIMEOUT · `127` `claude` or Git Bash not found · otherwise the agent's code | `.claude/logs/dream-agent.log`; agent output in `dream-agent.run.log`; `dream-pass.git-state.txt` |
-| `.claude/scripts/promotion-pass.sh` / `.cmd` | `0` OK · `1` NO-ARTIFACT · `2` VIOLATION · `124` TIMEOUT · `127` `claude` or Git Bash not found · otherwise the agent's code | `.claude/logs/promotion-agent.log`; agent output appended to `promotion-agent.run.log` |
+| `.claude/scripts/dream-pass.sh` / `.cmd` | `0` OK · `1` NO-ARTIFACT · `2` VIOLATION · `3` REFUSED · `64` unknown `VAULT_AGENT` · `124` TIMEOUT · `127` `claude`, wrapper or Git Bash not found · otherwise the agent's code | `.claude/logs/dream-agent.log`; agent output in `dream-agent.run.log`; `dream-pass.git-state.txt`; `dream-pass.prompt.md` in command mode |
+| `.claude/scripts/promotion-pass.sh` / `.cmd` | `0` OK · `1` NO-ARTIFACT · `2` VIOLATION · `3` REFUSED · `64` unknown `VAULT_AGENT` · `124` TIMEOUT · `127` `claude`, wrapper or Git Bash not found · otherwise the agent's code | `.claude/logs/promotion-agent.log`; agent output appended to `promotion-agent.run.log`; `promotion-pass.prompt.md` in command mode |
+| `.claude/githooks/pre-commit` | `vault-check.sh`'s status: `0` commit proceeds · `1` commit refused | stdout/stderr only |
 | `dream-agent` | n/a (agent) | one file: `20-projects/_logs/dream-<YYYY-MM-DD>.md` |
 | `promotion-agent` | n/a (agent) | `31-standards/`, `40-llm-wiki/wiki/`, optionally `20-projects/_logs/promotion-*.md`; git snapshot before writing |
 

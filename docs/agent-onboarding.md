@@ -3,8 +3,10 @@
 A library of copy-paste prompts for operating this vault with an agent.
 
 The vault is designed to be run *by* an agent, not only read by one. Every prompt below is written
-to be pasted verbatim into Claude Code (or any agent that reads `AGENTS.md` and `CLAUDE.md`) with
-the vault as the working directory.
+to be pasted verbatim into any coding-agent harness (Claude Code, Codex, Cursor, Copilot, Gemini
+CLI and others) with the vault as the working directory. Where a prompt names a skill, Claude Code
+also offers it as a slash command; in other harnesses the prompt's own pointer to the `SKILL.md`
+file is enough.
 
 Each section states what the prompt does and **what good looks like**, so you can tell a real
 result from a confident-sounding one. That distinction is the whole point of this vault: an agent
@@ -26,7 +28,7 @@ You are working in a claude-memory-vault: an Obsidian vault that serves as your 
 
 Please verify the install and report back:
 
-1. Read AGENTS.md, then CLAUDE.md, then the four files in .claude/rules/.
+1. Read AGENTS.md, then the four files in .claude/rules/.
 2. Run: bash .claude/scripts/run-tests.sh
 3. Run: bash .claude/scripts/vault-check.sh
 4. Report, as a table: which checks passed, which failed, and which optional dependencies
@@ -56,7 +58,8 @@ This vault is a fresh template. Please personalise it:
 1. Open 30-knowledge/moc/ARCH-INDEX.md and replace the "Declare your domain" placeholder with a
    two-sentence statement of what this vault is about. Ask me what the domain is if it is not
    obvious from the repo you can see — do not invent one.
-2. Update the first line of CLAUDE.md to describe this vault specifically.
+2. Replace the placeholder description comment near the top of AGENTS.md with a sentence
+   describing this vault specifically.
 3. Delete the fictional example notes: find . -name 'EXAMPLE-*.md' -delete
 4. Re-run bash .claude/scripts/vault-check.sh and report the new file count.
 
@@ -73,7 +76,7 @@ count instead of just saying "done". After deleting the examples you will have f
 ## 3. Onboard a codebase into the vault
 
 This is the highest-value prompt here. It turns the vault from an empty structure into your project
-memory. The `/onboard-project` skill follows the same checklist.
+memory. The `onboard-project` skill (`/onboard-project` in Claude Code) follows the same checklist.
 
 ```
 Onboard the repository at <PATH-TO-REPO> into this vault. Follow
@@ -88,7 +91,8 @@ Checklist — report against every line, with PASS / FAILED / NOT VERIFIED:
 5. First medium-term log written to 20-projects/_logs/<slug>-<YYYY-MM-DD>.md from
    20-projects/_logs/templates/medium-term-project-log.md, with a real summary of what the
    repository is and does.
-6. The repo's own CLAUDE.md references whichever vault standards it should load.
+6. Every agent instruction file the repo has (AGENTS.md, CLAUDE.md) references whichever vault
+   standards it should load, and every path listed there resolves.
 7. bash .claude/scripts/vault-check.sh run, and the new note passes.
 
 Rules:

@@ -1,8 +1,8 @@
 # claude-memory-vault
 
-**Claude Code forgets everything between sessions.** The usual fix is to keep appending to
-`CLAUDE.md` until it becomes a two-thousand-line wall of text that nobody reviews, nothing
-validates, and the model reads in full on every turn. This repository is the structured
+**Coding agents forget everything between sessions.** The usual fix is to keep appending to
+`CLAUDE.md` or `AGENTS.md` until it becomes a two-thousand-line wall of text that nobody reviews,
+nothing validates, and the model reads in full on every turn. This repository is the structured
 alternative: an [Obsidian](https://obsidian.md) markdown vault where project memory has **tiers**,
 an explicit **promotion path** between them, and a **conformance contract** that a script can
 check. Cheap observations land in a daily note. Anything that survives a session gets written to
@@ -13,8 +13,18 @@ a human ten months from now.
 
 This is a **template**. It ships zero personal notes — only the structure, the automation, the
 conformance checker, and five fictional `EXAMPLE-` notes that tell one small story across the
-tiers. You clone it, open it in Obsidian, point Claude Code at it, and start accumulating your own
-knowledge.
+tiers. You clone it, open it in Obsidian, point your coding agent at it, and start accumulating
+your own knowledge.
+
+**It works with any harness.** The contract, the checker, the rules and the skills are plain
+Markdown and bash, and `AGENTS.md` is the entry point every agent reads. Claude Code gets the
+most automation, because the template ships hooks, subagents and a Read deny for it in `.claude/`.
+Any other harness (Codex, Cursor, Copilot, Gemini CLI and the rest) gets the same contract once
+it reads `AGENTS.md`, natively or because you point it there, plus an opt-in git pre-commit gate
+and a wrapper hook for the scheduled passes. The
+[harness support table](AGENTS.md#8-harness-support) lists exactly what each side enforces. The
+repository name and the `.claude/` folder are historical: Claude Code requires that location, and
+nothing in the folder except `settings.json` and one audit hook is Claude-only.
 
 **Start here:** follow the [Quickstart](#quickstart) — clone, open in Obsidian, install Dataview,
 then run the two verification commands. [`docs/setup.md`](docs/setup.md) has the long version,
@@ -99,16 +109,18 @@ list of weaknesses, and a decision rule for picking the right tool.
   agent* that does the weekly medium → long pass, each with a shipped `.sh`/`.cmd` runner that
   kills a hung pass, fails a pass that writes outside its allowed folders, and fails loudly when a
   pass produces no artifact.
-- **Three hooks**: an advisory frontmatter + invisible-character lint on every Claude Code write,
-  a post-compaction stub writer so a compacted session leaves a trace, and an audit log of which
-  instruction files loaded at session start.
+- **Three hooks**: an advisory frontmatter + invisible-character lint, a post-compaction stub
+  writer so a compacted session leaves a trace, and an audit log of which instruction files loaded
+  at session start. Claude Code runs all three after the matching event. The lint also takes file
+  paths as arguments, so any harness, editor or script can call it.
 - **A conformance checker** (`vault-check.sh`) that checks five frontmatter invariants and exits
   non-zero on violation, or when it scanned nothing. CI (`.github/workflows/ci.yml`) runs it on
-  Linux, macOS and Windows, plus a job using macOS's system bash 3.2; no pre-commit hook ships, so
-  gating your own vault is yours to wire. Alongside it, a **control test suite** (`run-tests.sh`)
-  feeds the hooks and runners known-bad inputs that must be flagged and known-good inputs that
-  must stay silent, so a passing run is evidence the checks ran.
-- **Four rules files**: three path-scoped (the frontmatter contract when Claude edits a note, the
+  Linux, macOS and Windows, plus a job using macOS's system bash 3.2. An **opt-in git pre-commit
+  gate** (`.claude/githooks/pre-commit`) runs it before every commit, whatever harness wrote the
+  note. Alongside it, a **control test suite** (`run-tests.sh`) feeds the hooks and runners
+  known-bad inputs that must be flagged and known-good inputs that must stay silent, so a passing
+  run is evidence the checks ran.
+- **Four rules files**: three path-scoped (the frontmatter contract when an agent edits a note, the
   verification discipline, and a prompt-injection boundary for captured content) plus one global
   safety file that always loads.
 - **Dataview dashboards** and a tier-coloured graph view configuration.
@@ -119,20 +131,22 @@ list of weaknesses, and a decision rule for picking the right tool.
 
 ```
 claude-memory-vault/
-├── CLAUDE.md                        # root project instructions Claude reads every session
+├── AGENTS.md                        # instructions for every harness: tiers, contract, rules, commands
+├── CLAUDE.md                        # Claude Code bridge: imports AGENTS.md, lists the Claude adapter
 ├── CONTRIBUTING.md
 ├── .github/
 │   ├── workflows/ci.yml             # checks on Linux, macOS, Windows, bash 3.2, plus repo hygiene
 │   └── ISSUE_TEMPLATE/bug_report.yml
-├── .claude/
-│   ├── settings.json                # registers the three hooks; denies reads of .env and secrets/
+├── .claude/                         # shared tooling; only settings.json and one hook are Claude-only
+│   ├── settings.json                # Claude Code: registers the three hooks; denies reads of .env and secrets/
+│   ├── githooks/pre-commit          # opt-in commit gate for any harness: runs vault-check.sh
 │   ├── agents/
 │   │   ├── dream-agent.md           # scheduled consolidation; READ-AND-PROPOSE ONLY, one output file
 │   │   └── promotion-agent.md       # weekly medium → long promotion; git-snapshots before writing
 │   ├── hooks/
-│   │   ├── vault-lint.sh            # PostToolUse advisory lint; always exits 0
+│   │   ├── vault-lint.sh            # advisory lint; hook JSON on stdin or file paths as arguments; exits 0
 │   │   ├── postcompact-wrap-up.sh   # one idempotent, size-capped compaction stub per session
-│   │   └── instructions-loaded-log.sh # audit log of instruction files loaded at session start
+│   │   └── instructions-loaded-log.sh # Claude Code only: audit log of instruction files loaded at start
 │   ├── rules/
 │   │   ├── vault-notes.md           # frontmatter contract, wikilinks, Dataview, filing (path-scoped)
 │   │   ├── verification.md          # freshness, citation, earned-stamp discipline (path-scoped)
@@ -143,7 +157,7 @@ claude-memory-vault/
 │   │   ├── run-tests.sh             # control suite for the hooks; positive AND negative controls
 │   │   ├── dream-pass.sh / .cmd     # scheduled runner (cron/launchd; .cmd wraps it for Task Scheduler)
 │   │   ├── promotion-pass.sh / .cmd # ditto, for the weekly promotion pass
-│   │   └── lib/runner-common.sh     # watchdog and write-fence helpers shared by both runners
+│   │   └── lib/runner-common.sh     # watchdog, write fence and harness selection shared by both runners
 │   └── skills/
 │       ├── obsidian-save/SKILL.md   # session → medium-term log
 │       ├── wrap-up/SKILL.md         # structured end-of-session summary
@@ -168,9 +182,8 @@ claude-memory-vault/
 │   └── wiki/
 │       ├── EXAMPLE-idempotency-key.md
 │       └── templates/llm-wiki-entity.md
-├── 90-auto-memory/                  # Claude Code's own auto-memory directory, machine-managed
+├── 90-auto-memory/                  # a harness's own auto-memory (e.g. Claude Code's), machine-managed
 ├── 99-archive/                      # retired notes; prefer archiving over deleting
-├── AGENTS.md                        # orientation for coding agents landing in this repo
 └── docs/                            # setup, concepts, reference, customizing, agent-onboarding
 ```
 
@@ -228,8 +241,8 @@ stays small.
 
 ## Quickstart
 
-**Prerequisites:** `bash` (Git Bash on Windows), `git`, Obsidian, Claude Code, and (strongly
-recommended) `jq`. See [Requirements](#requirements--platform-notes) before you start; `jq` is
+**Prerequisites:** `bash` (Git Bash on Windows), `git`, Obsidian, a coding-agent harness (Claude
+Code gets the most automation), and (strongly recommended) `jq`. See [Requirements](#requirements--platform-notes) before you start; `jq` is
 *not* bundled with Git for Windows.
 
 1. **Clone the template.** Click **Use this template** (or fork) on GitHub first, then:
@@ -257,10 +270,23 @@ recommended) `jq`. See [Requirements](#requirements--platform-notes) before you 
    not download anything from it, so a plugin you have not installed stays absent, with no
    error. The graph plugins listed there are **optional**; the vault works fine without them.
 
-4. **Point Claude Code at the vault.** Start a session with `<your-vault>` as the working
-   directory. `CLAUDE.md` loads automatically and `.claude/settings.json` registers the three
-   hooks. `.claude/rules/security.md` loads every session; the other three rules files are
-   path-scoped and load only when you touch matching paths.
+4. **Point your harness at the vault.** Start a session with `<your-vault>` as the working
+   directory.
+   - **Claude Code:** `CLAUDE.md` loads automatically and imports `AGENTS.md`, and
+     `.claude/settings.json` registers the three hooks. `.claude/rules/security.md` loads every
+     session; the other three rules files are path-scoped and load only when you touch matching
+     paths.
+   - **Any other harness:** make sure it loads `AGENTS.md`. Many do so natively; otherwise add it
+     to the harness's context-file setting. `AGENTS.md` tells the agent to read the four rules
+     files itself, because nothing loads them automatically. Then enable the commit gate, which is
+     the one mechanical check that works without harness hooks:
+
+     ```bash
+     git config core.hooksPath .claude/githooks
+     ```
+
+     That setting replaces `.git/hooks`, so copy any hook you already rely on (git-lfs installs
+     several) into `.claude/githooks/` first.
 
 5. **Verify the automation runs.** Two commands, both from the vault root:
 
@@ -281,15 +307,20 @@ recommended) `jq`. See [Requirements](#requirements--platform-notes) before you 
 
 6. **Write your first note.** Copy a template from the matching `templates/` folder, fill the
    frontmatter, save. The `vault-lint.sh` hook will comment if `tier:` or `type:` is missing,
-   but only when **Claude Code** writes the file. A note you type directly in Obsidian, or a file
-   you drop into `01-inbox/` by hand, is never linted, so run
-   `bash .claude/scripts/vault-check.sh` after a manual authoring session.
+   but only when a harness that runs it writes the file (Claude Code does out of the box). A note
+   you type directly in Obsidian, or a file you drop into `01-inbox/` by hand, is never linted, so
+   run `bash .claude/scripts/vault-check.sh` after a manual authoring session, or let the commit
+   gate run it for you.
 
 7. **(Optional) Schedule the agents.** Use the shipped runners (`dream-pass.sh`/`.cmd` and
    `promotion-pass.sh`/`.cmd`) rather than a hand-rolled cron line. They kill a hung pass, fail a
    pass that wrote outside its allowed folders, and assert that a pass which exits 0 produced an
-   artifact, so a silent no-op cannot pass as a green run. Read [`docs/setup.md`](docs/setup.md)
-   first. The Windows traps below are real, and they fail silently.
+   artifact, so a silent no-op cannot pass as a green run. They run Claude Code by default. With
+   another harness, set `VAULT_AGENT=command` and point `VAULT_AGENT_CMD` at a wrapper you write.
+   The runner refuses that mode (exit 3) until you sandbox the wrapper and set
+   `VAULT_ALLOW_UNENFORCED_TOOLS=1`, because no wrapper can enforce the agents' tool allowlists.
+   Read [`docs/setup.md`](docs/setup.md) first. The Windows traps below are real, and they fail
+   silently.
 
 ---
 
@@ -391,11 +422,12 @@ reporting clean. The lint hook needs `jq` to parse hook input (without it, it fa
 bidirectional-override codepoints. That is the "Rules File Backdoor" class, where invisible
 characters hide instructions inside a file that looks innocuous in every editor. The scan covers
 the content tiers plus the files that steer the model: `.claude/rules/`, `.claude/agents/`,
-`.claude/skills/`, and any `CLAUDE.md` or `AGENTS.md`. If neither scanner is available, the hook
-reports that the scan **did not run** rather than passing the file. It still exits 0, and it
-could not do otherwise: `PostToolUse` fires *after* the write has landed
-on disk, so no exit code from it could ever block one. The lint is advisory by construction, not
-by choice.
+`.claude/skills/`, and any `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` or
+`.github/copilot-instructions.md`. If neither scanner is available, the hook reports that the scan
+**did not run** rather than passing the file. It still exits 0, and it could not do otherwise: a
+post-write hook fires *after* the write has landed on disk, so no exit code from it could ever
+block one. The lint is advisory by construction, not by choice. The pre-commit gate is the place
+where a violation can actually stop something.
 
 ---
 
@@ -403,7 +435,7 @@ by choice.
 
 | Dependency | Status | Notes |
 | --- | --- | --- |
-| `bash` | required | Git Bash on Windows; hooks are registered with `"shell": "bash"` |
+| `bash` | required | Git Bash on Windows; every hook, checker and runner is bash |
 | `git` | required | For the clone, for `git log` as the audit trail, and because the promotion agent's git snapshot is what makes its writes revertible |
 | Obsidian | required | Any recent version; open the repo root as a vault |
 | Obsidian **Dataview** | **required** | Every dashboard is a Dataview query; without it they render as code blocks |
@@ -411,7 +443,7 @@ by choice.
 | `perl` | recommended | Runs the invisible-character scan. Present on macOS, on most Linux distributions, and in Git for Windows |
 | `grep -P` | fallback only | A GNU extension, available on Linux but **absent from macOS BSD grep**. That is why the hook prefers `perl` |
 | Graph plugins | optional | The graph ids in `community-plugins.json` are configured but not needed |
-| Claude Code | required | For the hooks, skills, and agents; the vault is readable without it |
+| A coding-agent harness | required | Any harness that reads `AGENTS.md`. Claude Code runs the hooks, skills and subagents automatically; see [harness support](AGENTS.md#8-harness-support) for what other harnesses get |
 
 ### Template placeholders — read this before you file a bug
 
@@ -441,7 +473,8 @@ direction that looks healthy:
 - `claude --agent <name>` with **no** `-p` starts an *interactive* session. (The agent is
   selected with the `--agent` **flag**, not by typing a slash command.) Under a scheduler with no
   TTY it produces nothing while reporting success. Always pass `-p`. The shipped runners already
-  do; the `.cmd` files run the `.sh` runners through Git Bash.
+  do; the `.cmd` files run the `.sh` runners through Git Bash. The same trap applies to any other
+  harness: the wrapper behind `VAULT_AGENT_CMD` must run its CLI in non-interactive mode.
 - Task health is `LastTaskResult` **plus a log file on disk**, never `State`. A task can sit at
   `Ready` for weeks while every run dies on startup.
 
@@ -454,7 +487,7 @@ the template's biggest customization cost:
 
 > **Renaming a tier folder is a multi-file edit, not a rename.** The folder names
 > (`01-inbox/`, `10-daily/`, `20-projects/_logs/`, `31-standards/`, `40-llm-wiki/`, …) are
-> hardcoded independently across the repo. The *minimum* set is `CLAUDE.md`,
+> hardcoded independently across the repo. The *minimum* set is `AGENTS.md`,
 > `.claude/hooks/vault-lint.sh`, `.claude/scripts/vault-check.sh` (its `TIERS=` line),
 > `.claude/hooks/postcompact-wrap-up.sh`, both files in `.claude/agents/`, all four
 > `.claude/rules/*.md`, all five skills, `30-knowledge/moc/VAULT-INDEX.md` (every Dataview query
