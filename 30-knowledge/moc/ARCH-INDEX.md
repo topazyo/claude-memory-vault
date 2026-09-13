@@ -17,7 +17,7 @@ The central map of content for this vault, referenced everywhere as `[[ARCH-INDE
 
 Every long-tier note links back here. That convention is what keeps the long tier navigable
 rather than a flat pile of files, and it is why "a note with no links is a defect" is a rule
-rather than a preference — see `.claude/rules/vault-notes.md`.
+rather than a preference (see `.claude/rules/vault-notes.md`).
 
 > **This is a scaffold.** It ships nearly empty on purpose. Replace the placeholder sections
 > below with your own as you accumulate notes. The headings are a suggested shape, not a
@@ -29,7 +29,7 @@ Write one or two sentences here saying what this vault is *about*. It is worth d
 
 A vault without a declared domain drifts: notes get filed because they were interesting rather
 than because they belong, and a year later nobody can say what the collection is for. Declaring
-the domain also makes one specific question answerable — "is this note in scope?" — which is the
+the domain also makes one specific question answerable: "is this note in scope?" That is the
 question that decides whether something gets promoted or archived.
 
 Example: *"This vault's domain is operating our payments platform — its services, runbooks,

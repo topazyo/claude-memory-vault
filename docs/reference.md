@@ -17,7 +17,7 @@ to that root; all dates are ISO `YYYY-MM-DD`.
 Every note in a content tier opens with a YAML frontmatter block. `tier` and `type` are the only
 two keys that are *checked* — the PostToolUse lint warns on a missing one and `vault-check.sh`
 exits non-zero. Everything else is a convention the dashboard queries rely on: a note missing
-`last_reviewed` is not an error, it simply never appears in the review queues.
+`last_reviewed` is not an error, it never appears in the review queues.
 
 Read "checked" narrowly. The lint hook is advisory and post-hoc (§3.1), and `vault-check.sh` is
 report-only and runs only when you run it (§4.1). Nothing here blocks a write.
@@ -80,7 +80,7 @@ that names a type.
 tables. They tell one fictional story: an `example-api` service double-charging customers because
 its retries carried no idempotency key. One of them,
 `31-standards/EXAMPLE-retry-on-any-5xx.md`, carries `status: superseded` with a `superseded_by`
-pointing at the replacement standard — that pair is the mark-never-delete convention shown rather
+pointing at the replacement standard. That pair is the mark-never-delete convention shown rather
 than described. Remove them all when you are ready:
 
 ```bash
@@ -90,9 +90,9 @@ find . -name 'EXAMPLE-*.md' -delete
 **Templater caveat.** The four templates use `{{date:YYYY-MM-DD}}` and `{{time:HH:mm}}`, which
 Obsidian's **core Templates** plugin expands, *and also* `{{selection}}`, `{{project}}` and
 `{{concept}}`, which core Templates does **not** support. Those render literally unless you install
-the community **Templater** plugin or fill them in by hand. Nothing breaks either way — a literal
-`{{project}}` in a title is ugly, not fatal — but do not expect them to expand out of the box.
-Note also that `.obsidian/templates.json` is deliberately **not** shipped: the core Templates
+the community **Templater** plugin or fill them in by hand. Nothing breaks either way (a literal
+`{{project}}` in a title is ugly, not fatal), but do not expect them to expand out of the box.
+`.obsidian/templates.json` is deliberately **not** shipped: the core Templates
 plugin accepts exactly one template folder, while this layout co-locates a `templates/` folder
 inside each tier, so any single value would point somewhere wrong. Set the folder yourself, or use
 Templater.
@@ -103,7 +103,7 @@ Templater.
 `.claude/agents/promotion-agent.md`, all four `.claude/rules/*.md`, all five skills,
 `30-knowledge/moc/VAULT-INDEX.md` (every Dataview query names folders), `dream-pass.sh` and
 `promotion-pass.sh` (their write fences name folders), the fixtures in
-`.claude/scripts/run-tests.sh`, `.obsidian/daily-notes.json`, and `.gitignore`. Treat that as a floor, not an inventory — grep the whole repo for the old name
+`.claude/scripts/run-tests.sh`, `.obsidian/daily-notes.json`, and `.gitignore`. Treat that as a floor, not an inventory. Grep the whole repo for the old name
 before you believe you are done. See [`customizing.md`](customizing.md) § 2 for the procedure.
 
 ---
@@ -111,7 +111,7 @@ before you believe you are done. See [`customizing.md`](customizing.md) § 2 for
 ## 3. Hooks
 
 All three are registered in `.claude/settings.json` with `"shell": "bash"`, so they run on
-Windows through Git Bash as well as on macOS and Linux. **All three always exit 0** — none can
+Windows through Git Bash as well as on macOS and Linux. **All three always exit 0**, so none can
 block a tool call or fail a session. Their output is advisory: stderr text that Claude Code
 surfaces, plus an append-only log under `.claude/logs/` (gitignored).
 
@@ -129,7 +129,7 @@ surfaces, plus an append-only log under `.claude/logs/` (gitignored).
 | Deps | `jq` (recommended), `perl` **or** `grep -P` (for the character scan) |
 
 **Two scope limits, stated up front, because both are easy to over-read.** `PostToolUse` fires
-*after* the write has already landed on disk — no exit code could prevent it, which is why the hook
+*after* the write has already landed on disk. No exit code could prevent it, which is why the hook
 does not try. And it only ever sees files that **Claude Code** writes: a note you type directly in
 Obsidian, or a file you drop into `01-inbox/` by hand, is never linted at all. The lint is a
 tripwire on one path into the vault, not a gate on the vault. `vault-check.sh` (§4.1) is what sees
@@ -153,7 +153,7 @@ What it does, in order:
 4. **Invisible-character scan** (content tiers **plus** `.claude/rules/`, `.claude/agents/`,
    `.claude/skills/`, and any `CLAUDE.md` or `AGENTS.md`): flags zero-width `U+200B`–`U+200D`,
    `U+FEFF`, and bidi controls `U+202A`–`U+202E`, `U+2066`–`U+2069`. This is the "Rules File
-   Backdoor" class — steering files carrying instructions no reviewer can see — which is why the
+   Backdoor" class (steering files carrying instructions no reviewer can see), which is why the
    scan reaches the files that steer the agent, including the always-loaded ones the frontmatter
    check never touches. Up to 5 hits are reported with line number and codepoint.
 
@@ -187,7 +187,7 @@ created only if absent — and **capped at 50 entries**, after which it appends 
 `session_id` is sanitized to `[A-Za-z0-9._-]` before it ever reaches a path, so a hook-supplied
 value containing `/` or `..` cannot write outside `20-projects/_logs/`; the substitution is
 logged. A missing `session_id` becomes `unknown-<YYYY-MM-DD>` rather than a dropped write, so one
-day's unidentified compactions share a single capped stub — a visibly wrong stub beats a silent
+day's unidentified compactions share a single capped stub. A visibly wrong stub beats a silent
 no-op.
 
 The stub is **not** a substitute for `/wrap-up` or `/obsidian-save`. Both the dream-agent and the
@@ -304,7 +304,7 @@ The fixture vault is created at a path containing spaces (`.../some one/my vault
 that is the case word-splitting bugs break on, while still printing a reassuring "0 violations".
 
 **What this suite does not tell you.** Every fixture it uses is synthetic and lives in that temp
-directory. It never looks at your actual vault — not its folders, not its notes — so it stays
+directory. It never looks at your actual vault's folders or notes, so it stays
 fully green after a botched tier rename that has left `vault-check.sh` scanning nothing. A green
 `run-tests.sh` is evidence the *instruments* work; only `vault-check.sh`, run against your real
 notes and read together with its file count, is evidence about the vault.
@@ -379,7 +379,7 @@ Three Windows traps worth stating plainly, since each fails in the healthy-looki
 - In `cmd`, `echo ... %ERRORLEVEL%>> "log"` makes cmd parse the trailing digit as a **file
   handle**, so the exit code silently vanishes. Capture it first and write
   `(echo ... %RC%)>> "log"`.
-- A `.cmd` that does not end with `exit /b %RC%` reports the status of its *last* command — so a
+- A `.cmd` that does not end with `exit /b %RC%` reports the status of its *last* command, so a
   trailing `echo` reports success over any failure above it.
 - Task health is `LastTaskResult` **plus a log on disk**, never `State`. A task can sit `Ready`
   for weeks while every run dies at startup.
@@ -407,8 +407,8 @@ The three user-only skills read notes with the `Read` tool rather than a `Bash(c
 the `permissions.deny` rules in `.claude/settings.json` apply to what they read.
 
 **The promotion bar** (shared by `preserve` and the promotion-agent): promote when the lesson is
-**general** — it will apply again outside the situation that produced it — and **verified** — you
-can point at what established it. A vivid one-off is not a standard.
+**general** (it will apply again outside the situation that produced it) and **verified** (you
+can point at what established it). A vivid one-off is not a standard.
 
 ---
 
@@ -442,7 +442,7 @@ path, that cannot corrupt anything it misreads. The instruction is backed mechan
 unattended `acceptEdits` pass over the untrusted inbox should not run commands. It learns the
 repository state from `.claude/logs/dream-pass.git-state.txt`, and says so in "Scan coverage" when
 that file is absent on a manual run. `compaction-*.md` stubs are excluded from both occurrence
-counting and the orphan check, and earlier `dream-*.md` journals from the orphan check — they are
+counting and the orphan check, and earlier `dream-*.md` journals from the orphan check. Both are
 the system's own output, and feeding that back in is the amplification hazard the design exists to
 avoid.
 
@@ -463,8 +463,8 @@ The journal's mandatory sections:
 
 **A missing section is itself a defect**, and that is most true of "What this pass could not
 determine". An unstated gap is indistinguishable from completeness, and a journal that reads as
-complete gets acted on as complete. `none` is a permitted answer when there genuinely were no
-gaps — but it has to be written down. The agent is also told to **record the gap and stop**, not
+complete gets acted on as complete. `none` is a permitted answer when there were no
+gaps, but it has to be written down. The agent is also told to **record the gap and stop**, not
 to re-run or synthesize to close it: closing a gap is the owner's call.
 
 ### 6.2 `promotion-agent`
@@ -502,7 +502,7 @@ Safety constraints, all load-bearing:
 ## 7. Dataview dashboard queries
 
 `30-knowledge/moc/VAULT-INDEX.md` holds 13 Dataview queries. **The Dataview community plugin is
-required** — without it the file renders as inert code blocks, which is the expected first-run
+required**. Without it the file renders as inert code blocks, which is the expected first-run
 state rather than a fault. Every query excludes `templates/` folders. The first three are the
 working queues; the rest are conformance and decay detectors.
 
@@ -531,7 +531,7 @@ worth a second look — most often the query names a folder you have since renam
 
 `.obsidian/community-plugins.json` lists four enabled plugin ids: `dataview` and three graph
 plugins (`folders2graph`, `three-d-graph-view`, `extended-graph`). Obsidian does **not** download
-plugins from that file — it is the enabled list, and you still install each one yourself, starting
+plugins from that file. It is the enabled list, and you still install each one yourself, starting
 by turning off Restricted Mode. The three graph plugins are optional and only affect how the graph
 view renders tiers; nothing in the table above depends on them.
 
@@ -588,8 +588,8 @@ while a note under `40-llm-wiki/wiki/` is covered by the six-tier rules only.
 every hook recreates what it needs.
 
 **Reading these honestly.** A hook exiting 0 says the hook ran to completion, not that the file
-was clean — read the log line. `vault-check.sh` exiting 0 says no violation was found among the
-files it *checked* — read the file count on the last line. A green `run-tests.sh` says the
+was clean, so read the log line. `vault-check.sh` exiting 0 says no violation was found among the
+files it *checked*, so read the file count on the last line. A green `run-tests.sh` says the
 instruments detect known-bad fixtures, not that your vault is conformant. Every exit code in this
 table is evidence about the instrument; only the log line, the printed count, or the artifact on
 disk is evidence about the vault.

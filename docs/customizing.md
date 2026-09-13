@@ -17,8 +17,8 @@ These are local, reversible, and touch nothing the hooks or scripts depend on.
 
 **Add your own notes.** Write into `10-daily/`, `01-inbox/`, `20-projects/_logs/`,
 `31-standards/`, `40-llm-wiki/wiki/`. If the frontmatter carries `tier` and `type`, the lint
-hook's frontmatter check passes. It also flags invisible zero-width and bidi characters — which is
-how a note pasted from the web draws a warning despite correct frontmatter — and it only inspects
+hook's frontmatter check passes. It also flags invisible zero-width and bidi characters (which is
+how a note pasted from the web draws a warning despite correct frontmatter), and it only inspects
 files under the six content-tier folders. Silence on a note written anywhere else means it was
 never checked, not that it passed. And because the hook fires on Claude Code's own writes, a note
 you type directly in Obsidian is never linted at all; `vault-check.sh` is what sees those.
@@ -44,19 +44,19 @@ find . -name 'EXAMPLE-*.md' -delete
 plugins. Change the colours from Obsidian's graph settings UI; it writes the config back for you.
 None of the shipped scripts read those colours.
 
-**Trim the Obsidian plugin set.** Dataview is required — every dashboard in the vault is a
+**Trim the Obsidian plugin set.** Dataview is required, because every dashboard in the vault is a
 Dataview query, and removing it turns them into inert code blocks. The three graph plugins
 (`folders2graph`, `three-d-graph-view`, `extended-graph`) are optional; disable any of them
-without consequence. Note that `.obsidian/community-plugins.json` is only the list of *enabled*
-plugin ids — Obsidian does not download anything from it, you install each plugin yourself — and
-that Obsidian opens an unfamiliar vault in **Restricted Mode**, where community plugins are
+without consequence. `.obsidian/community-plugins.json` is only the list of *enabled*
+plugin ids. Obsidian does not download anything from it, and you install each plugin yourself.
+Obsidian also opens an unfamiliar vault in **Restricted Mode**, where community plugins are
 disabled and there is no Browse button until you turn Restricted Mode off.
 
 **Fill in the template placeholders by hand.** The note templates use `{{date:...}}` and
 `{{time:...}}`, which Obsidian's **core** Templates plugin expands, but also `{{selection}}`,
 `{{project}}` and `{{concept}}`, which it does **not**. Under core Templates those three render
 literally and you overwrite them by hand. If that annoys you, install Templater
-and rewrite them in Templater syntax — or just delete the placeholders from the templates and
+and rewrite them in Templater syntax, or delete the placeholders from the templates and
 type the values in. There is deliberately no `.obsidian/templates.json` in the repo: the core
 plugin accepts exactly one template folder, while this layout co-locates a `templates/` folder
 inside each tier, so any shipped value would point somewhere wrong. Set the Templates folder
@@ -110,7 +110,7 @@ into it get linted).
 
 ### Verify the rename
 
-Do not trust the absence of errors. Run both checkers — but know what each one can and cannot see:
+Do not trust the absence of errors. Run both checkers, but know what each one can and cannot see:
 
 ```bash
 bash .claude/scripts/run-tests.sh      # hook and runner logic: positive AND negative controls
@@ -121,15 +121,15 @@ bash .claude/scripts/vault-check.sh    # frontmatter invariants over your real n
 the *original* folder names and runs the hooks against those, so it never looks at your vault's
 layout and stays green after a botched rename. Treat it as "the hook logic still works", nothing
 more. (Its controls are worth understanding while you are here: a **positive** control is a
-known-bad fixture the checker *must* flag — if positive controls stop firing, the instrument has
-silently broken — and a **negative** control is a known-good fixture that must produce silence.)
+known-bad fixture the checker *must* flag, and if positive controls stop firing, the instrument has
+silently broken. A **negative** control is a known-good fixture that must produce silence.)
 
 That leaves two probes that do see your vault:
 
 > **1. Compare `vault-check.sh`'s file count against the count from before the rename.** It should
 > be unchanged. The script builds its scan set by testing each tier folder for existence and
 > skipping the missing ones, so renaming *one* folder leaves the other five contributing files and
-> the total stays comfortably non-zero — it only reaches zero when every tier is gone. A shrinking
+> the total stays comfortably non-zero, and only reaches zero when every tier is gone. A shrinking
 > count is the signal; "0 violations across 0 files" is a vacuous result, not a pass. Against the
 > shipped example notes, correct output is `0 violation(s) across 9 file(s) checked`.
 
@@ -163,7 +163,7 @@ tags: [tier/long]
 ```
 
 Three more optional keys are defined: `contradicts` and `superseded_by` (each a wikilink), and the
-`last_verified` date above. Those enums are the whole vocabulary — there is no `draft` or
+`last_verified` date above. Those enums are the whole vocabulary. There is no `draft` or
 `archived` status, and the types are `project-log` and `wiki-entity`, not `log` and `entity`.
 
 **Adding a key is non-breaking.** Dataview ignores keys that nothing queries, the lint hook only
@@ -174,12 +174,12 @@ whatever you like.
 
 **Removing or renaming `tier` or `type` is breaking.** Both are load-bearing in three places at
 once: `vault-lint.sh` (mandatory-key check), `vault-check.sh` (the C1–C5 invariants), and
-essentially every dashboard query in the vault. If you genuinely need different names, treat it
+essentially every dashboard query in the vault. If you need different names, treat it
 as a section-2-scale change and use the same verification discipline.
 
 ### Worked example: add an optional key
 
-Say you want to track which notes carry an unresolved disagreement — the shipped `contradicts` key
+Say you want to track which notes carry an unresolved disagreement. The shipped `contradicts` key
 does exactly this, so extend it. Add to the long-term template:
 
 ```yaml
@@ -192,7 +192,7 @@ Populate it on a note:
 contradicts: ["[[retry-policy-exponential]]"]
 ```
 
-Then add a dashboard that surfaces them. Nothing resolves a contradiction automatically — the
+Then add a dashboard that surfaces them. Nothing resolves a contradiction automatically. The
 point of recording the edge is that **both notes still stand** until a human decides:
 
 ````markdown
@@ -205,7 +205,7 @@ SORT last_reviewed ASC
 ```
 ````
 
-Notes that never set `contradicts` simply do not appear. That is the whole cost of adding a key.
+Notes that never set `contradicts` do not appear. That is the whole cost of adding a key.
 
 ---
 
@@ -243,7 +243,7 @@ SORT length(rows) DESC
 ```
 
 Three things to keep in mind. After `GROUP BY`, only the group key and the `rows` array are in
-scope — a bare `created` or `last_reviewed` resolves to null, giving you a table of empty columns
+scope. A bare `created` or `last_reviewed` resolves to null, giving you a table of empty columns
 that renders rather than errors, so reach for `rows.<field>` as above. Dates must be wrapped in
 `date(...)` to compare; a bare string comparison sorts lexically and gives you plausible-looking
 nonsense. And a `WHERE` over a key nothing sets returns an empty table, which reads exactly like
@@ -259,7 +259,7 @@ Three hooks are registered in `.claude/settings.json`: `PostToolUse` with matche
 matcher `*` (audit log). Each is registered with `"shell": "bash"`, which is what makes them run
 on Windows through Git Bash. All three log to `.claude/logs/`, which is gitignored.
 
-**To disable one**, remove its entry from `.claude/settings.json`. Edit that file by hand — it
+**To disable one**, remove its entry from `.claude/settings.json`. Edit that file by hand. It
 governs the permission and hook surface, and assistants are routinely blocked from writing to it.
 Hook registrations are read at session start, so restart Claude Code and then confirm from
 `.claude/logs/` that the hook no longer fires; editing mid-session and watching it still run is
@@ -275,7 +275,7 @@ is widened to `.claude/rules/`, `.claude/agents/`, `.claude/skills/`, and any `C
 You could make it exit non-zero on a violation, but be clear about what that does and does not
 buy you:
 
-- **It cannot block the write.** `PostToolUse` fires *after* the tool has completed — the file is
+- **It cannot block the write.** `PostToolUse` fires *after* the tool has completed. The file is
   already on disk by the time the hook runs, so no exit code can prevent or roll back anything.
   A non-zero exit surfaces the hook's output to Claude as an error, which usually prompts a
   follow-up correction pass. That is a nudge, not enforcement. (`PreToolUse` is the hook point that
@@ -284,9 +284,9 @@ buy you:
   `01-inbox/` by hand bypasses the hook entirely, whatever its exit code.
 - **The hook guards its dependencies, and you would be raising the volume on those guards.** `jq`
   is recommended but is **not** bundled with Git for Windows (without it the hook falls back to a
-  sed path-parse and warns loudly), and `perl` drives the invisible-character scan — `grep -P` is
-  a GNU extension, absent from macOS BSD grep, which is exactly why perl is preferred and the
-  `grep -P` path is only a fallback. With neither available the hook says the scan did not run
+  sed path-parse and warns loudly), and `perl` drives the invisible-character scan (`grep -P` is
+  a GNU extension, absent from macOS BSD grep, which is why perl is preferred and the
+  `grep -P` path is only a fallback). With neither available the hook says the scan did not run
   rather than reporting clean. Turn warnings into errors and you get error-shaped noise from a
   check that never ran.
 - **The whole point of the short tier is high-volume, disposable capture.** Gating it behind a
@@ -309,12 +309,12 @@ description: One sentence on when to use this. Claude reads this to decide wheth
 ---
 ```
 
-> **A skill without a `name:` frontmatter key silently never registers.** No error, no warning —
-> it simply does not appear as an available skill. If a skill you just wrote is never offered,
+> **A skill without a `name:` frontmatter key silently never registers.** It raises no error or warning
+> and does not appear as an available skill. If a skill you just wrote is never offered,
 > check `name:` first. Everything below the frontmatter is plain Markdown instructions.
 
 The five shipped skills are the shape to copy: `obsidian-save` (session → a dated medium-term
-log), `wrap-up` (a structured end-of-session summary that a log or a human then consumes — it does
+log), `wrap-up` (a structured end-of-session summary that a log or a human then consumes. It does
 not itself write the log), `resume` (rehydrate from recent logs at session start), `preserve`
 (medium → long promotion), and `onboard-project` (wire a codebase into the vault). Three of them
 carry `disable-model-invocation: true`, so they run only when you ask for them by name;
@@ -328,13 +328,13 @@ that makes `dream-agent` safe: its only write is one dated journal file, and it 
 existing note. Propose, don't execute. An unattended agent with edit rights over your long-term
 tier can quietly rewrite the knowledge you rely on, and you find out weeks later. (`promotion-agent`
 does write into the long tier. It takes a git snapshot before writing, which is what makes a bad
-write revertible — hence git is a hard dependency — and its runner fails any run that wrote outside
+write revertible and why git is a hard dependency. Its runner fails any run that wrote outside
 the long tier or a promotion report.)
 
 For scheduling, use the shipped runners rather than a hand-rolled cron line: `dream-pass.sh` /
 `.cmd` and `promotion-pass.sh` / `.cmd` in `.claude/scripts/`. They kill a hung pass (exit 124),
-fail a pass that wrote outside its allowed folders (exit 2), and carry an **artifact assertion** —
-if the pass exits 0 having produced no artifact, the runner exits 1 — so a silent no-op cannot
+fail a pass that wrote outside its allowed folders (exit 2), and carry an **artifact assertion**
+(if the pass exits 0 having produced no artifact, the runner exits 1), so a silent no-op cannot
 masquerade as a green run. Roll your own and you lose all three; `docs/reference.md` § 4.3 has the
 details. Three traps worth repeating if you
 write your own `.cmd` wrapper anyway:
@@ -378,7 +378,7 @@ sits beside the vault on disk:
 @../claude-memory-vault/30-knowledge/moc/ARCH-INDEX.md
 ```
 
-Use a **relative** path. An absolute one bakes your home directory — and your username — into a
+Use a **relative** path. An absolute one bakes your home directory, and your username, into a
 file you may later publish. One honest limit: an import shares the *text* of the long tier, not
 the machinery. The hooks, skills and agents load only when the vault itself is the project
 directory (see `docs/setup.md` § 6), so a session started from the codebase reads your standards
@@ -408,7 +408,7 @@ rewrite.
    ```
 
    That works as written **after a fork**, which shares history with upstream. "Use this template"
-   does not — it creates a repo with one fresh initial commit and no common ancestor, so the merge
+   does not. It creates a repo with one fresh initial commit and no common ancestor, so the merge
    fails with `fatal: refusing to merge unrelated histories`. For that path, the *first* sync needs
    `git merge --allow-unrelated-histories template/main` (expect conflicts on files you have
    already edited); every later merge is normal.

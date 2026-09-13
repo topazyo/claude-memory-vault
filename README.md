@@ -2,7 +2,7 @@
 
 **Claude Code forgets everything between sessions.** The usual fix is to keep appending to
 `CLAUDE.md` until it becomes a two-thousand-line wall of text that nobody reviews, nothing
-validates, and the model reads in full on every single turn. This repository is the structured
+validates, and the model reads in full on every turn. This repository is the structured
 alternative: an [Obsidian](https://obsidian.md) markdown vault where project memory has **tiers**,
 an explicit **promotion path** between them, and a **conformance contract** that a script can
 check. Cheap observations land in a daily note. Anything that survives a session gets written to
@@ -49,13 +49,13 @@ worth taking.
 
 **What I needed, all at once:**
 
-- plain markdown in git as the only store, with no services or API keys;
+- plain markdown in git as the only store, with no services or API keys
 - automation that proposes changes instead of rewriting notes, with any unattended write fenced and
-  revertible;
-- refuted beliefs kept as linked, superseded notes rather than deleted;
-- a small long-term tier that has to be earned;
-- native Windows support;
-- checkers that prove they actually scanned something.
+  revertible
+- refuted beliefs kept as linked, superseded notes rather than deleted
+- a small long-term tier that has to be earned
+- native Windows support
+- checkers that prove they scanned something
 
 **Why each kind of tool fell short:**
 
@@ -83,8 +83,8 @@ They aren't mutually exclusive either: this vault is plain markdown, so an index
 a retrieval plugin can sit on top of it.
 
 **The full reasoning** is in [`docs/why.md`](docs/why.md). It has a per-project table for each
-category, the documented failures that shaped the design, what this repo borrowed and from whom, an
-honest list of weaknesses, and a decision rule for picking the right tool.
+category, the documented failures that shaped the design, what this repo borrowed and from whom, a
+list of weaknesses, and a decision rule for picking the right tool.
 
 ---
 
@@ -96,7 +96,7 @@ honest list of weaknesses, and a decision rule for picking the right tool.
   `/preserve` — plus `/wrap-up`, which drafts an end-of-session summary without writing it, and
   `/onboard-project`, which wires a new codebase into the vault.
 - **Two scheduled agents**: a *dream agent* that consolidates and proposes, and a *promotion
-  agent* that does the weekly medium → long pass — each with a shipped `.sh`/`.cmd` runner that
+  agent* that does the weekly medium → long pass, each with a shipped `.sh`/`.cmd` runner that
   kills a hung pass, fails a pass that writes outside its allowed folders, and fails loudly when a
   pass produces no artifact.
 - **Three hooks**: an advisory frontmatter + invisible-character lint on every Claude Code write,
@@ -107,7 +107,7 @@ honest list of weaknesses, and a decision rule for picking the right tool.
   Linux, macOS and Windows, plus a job using macOS's system bash 3.2; no pre-commit hook ships, so
   gating your own vault is yours to wire. Alongside it, a **control test suite** (`run-tests.sh`)
   feeds the hooks and runners known-bad inputs that must be flagged and known-good inputs that
-  must stay silent, so a passing run is evidence the checks actually ran.
+  must stay silent, so a passing run is evidence the checks ran.
 - **Four rules files**: three path-scoped (the frontmatter contract when Claude edits a note, the
   verification discipline, and a prompt-injection boundary for captured content) plus one global
   safety file that always loads.
@@ -185,8 +185,8 @@ When you have seen enough of it, `find . -name 'EXAMPLE-*.md' -delete`.
 
 Promotion is **deliberate, not automatic**. Nothing is copied upward because a heuristic thought
 it looked important; something moves up because you (or a run you reviewed) decided it earned the
-move. That friction is the point — the long tier only steers future sessions well if it stays
-small.
+move. The friction is intentional, because the long tier only steers future sessions well if it
+stays small.
 
 ```
   ┌──────────────────────────────────────────────────────────────────────┐
@@ -228,8 +228,8 @@ small.
 
 ## Quickstart
 
-**Prerequisites:** `bash` (Git Bash on Windows), `git`, Obsidian, Claude Code, and — strongly
-recommended — `jq`. See [Requirements](#requirements--platform-notes) before you start; `jq` is
+**Prerequisites:** `bash` (Git Bash on Windows), `git`, Obsidian, Claude Code, and (strongly
+recommended) `jq`. See [Requirements](#requirements--platform-notes) before you start; `jq` is
 *not* bundled with Git for Windows.
 
 1. **Clone the template.** Click **Use this template** (or fork) on GitHub first, then:
@@ -253,8 +253,8 @@ recommended — `jq`. See [Requirements](#requirements--platform-notes) before y
    all, so start there: Settings → Community plugins → *Turn off Restricted Mode* → Browse →
    *Dataview* → Install → Enable. Every dashboard in `30-knowledge/moc/` is a Dataview query and
    will render as an unstyled code block until you do this. The bundled
-   `.obsidian/community-plugins.json` is only the list of plugin ids to *enable* — Obsidian does
-   not download anything from it, so a plugin you have not installed simply stays absent, with no
+   `.obsidian/community-plugins.json` is only the list of plugin ids to *enable*. Obsidian does
+   not download anything from it, so a plugin you have not installed stays absent, with no
    error. The graph plugins listed there are **optional**; the vault works fine without them.
 
 4. **Point Claude Code at the vault.** Start a session with `<your-vault>` as the working
@@ -262,40 +262,40 @@ recommended — `jq`. See [Requirements](#requirements--platform-notes) before y
    hooks. `.claude/rules/security.md` loads every session; the other three rules files are
    path-scoped and load only when you touch matching paths.
 
-5. **Verify the automation actually runs.** Two commands, both from the vault root:
+5. **Verify the automation runs.** Two commands, both from the vault root:
 
    ```bash
    bash .claude/scripts/run-tests.sh     # control suite for the hooks
    bash .claude/scripts/vault-check.sh   # frontmatter invariants C1–C5
    ```
 
-   `run-tests.sh` includes positive controls — cases that are *supposed* to be flagged. If one of
+   `run-tests.sh` includes positive controls, cases that are *supposed* to be flagged. If one of
    those stops firing, the suite tells you, because a checker that flags nothing and a checker
    that scanned nothing look identical from the outside. Note what it does **not** cover: it
    builds synthetic fixtures in a temp directory and runs the hooks against those, so it stays
    green even if you have renamed a tier folder out from under the vault. `vault-check.sh` is the
    only thing that reads your real notes, and it is report-only: it never edits a note, it prints
    violations and exits 1 if it found any. On a fresh clone the correct output is
-   `0 violation(s) across 9 file(s) checked` — if you see *0 files checked*, that is a vacuous
+   `0 violation(s) across 9 file(s) checked`. If you see *0 files checked*, that is a vacuous
    result, not a pass, and it means nothing was scanned.
 
 6. **Write your first note.** Copy a template from the matching `templates/` folder, fill the
-   frontmatter, save. The `vault-lint.sh` hook will comment if `tier:` or `type:` is missing —
+   frontmatter, save. The `vault-lint.sh` hook will comment if `tier:` or `type:` is missing,
    but only when **Claude Code** writes the file. A note you type directly in Obsidian, or a file
    you drop into `01-inbox/` by hand, is never linted, so run
    `bash .claude/scripts/vault-check.sh` after a manual authoring session.
 
-7. **(Optional) Schedule the agents.** Use the shipped runners — `dream-pass.sh`/`.cmd` and
-   `promotion-pass.sh`/`.cmd` — rather than a hand-rolled cron line: they kill a hung pass, fail a
-   pass that wrote outside its allowed folders, and assert that a pass which exits 0 actually
-   produced an artifact, so a silent no-op cannot masquerade as a green run. Read [`docs/setup.md`](docs/setup.md) first — the Windows traps
-   below are real and they fail silently.
+7. **(Optional) Schedule the agents.** Use the shipped runners (`dream-pass.sh`/`.cmd` and
+   `promotion-pass.sh`/`.cmd`) rather than a hand-rolled cron line. They kill a hung pass, fail a
+   pass that wrote outside its allowed folders, and assert that a pass which exits 0 produced an
+   artifact, so a silent no-op cannot pass as a green run. Read [`docs/setup.md`](docs/setup.md)
+   first. The Windows traps below are real, and they fail silently.
 
 ---
 
 ## The frontmatter contract
 
-Every note carries YAML frontmatter. `tier` and `type` are the two keys the machinery actually
+Every note carries YAML frontmatter. `tier` and `type` are the two keys the machinery
 reads: the lint hook flags their absence on write, and `vault-check.sh` fails the vault without
 them. The rest are contract, enforced by review and by you.
 
@@ -319,9 +319,9 @@ The checker implements exactly five invariants, and nothing beyond them: **C1** 
 with a bare `---` fence; **C2** frontmatter has a `tier:` key; **C3** it has a `type:` key; **C4**
 if both `created:` and `last_verified:` exist, `last_verified >= created`; **C5** `last_verified`
 is never in the future. C4 also flags a `created` that is not a `YYYY-MM-DD` date, and C5 a
-`last_verified` that is not. C4 and C5 exist because a bad date is the quietest way to poison a freshness
-signal. There is deliberately **no** check that a long-tier note carries
-`last_verified` at all — that judgement stays with you. The scan covers the six content tiers
+`last_verified` that is not. C4 and C5 exist because a bad date is the quietest way to poison a
+freshness signal. There is deliberately **no** check that a long-tier note carries
+`last_verified` at all. That judgement stays with you. The scan covers the six content tiers
 (`01-inbox`, `10-daily`, `20-projects`, `30-knowledge`, `31-standards`, `40-llm-wiki`), skipping
 `*/templates/*` and the compaction stubs; `90-auto-memory/` is machine-managed and out of scope.
 
@@ -334,21 +334,21 @@ you build something else.
 
 ### 1. Mark superseded, never delete
 
-When knowledge is replaced, the old note gets `status: superseded` and a `superseded_by:` link —
-it does not get deleted. A memory store whose whole value proposition is auditable provenance
-cannot answer *"what did we believe last quarter, and what changed our minds?"* if it throws the
-old belief away. Deletion also destroys the most useful debugging artifact you have: the shape of
-a mistake you already made once. Obsolete material goes to `99-archive/`, still linkable, still
-greppable, just out of the way. `31-standards/EXAMPLE-retry-on-any-5xx.md` ships superseded, so
+When knowledge is replaced, the old note gets `status: superseded` and a `superseded_by:` link.
+It does not get deleted. A memory store whose value is auditable provenance cannot answer
+*"what did we believe last quarter, and what changed our minds?"* if it throws the old belief
+away. Deletion also destroys the most useful debugging artifact you have, which is the shape of a
+mistake you already made once. Obsolete material goes to `99-archive/`, still linkable, still greppable,
+out of the way. `31-standards/EXAMPLE-retry-on-any-5xx.md` ships superseded, so
 you can see the shape before you need it.
 
 ### 2. Contradictions are recorded, not auto-resolved
 
-A `contradicts:` edge in frontmatter says two notes disagree — and **both remain active**. Nothing
+A `contradicts:` edge in frontmatter says two notes disagree, and **both remain active**. Nothing
 resolves the conflict except a human deciding which one is wrong, or discovering that they are
-scoped differently and both are right. Systems that auto-resolve contradictions are really
-systems that silently delete one side of a disagreement, usually the newer and less-linked side,
-which is exactly the side carrying the new information. Surfacing the conflict is cheap; picking
+scoped differently and both are right. A system that auto-resolves contradictions silently
+deletes one side of a disagreement, usually the newer and less-linked side, which is the side
+carrying the new information. Surfacing the conflict is cheap; picking
 the wrong winner is not.
 
 ### 3. A success signal is not evidence
@@ -356,26 +356,26 @@ the wrong winner is not.
 Exit codes, HTTP 200s, "0 findings", and a green test run are *reports about* a state change, not
 the state change. An API can return 200 and ignore the field you set. A scanner can print zero
 findings because it matched nothing or because it scanned nothing, and those two outcomes are
-indistinguishable from the outside — which is why `vault-check.sh` prints the file count next to
-the violation count. So every absence claim here is paired with a **positive control**: a known-bad
-input the checker must flag. `run-tests.sh` is built that way on purpose — if the positive
+indistinguishable from the outside. That is why `vault-check.sh` prints the file count next to
+the violation count. So every absence claim here is paired with a **positive control**, a known-bad
+input the checker must flag. `run-tests.sh` is built that way on purpose. If the positive
 controls stop firing, the instrument has silently broken, and the suite says so. Its negative
 controls are the mirror image: known-good notes that must produce silence.
 
 ### 4. Earned vs. unearned freshness stamps
 
-`last_verified` moves **only** when you re-probed the claim — re-ran the command, re-read the
-upstream doc, re-checked the API. If you merely re-read the note and still believe it, you move
-`last_reviewed`. The distinction matters more than it looks: an unearned `last_verified` stamp
-suppresses its own detection. Every later staleness pass sees a recent date, skips the note, and
-the stale claim becomes permanently invisible — worse than having no stamp at all, because now
-there is false confidence attached.
+`last_verified` moves **only** when you re-probed the claim by re-running the command, re-reading
+the upstream doc, or re-checking the API. If you re-read the note and still believe it, you move
+`last_reviewed`. The distinction matters more than it looks, because an unearned `last_verified`
+stamp suppresses its own detection. Every later staleness pass sees a recent date, skips the note,
+and the stale claim becomes permanently invisible. That is worse than having no stamp at all,
+because now there is false confidence attached.
 
 ### 5. Propose, don't execute
 
 The scheduled dream agent reads broadly across all three tiers and writes exactly one thing: a
 dated journal file of proposals. It never edits an existing note, never promotes anything, never
-deletes. That single constraint is what makes running it unattended safe — the worst outcome of a
+deletes. That constraint is what makes running it unattended safe. The worst outcome of a
 bad run is one bad file you ignore, not a vault quietly rewritten overnight by a model nobody was
 watching. The runner backs that constraint mechanically: it fails the run if any other file
 changed. The promotion agent, which *does* write into the long tier, takes a git snapshot first so
@@ -386,14 +386,14 @@ only the snapshot can undo a bad write in the right one, which is why `git` is a
 ### 6. Degrade loudly
 
 Every optional dependency is guarded, and a check that cannot run **says so** instead of
-reporting clean. The lint hook needs `jq` to parse hook input — without it, it falls back to a
-`sed` path-parse and warns — and `perl` (preferred) or `grep -P` to scan for zero-width and
-bidirectional-override codepoints, the "Rules File Backdoor" class, where invisible characters
-hide instructions inside a file that looks innocuous in every editor. That scan covers the content
-tiers plus the files that steer the model: `.claude/rules/`, `.claude/agents/`, `.claude/skills/`,
-and any `CLAUDE.md` or `AGENTS.md`. If neither
-scanner is available, the hook reports that the scan **did not run** rather than passing the file.
-It still exits 0 — and it could not do otherwise: `PostToolUse` fires *after* the write has landed
+reporting clean. The lint hook needs `jq` to parse hook input (without it, it falls back to a
+`sed` path-parse and warns), and `perl` (preferred) or `grep -P` to scan for zero-width and
+bidirectional-override codepoints. That is the "Rules File Backdoor" class, where invisible
+characters hide instructions inside a file that looks innocuous in every editor. The scan covers
+the content tiers plus the files that steer the model: `.claude/rules/`, `.claude/agents/`,
+`.claude/skills/`, and any `CLAUDE.md` or `AGENTS.md`. If neither scanner is available, the hook
+reports that the scan **did not run** rather than passing the file. It still exits 0, and it
+could not do otherwise: `PostToolUse` fires *after* the write has landed
 on disk, so no exit code from it could ever block one. The lint is advisory by construction, not
 by choice.
 
@@ -407,9 +407,9 @@ by choice.
 | `git` | required | For the clone, for `git log` as the audit trail, and because the promotion agent's git snapshot is what makes its writes revertible |
 | Obsidian | required | Any recent version; open the repo root as a vault |
 | Obsidian **Dataview** | **required** | Every dashboard is a Dataview query; without it they render as code blocks |
-| `jq` | strongly recommended | Parses hook input. **Not bundled with Git for Windows** — install it separately. Without it the lint hook falls back to a `sed` path-parse and warns loudly |
+| `jq` | strongly recommended | Parses hook input. **Not bundled with Git for Windows**, so install it separately. Without it the lint hook falls back to a `sed` path-parse and warns loudly |
 | `perl` | recommended | Runs the invisible-character scan. Present on macOS, on most Linux distributions, and in Git for Windows |
-| `grep -P` | fallback only | A GNU extension — available on Linux, **absent from macOS BSD grep**. The hook prefers `perl` for exactly this reason |
+| `grep -P` | fallback only | A GNU extension, available on Linux but **absent from macOS BSD grep**. That is why the hook prefers `perl` |
 | Graph plugins | optional | The graph ids in `community-plugins.json` are configured but not needed |
 | Claude Code | required | For the hooks, skills, and agents; the vault is readable without it |
 
@@ -418,17 +418,17 @@ by choice.
 The four shipped templates use `{{date:...}}` and `{{time:...}}`, which Obsidian's **core**
 Templates plugin does support. They **also** use `{{selection}}`, `{{project}}` and `{{concept}}`,
 which core Templates does **not** support. With only the core plugin enabled, those three
-placeholders render **literally** — you will see `{{project}}` sitting in your new
-note. Two honest options: install the community **Templater** plugin, which resolves them, or fill
-them in by hand. Nothing in the vault breaks either way; the frontmatter checker will simply see a
-literal string where it expected a value.
+placeholders render **literally**, so you will see `{{project}}` sitting in your new note. You
+have two options: install the community **Templater** plugin, which resolves them, or fill them in
+by hand. Nothing in the vault breaks either way; the frontmatter checker sees a literal string where
+it expected a value.
 
 You also have to point the Templates plugin at a template folder yourself. This vault deliberately
 ships **no** `.obsidian/templates.json`: the core plugin supports exactly one template folder,
 while this layout co-locates a `templates/` folder inside each tier, so any single value shipped
 here would point at a folder you did not want. Set it in Settings → Templates, or use Templater,
-which handles per-folder templates. `.obsidian/daily-notes.json` *is* shipped and correct as-is —
-it points at `10-daily/` and `10-daily/templates/short-term-daily.md`.
+which handles per-folder templates. `.obsidian/daily-notes.json` *is* shipped and correct as-is.
+It points at `10-daily/` and `10-daily/templates/short-term-daily.md`.
 
 ### Windows scheduling traps
 
@@ -438,19 +438,19 @@ direction that looks healthy:
 - In `cmd`, `echo Result %ERRORLEVEL%>> "log"` makes the parser read the trailing digit as a file
   handle, so the exit code silently vanishes from your log. Capture it first and write
   `(echo Result %RC%)>> "log"`.
-- `claude --agent <name>` with **no** `-p` starts an *interactive* session — and note that the
-  agent is selected with the `--agent` **flag**, not by typing a slash command. Under a scheduler
-  with no TTY it produces nothing while reporting success. Always pass `-p`. The shipped runners
-  already do; the `.cmd` files simply run the `.sh` runners through Git Bash.
-- Task health is `LastTaskResult` **plus a log file on disk** — never `State`. A task can sit at
-  `Ready` for weeks while every single run dies on startup.
+- `claude --agent <name>` with **no** `-p` starts an *interactive* session. (The agent is
+  selected with the `--agent` **flag**, not by typing a slash command.) Under a scheduler with no
+  TTY it produces nothing while reporting success. Always pass `-p`. The shipped runners already
+  do; the `.cmd` files run the `.sh` runners through Git Bash.
+- Task health is `LastTaskResult` **plus a log file on disk**, never `State`. A task can sit at
+  `Ready` for weeks while every run dies on startup.
 
 ---
 
 ## Customizing
 
 Start with [`docs/customizing.md`](docs/customizing.md). One warning belongs here because it is
-the template's single biggest customization cost:
+the template's biggest customization cost:
 
 > **Renaming a tier folder is a multi-file edit, not a rename.** The folder names
 > (`01-inbox/`, `10-daily/`, `20-projects/_logs/`, `31-standards/`, `40-llm-wiki/`, …) are
@@ -461,7 +461,7 @@ the template's single biggest customization cost:
 > names folders), `dream-pass.sh` and `promotion-pass.sh`, the fixtures in `.claude/scripts/run-tests.sh`,
 > `.obsidian/daily-notes.json`, and `.gitignore`. Treat that list as a floor, not an inventory:
 > grep for the old name across the whole repo and fix every hit. A missed one turns into a hook
-> that silently stops matching, which looks exactly like a hook that found nothing wrong — and
+> that silently stops matching, which looks like a hook that found nothing wrong. And
 > `run-tests.sh` will not catch it, because it tests against its own temp-directory fixtures
 > rather than your folder layout.
 

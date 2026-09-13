@@ -5,13 +5,13 @@ repository.
 
 ## 1. What this repo is
 
-This repository is an **Obsidian vault** — a tree of Markdown notes — that acts as durable,
+This repository is an **Obsidian vault** (a tree of Markdown notes) that holds durable,
 auditable long-term memory for the agent working alongside it. There is nothing to build, install,
 or run as an application: the "product" is the notes, their frontmatter, and the small set of shell
 checkers that keep them honest.
 
 Treat it as a system **you operate**, not a codebase you refactor. Your normal output here is a
-note filed in the right tier with correct frontmatter — not a code change.
+note filed in the right tier with correct frontmatter, not a code change.
 
 ## 2. How to orient yourself
 
@@ -27,12 +27,12 @@ Read in this order, before your first write:
 
 Read the rules *first* because they are the contract the PostToolUse lint hook
 (`.claude/hooks/vault-lint.sh`) and the `vault-check.sh` script check. A note written before you
-have read them will usually violate something, and the lint hook is advisory — it warns and
-**always exits 0**, so a violation will not stop you. It is on you to not create one.
+have read them will usually violate something, and the lint hook is advisory. It warns and
+**always exits 0**, so a violation will not stop you. It is on you not to create one.
 
 Four `EXAMPLE-` notes plus one wiki entity tell a single fictional story (an `example-api` service
 that double-charged customers because its retries carried no idempotency key). They are the
-shortest way to see the tiers working together — read them as a worked example, never as facts
+shortest way to see the tiers working together. Read them as a worked example, never as facts
 about a real system.
 
 ## 3. The tier model
@@ -107,7 +107,7 @@ Two further requirements the checkers cannot see, and you must satisfy anyway:
    it.
 5. **Report violations; do not silently repair them.** Rewriting a note so a checker goes quiet
    clears the alarm without establishing the fact.
-6. **Degrade loudly.** If a check cannot run — a missing dependency, an empty scan — say so. Never
+6. **Degrade loudly.** If a check cannot run (a missing dependency, an empty scan), say so. Never
    report clean on the strength of a check that did not happen.
 
 ## 6. How to verify your work
@@ -116,7 +116,7 @@ Two further requirements the checkers cannot see, and you must satisfy anyway:
 bash .claude/scripts/vault-check.sh
 ```
 
-Run it from the vault root, **unpiped** — a pipe reports the pager's exit status, not the
+Run it from the vault root, **unpiped**, because a pipe reports the pager's exit status, not the
 checker's. It is report-only: it never writes to a note, and it exits 1 when any note violates an
 invariant (C1 opening `---` fence, C2 `tier:`, C3 `type:`, C4 `last_verified >= created` and a
 well-formed `created`, C5 `last_verified` well-formed and not in the future).
@@ -167,9 +167,9 @@ section prints which optional dependencies were found.
 - **Do not create top-level folders** or rename the numbered ones. Dataview queries, the rule
   path-scopes, and both checkers hardcode them.
 - **Do not hand-edit `90-auto-memory/`.** It is machine-managed and deliberately out of scope.
-- **Do not hardcode volatile values** — counts, versions, prices — into notes or rules. Link to the
+- **Do not hardcode volatile values** (counts, versions, prices) into notes or rules. Link to the
   source instead.
 - **Do not commit a user's own notes upstream.** If you are contributing to this template, the only
   notes that belong in a pull request are templates and the clearly-marked `EXAMPLE-` set. Personal
-  vault content, absolute paths containing a username, employer names, and secrets stay out — see
+  vault content, absolute paths containing a username, employer names, and secrets stay out. See
   `CONTRIBUTING.md`.

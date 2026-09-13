@@ -37,7 +37,7 @@ Both must pass. For `vault-check.sh`, read the file count as well as the violati
 CI (`.github/workflows/ci.yml`) runs both on ubuntu-latest, macos-latest and windows-latest, plus a
 separate job that runs them under macOS's system `/bin/bash` 3.2. It deliberately does **not**
 install `jq`, because `jq` is absent by default on macOS and in Git for Windows and the hooks are
-written to degrade loudly without it — installing it in CI would hide the case most users hit.
+written to degrade loudly without it, and installing it in CI would hide the case most users hit.
 
 ## Changing a shell script
 
@@ -63,7 +63,7 @@ path most macOS and Git for Windows users actually run. The suite already uses i
 tests; if your change touches a `jq` code path, add a test there that sets it.
 
 Line endings are governed by `.gitattributes`: `*.sh` is `eol=lf`, `*.cmd` is `eol=crlf`. A CR in
-a shebang gives `bad interpreter` on Linux. Note also that Windows has no executable bit, so a
+a shebang gives `bad interpreter` on Linux. Windows has no executable bit, so a
 script committed from Windows lands as `100644`; fix it in the index with
 `git update-index --chmod=+x <file>` and verify with `git ls-files -s`.
 

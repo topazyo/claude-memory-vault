@@ -2,7 +2,7 @@
 
 A library of copy-paste prompts for operating this vault with an agent.
 
-The vault is designed to be run *by* an agent, not just read by one. Every prompt below is written
+The vault is designed to be run *by* an agent, not only read by one. Every prompt below is written
 to be pasted verbatim into Claude Code (or any agent that reads `AGENTS.md` and `CLAUDE.md`) with
 the vault as the working directory.
 
@@ -72,9 +72,8 @@ count instead of just saying "done". After deleting the examples you will have f
 
 ## 3. Onboard a codebase into the vault
 
-The highest-value prompt here. This is what turns the vault from an empty structure into your
-actual project memory. There is also a skill for it — `/onboard-project` — which follows the same
-checklist.
+This is the highest-value prompt here. It turns the vault from an empty structure into your project
+memory. The `/onboard-project` skill follows the same checklist.
 
 ```
 Onboard the repository at <PATH-TO-REPO> into this vault. Follow
@@ -252,12 +251,12 @@ and reaches for `contradicts` when the question is still open. `superseded_by` c
 
 ## 9. Prompting agents for this vault
 
-A few habits that make the difference between a vault you can trust and one you cannot:
+Habits that separate a vault you can trust from one you cannot:
 
 - **Ask for evidence, not assertions.** "Report the file count" beats "confirm it worked". A
   number can be wrong in a way you can see; "done" cannot.
 - **Require a statement of what was not checked.** Every prompt above asks for this. An agent that
-  never reports a gap is not a thorough agent — it is an agent that is not tracking its gaps.
+  never reports a gap is not thorough. It is not tracking its gaps.
 - **Never let an agent bulk-edit frontmatter to silence a checker.** That is resolution-by-writing:
   it clears the alarm without establishing the fact. If `vault-check.sh` reports a violation, fix
   the underlying note, one at a time, for a stated reason.

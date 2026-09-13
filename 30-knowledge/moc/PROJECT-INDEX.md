@@ -14,8 +14,8 @@ related_notes:
 # Projects wired to this vault
 
 The register of every codebase whose memory lives here. Unlike [[VAULT-INDEX]], this is a
-hand-maintained table, not a Dataview query — there is no frontmatter key that can tell you a
-repo was onboarded, only a human who did it.
+hand-maintained table, not a Dataview query, because no frontmatter key can tell you a
+repo was onboarded. Only the human who did it can.
 
 > **This is a scaffold.** The row below is a fictional example showing the intended shape.
 > Delete it and add your own.
@@ -31,7 +31,7 @@ frontmatter key.
 
 This section exists because of a specific failure mode: a log nobody links to is an orphan, and
 the orphan query in [[VAULT-INDEX]] will flag it. Rebuilding this list by hand from each log's
-`project:` key — rather than by eye — is the only way to be sure it is complete. Checking by set
+`project:` key (rather than by eye) is the only way to be sure it is complete. Checking by set
 difference catches the ones you would otherwise skim past.
 
 ### example-api

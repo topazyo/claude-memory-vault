@@ -1,8 +1,8 @@
 # Setup
 
 This guide takes you from a fresh clone to a working vault: Obsidian open, Claude Code wired to
-the hooks, and — the part that actually matters — a verified install, where you have proof the
-checkers ran rather than a reassuring silence.
+the hooks, and (the part that matters) a verified install, where you have proof the checkers ran
+rather than a reassuring silence.
 
 The whole thing takes about fifteen minutes. Steps 1–3 and 6–7 are required. Steps 4, 5 and 8 are
 optional and can be skipped without breaking anything.
@@ -27,7 +27,7 @@ complete little userland otherwise.
 
 Without `jq`, `vault-lint.sh` falls back to a `sed` parse of the hook's JSON payload to find the
 file path. The fallback works for ordinary paths, but it is a single regex against a JSON blob and
-it will mis-parse paths containing quotes or escapes. The hook does not hide this — every degraded
+it will mis-parse paths containing quotes or escapes. The hook does not hide this. Every degraded
 run writes a `DEGRADED:` line to `.claude/logs/vault-lint.log` and prints a warning to stderr.
 
 Install it if you can:
@@ -40,7 +40,7 @@ sudo apt install jq             # Debian / Ubuntu
 
 ### About perl and `grep -P`
 
-The lint hook scans written notes for zero-width and bidirectional-control codepoints — the
+The lint hook scans written notes for zero-width and bidirectional-control codepoints, the
 "Rules File Backdoor" class of attack, where a steering file carries instructions that no human
 reviewer can see on screen.
 
@@ -92,7 +92,7 @@ With those lines active, your notes stay on disk and out of every pull request, 
 subfolders. The last line re-includes the `templates/` folders, so the templates still travel with
 the repo. Confirm with `git status --ignored` before your first push.
 
-Note that this is a one-way door in practice: once note content has been pushed to a public repo,
+This is a one-way door in practice: once note content has been pushed to a public repo,
 a pull-request diff of it is stored by GitHub under refs nobody can rewrite. Decide before your
 first push, not after.
 
@@ -104,10 +104,10 @@ first push, not after.
 2. Obsidian will read the checked-in `.obsidian/` config: the tier-coloured graph, and
    the list of community plugins the vault expects.
 3. Go to **Settings → Community plugins**, turn off Restricted Mode if prompted, and install
-   **Dataview**. Then **enable** it — installing is not enabling, and this catches people.
+   **Dataview**. Then **enable** it. Installing is not enabling, and this catches people.
 
    Restricted Mode exists for a reason: community plugins run code with the same access to your
-   files as Obsidian itself. Install only the plugins you have decided to trust — Dataview is the
+   files as Obsidian itself. Install only the plugins you have decided to trust. Dataview is the
    one this vault needs.
 
 **Dataview is required.** Every dashboard in `30-knowledge/moc/VAULT-INDEX.md` and
@@ -123,7 +123,7 @@ and confirm you see tables rather than code fences.
 
 `.obsidian/community-plugins.json` also lists three optional graph plugins:
 `folders2graph`, `three-d-graph-view`, and `extended-graph`. They change how the vault's link
-graph is drawn — folder nodes, a 3-D view, and extended styling respectively. Nothing in the
+graph is drawn: folder nodes, a 3-D view, and extended styling respectively. Nothing in the
 system depends on them; skip them if you want a lean install.
 
 What *is* worth keeping either way is `.obsidian/graph.json`, which defines four colour groups
@@ -137,8 +137,8 @@ keyed on tags that the templates seed:
 | `tag:#llm/wiki` | Wiki entities and the wiki index, which carry both `tier/long` and `llm/wiki` |
 
 The practical effect is that the core graph view shows you your tier distribution at a glance. A
-graph that is overwhelmingly short-tier colour means capture is happening but promotion is not —
-which is the failure mode this whole system exists to make visible.
+graph that is overwhelmingly short-tier colour means capture is happening but promotion is not.
+That is the failure mode this system exists to make visible.
 
 ---
 
@@ -155,7 +155,7 @@ Each tier folder carries its own template:
 
 To use them, enable the **core** Templates plugin (Settings → Core plugins → Templates) and point
 its **Template folder location** at one of those folders. Core Templates accepts exactly one
-folder, while this layout deliberately co-locates a `templates/` folder inside each tier — so
+folder, while this layout deliberately co-locates a `templates/` folder inside each tier. So
 pick the tier you create by hand most often, usually `31-standards/templates`, and insert the
 others by copying the file.
 
@@ -199,7 +199,7 @@ as `${CLAUDE_PROJECT_DIR}/.claude/hooks/...` with `"shell": "bash"`. Because the
 relative to the project directory and the shell is named explicitly, the same config works on
 macOS, Linux, and on Windows through Git Bash.
 
-The only requirement is that **the vault is the project directory** — start Claude Code from
+The only requirement is that **the vault is the project directory**. Start Claude Code from
 `<your-vault>`:
 
 ```bash
@@ -243,12 +243,12 @@ Expect a list of `PASS` lines, an informational dependency block, and a final
 This suite is not decorative. It pairs **known-bad inputs that must be flagged** with **known-good
 inputs that must stay silent**: it feeds the lint hook a file containing a known U+200B and a known
 U+202E and asserts the hook *catches* them, before trusting any "clean" result from it. It also
-runs the hooks' no-jq fallback and both scheduled runners against a fake `claude`. It also builds its fixtures inside a
-directory whose name contains a space, because a path like `/Users/Some One/...` is precisely what
-breaks word-splitting bugs while still printing a reassuring "0 violations".
+runs the hooks' no-jq fallback and both scheduled runners against a fake `claude`, and builds its
+fixtures inside a directory whose name contains a space, because a path like `/Users/Some One/...`
+is what breaks word-splitting bugs while still printing a reassuring "0 violations".
 
 The dependency block at the end tells you, in plain language, whether `jq` and `perl` were found.
-If it says `MISSING perl and grep -P`, your invisible-character scan cannot run — go back to
+If it says `MISSING perl and grep -P`, your invisible-character scan cannot run. Go back to
 step 1.
 
 ### 7b. The frontmatter checker
@@ -286,8 +286,7 @@ vault-check: 0 violation(s) across 9 file(s) checked (as of 2026-01-01).
 > script also prints `VACUOUS` to stderr and exits 1.
 
 Zero findings from an instrument that examined zero inputs is indistinguishable from zero findings
-from an instrument that examined everything — which is exactly why the file count is printed at
-all. `vault-check.sh` resolves the vault from its **own location** (`$(dirname "$0")/../..`) unless
+from an instrument that examined everything. That is why the file count is printed at all. `vault-check.sh` resolves the vault from its **own location** (`$(dirname "$0")/../..`) unless
 `CLAUDE_PROJECT_DIR` overrides it, so calling it by an absolute path from anywhere works fine. A
 zero file count therefore usually means `CLAUDE_PROJECT_DIR` points somewhere else, or the
 content tiers genuinely hold nothing but templates, or a tier folder was renamed without
@@ -303,7 +302,7 @@ result becomes vacuous again.
 
 ## 8. Optional: scheduling the dream and promotion agents
 
-Two agents are defined in `.claude/agents/`. Scheduling them is entirely optional — the vault
+Two agents are defined in `.claude/agents/`. Scheduling them is optional. The vault
 works fine driven only by `/obsidian-save` and `/preserve` during ordinary sessions.
 
 | Agent | Cadence | What it writes |
@@ -311,10 +310,10 @@ works fine driven only by `/obsidian-save` and `/preserve` during ordinary sessi
 | `dream-agent` | Nightly, if you want it | **One** dated dream-journal file. Nothing else, ever. |
 | `promotion-agent` | Weekly | **Creates and edits notes** in `31-standards/` and `40-llm-wiki/wiki/` |
 
-The dream-agent is safe to run unattended precisely because it proposes rather than executes: its
+The dream-agent is safe to run unattended because it proposes rather than executes: its
 only write is a new file at a predictable path, so a pass that misreads something cannot corrupt
 anything, and its runner fails the pass if any other file changed. **The promotion-agent is
-different — it writes into your long-term tier.** It takes a git snapshot before writing so a bad
+different, because it writes into your long-term tier.** It takes a git snapshot before writing so a bad
 pass is reversible, and its runner fails a pass that writes outside `31-standards/`,
 `40-llm-wiki/wiki/` or a `20-projects/_logs/promotion-*.md` report. Still, read
 `.claude/agents/promotion-agent.md` in full before you put it on a timer, and run it manually a
@@ -324,7 +323,7 @@ few times first.
 
 Use the shipped runners. They resolve the vault from their own location, guard for a `claude`
 binary that a scheduler's minimal PATH cannot see, log to `.claude/logs/`, kill a pass that hangs,
-fail a pass that writes outside its allowed folders, and — the part that matters — assert that the
+fail a pass that writes outside its allowed folders, and (the part that matters) assert that the
 pass actually produced something. Exit codes are `0` OK, `1` no artifact, `2` write outside the
 fence, `124` timeout, `127` no `claude`; `docs/reference.md` § 4.3 has the full table.
 
@@ -335,8 +334,8 @@ fence, `124` timeout, `127` no `claude`; `docs/reference.md` § 4.3 has the full
 30 3 * * 0  /path/to/your-vault/.claude/scripts/promotion-pass.sh
 ```
 
-If `claude` is not on the PATH cron gives you — and it usually is not, since cron runs no login
-profile — set `CLAUDE_BIN` to the full path in the crontab. The watchdog limits are environment
+If `claude` is not on the PATH cron gives you (it usually is not, since cron runs no login
+profile), set `CLAUDE_BIN` to the full path in the crontab. The watchdog limits are environment
 variables too: `DREAM_PASS_TIMEOUT` (default 3600 seconds) and `PROMOTION_PASS_TIMEOUT` (default
 5400). Set them the same way, as `NAME=value` lines above the entries, if a pass legitimately needs
 longer.
@@ -349,15 +348,15 @@ nothing to do" from "did not run at all". Without it, a broken schedule looks gr
 
 ### macOS — launchd (use this, not cron)
 
-On macOS prefer `launchd`. It runs a missed job when the machine wakes, whereas cron simply skips
-it — and on modern macOS, cron additionally cannot read a vault in `~/Documents`, `~/Desktop` or
+On macOS prefer `launchd`. It runs a missed job when the machine wakes, whereas cron skips
+it. On modern macOS, cron also cannot read a vault in `~/Documents`, `~/Desktop` or
 iCloud Drive unless you grant **Full Disk Access** to `/usr/sbin/cron` in System Settings →
-Privacy & Security. A cron job that silently reads nothing is exactly the failure this project
+Privacy & Security. A cron job that silently reads nothing is the failure this project
 argues against, so use launchd.
 
 Put both files in `~/Library/LaunchAgents/`. Replace `/Users/YOU/Vaults/my-vault` with your
-vault's **absolute** path — launchd does not expand `~`, and a job whose paths contain a tilde
-simply never runs.
+vault's **absolute** path. launchd does not expand `~`, and a job whose paths contain a tilde
+never runs.
 
 `~/Library/LaunchAgents/com.claude-memory-vault.dream-pass.plist`
 
@@ -407,8 +406,8 @@ simply never runs.
 </plist>
 ```
 
-The promotion runner's plist is identical except for these keys — weekly on Sunday rather than
-nightly:
+The promotion runner's plist is identical except for these keys (weekly on Sunday rather than
+nightly):
 
 ```xml
   <key>Label</key>
@@ -448,7 +447,7 @@ launchctl enable  gui/$(id -u)/com.claude-memory-vault.dream-pass
 Three things that will otherwise cost you an evening:
 
 - **launchd creates the log file, not its directory.** `StandardOutPath` and `StandardErrorPath`
-  are opened before your script runs, so the `.claude/logs/` directory must already exist — hence
+  are opened before your script runs, so the `.claude/logs/` directory must already exist, hence
   the `mkdir -p` above.
 - **The plist must be mode 0644 and owned by you**, or `bootstrap` fails with
   `Path had bad ownership/permissions`.
@@ -465,7 +464,7 @@ launchctl kickstart -p gui/$(id -u)/com.claude-memory-vault.dream-pass
 ```
 
 Then check `.claude/logs/dream-agent.log` for a timestamped line. As on Windows, the presence of a
-log line is the evidence — a job that launchd lists as loaded has not necessarily ever run.
+log line is the evidence. A job that launchd lists as loaded has not necessarily ever run.
 
 
 ### Windows — Task Scheduler, and three traps that will cost you a week
@@ -513,7 +512,7 @@ so a missing timeout turns one hang into permanent silence.
 
 Make the task's limit longer than the runner's own watchdog, so the runner kills a hung pass first
 and logs `TIMEOUT` with exit 124. Change the existing task object rather than building new settings
-— `New-ScheduledTaskSettingsSet` resets every setting you do not name — then read the definition
+(`New-ScheduledTaskSettingsSet` resets every setting you do not name), then read the definition
 back, because a success from `Set-ScheduledTask` is not evidence the change landed:
 
 ```powershell
@@ -528,7 +527,7 @@ Repeat for `Vault-PromotionAgent` with a limit above `PROMOTION_PASS_TIMEOUT` (d
 for example `PT2H`.
 
 **Trap 3 — judging health by `State`.** Task health is `LastTaskResult` **plus a log file on
-disk** — never `State`. A task can sit at `Ready` for weeks while every single run dies on startup.
+disk**, never `State`. A task can sit at `Ready` for weeks while every run dies on startup.
 If `.claude/logs/dream-agent.log` has no new lines, the task is not working, whatever the UI says.
 
 ### Removing it
@@ -588,6 +587,6 @@ hardcoded in at least these files (`docs/customizing.md` § 2 has the full proce
 - `.obsidian/daily-notes.json`
 
 Miss one and the failure is quiet in the worst direction: the lint hook stops recognising the
-folder as a content tier and skips it, and `vault-check.sh` drops it from the scan list — so both
+folder as a content tier and skips it, and `vault-check.sh` drops it from the scan list, so both
 report clean about a tier neither one looked at. If you rename, grep for the old name across the
 whole repo afterwards and re-run step 7, watching the **file count**, not the violation count.

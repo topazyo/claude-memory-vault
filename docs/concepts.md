@@ -7,8 +7,8 @@ costs to move a fact upward, and why several tempting conveniences (auto-resolvi
 contradictions, auto-repairing notes, letting an unattended agent edit your knowledge) are
 deliberately absent.
 
-For the other half of the story — why this exists at all instead of adopting one of the many
-existing agent-memory systems — see [`why.md`](why.md).
+For why this exists at all, instead of adopting one of the many existing agent-memory systems,
+see [`why.md`](why.md).
 
 ---
 
@@ -74,28 +74,27 @@ bidirectional-override codepoints, the mechanism behind the "rules file backdoor
 attack, where invisible characters hide instructions inside text that looks innocuous to a human
 reader. Note the limit, though: the hook fires on writes Claude Code makes, so a file pasted into
 Obsidian by hand, dropped into `01-inbox/` by a file manager, or downloaded there is not scanned
-until something inside the tool edits it. The durable boundary is the rule that instructions
-inside a captured note are data. The scan is a backstop, not a gate.
+until something inside the tool edits it. The durable boundary is the rule itself, and the scan is
+a backstop, not a gate.
 
 **Medium tier is a record, not a ruling.** A project log in `20-projects/_logs/` says what
 happened in a session: decisions taken, things that broke, what you would do differently. Its
 verification bar is only "this is an accurate account of the session". It does not have to be
 general, and it does not have to be right about the world; it has to be right about the day.
 
-Each log carries a `Promotion candidates (for long-term)` section. That section is the whole
-point of the tier. It is the queue: the things that looked, at the time, like they might matter
+Each log carries a `Promotion candidates (for long-term)` section. That section is the point of
+the tier, the queue of things that looked, at the time, like they might matter
 beyond this project. Writing a line there costs nothing and commits to nothing.
 
 **Long tier is expensive and must be earned.** `31-standards/` holds durable standards, the
-notes that actually steer future sessions, because these are the ones you load into context on
+notes that steer future sessions, because these are the ones you load into context on
 purpose. `40-llm-wiki/wiki/` holds concept entities, the same bar applied to ideas rather than
 rules.
 
 By convention every long-tier note carries `confidence`, `last_reviewed`, `last_verified`, and a
-`Sources / Verification` section. Those fields are not decoration. They are the price of
-admission, and they exist so that a reader six months later can reconstruct why the note says
-what it says without asking you. It is worth being precise about what "convention" means here:
-of those, nothing is machine-checked except the internal consistency of the dates (section 8).
+`Sources / Verification` section. Those fields exist so that a reader six months later can
+reconstruct why the note says what it says without asking you. "Convention" is precise here: of
+those, nothing is machine-checked except the internal consistency of the dates (section 8).
 Nobody will stop you promoting a note without them.
 
 The long tier must stay small. A standards folder with four hundred notes in it has recreated
@@ -267,7 +266,7 @@ confidence: high
 
 `last_verified` does not move here. Nothing was re-probed about the old claim; it was retired.
 The new note carries its own verification and links back with `related_notes`, the standard-to-
-standard edge — `related_logs` is reserved for the medium-tier logs a standard came from:
+standard edge (`related_logs` is reserved for the medium-tier logs a standard came from):
 
 ```yaml
 ---
@@ -296,7 +295,7 @@ deleted.
 links to it and the reason it changed is still worth reading. `99-archive/` is for notes that no
 longer belong to any live concern: a retired project's logs, a standard for a system you no longer
 run. When you move one there, move the file whole, with its frontmatter unchanged, and do not
-rename it — Obsidian resolves wikilinks by filename, so inbound links keep working. Expect it to
+rename it. Obsidian resolves wikilinks by filename, so inbound links keep working. Expect it to
 drop out of the dashboards and out of `vault-check.sh`, neither of which scans `99-archive/`; a
 lower file count after an archiving session is the move working, not a fault.
 
@@ -436,8 +435,8 @@ long session, chopped into six compactions, look like six separate corroboration
 The output shape follows: the agent proposes, you dispose. Its journal is a list of suggestions
 with links, and promoting any of them is a human action. The weekly promotion-agent is allowed
 to write into the long tier, which is why it takes a git snapshot before it writes: its output
-is recoverable by `git` rather than by trust. Its runner fences where it may write — the long
-tier and a promotion report — but a fence only catches a write in the wrong place; undoing a bad
+is recoverable by `git` rather than by trust. Its runner fences where it may write (the long
+tier and a promotion report), but a fence only catches a write in the wrong place; undoing a bad
 write in the right place takes the snapshot, which is why `git` is a hard requirement.
 
 ---
@@ -475,7 +474,7 @@ is invisible to every dashboard query, so it has quietly left the system.
 
 Now imagine either one auto-repaired. A fixer that clamps an out-of-range `last_verified` back to
 today satisfies C5 perfectly and converts "this stamp is provably wrong" into "this note was
-verified today" — the strongest claim in the vocabulary, manufactured from the weakest possible
+verified today", the strongest claim in the vocabulary, manufactured from the weakest possible
 evidence. A fixer that inserts a default `tier:` into every note missing one clears C2 and
 silently misfiles whatever was actually a standard. Either way the vault ends up fully compliant
 and you have lost the thing the check was measuring. The alarm is cleared; the fact is not
@@ -484,12 +483,12 @@ invisible to every future staleness pass.
 
 The same reasoning applies to the lint hook (`.claude/hooks/vault-lint.sh`): it runs on write,
 prints advice, and always exits 0. It will tell you a note is missing `tier:` or `type:`. It
-will not add them. And it could not block the write even if it wanted to — it is registered as a
+will not add them. And it could not block the write even if it wanted to, because it is registered as a
 PostToolUse hook, so the file is already on disk by the time it runs.
 
 A related discipline governs the checks themselves: **a check that cannot run must say so rather
 than report clean.** A "0 findings" result from a scanner that never scanned anything is
-indistinguishable, in the output, from a genuinely clean vault — which is why `vault-check.sh`
+indistinguishable, in the output, from a clean vault. That is why `vault-check.sh`
 prints its file count, and why a scan of zero notes exits 1 with a `VACUOUS` message instead of
 reporting a pass. Against the shipped example notes the correct output is
 `0 violation(s) across 9 file(s) checked`.
@@ -522,7 +521,7 @@ that means before adopting it.
 
 - **The lint hook cannot stop a bad write.** It runs after the write has already landed
   (PostToolUse), so no exit code could block it, and it always exits 0 so it never even surfaces
-  as a failure. It also only sees files Claude Code itself writes — a note you type in Obsidian
+  as a failure. It also only sees files Claude Code itself writes. A note you type in Obsidian
   is never linted.
 - **Nothing stops you writing a bad note.** A standard with a fabricated `Sources /
   Verification` section passes every check in this repo. The checks read structure; they cannot
@@ -551,8 +550,7 @@ that means before adopting it.
   judgment, curating a long tier of tens of notes. It has not been designed for an organisation
   of a hundred contributors writing standards concurrently.
 
-What the system actually buys you is narrower than "reliable memory", and it is worth stating
-plainly: **the value is in making a bad note visible, not impossible.** A wrong standard in this
+What the system buys you is narrower than "reliable memory": **the value is in making a bad note visible, not impossible.** A wrong standard in this
 vault has a date on it, a stated confidence, a sources section, a link to the log it came from,
 and a place in a folder small enough to read end to end. When it turns out to be wrong, you mark
 it superseded, and the record of having believed it survives.

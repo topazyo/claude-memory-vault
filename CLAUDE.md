@@ -50,7 +50,7 @@ bash .claude/scripts/run-tests.sh     # control suite for the hooks themselves
 ```
 
 `vault-check.sh` reports and never repairs. If it says `0 violations across 0 files`, it scanned
-nothing — that is a broken invocation, not a pass.
+nothing. That is a broken invocation, not a pass.
 
 ## Knowledge base
 
