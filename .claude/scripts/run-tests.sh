@@ -502,8 +502,19 @@ else
 
   for branch in jq no-jq; do
     extra=""; [ "$branch" = no-jq ] && extra="VAULT_FORCE_NO_JQ=1"
-    expect_rc "[$branch] Windsurf pre_read_code on .env is blocked" 2 \
-      "$(guard_json_rc "{\"agent_action_name\":\"pre_read_code\",\"tool_info\":{\"file_path\":\"$RG/.env\"}}" "$extra")"
+    # Assign first, never "$(... "{\"...\"}" ...)" inline: bash 3.2 keeps the
+    # backslashes of \" inside a command substitution nested in double quotes,
+    # so the guard would get broken JSON and block by failing closed - a pass
+    # that proved nothing. The BLOCKED log line is the evidence the path was read.
+    : > "$RG/.claude/logs/read-guard.log" 2>/dev/null
+    rc_env=$(guard_json_rc "{\"agent_action_name\":\"pre_read_code\",\"tool_info\":{\"file_path\":\"$RG/.env\"}}" "$extra")
+    expect_rc "[$branch] Windsurf pre_read_code on .env is blocked" 2 "$rc_env"
+    if grep -q "BLOCKED: .*/.env" "$RG/.claude/logs/read-guard.log" 2>/dev/null; then
+      ok "[$branch] ... because the path was read and matched, not because parsing failed"
+    else
+      bad "[$branch] .env was blocked without a BLOCKED line (parsing failed?)"
+      guard_evidence
+    fi
     rc_note=$(guard_json_rc "{\"agent_action_name\":\"pre_read_code\",\"tool_info\":{\"file_path\":\"$RG/10-daily/x.md\"}}" "$extra")
     expect_rc "[$branch] Windsurf pre_read_code on a note is allowed" 0 "$rc_note"
     [ "$rc_note" -eq 0 ] || guard_evidence
