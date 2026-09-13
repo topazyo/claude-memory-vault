@@ -2,7 +2,7 @@
 name: preserve
 description: Distill medium-term logs into long-term standards and wiki entities. The medium-to-long promotion step.
 disable-model-invocation: true
-allowed-tools: Bash(cat *) Bash(ls *) Bash(echo *)
+allowed-tools: Read Bash(ls *) Bash(echo *)
 shell: bash
 ---
 

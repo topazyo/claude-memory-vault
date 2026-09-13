@@ -21,7 +21,8 @@ expensive and earned at the bottom.
 - `99-archive/` — retired notes. Archive rather than delete.
 
 Path-scoped conventions live in `.claude/rules/` and load automatically for the folders they
-name. Read them before writing notes; they are the contract the lint hook enforces.
+name. Read them before writing notes; they are the contract the lint hook checks (advisory — it
+warns after a write and never blocks one).
 
 ## Non-negotiables
 

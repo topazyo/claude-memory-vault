@@ -1,0 +1,54 @@
+name: Bug report
+description: Something in the hooks, scripts, or docs does not behave as documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please do not paste real vault notes, secrets, or absolute paths containing your username.
+        The output of `run-tests.sh` usually identifies the issue on its own.
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS
+        - Linux
+        - Windows (Git Bash)
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: bash-version
+    attributes:
+      label: Output of `bash --version` (first line)
+      placeholder: GNU bash, version 5.2.21(1)-release
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: tools
+    attributes:
+      label: Tools present on PATH
+      options:
+        - label: "`jq`"
+        - label: "`perl`"
+
+  - type: textarea
+    id: run-tests
+    attributes:
+      label: Output of `bash .claude/scripts/run-tests.sh`
+      description: Run from the vault root. Include the final passed/failed line.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened, and what you expected
+      description: Include the command you ran and any log lines from `.claude/logs/`.
+    validations:
+      required: true

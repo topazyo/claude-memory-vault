@@ -289,6 +289,14 @@ The shipped example notes tell a second, smaller version of the same story: a fi
 and `31-standards/EXAMPLE-retry-on-any-5xx.md` is marked `status: superseded` rather than
 deleted.
 
+**Archiving is a different move.** Superseded knowledge stays in its tier, because its successor
+links to it and the reason it changed is still worth reading. `99-archive/` is for notes that no
+longer belong to any live concern: a retired project's logs, a standard for a system you no longer
+run. When you move one there, move the file whole, with its frontmatter unchanged, and do not
+rename it — Obsidian resolves wikilinks by filename, so inbound links keep working. Expect it to
+drop out of the dashboards and out of `vault-check.sh`, neither of which scans `99-archive/`; a
+lower file count after an archiving session is the move working, not a fault.
+
 ---
 
 ## 5. `superseded` versus `contradicts`
@@ -399,7 +407,10 @@ never moves a note between tiers, never changes a status, never touches a date f
 
 That constraint is what makes running it unattended acceptable. An unattended process that can
 rewrite your standards is an unattended process that can quietly corrupt the exact material you
-rely on to catch errors, and it does so while you are asleep and not reading diffs.
+rely on to catch errors, and it does so while you are asleep and not reading diffs. And because an
+instruction to a model is not a sandbox, the constraint is also checked from outside: the runner
+fails the pass if any file other than the journal changed, and the agent has no Bash tool with
+which to reach around it.
 
 There is a second, subtler reason, and it is the one worth internalising: **an agent that
 consolidates its own prior output converges on its own errors.**
@@ -422,8 +433,9 @@ long session, chopped into six compactions, look like six separate corroboration
 The output shape follows: the agent proposes, you dispose. Its journal is a list of suggestions
 with links, and promoting any of them is a human action. The weekly promotion-agent is allowed
 to write into the long tier, which is why it takes a git snapshot before it writes: its output
-is recoverable by `git` rather than by trust. That snapshot is its **only** write-safety guard,
-which is why `git` is a hard requirement rather than a nicety.
+is recoverable by `git` rather than by trust. Its runner fences where it may write — the long
+tier and a promotion report — but a fence only catches a write in the wrong place; undoing a bad
+write in the right place takes the snapshot, which is why `git` is a hard requirement.
 
 ---
 
@@ -442,8 +454,9 @@ Five checks, and that is the entire list:
 - **C2** — the frontmatter contains a `tier:` key.
 - **C3** — the frontmatter contains a `type:` key.
 - **C4** — if both `created:` and `last_verified:` are present, `last_verified` is not earlier
-  than `created`.
-- **C5** — if `last_verified:` is present, it is not later than today.
+  than `created`; a `created` that is not a `YYYY-MM-DD` date is reported too.
+- **C5** — if `last_verified:` is present, it is not later than today; a `last_verified` that is
+  not a `YYYY-MM-DD` date is reported too.
 
 Notice what is *not* there. Nothing requires a long-tier note to have a `last_verified` date at
 all, and nothing reads the `Sources / Verification` section. The discipline in sections 3 and 6
@@ -474,8 +487,8 @@ PostToolUse hook, so the file is already on disk by the time it runs.
 A related discipline governs the checks themselves: **a check that cannot run must say so rather
 than report clean.** A "0 findings" result from a scanner that never scanned anything is
 indistinguishable, in the output, from a genuinely clean vault — which is why `vault-check.sh`
-prints its file count, and why `0 violations across 0 files` should be read as *nothing was
-scanned*, not as a pass. Against the shipped example notes the correct output is
+prints its file count, and why a scan of zero notes exits 1 with a `VACUOUS` message instead of
+reporting a pass. Against the shipped example notes the correct output is
 `0 violation(s) across 9 file(s) checked`.
 
 The optional dependencies degrade loudly for the same reason. The lint hook's
@@ -486,14 +499,14 @@ parses the hook's JSON input, it is not bundled with Git for Windows, and when i
 hook falls back to a cruder path parse and prints a degraded-mode warning rather than silently
 extracting an empty path and exiting 0. The scheduled passes carry the same idea in a different
 place: both runners assert that an artifact was produced, and exit 1 when a pass exits 0 having
-written nothing, so a silent no-op cannot masquerade as a green run. (`docs/setup.md` covers
+written nothing, so a silent no-op cannot masquerade as a green run; a pass that hangs is killed
+and exits 124 rather than holding the scheduler slot indefinitely. (`docs/setup.md` covers
 installing `jq`, `perl` and the Dataview plugin.)
 
 The shipped test suite in `.claude/scripts/run-tests.sh` applies the rule to itself with **both**
 positive and negative controls: a positive control is known-bad input the hook must flag, and a
 negative control is known-good input that must produce silence. A suite that only ever asserts
-silence cannot distinguish a working detector from a broken one. Eighteen assertions, all
-passing — but note the scope limit: the suite builds synthetic fixtures in a temporary directory
+silence cannot distinguish a working detector from a broken one. Note the scope limit, though: the suite builds synthetic fixtures in a temporary directory
 and runs the hooks against those. It never looks at your vault's actual folder layout, so it will
 stay green after a botched tier rename. Only `vault-check.sh` sees your real notes.
 
@@ -522,7 +535,7 @@ that means before adopting it.
   `CLAUDE.md`, `.claude/hooks/vault-lint.sh`, `.claude/scripts/vault-check.sh` (its `TIERS=`
   line), `.claude/hooks/postcompact-wrap-up.sh`, both agents, all four files in
   `.claude/rules/`, all five skills, `30-knowledge/moc/VAULT-INDEX.md` (every Dataview query
-  names folders), the four pass scripts, the `run-tests.sh` fixtures,
+  names folders), `dream-pass.sh` and `promotion-pass.sh`, the `run-tests.sh` fixtures,
   `.obsidian/daily-notes.json`, and `.gitignore`. Treat that list as a floor, not an inventory,
   and grep for the old folder name before you declare the rename done. It is the template's
   largest customization cost, and it is worth deciding on the folder names before you have a

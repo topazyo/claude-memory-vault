@@ -7,8 +7,9 @@ type: standard
 project: "{{project}}"
 created: "{{date:YYYY-MM-DD}}"
 last_reviewed: "{{date:YYYY-MM-DD}}"
-confidence: high
-last_verified: "{{date:YYYY-MM-DD}}"
+confidence: medium
+# last_verified stays empty until a real re-probe of the claim; vault-check treats "" as absent.
+last_verified: ""
 related_logs: []
 ---
 
@@ -26,7 +27,7 @@ related_logs: []
 
 # Sources / Verification
 
-- [Source: [[{{selection}}]] | {{date:YYYY-MM-DD}} | confidence: high]
+- [Source: [[{{selection}}]] | {{date:YYYY-MM-DD}} | confidence: medium]
 
 # References
 

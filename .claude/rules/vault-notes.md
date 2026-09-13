@@ -60,7 +60,8 @@ All non-breaking — Dataview ignores keys nothing queries. See `.claude/rules/v
 ## Links
 
 - Use Obsidian wikilinks `[[Note Title]]` for internal references, not raw paths or Markdown links.
-- Daily notes are titled `YYYY-MM-DD`; reference them as `[[YYYY-MM-DD]]`.
+- Daily notes are named `YYYY-MM-DD.md`, with the template's `title: "YYYY-MM-DD – HH:mm"`.
+  Wikilinks resolve by filename, so reference them as `[[YYYY-MM-DD]]`.
 - Standards and index notes link back to [[ARCH-INDEX]].
 - Every note links out to at least one peer or index. **A note with no links is a defect** — see
   the dead-end and orphan queries in [[VAULT-INDEX]].

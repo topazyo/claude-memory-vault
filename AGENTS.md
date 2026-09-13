@@ -26,7 +26,7 @@ Read in this order, before your first write:
    lists wired projects.
 
 Read the rules *first* because they are the contract the PostToolUse lint hook
-(`.claude/hooks/vault-lint.sh`) and the `vault-check.sh` script enforce. A note written before you
+(`.claude/hooks/vault-lint.sh`) and the `vault-check.sh` script check. A note written before you
 have read them will usually violate something, and the lint hook is advisory — it warns and
 **always exits 0**, so a violation will not stop you. It is on you to not create one.
 
@@ -43,7 +43,7 @@ expensive and earned at the bottom.
 | Folder | `tier` | `type` | Write here when… |
 | --- | --- | --- | --- |
 | `01-inbox/` | `short` | `reference` | Capturing raw, unprocessed material. Untrusted. |
-| `10-daily/` | `short` | `daily` | Logging a day's scratch work, titled `YYYY-MM-DD`. |
+| `10-daily/` | `short` | `daily` | Logging a day's scratch work, in a file named `YYYY-MM-DD.md`. |
 | `20-projects/_logs/` | `medium` | `project-log` | Closing a working block on one project. |
 | `30-knowledge/moc/` | `long` | `moc` | Adding or updating an index note. |
 | `30-knowledge/research/` | `long` | `reference` | Durable reference that is *not* an enforced rule. |
@@ -89,7 +89,7 @@ Two further requirements the checkers cannot see, and you must satisfy anyway:
 - **Link out.** Every note links to at least one peer or index; standards and index notes link
   back to `[[ARCH-INDEX]]`. A note with no links is a defect.
 - **Date or source every fact.** Timeless, dated ("as of `YYYY-MM-DD`"), or a pointer to its
-  source. For non-trivial claims use `[Source: [[note-or-url]] | YYYY-MM-DD | confidence: high]`.
+  source. For non-trivial claims use `[Source: [[note-or-url]] | YYYY-MM-DD | confidence: high|medium|low]`.
 
 ## 5. The rules you must not break
 
@@ -118,41 +118,42 @@ bash .claude/scripts/vault-check.sh
 
 Run it from the vault root, **unpiped** — a pipe reports the pager's exit status, not the
 checker's. It is report-only: it never writes to a note, and it exits 1 when any note violates an
-invariant (C1 opening `---` fence, C2 `tier:`, C3 `type:`, C4 `last_verified >= created`,
-C5 `last_verified` not in the future).
+invariant (C1 opening `---` fence, C2 `tier:`, C3 `type:`, C4 `last_verified >= created` and a
+well-formed `created`, C5 `last_verified` well-formed and not in the future).
 
-A passing run looks like this, with a **non-zero** file count:
+A passing run looks like this, with a **non-zero** file count (on the vault as shipped):
 
 ```
-vault-check: 0 violation(s) across 37 file(s) checked (as of 2026-01-15).
+vault-check: 0 violation(s) across 9 file(s) checked (as of 2026-01-15).
 ```
 
-`0 violations across 0 files` is not a pass. It means the scan matched nothing — wrong working
-directory, wrong `CLAUDE_PROJECT_DIR`, or a vault path the invocation could not resolve. Read the
-file count before you believe the violation count; an absence claim needs a positive control.
+`0 violations across 0 files` is not a pass, and the script exits 1 with a `VACUOUS` message when
+it happens. It means the scan matched nothing — wrong working directory, wrong
+`CLAUDE_PROJECT_DIR`, or a vault path the invocation could not resolve. Read the file count before
+you believe the violation count; an absence claim needs a positive control.
 
 ## 7. Commands
 
 | Command | What it does | Passing run |
 | --- | --- | --- |
 | `bash .claude/scripts/vault-check.sh` | Frontmatter invariants C1–C5 over six content tiers | `0 violation(s) across N file(s)`, N > 0; exit 0 |
-| `bash .claude/scripts/run-tests.sh` | 19-assertion control suite for the hooks, with positive *and* negative controls, in a temp dir | `=== 19 passed, 0 failed ===` |
-| `bash .claude/scripts/dream-pass.sh` | Nightly consolidation pass (`.cmd` twin for Task Scheduler) | One dated journal in `20-projects/_logs/` |
-| `bash .claude/scripts/promotion-pass.sh` | Weekly medium → long promotion (`.cmd` twin) | Proposed standards / wiki entities |
+| `bash .claude/scripts/run-tests.sh` | Control suite for the hooks and runners — known-bad inputs that must be flagged, known-good inputs that must stay silent — in a temp dir | `=== N passed, 0 failed ===`; exit 0 |
+| `bash .claude/scripts/dream-pass.sh` | Nightly consolidation pass (`.cmd` wrapper for Task Scheduler) | One dated journal in `20-projects/_logs/`; exit 0 |
+| `bash .claude/scripts/promotion-pass.sh` | Weekly medium → long promotion (`.cmd` wrapper) | A `PROMOTION-SUMMARY:` line or long-tier notes; exit 0 |
 
 The two scheduled passes run the `dream-agent` and `promotion-agent` definitions in
 `.claude/agents/`. The dream agent **proposes only**: its single write is one dated journal, and it
-mutates no existing note. Keep it that way.
+mutates no existing note. Keep it that way. Both runners also fail a pass that writes outside its
+allowed folders (exit 2) and kill one that hangs (exit 124); see `docs/reference.md` §4.3.
 
 The five skills in `.claude/skills/` cover the session lifecycle: `resume` (start),
 `obsidian-save` and `wrap-up` (end of a working block), `preserve` (medium → long promotion),
 and `onboard-project` (wiring a new codebase into the vault).
 
-`run-tests.sh` runs every assertion whether or not `jq` and `perl` are installed: the hooks are
-written to degrade loudly, and the suite asserts that they say so. Its closing section prints
-which optional dependencies were found. The one case it reports as `SKIP` is when it cannot
-remove `jq` from `PATH` to exercise the no-jq code path — it says so rather than counting an
-unexercised path as a pass.
+`run-tests.sh` runs every test whether or not `jq` and `perl` are installed: the hooks are
+written to degrade loudly, and the suite checks that they say so. It exercises the no-jq code path
+with `VAULT_FORCE_NO_JQ=1`, which forces the fallback even on a machine that has `jq`. Its closing
+section prints which optional dependencies were found.
 
 ## 8. What NOT to do
 

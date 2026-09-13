@@ -25,16 +25,19 @@
 # This repo is a FRAMEWORK, not a notebook. If you use it as your own
 # private vault, keep it private. If you fork it to contribute back,
 # uncomment these so your own notes never land in a pull request.
+# The **/*.md forms also catch notes in subfolders; the last line keeps
+# the shipped templates/ folders tracked.
 #
-# 01-inbox/*.md
-# 10-daily/*.md
-# 20-projects/_logs/*.md
-# 30-knowledge/research/*.md
-# 31-standards/*.md
-# 40-llm-wiki/raw/*.md
-# 40-llm-wiki/wiki/*.md
+# 01-inbox/**/*.md
+# 10-daily/**/*.md
+# 20-projects/_logs/**/*.md
+# 30-knowledge/research/**/*.md
+# 31-standards/**/*.md
+# 40-llm-wiki/raw/**/*.md
+# 40-llm-wiki/wiki/**/*.md
 # 90-auto-memory/**
 # 99-archive/**
+# !**/templates/*.md
 
 # ── OS cruft ─────────────────────────────────────────────────
 .DS_Store

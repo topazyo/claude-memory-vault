@@ -54,8 +54,8 @@ disabled and there is no Browse button until you turn Restricted Mode off.
 
 **Fill in the template placeholders by hand.** The note templates use `{{date:...}}` and
 `{{time:...}}`, which Obsidian's **core** Templates plugin expands, but also `{{selection}}`,
-`{{project}}`, `{{concept}}` and `{{file_name}}`, which it does **not**. Under core Templates
-those four render literally and you overwrite them by hand. If that annoys you, install Templater
+`{{project}}` and `{{concept}}`, which it does **not**. Under core Templates those three render
+literally and you overwrite them by hand. If that annoys you, install Templater
 and rewrite them in Templater syntax — or just delete the placeholders from the templates and
 type the values in. There is deliberately no `.obsidian/templates.json` in the repo: the core
 plugin accepts exactly one template folder, while this layout co-locates a `templates/` folder
@@ -99,7 +99,7 @@ is the authoritative list.
 | `.claude/rules/security.md` | Names folders in its body. (It has no `paths:` frontmatter — it is global and always loads.) |
 | `30-knowledge/moc/VAULT-INDEX.md` | Every Dataview dashboard names its folders in a `from` clause. Miss this and each dashboard quietly returns an empty table. |
 | The five skills in `.claude/skills/` | `obsidian-save`, `wrap-up`, `resume`, `preserve` and `onboard-project` all name tier folders in their filing and reading instructions. |
-| `.claude/scripts/dream-pass.{sh,cmd}`, `promotion-pass.{sh,cmd}` | Paths used for the artifact assertion and for logging. |
+| `.claude/scripts/dream-pass.sh`, `promotion-pass.sh` | The write fences and artifact assertions name `20-projects/_logs/`, `31-standards/` and `40-llm-wiki/wiki/`. Miss these and every run exits 2 (VIOLATION) or 1 (NO-ARTIFACT). The `.cmd` wrappers name no tier folder. |
 | `.claude/scripts/run-tests.sh` | Its synthetic fixture paths. These are *not* your vault, but leaving them stale means the suite stops testing the paths you actually use. |
 | `.obsidian/daily-notes.json` | The daily-note folder and template path (vault-root-relative). Obsidian will happily create daily notes in a folder that no longer matches your tier layout. |
 | `.gitignore` | The commented note-exclusion block in section 8 below. |
@@ -113,7 +113,7 @@ into it get linted).
 Do not trust the absence of errors. Run both checkers — but know what each one can and cannot see:
 
 ```bash
-bash .claude/scripts/run-tests.sh      # hook logic: positive AND negative controls (19 assertions)
+bash .claude/scripts/run-tests.sh      # hook and runner logic: positive AND negative controls
 bash .claude/scripts/vault-check.sh    # frontmatter invariants over your real notes; exits 1 on violation
 ```
 
@@ -139,8 +139,9 @@ That leaves two probes that do see your vault:
 > new path. Write it *through Claude Code* — the hook fires on `Write`/`Edit`, so a file you create
 > in Obsidian or from a shell proves nothing.
 
-Neither checker is wired into a pre-commit hook or into CI. If you want a rename to be caught
-automatically, that wiring is yours to add.
+The shipped CI (`.github/workflows/ci.yml`) runs both checkers, but only against this template's
+own example notes and fixtures, and no pre-commit hook ships. If you want a rename in your vault to
+be caught automatically, that wiring is yours to add.
 
 ---
 
@@ -168,7 +169,8 @@ Three more optional keys are defined: `contradicts` and `superseded_by` (each a 
 **Adding a key is non-breaking.** Dataview ignores keys that nothing queries, the lint hook only
 asserts that `tier` and `type` are present, and `vault-check.sh` only enforces its own five
 invariants (a leading `---` fence, a `tier:` key, a `type:` key, `last_verified >= created` when
-both exist, and `last_verified` not in the future). Add whatever you like.
+both exist, and `last_verified` not in the future, with both dates in `YYYY-MM-DD` form). Add
+whatever you like.
 
 **Removing or renaming `tier` or `type` is breaking.** Both are load-bearing in three places at
 once: `vault-lint.sh` (mandatory-key check), `vault-check.sh` (the C1–C5 invariants), and
@@ -267,7 +269,8 @@ Code invoking a missing file on every matching event.
 **`vault-lint.sh` always exits 0, by design.** It writes advice — missing `tier`/`type`
 frontmatter, and any zero-width or bidirectional-override codepoints it finds (the "Rules File
 Backdoor" class, where invisible characters hide instructions inside a note). The character scan
-is widened to `.claude/rules/` and `.claude/agents/`, which are what that attack targets.
+is widened to `.claude/rules/`, `.claude/agents/`, `.claude/skills/`, and any `CLAUDE.md` or
+`AGENTS.md` — the steering files that attack targets.
 
 You could make it exit non-zero on a violation, but be clear about what that does and does not
 buy you:
@@ -310,24 +313,30 @@ description: One sentence on when to use this. Claude reads this to decide wheth
 > it simply does not appear as an available skill. If a skill you just wrote is never offered,
 > check `name:` first. Everything below the frontmatter is plain Markdown instructions.
 
-The four shipped skills are the shape to copy: `obsidian-save` (session → a dated medium-term
+The five shipped skills are the shape to copy: `obsidian-save` (session → a dated medium-term
 log), `wrap-up` (a structured end-of-session summary that a log or a human then consumes — it does
 not itself write the log), `resume` (rehydrate from recent logs at session start), `preserve`
-(medium → long promotion). Three of them carry `disable-model-invocation: true`, so they run only
-when you ask for them by name; `wrap-up` does not, and Claude may reach for it on its own.
+(medium → long promotion), and `onboard-project` (wire a codebase into the vault). Three of them
+carry `disable-model-invocation: true`, so they run only when you ask for them by name;
+`wrap-up` and `onboard-project` do not, and Claude may reach for them on its own. Prefer `Read` in
+`allowed-tools` over a `Bash(cat *)` grant: the `permissions.deny` read rules cover the `Read`
+tool, not a shell `cat`.
 
 **Agents** live in `.claude/agents/<agent-name>.md`, with `name` and `description` in
 frontmatter. If you write an agent meant to run **unattended** on a schedule, copy the constraint
 that makes `dream-agent` safe: its only write is one dated journal file, and it never mutates an
 existing note. Propose, don't execute. An unattended agent with edit rights over your long-term
 tier can quietly rewrite the knowledge you rely on, and you find out weeks later. (`promotion-agent`
-does write into the long tier, and its only write-safety guard is the git snapshot the runner takes
-first — which is why git is a hard dependency, not a convenience.)
+does write into the long tier. It takes a git snapshot before writing, which is what makes a bad
+write revertible — hence git is a hard dependency — and its runner fails any run that wrote outside
+the long tier or a promotion report.)
 
 For scheduling, use the shipped runners rather than a hand-rolled cron line: `dream-pass.sh` /
-`.cmd` and `promotion-pass.sh` / `.cmd` in `.claude/scripts/`. They carry an **artifact assertion**
-— if the pass exits 0 having produced no artifact, the runner exits 1 — so a silent no-op cannot
-masquerade as a green run. Roll your own and you lose that. Three traps worth repeating if you
+`.cmd` and `promotion-pass.sh` / `.cmd` in `.claude/scripts/`. They kill a hung pass (exit 124),
+fail a pass that wrote outside its allowed folders (exit 2), and carry an **artifact assertion** —
+if the pass exits 0 having produced no artifact, the runner exits 1 — so a silent no-op cannot
+masquerade as a green run. Roll your own and you lose all three; `docs/reference.md` § 4.3 has the
+details. Three traps worth repeating if you
 write your own `.cmd` wrapper anyway:
 
 - `echo ... %ERRORLEVEL%>> "log"` makes cmd parse the trailing digit as a **file handle**, so the
@@ -349,8 +358,8 @@ The vault is built for this. It needs three habits rather than any new machinery
 groups on this field, and Dataview's grouping is case- and spelling-sensitive.
 
 **Give each project a subfolder under `20-projects/_logs/<project-slug>/`** for session logs. Flat
-per-project files work at two projects and stop working at six. If you nest like this, widen the
-`.gitignore` patterns in section 8 — a single `*` does not cross a directory separator.
+per-project files work at two projects and stop working at six. The `.gitignore` block in section 8
+already uses `**/*.md`, so nested logs are covered once you uncomment it.
 `90-auto-memory/` also grows per-project subdirectories, but those are created and maintained by
 Claude Code's own auto-memory, not by hand: nothing in there is linted or checked
 (`vault-check.sh` excludes the folder deliberately), so durable knowledge belongs in the long tier,
@@ -411,23 +420,22 @@ rewrite.
 exclusion block already present in `.gitignore`:
 
 ```gitignore
-# 01-inbox/*.md
-# 10-daily/*.md
-# 20-projects/_logs/*.md
-# 30-knowledge/research/*.md
-# 31-standards/*.md
-# 40-llm-wiki/raw/*.md
-# 40-llm-wiki/wiki/*.md
+# 01-inbox/**/*.md
+# 10-daily/**/*.md
+# 20-projects/_logs/**/*.md
+# 30-knowledge/research/**/*.md
+# 31-standards/**/*.md
+# 40-llm-wiki/raw/**/*.md
+# 40-llm-wiki/wiki/**/*.md
 # 90-auto-memory/**
 # 99-archive/**
+# !**/templates/*.md
 ```
 
-The patterns exclude your notes while leaving `*/templates/*` tracked, so framework edits to the
-templates still show up in a diff. **But they are single-level.** `20-projects/_logs/*.md` matches
-files sitting directly in `_logs/` and nothing inside `_logs/<project-slug>/` — so if you follow
-section 7 and nest by project (or nest daily notes by year, or wiki entities by topic), every
-nested note stays tracked. Widen those lines to `**/*.md` and re-include the templates, e.g.
-`20-projects/_logs/**/*.md` plus `!**/templates/**`.
+The `**/*.md` forms exclude notes at any depth, so logs nested by project (section 7), daily notes
+nested by year, or wiki entities nested by topic are all covered. The last line re-includes the
+`templates/` folders, so framework edits to the templates still show up in a diff. Index notes in
+`30-knowledge/moc/` are not excluded; if yours carry private content, add that folder too.
 
 Then confirm it, rather than trusting the block: run `git status --ignored` and look for your own
 notes in the ignored list before your first push.

@@ -2,7 +2,7 @@
 name: resume
 description: Resume work by summarizing the most recent medium-term logs. Use at session start.
 disable-model-invocation: true
-allowed-tools: Bash(cat *) Bash(ls *)
+allowed-tools: Read Bash(ls *)
 shell: bash
 ---
 

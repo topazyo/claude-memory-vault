@@ -6,8 +6,9 @@ status: stable
 type: wiki-entity
 created: "{{date:YYYY-MM-DD}}"
 last_reviewed: "{{date:YYYY-MM-DD}}"
-confidence: high
-last_verified: "{{date:YYYY-MM-DD}}"
+confidence: medium
+# last_verified stays empty until a real re-probe of the claim; vault-check treats "" as absent.
+last_verified: ""
 ---
 
 # Summary
@@ -29,4 +30,4 @@ last_verified: "{{date:YYYY-MM-DD}}"
 
 # Sources / Verification
 
-- [Source: [[RawSource]] | {{date:YYYY-MM-DD}} | confidence: high]
+- [Source: [[RawSource]] | {{date:YYYY-MM-DD}} | confidence: medium]

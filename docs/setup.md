@@ -16,7 +16,7 @@ optional and can be skipped without breaking anything.
 | **Obsidian** | Reads the vault, renders the Dataview dashboards, draws the graph | Required to *use* the vault as a human; Claude Code alone does not need it | Launch it; Help → About shows the version |
 | **Claude Code** | Runs the hooks, skills and agents that write and promote notes | Required | `claude --version` |
 | **bash** | Every hook and script is a bash script. macOS and Linux have it; on Windows it comes with Git for Windows | Required | `bash --version` |
-| **git** | Cloning the template, and the promotion-agent's only write-safety guard is the git snapshot it takes before writing | Required | `git --version` |
+| **git** | Cloning the template, and the git snapshot the promotion-agent takes before writing, which is what makes its writes revertible | Required | `git --version` |
 | **jq** | Parses the JSON that Claude Code pipes into the lint hook | Strongly recommended | `command -v jq` |
 | **perl** | Runs the invisible-character (zero-width / bidi) scan in the lint hook | Strongly recommended | `command -v perl` |
 
@@ -76,19 +76,21 @@ If instead you are forking to contribute back, open `.gitignore` and uncomment t
 `-- Your notes --`:
 
 ```gitignore
-# 01-inbox/*.md
-# 10-daily/*.md
-# 20-projects/_logs/*.md
-# 30-knowledge/research/*.md
-# 31-standards/*.md
-# 40-llm-wiki/raw/*.md
-# 40-llm-wiki/wiki/*.md
+# 01-inbox/**/*.md
+# 10-daily/**/*.md
+# 20-projects/_logs/**/*.md
+# 30-knowledge/research/**/*.md
+# 31-standards/**/*.md
+# 40-llm-wiki/raw/**/*.md
+# 40-llm-wiki/wiki/**/*.md
 # 90-auto-memory/**
 # 99-archive/**
+# !**/templates/*.md
 ```
 
-With those lines active, your notes stay on disk and out of every pull request. The `templates/`
-subfolders are not matched by those globs, so the templates still travel with the repo.
+With those lines active, your notes stay on disk and out of every pull request, including notes in
+subfolders. The last line re-includes the `templates/` folders, so the templates still travel with
+the repo. Confirm with `git status --ignored` before your first push.
 
 Note that this is a one-way door in practice: once note content has been pushed to a public repo,
 a pull-request diff of it is stored by GitHub under refs nobody can rewrite. Decide before your
@@ -103,6 +105,10 @@ first push, not after.
    the list of community plugins the vault expects.
 3. Go to **Settings → Community plugins**, turn off Restricted Mode if prompted, and install
    **Dataview**. Then **enable** it — installing is not enabling, and this catches people.
+
+   Restricted Mode exists for a reason: community plugins run code with the same access to your
+   files as Obsidian itself. Install only the plugins you have decided to trust — Dataview is the
+   one this vault needs.
 
 **Dataview is required.** Every dashboard in `30-knowledge/moc/VAULT-INDEX.md` and
 `30-knowledge/moc/PROJECT-INDEX.md` is a Dataview query. Until the plugin is enabled, those notes
@@ -120,14 +126,15 @@ and confirm you see tables rather than code fences.
 graph is drawn — folder nodes, a 3-D view, and extended styling respectively. Nothing in the
 system depends on them; skip them if you want a lean install.
 
-What *is* worth keeping either way is `.obsidian/graph.json`, which defines three colour groups
-keyed on tier tags:
+What *is* worth keeping either way is `.obsidian/graph.json`, which defines four colour groups
+keyed on tags that the templates seed:
 
 | Group query | Meaning |
 | --- | --- |
 | `tag:#tier/short` | Daily notes and inbox captures — the cheap, high-volume tier |
 | `tag:#tier/medium` | Project session logs — the promotion pipeline's input |
-| `tag:#llm/wiki tag:#tier/long` | Wiki entities and long-term material — the small, verified tier |
+| `tag:#tier/long` | Standards, index notes and other long-term material — the small, verified tier |
+| `tag:#llm/wiki` | Wiki entities and the wiki index, which carry both `tier/long` and `llm/wiki` |
 
 The practical effect is that the core graph view shows you your tier distribution at a glance. A
 graph that is overwhelmingly short-tier colour means capture is happening but promotion is not —
@@ -173,7 +180,6 @@ them.
 | `{{selection}}` | **Not supported** | Renders literally |
 | `{{project}}` | **Not supported** | Renders literally |
 | `{{concept}}` | **Not supported** | Renders literally |
-| `{{file_name}}` | **Not supported** | Renders literally |
 
 So with core Templates alone, a freshly inserted project log will contain the literal text
 `{{project}}` where the project name should be. That is expected, not a bug. Two ways to live
@@ -205,15 +211,19 @@ claude
 
 | Hook | Fires on | What it does | Can it block you? |
 | --- | --- | --- | --- |
-| `vault-lint.sh` | `PostToolUse`, matcher `Write` or `Edit` | Checks the just-written note for the mandatory `tier:` and `type:` frontmatter, and scans it for zero-width / bidi codepoints. The character scan is widened to `.claude/rules/` and `.claude/agents/`, which are exactly what a rules-file backdoor targets. Logs to `.claude/logs/vault-lint.log`. | No — advisory, **always exits 0** |
+| `vault-lint.sh` | `PostToolUse`, matcher `Write` or `Edit` | Checks the just-written note for the mandatory `tier:` and `type:` frontmatter, and scans it for zero-width / bidi codepoints. The character scan is widened to `.claude/rules/`, `.claude/agents/`, `.claude/skills/`, and any `CLAUDE.md` or `AGENTS.md`, which are exactly what a rules-file backdoor targets. Logs to `.claude/logs/vault-lint.log`. | No — advisory, **always exits 0** |
 | `postcompact-wrap-up.sh` | `PostCompact` | Writes one idempotent, size-capped stub per session into `20-projects/_logs/compaction-<session>.md`, so the material in a compacted context is still recoverable afterwards. Caps at 50 entries, and sanitizes the session id before building a path. | No |
 | `instructions-loaded-log.sh` | `InstructionsLoaded`, session start only | Appends which instruction files loaded, to `.claude/logs/instructions-loaded.log`. This is how you answer "was that rule actually in context?" instead of guessing. | No |
 
 All three write only into `.claude/logs/` (gitignored) or into `20-projects/_logs/`. None of them
 edits an existing note.
 
-The skills in `.claude/skills/` — `obsidian-save`, `wrap-up`, `resume`, `preserve` — are picked up
-automatically from the project directory; there is no registration step.
+The five skills in `.claude/skills/` — `obsidian-save`, `wrap-up`, `resume`, `preserve` and
+`onboard-project` — are picked up automatically from the project directory; there is no
+registration step.
+
+`.claude/settings.json` also carries `permissions.deny` rules for `Read(./.env)`, `Read(./.env.*)`
+and `Read(./secrets/**)`. They apply immediately, without a trust prompt.
 
 ---
 
@@ -230,9 +240,10 @@ bash .claude/scripts/run-tests.sh
 Expect a list of `PASS` lines, an informational dependency block, and a final
 `=== N passed, 0 failed ===`. Exit code 0.
 
-This suite is not decorative. Every check in it has **both a positive and a negative control**: it
-feeds the lint hook a file containing a known U+200B and a known U+202E and asserts the hook
-*catches* them, before trusting any "clean" result from it. It also builds its fixtures inside a
+This suite is not decorative. It pairs **known-bad inputs that must be flagged** with **known-good
+inputs that must stay silent**: it feeds the lint hook a file containing a known U+200B and a known
+U+202E and asserts the hook *catches* them, before trusting any "clean" result from it. It also
+runs the hooks' no-jq fallback and both scheduled runners against a fake `claude`. It also builds its fixtures inside a
 directory whose name contains a space, because a path like `/Users/Some One/...` is precisely what
 breaks word-splitting bugs while still printing a reassuring "0 violations".
 
@@ -257,8 +268,8 @@ It validates five invariants across the content tiers (`01-inbox`, `10-daily`, `
 | C1 | First line is a bare `---` fence |
 | C2 | Frontmatter has a `tier:` key |
 | C3 | Frontmatter has a `type:` key |
-| C4 | If both exist, `last_verified` is not earlier than `created` |
-| C5 | `last_verified` is not in the future |
+| C4 | If both exist, `last_verified` is not earlier than `created`; `created` is a `YYYY-MM-DD` date |
+| C5 | `last_verified` is not in the future, and is a `YYYY-MM-DD` date |
 
 It is **report-only**: it never writes, stamps, or repairs, and it exits 1 when any note violates
 an invariant so you can gate a pass on it. Repair is a human act.
@@ -266,12 +277,13 @@ an invariant so you can gate a pass on it. Repair is a human act.
 The final line looks like this:
 
 ```
-vault-check: 0 violation(s) across 12 file(s) checked (as of 2026-01-01).
+vault-check: 0 violation(s) across 9 file(s) checked (as of 2026-01-01).
 ```
 
 ### The one output you must not misread
 
-> **`0 violation(s) across 0 file(s)` is NOT a pass.** It means the checker scanned nothing.
+> **`0 violation(s) across 0 file(s)` is NOT a pass.** It means the checker scanned nothing, so the
+> script also prints `VACUOUS` to stderr and exits 1.
 
 Zero findings from an instrument that examined zero inputs is indistinguishable from zero findings
 from an instrument that examined everything — which is exactly why the file count is printed at
@@ -301,16 +313,20 @@ works fine driven only by `/obsidian-save` and `/preserve` during ordinary sessi
 
 The dream-agent is safe to run unattended precisely because it proposes rather than executes: its
 only write is a new file at a predictable path, so a pass that misreads something cannot corrupt
-anything. **The promotion-agent is different — it writes into your long-term tier.** It takes a
-git snapshot before writing so a bad pass is reversible, but read
+anything, and its runner fails the pass if any other file changed. **The promotion-agent is
+different — it writes into your long-term tier.** It takes a git snapshot before writing so a bad
+pass is reversible, and its runner fails a pass that writes outside `31-standards/`,
+`40-llm-wiki/wiki/` or a `20-projects/_logs/promotion-*.md` report. Still, read
 `.claude/agents/promotion-agent.md` in full before you put it on a timer, and run it manually a
 few times first.
 
 ### Linux — cron
 
 Use the shipped runners. They resolve the vault from their own location, guard for a `claude`
-binary that a scheduler's minimal PATH cannot see, log to `.claude/logs/`, and — the part that
-matters — assert that the pass actually produced something.
+binary that a scheduler's minimal PATH cannot see, log to `.claude/logs/`, kill a pass that hangs,
+fail a pass that writes outside its allowed folders, and — the part that matters — assert that the
+pass actually produced something. Exit codes are `0` OK, `1` no artifact, `2` write outside the
+fence, `124` timeout, `127` no `claude`; `docs/reference.md` § 4.3 has the full table.
 
 ```cron
 # dream pass, nightly at 02:30
@@ -320,7 +336,10 @@ matters — assert that the pass actually produced something.
 ```
 
 If `claude` is not on the PATH cron gives you — and it usually is not, since cron runs no login
-profile — export `CLAUDE_BIN` with the full path in the crontab.
+profile — set `CLAUDE_BIN` to the full path in the crontab. The watchdog limits are environment
+variables too: `DREAM_PASS_TIMEOUT` (default 3600 seconds) and `PROMOTION_PASS_TIMEOUT` (default
+5400). Set them the same way, as `NAME=value` lines above the entries, if a pass legitimately needs
+longer.
 
 **Why not call `claude` directly from cron?** Two reasons. The agent is selected with the
 `--agent <name>` *flag*, not by putting a slash command in the prompt, so a hand-rolled line is
@@ -435,7 +454,9 @@ Three things that will otherwise cost you an evening:
   `Path had bad ownership/permissions`.
 - **A launchd job gets a minimal PATH and no login shell**, so a bare `claude` will usually not be
   found. That is what the `CLAUDE_BIN` entry above is for. Find the right value with
-  `command -v claude` in a normal Terminal window and paste the absolute path in.
+  `command -v claude` in a normal Terminal window and paste the absolute path in. The watchdog
+  limits `DREAM_PASS_TIMEOUT` and `PROMOTION_PASS_TIMEOUT` (seconds) go in the same
+  `EnvironmentVariables` dictionary if a pass needs longer than the defaults.
 
 Run it once by hand, while logged in, before trusting the schedule:
 
@@ -447,9 +468,13 @@ Then check `.claude/logs/dream-agent.log` for a timestamped line. As on Windows,
 log line is the evidence — a job that launchd lists as loaded has not necessarily ever run.
 
 
-### Windows — Task Scheduler, and two traps that will cost you a week
+### Windows — Task Scheduler, and three traps that will cost you a week
 
-Schedule the shipped `.cmd` runners, not `claude` directly:
+Schedule the shipped `.cmd` files, not `claude` directly. Each is a thin wrapper that runs the
+matching `.sh` runner through Git Bash, so the watchdog, write fence and artifact assertion are the
+same code as on macOS and Linux. It looks for Git Bash in the standard Git for Windows locations
+and never searches `PATH`, because `C:\Windows\System32\bash.exe` is WSL; set `BASH_EXE` if yours
+is elsewhere. `CLAUDE_BIN` and the timeout variables pass through from the task's environment.
 
 ```bat
 schtasks /create /tn "Vault-DreamAgent" /tr "\"C:\path\to\your-vault\.claude\scripts\dream-pass.cmd\"" /sc daily /st 23:00
@@ -486,9 +511,48 @@ pass `-p`. Set `ExecutionTimeLimit` as well: with
 `MultipleInstances=IgnoreNew`, a single hung run suppresses every later run for the whole limit,
 so a missing timeout turns one hang into permanent silence.
 
-**Checking health.** Task health is `LastTaskResult` **plus a log file on disk** — never `State`.
-A task can sit at `Ready` for weeks while every single run dies on startup. If the log has no new
-lines, the task is not working, whatever the UI says.
+Make the task's limit longer than the runner's own watchdog, so the runner kills a hung pass first
+and logs `TIMEOUT` with exit 124. Change the existing task object rather than building new settings
+— `New-ScheduledTaskSettingsSet` resets every setting you do not name — then read the definition
+back, because a success from `Set-ScheduledTask` is not evidence the change landed:
+
+```powershell
+$task = Get-ScheduledTask -TaskName 'Vault-DreamAgent'
+$task.Settings.ExecutionTimeLimit = 'PT90M'   # longer than DREAM_PASS_TIMEOUT (default 60 min)
+Set-ScheduledTask -InputObject $task | Out-Null
+(Get-ScheduledTask -TaskName 'Vault-DreamAgent').Settings |
+  Select-Object ExecutionTimeLimit, MultipleInstances
+```
+
+Repeat for `Vault-PromotionAgent` with a limit above `PROMOTION_PASS_TIMEOUT` (default 90 minutes),
+for example `PT2H`.
+
+**Trap 3 — judging health by `State`.** Task health is `LastTaskResult` **plus a log file on
+disk** — never `State`. A task can sit at `Ready` for weeks while every single run dies on startup.
+If `.claude/logs/dream-agent.log` has no new lines, the task is not working, whatever the UI says.
+
+### Removing it
+
+Scheduling is the only part of the vault that lives outside the folder, so remove it first.
+
+```bash
+# Linux: delete the two runner lines
+crontab -e
+
+# macOS: unload both jobs, then delete their plists
+launchctl bootout gui/$(id -u)/com.claude-memory-vault.dream-pass
+launchctl bootout gui/$(id -u)/com.claude-memory-vault.promotion-pass
+rm ~/Library/LaunchAgents/com.claude-memory-vault.dream-pass.plist \
+   ~/Library/LaunchAgents/com.claude-memory-vault.promotion-pass.plist
+```
+
+```bat
+schtasks /delete /tn "Vault-DreamAgent" /f
+schtasks /delete /tn "Vault-PromotionAgent" /f
+```
+
+To stop Claude Code using the vault's hooks, skills, agents and rules, delete the `.claude/`
+folder. That also removes `.claude/logs/`. Your notes are plain Markdown and are untouched.
 
 ---
 
@@ -501,16 +565,18 @@ lines, the task is not working, whatever the UI says.
 | `vault-lint: jq not found; path parsing is degraded` | `jq` is missing — expected on a stock Git for Windows | Install jq (step 1). The hook keeps working, less reliably, until you do |
 | `INVISIBLE-CHAR SCAN DID NOT RUN (no perl, no grep -P)` | Neither scanner is available on this machine | Install perl. Do **not** treat earlier "clean" lint lines from that machine as evidence — they were unscanned |
 | Dataview tables in `VAULT-INDEX.md` show as code blocks or raw text | Dataview installed but not enabled, or not installed at all | Settings → Community plugins → enable **Dataview**, then reload Obsidian |
-| A new note renders `{{project}}` / `{{concept}}` / `{{file_name}}` literally | Core Templates does not support those placeholders | Fill them by hand, or install Templater and adapt the syntax (step 5) |
-| `vault-check: 0 violation(s) across 0 file(s)` | The checker scanned nothing — **this is not a pass** | Check `CLAUDE_PROJECT_DIR`, and that the `TIERS=` line in the script still names folders that exist. Add a note and re-run until the file count is non-zero |
+| A new note renders `{{project}}` / `{{concept}}` / `{{selection}}` literally | Core Templates does not support those placeholders | Fill them by hand, or install Templater and adapt the syntax (step 5) |
+| `vault-check: 0 violation(s) across 0 file(s)` plus `VACUOUS`, exit 1 | The checker scanned nothing — **this is not a pass** | Check `CLAUDE_PROJECT_DIR`, and that the `TIERS=` line in the script still names folders that exist. Add a note and re-run until the file count is non-zero |
 | `vault-check: no content-tier folders found under ...` | Wrong working directory, or the tier folders were renamed | Run from the vault root, or finish the rename everywhere (see below) |
 | `run-tests.sh` fails only on a path containing spaces | A word-splitting regression in a local edit | Revert the edit; the suite builds fixtures under a directory named with a space specifically to catch this |
-| Scheduled agent "succeeded" but nothing changed | On Windows, the exit code was swallowed by `%ERRORLEVEL%>>`; or the run hung because `-p` was missing | Apply both fixes in step 8, and judge health by the log file rather than by `State` |
+| Scheduled agent "succeeded" but nothing changed | On Windows, the exit code was swallowed by `%ERRORLEVEL%>>`; or the run did nothing because `-p` was missing | Use the shipped runners (step 8), and judge health by the log file rather than by `State` |
+| Runner exits 2 and the log says `VIOLATION` | A file outside the pass's allowed folders changed during the run — the agent, or another writer such as a sync client | Read the paths listed under the `VIOLATION` line in `.claude/logs/`, and revert with git anything you did not expect |
+| Runner exits 124 and the log says `TIMEOUT` | The pass exceeded `DREAM_PASS_TIMEOUT` / `PROMOTION_PASS_TIMEOUT` and was killed | Check the `.run.log` for where it stalled; raise the limit only if the pass was making progress |
 
 ### One more, because it is the template's biggest customization cost
 
 **Renaming a tier folder is a multi-file edit, not a rename.** The folder names are independently
-hardcoded in:
+hardcoded in at least these files (`docs/customizing.md` § 2 has the full procedure):
 
 - `CLAUDE.md`
 - `.claude/hooks/vault-lint.sh`

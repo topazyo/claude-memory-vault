@@ -16,25 +16,32 @@ conformance checker, and five fictional `EXAMPLE-` notes that tell one small sto
 tiers. You clone it, open it in Obsidian, point Claude Code at it, and start accumulating your own
 knowledge.
 
+**Start here:** follow the [Quickstart](#quickstart) — clone, open in Obsidian, install Dataview,
+then run the two verification commands. [`docs/setup.md`](docs/setup.md) has the long version,
+and coding agents should read [`AGENTS.md`](AGENTS.md) first.
+
 ---
 
 ## What you get
 
 - **Three memory tiers** with distinct lifetimes: `short` (daily notes, inbox captures),
   `medium` (per-project session logs), `long` (standards and concept entities).
-- **Five skills**: four that move knowledge between tiers — `/obsidian-save`, `/wrap-up`,
-  `/resume`, `/preserve` — plus `/onboard-project`, which wires a new codebase into the vault.
+- **Five skills**: three that move knowledge between tiers — `/obsidian-save`, `/resume`,
+  `/preserve` — plus `/wrap-up`, which drafts an end-of-session summary without writing it, and
+  `/onboard-project`, which wires a new codebase into the vault.
 - **Two scheduled agents**: a *dream agent* that consolidates and proposes, and a *promotion
   agent* that does the weekly medium → long pass — each with a shipped `.sh`/`.cmd` runner that
-  fails loudly when a pass produces no artifact.
+  kills a hung pass, fails a pass that writes outside its allowed folders, and fails loudly when a
+  pass produces no artifact.
 - **Three hooks**: an advisory frontmatter + invisible-character lint on every Claude Code write,
   a post-compaction stub writer so a compacted session leaves a trace, and an audit log of which
   instruction files loaded at session start.
 - **A conformance checker** (`vault-check.sh`) that checks five frontmatter invariants and exits
-  non-zero on violation. CI (`.github/workflows/ci.yml`) runs it on Linux, macOS and Windows,
-  plus a job using macOS's system bash 3.2; wiring it into a pre-commit hook is
-  wire it for you — plus a **control test suite** (`run-tests.sh`, 19 assertions) with both
-  positive and negative controls, so a passing run is evidence the checks actually ran.
+  non-zero on violation, or when it scanned nothing. CI (`.github/workflows/ci.yml`) runs it on
+  Linux, macOS and Windows, plus a job using macOS's system bash 3.2; no pre-commit hook ships, so
+  gating your own vault is yours to wire. Alongside it, a **control test suite** (`run-tests.sh`)
+  feeds the hooks and runners known-bad inputs that must be flagged and known-good inputs that
+  must stay silent, so a passing run is evidence the checks actually ran.
 - **Four rules files**: three path-scoped (the frontmatter contract when Claude edits a note, the
   verification discipline, and a prompt-injection boundary for captured content) plus one global
   safety file that always loads.
@@ -48,8 +55,11 @@ knowledge.
 claude-memory-vault/
 ├── CLAUDE.md                        # root project instructions Claude reads every session
 ├── CONTRIBUTING.md
+├── .github/
+│   ├── workflows/ci.yml             # checks on Linux, macOS, Windows, bash 3.2, plus repo hygiene
+│   └── ISSUE_TEMPLATE/bug_report.yml
 ├── .claude/
-│   ├── settings.json                # registers the three hooks (shell: bash → Git Bash on Windows)
+│   ├── settings.json                # registers the three hooks; denies reads of .env and secrets/
 │   ├── agents/
 │   │   ├── dream-agent.md           # scheduled consolidation; READ-AND-PROPOSE ONLY, one output file
 │   │   └── promotion-agent.md       # weekly medium → long promotion; git-snapshots before writing
@@ -65,13 +75,15 @@ claude-memory-vault/
 │   ├── scripts/
 │   │   ├── vault-check.sh           # report-only invariant checker (C1–C5); exit 1 on violation
 │   │   ├── run-tests.sh             # control suite for the hooks; positive AND negative controls
-│   │   ├── dream-pass.sh / .cmd     # scheduled runner (cron/launchd + Windows Task Scheduler)
-│   │   └── promotion-pass.sh / .cmd # ditto, for the weekly promotion pass
+│   │   ├── dream-pass.sh / .cmd     # scheduled runner (cron/launchd; .cmd wraps it for Task Scheduler)
+│   │   ├── promotion-pass.sh / .cmd # ditto, for the weekly promotion pass
+│   │   └── lib/runner-common.sh     # watchdog and write-fence helpers shared by both runners
 │   └── skills/
 │       ├── obsidian-save/SKILL.md   # session → medium-term log
 │       ├── wrap-up/SKILL.md         # structured end-of-session summary
 │       ├── resume/SKILL.md          # rehydrate from recent logs at session start
-│       └── preserve/SKILL.md        # medium → long promotion
+│       ├── preserve/SKILL.md        # medium → long promotion
+│       └── onboard-project/SKILL.md # wire a codebase into the vault
 ├── .obsidian/                       # enabled-plugin list and the tier-coloured graph config
 ├── 01-inbox/                        # raw captures — treated as untrusted content
 ├── 10-daily/
@@ -208,9 +220,9 @@ recommended — `jq`. See [Requirements](#requirements--platform-notes) before y
    `bash .claude/scripts/vault-check.sh` after a manual authoring session.
 
 7. **(Optional) Schedule the agents.** Use the shipped runners — `dream-pass.sh`/`.cmd` and
-   `promotion-pass.sh`/`.cmd` — rather than a hand-rolled cron line: they assert that a pass which
-   exits 0 actually produced an artifact, and exit 1 when it did not, so a silent no-op cannot
-   masquerade as a green run. Read [`docs/setup.md`](docs/setup.md) first — the Windows traps
+   `promotion-pass.sh`/`.cmd` — rather than a hand-rolled cron line: they kill a hung pass, fail a
+   pass that wrote outside its allowed folders, and assert that a pass which exits 0 actually
+   produced an artifact, so a silent no-op cannot masquerade as a green run. Read [`docs/setup.md`](docs/setup.md) first — the Windows traps
    below are real and they fail silently.
 
 ---
@@ -240,8 +252,9 @@ them. The rest are contract, enforced by review and by you.
 The checker implements exactly five invariants, and nothing beyond them: **C1** the file opens
 with a bare `---` fence; **C2** frontmatter has a `tier:` key; **C3** it has a `type:` key; **C4**
 if both `created:` and `last_verified:` exist, `last_verified >= created`; **C5** `last_verified`
-is never in the future. C4 and C5 exist because a bad date is the quietest way to poison a
-freshness signal. There is deliberately **no** check that a long-tier note carries
+is never in the future. C4 also flags a `created` that is not a `YYYY-MM-DD` date, and C5 a
+`last_verified` that is not. C4 and C5 exist because a bad date is the quietest way to poison a freshness
+signal. There is deliberately **no** check that a long-tier note carries
 `last_verified` at all — that judgement stays with you. The scan covers the six content tiers
 (`01-inbox`, `10-daily`, `20-projects`, `30-knowledge`, `31-standards`, `40-llm-wiki`), skipping
 `*/templates/*` and the compaction stubs; `90-auto-memory/` is machine-managed and out of scope.
@@ -298,9 +311,11 @@ The scheduled dream agent reads broadly across all three tiers and writes exactl
 dated journal file of proposals. It never edits an existing note, never promotes anything, never
 deletes. That single constraint is what makes running it unattended safe — the worst outcome of a
 bad run is one bad file you ignore, not a vault quietly rewritten overnight by a model nobody was
-watching. The promotion agent, which *does* write into the long tier, takes a git snapshot first
-so every unattended write is revertible with one command. That snapshot is the only write-safety
-guard it has, which is why `git` is a hard requirement rather than a convenience.
+watching. The runner backs that constraint mechanically: it fails the run if any other file
+changed. The promotion agent, which *does* write into the long tier, takes a git snapshot first so
+every unattended write is revertible with one command, and its runner fails the run if it wrote
+anywhere but the long tier or a promotion report. The fence catches a write in the wrong place;
+only the snapshot can undo a bad write in the right one, which is why `git` is a hard requirement.
 
 ### 6. Degrade loudly
 
@@ -309,7 +324,8 @@ reporting clean. The lint hook needs `jq` to parse hook input — without it, it
 `sed` path-parse and warns — and `perl` (preferred) or `grep -P` to scan for zero-width and
 bidirectional-override codepoints, the "Rules File Backdoor" class, where invisible characters
 hide instructions inside a file that looks innocuous in every editor. That scan covers the content
-tiers plus `.claude/rules/` and `.claude/agents/`, the files that steer the model. If neither
+tiers plus the files that steer the model: `.claude/rules/`, `.claude/agents/`, `.claude/skills/`,
+and any `CLAUDE.md` or `AGENTS.md`. If neither
 scanner is available, the hook reports that the scan **did not run** rather than passing the file.
 It still exits 0 — and it could not do otherwise: `PostToolUse` fires *after* the write has landed
 on disk, so no exit code from it could ever block one. The lint is advisory by construction, not
@@ -322,7 +338,7 @@ by choice.
 | Dependency | Status | Notes |
 | --- | --- | --- |
 | `bash` | required | Git Bash on Windows; hooks are registered with `"shell": "bash"` |
-| `git` | required | For the clone, for `git log` as the audit trail, and because the promotion agent's only write-safety guard is a git snapshot |
+| `git` | required | For the clone, for `git log` as the audit trail, and because the promotion agent's git snapshot is what makes its writes revertible |
 | Obsidian | required | Any recent version; open the repo root as a vault |
 | Obsidian **Dataview** | **required** | Every dashboard is a Dataview query; without it they render as code blocks |
 | `jq` | strongly recommended | Parses hook input. **Not bundled with Git for Windows** — install it separately. Without it the lint hook falls back to a `sed` path-parse and warns loudly |
@@ -334,9 +350,9 @@ by choice.
 ### Template placeholders — read this before you file a bug
 
 The four shipped templates use `{{date:...}}` and `{{time:...}}`, which Obsidian's **core**
-Templates plugin does support. They **also** use `{{selection}}`, `{{project}}`, `{{concept}}` and
-`{{file_name}}`, which core Templates does **not** support. With only the core plugin enabled,
-those four placeholders render **literally** — you will see `{{project}}` sitting in your new
+Templates plugin does support. They **also** use `{{selection}}`, `{{project}}` and `{{concept}}`,
+which core Templates does **not** support. With only the core plugin enabled, those three
+placeholders render **literally** — you will see `{{project}}` sitting in your new
 note. Two honest options: install the community **Templater** plugin, which resolves them, or fill
 them in by hand. Nothing in the vault breaks either way; the frontmatter checker will simply see a
 literal string where it expected a value.
@@ -358,8 +374,8 @@ direction that looks healthy:
   `(echo Result %RC%)>> "log"`.
 - `claude --agent <name>` with **no** `-p` starts an *interactive* session — and note that the
   agent is selected with the `--agent` **flag**, not by typing a slash command. Under a scheduler
-  with no TTY it produces nothing while reporting success. Always pass `-p`. The shipped `.cmd`
-  runners already do.
+  with no TTY it produces nothing while reporting success. Always pass `-p`. The shipped runners
+  already do; the `.cmd` files simply run the `.sh` runners through Git Bash.
 - Task health is `LastTaskResult` **plus a log file on disk** — never `State`. A task can sit at
   `Ready` for weeks while every single run dies on startup.
 
@@ -376,7 +392,7 @@ the template's single biggest customization cost:
 > `.claude/hooks/vault-lint.sh`, `.claude/scripts/vault-check.sh` (its `TIERS=` line),
 > `.claude/hooks/postcompact-wrap-up.sh`, both files in `.claude/agents/`, all four
 > `.claude/rules/*.md`, all five skills, `30-knowledge/moc/VAULT-INDEX.md` (every Dataview query
-> names folders), the four pass scripts, the fixtures in `.claude/scripts/run-tests.sh`,
+> names folders), `dream-pass.sh` and `promotion-pass.sh`, the fixtures in `.claude/scripts/run-tests.sh`,
 > `.obsidian/daily-notes.json`, and `.gitignore`. Treat that list as a floor, not an inventory:
 > grep for the old name across the whole repo and fix every hit. A missed one turns into a hook
 > that silently stops matching, which looks exactly like a hook that found nothing wrong — and
@@ -393,7 +409,7 @@ the most expensive.
 
 | Document | What it covers |
 | --- | --- |
-| [`docs/setup.md`](docs/setup.md) | Longer-form setup walkthrough, your first week in the vault, and scheduling on cron, launchd, and Task Scheduler |
+| [`docs/setup.md`](docs/setup.md) | Longer-form setup walkthrough, graph and template configuration, scheduling on cron, launchd, and Task Scheduler, and removing it all again |
 | [`docs/concepts.md`](docs/concepts.md) | The tier model, the promotion path, and why each boundary sits where it does |
 | [`docs/reference.md`](docs/reference.md) | Full reference: frontmatter keys, the C1–C5 invariants, the hooks, the skills, and the agents |
 | [`docs/customizing.md`](docs/customizing.md) | Renaming tiers, adding a tier, changing the frontmatter contract |

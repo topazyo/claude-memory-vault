@@ -122,7 +122,7 @@ where status = "superseded" and !contains(file.folder, "templates")
 table file.folder, tier, type
 from "01-inbox" or "10-daily" or "20-projects" or "30-knowledge" or "31-standards" or "40-llm-wiki/wiki"
 where length(file.inlinks) = 0 and !contains(file.folder, "templates")
-  and !contains(file.name, "compaction-")
+  and !contains(file.name, "compaction-") and !contains(file.name, "dream-")
 sort file.folder asc
 ```
 

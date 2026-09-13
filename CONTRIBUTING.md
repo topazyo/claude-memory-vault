@@ -55,8 +55,12 @@ are invisible on the machine you are testing on:
 
 If you add a check, **add a positive control for it** in `run-tests.sh`. A check that cannot fail
 is not a check, and a test suite that only ever asserts "clean" cannot tell a working instrument
-from a broken one. Every assertion in that file has both a passing and a failing fixture; please
-keep it that way.
+from a broken one. The suite pairs known-bad inputs that must be flagged with known-good inputs
+that must stay silent; please give a new check at least one of each.
+
+`VAULT_FORCE_NO_JQ=1` makes the hooks take their no-jq fallback even where `jq` is installed — the
+path most macOS and Git for Windows users actually run. The suite already uses it for its no-jq
+tests; if your change touches a `jq` code path, add a test there that sets it.
 
 Line endings are governed by `.gitattributes`: `*.sh` is `eol=lf`, `*.cmd` is `eol=crlf`. A CR in
 a shebang gives `bad interpreter` on Linux. Note also that Windows has no executable bit, so a

@@ -36,7 +36,7 @@ have explained it twice. Use `40-llm-wiki/wiki/templates/llm-wiki-entity.md`.
 
 ## Entities
 
-- [[EXAMPLE-idempotency-key]] — fictional example entity; delete with the other `EXAMPLE-` notes
+One line per entity: its wikilink and a one-line description.
 
 ## See also
 

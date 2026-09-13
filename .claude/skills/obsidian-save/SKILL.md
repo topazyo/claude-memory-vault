@@ -2,7 +2,7 @@
 name: obsidian-save
 description: Save the current Claude session's context into a medium-term project log. Use at the end of a working block or when finishing a debugging session.
 disable-model-invocation: true
-allowed-tools: Bash(git status *) Bash(cat *) Bash(ls *) Bash(echo *)
+allowed-tools: Bash(git status *) Read Bash(ls *) Bash(echo *)
 shell: bash
 ---
 

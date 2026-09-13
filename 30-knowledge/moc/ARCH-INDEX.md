@@ -41,8 +41,6 @@ Link your `31-standards/` notes here as you write them, with a one-line descript
 description matters more than the link: it is what lets you decide whether to open a note without
 opening it.
 
-- *(none yet)*
-
 ## Knowledge folders
 
 Group the durable reference material under `30-knowledge/` here. Notes that are reference rather
@@ -56,7 +54,7 @@ background" from "this is how we do things".
 Entities under `40-llm-wiki/wiki/` — one page per concept, distilled from the raw captures in
 `40-llm-wiki/raw/`.
 
-- [[LLM-wiki-index]] — *(create this when you have your first few entities)*
+- [[LLM-wiki-index]] — the index of wiki entities
 
 ## See also
 
