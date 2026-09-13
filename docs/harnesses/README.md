@@ -41,8 +41,8 @@ and the agent must follow it.
 
 "Both skill folders" means the harness reads `.claude/skills/` and `.agents/skills/`. The two
 copies are byte-identical (the control suite fails if they drift). How each of those harnesses
-handles two skills with the same name was not documented: expect a skill to be listed twice, and
-report anything worse.
+handles a skill name found in both folders was not documented: expect a skill to be listed twice,
+and report anything worse.
 
 The read denies in this table cover the harness's file-read tool only. A shell command such as
 `cat` reads anything, in every harness, including Claude Code.

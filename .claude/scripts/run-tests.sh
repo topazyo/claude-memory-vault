@@ -480,8 +480,15 @@ else
     echo $?
   }
   guard_json_rc() {  # guard_json_rc <json> [extra env assignment]
-    printf '%s' "$1" | env CLAUDE_PROJECT_DIR="$RG" ${2:+"$2"} bash "$READ_GUARD" >/dev/null 2>&1
+    printf '%s' "$1" | env CLAUDE_PROJECT_DIR="$RG" ${2:+"$2"} bash "$READ_GUARD" >/dev/null 2>"$TMP/guard-stderr"
     echo $?
+  }
+  # On an unexpected status, show what the guard said, so a platform-specific
+  # failure can be diagnosed from a CI log alone.
+  guard_evidence() {
+    printf '        stderr: %s\n        log: %s\n' \
+      "$(tr '\n' ' ' < "$TMP/guard-stderr" 2>/dev/null)" \
+      "$(tail -n 2 "$RG/.claude/logs/read-guard.log" 2>/dev/null | tr '\n' ' ')"
   }
 
   expect_rc "a root .env is blocked"                2 "$(guard_rc "$RG/.env")"
@@ -497,8 +504,9 @@ else
     extra=""; [ "$branch" = no-jq ] && extra="VAULT_FORCE_NO_JQ=1"
     expect_rc "[$branch] Windsurf pre_read_code on .env is blocked" 2 \
       "$(guard_json_rc "{\"agent_action_name\":\"pre_read_code\",\"tool_info\":{\"file_path\":\"$RG/.env\"}}" "$extra")"
-    expect_rc "[$branch] Windsurf pre_read_code on a note is allowed" 0 \
-      "$(guard_json_rc "{\"agent_action_name\":\"pre_read_code\",\"tool_info\":{\"file_path\":\"$RG/10-daily/x.md\"}}" "$extra")"
+    rc_note=$(guard_json_rc "{\"agent_action_name\":\"pre_read_code\",\"tool_info\":{\"file_path\":\"$RG/10-daily/x.md\"}}" "$extra")
+    expect_rc "[$branch] Windsurf pre_read_code on a note is allowed" 0 "$rc_note"
+    [ "$rc_note" -eq 0 ] || guard_evidence
   done
 
   # Fail closed: hook input with no path means broken wiring, not a safe read.
