@@ -1,0 +1,204 @@
+name: checks
+
+# The vault ships two checkers and a control suite. Running them here is what
+# keeps the portability claims in the README honest: the hooks are bash and are
+# advertised as working on Linux, macOS and Git Bash on Windows, so all three
+# are exercised on every push rather than trusted.
+#
+# The macOS job matters most. macOS ships BSD userland (no `grep -P`) and bash
+# 3.2 from 2007 as /bin/bash, and neither `jq` nor GNU coreutils are present by
+# default. Those differences are invisible on a Linux developer machine, and
+# every portability defect this repo has had so far failed in the quiet
+# direction - reporting "clean" while scanning nothing.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    # A hung step must fail the build in minutes, not hold a runner for the
+    # six-hour GitHub default. The suite takes a minute on Linux and macOS and
+    # several on Windows, where process start-up is slow.
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Report the environment
+        shell: bash
+        run: |
+          echo "bash:  $BASH_VERSION"
+          echo "uname: $(uname -s)"
+          for t in jq perl awk sed find date; do
+            printf '%-6s %s\n' "$t" "$(command -v "$t" || echo MISSING)"
+          done
+
+      # jq is deliberately NOT installed. It is absent by default on macOS and in
+      # Git for Windows, and the hook is written to degrade loudly without it.
+      # Installing it here would hide exactly the case most users will hit.
+
+      - name: Control suite
+        shell: bash
+        run: bash .claude/scripts/run-tests.sh
+
+      # vault-check.sh exits 1 when it scans zero notes, so a path-resolution
+      # regression fails this step on its own - no separate vacuity check needed.
+      - name: Frontmatter invariants
+        shell: bash
+        run: bash .claude/scripts/vault-check.sh
+
+  bash32:
+    name: macOS with system bash 3.2
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      # macOS ships bash 3.2.57 as /bin/bash because Apple would not ship GPLv3,
+      # and `#!/usr/bin/env bash` picks it up unless the user installed a newer
+      # one. Invoking /bin/bash explicitly pins the oldest interpreter the
+      # scripts claim to support, so a bash-4-only construct fails here rather
+      # than in a stranger's terminal.
+      - name: Confirm this really is bash 3.2
+        run: /bin/bash -c 'echo "$BASH_VERSION"'
+
+      - name: Control suite under bash 3.2
+        run: /bin/bash .claude/scripts/run-tests.sh
+
+      - name: Frontmatter invariants under bash 3.2
+        run: /bin/bash .claude/scripts/vault-check.sh
+
+  hygiene:
+    name: repository hygiene
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Every shell script parses
+        run: |
+          rc=0
+          for f in $(git ls-files '*.sh'); do
+            bash -n "$f" || { echo "::error file=$f::syntax error"; rc=1; }
+          done
+          exit $rc
+
+      # Advisory, not gating. Several warnings here would be deliberate - the
+      # word splitting in `for d in $TIERS` is intended, for instance - and a
+      # build that fails on a style opinion trains people to ignore the build.
+      # Read the output, silence what is genuinely intentional with a
+      # `# shellcheck disable=` comment and a reason, then make this gating.
+      - name: shellcheck (advisory)
+        continue-on-error: true
+        run: |
+          shellcheck --version
+          for f in $(git ls-files '*.sh'); do
+            echo "--- $f"
+            shellcheck --severity=warning "$f" || true
+          done
+
+      - name: Every JSON file parses
+        run: |
+          rc=0
+          for f in $(git ls-files '*.json'); do
+            python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$f" \
+              || { echo "::error file=$f::invalid JSON"; rc=1; }
+          done
+          exit $rc
+
+      # Windows has no executable bit, so scripts committed from a Windows
+      # machine land as 100644 and `./script.sh` fails on a Linux clone.
+      - name: Shell scripts are executable in the index
+        run: |
+          rc=0
+          for f in $(git ls-files '*.sh'); do
+            mode=$(git ls-files -s "$f" | cut -d' ' -f1)
+            [ "$mode" = "100755" ] || { echo "::error file=$f::mode $mode, expected 100755"; rc=1; }
+          done
+          exit $rc
+
+      # A skill without a name: key silently never registers, which is the worst
+      # kind of breakage - nothing errors, the skill simply does not exist.
+      - name: Skills and agents declare their frontmatter keys
+        run: |
+          rc=0
+          for f in $(git ls-files '.claude/skills/*/SKILL.md'); do
+            grep -q '^name:' "$f" || { echo "::error file=$f::missing name: key"; rc=1; }
+          done
+          for f in $(git ls-files '.claude/agents/*.md'); do
+            grep -q '^name:' "$f"  || { echo "::error file=$f::missing name: key"; rc=1; }
+            grep -q '^tools:' "$f" || { echo "::error file=$f::missing tools: key"; rc=1; }
+          done
+          exit $rc
+
+      # Counts written into prose drift the moment someone adds a skill or an
+      # assertion, and a stale number in a README is the kind of small wrongness
+      # that costs a reader's trust in everything around it. Derive both numbers
+      # from reality and compare.
+      - name: Documented counts match reality
+        run: |
+          rc=0
+
+          # The assertion count changes whenever a test is added, so the docs
+          # deliberately do not state it. Keep it that way: any number or number
+          # word in front of "assertion" is a count that will go stale.
+          if git grep -nIiE "\b([0-9]+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty[a-z-]*|thirty[a-z-]*|forty[a-z-]*)[- ]assertions?\b" -- '*.md' ; then
+            echo "::error::a document hardcodes the assertion count; describe the suite instead"
+            rc=1
+          fi
+
+          # The docs nominate this count as the reader's positive control, so a
+          # stale value here is worse than an ordinary typo - it teaches people
+          # to expect the wrong evidence.
+          actual_files=$(bash .claude/scripts/vault-check.sh | sed -n 's/.*across \([0-9]*\) file(s).*/\1/p')
+          echo "vault-check scans $actual_files files on a clean checkout"
+          if git grep -nIE "across [0-9]+ file" -- '*.md' \
+               | grep -vE "across ${actual_files} file" \
+               | grep -v 'across 0 file' ; then
+            echo "::error::a document states a scanned-file count other than ${actual_files}"
+            rc=1
+          fi
+
+          actual_skills=$(git ls-files '.claude/skills/*/SKILL.md' | wc -l | tr -d ' ')
+          echo ".claude/skills/ contains $actual_skills skills"
+          words="zero one two three four five six seven eight nine ten"
+          expected_word=$(echo "$words" | cut -d' ' -f$((actual_skills + 1)))
+          if git grep -nIiE "\b([0-9]+|two|three|four|five|six|seven|eight|nine|ten) skills" -- '*.md' \
+               | grep -viE "\b(${expected_word}|${actual_skills}) skills" ; then
+            echo "::error::a document states a skill count other than ${expected_word} (${actual_skills})"
+            rc=1
+          fi
+
+          exit $rc
+
+      # This repo is a framework. A pull request should never carry someone's
+      # real notes, an absolute path containing a username, or a secret.
+      - name: No personal content or absolute user paths
+        run: |
+          rc=0
+          # Scan every file. The one deliberate example path, "C:/Users/Some One/",
+          # is filtered by name rather than by excluding whole directories, so a
+          # real path added to docs/ or a script is still caught.
+          if git grep -nIE '[A-Za-z]:[\\/]Users[\\/][A-Za-z0-9._-]+' | grep -vE 'Users[\\/]Some One'; then
+            echo "::error::absolute user path committed"
+            rc=1
+          fi
+          # Quotes optional: in a markdown note a pasted secret is usually bare.
+          # Plus the prefixes of common real credentials, which need no key name.
+          if git grep -nIE '(api[_-]?key|secret|password|passwd|token)[[:space:]]*[:=][[:space:]]*["'"'"']?[A-Za-z0-9/+_-]{20,}|gh[pousr]_[A-Za-z0-9]{36}|sk-ant-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----' ; then
+            echo "::error::possible secret committed"
+            rc=1
+          fi
+          exit $rc

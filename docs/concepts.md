@@ -476,7 +476,7 @@ than report clean.** A "0 findings" result from a scanner that never scanned any
 indistinguishable, in the output, from a genuinely clean vault — which is why `vault-check.sh`
 prints its file count, and why `0 violations across 0 files` should be read as *nothing was
 scanned*, not as a pass. Against the shipped example notes the correct output is
-`0 violation(s) across 8 file(s) checked`.
+`0 violation(s) across 9 file(s) checked`.
 
 The optional dependencies degrade loudly for the same reason. The lint hook's
 invisible-character scan prefers `perl`; `grep -P` is a GNU extension, absent from the BSD grep
@@ -512,14 +512,16 @@ that means before adopting it.
   Verification` section passes every check in this repo. The checks read structure; they cannot
   read truth.
 - **`vault-check.sh` is report-only.** It exits 1 on violations, which is useful in a pre-commit
-  hook or in CI, but nothing in this repo wires it into either — you have to do that yourself.
+  hook or in CI. The shipped `.github/workflows/ci.yml` runs it against the template's own
+  example notes on Linux, macOS and Windows; wiring it into a pre-commit hook for *your*
+  notes is still yours to do.
 - **Promotion is manual by design, which means it can simply not happen.** The medium tier will
   fill with promotion candidates that nobody promotes. The dream-agent surfaces them; it cannot
   make you act.
 - **The tier folder names are hardcoded in many places.** Renaming a tier touches, at minimum,
   `CLAUDE.md`, `.claude/hooks/vault-lint.sh`, `.claude/scripts/vault-check.sh` (its `TIERS=`
   line), `.claude/hooks/postcompact-wrap-up.sh`, both agents, all four files in
-  `.claude/rules/`, all four skills, `30-knowledge/moc/VAULT-INDEX.md` (every Dataview query
+  `.claude/rules/`, all five skills, `30-knowledge/moc/VAULT-INDEX.md` (every Dataview query
   names folders), the four pass scripts, the `run-tests.sh` fixtures,
   `.obsidian/daily-notes.json`, and `.gitignore`. Treat that list as a floor, not an inventory,
   and grep for the old folder name before you declare the rename done. It is the template's

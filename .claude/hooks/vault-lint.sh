@@ -12,24 +12,47 @@
 # cannot run must never be indistinguishable from a security scan that found
 # nothing.
 
-LOG_DIR="${CLAUDE_PROJECT_DIR:-.}/.claude/logs"
+# Resolve the vault from this script's own location when CLAUDE_PROJECT_DIR is
+# unset, like the other two hooks - never from the current directory, which
+# would scatter .claude/logs/ folders wherever the hook happened to be invoked.
+ROOT="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "$0")/../.." && pwd)}"
+LOG_DIR="$ROOT/.claude/logs"
 mkdir -p "$LOG_DIR" 2>/dev/null
 LOG="$LOG_DIR/vault-lint.log"
-TS=$(date -Iseconds 2>/dev/null || date)
+# `date -Iseconds` is GNU-only; BSD/macOS date has no -I. Fall back to an
+# explicit ISO-8601 format so the log has ONE shape on every platform.
+TS=$(date -Iseconds 2>/dev/null || date +%Y-%m-%dT%H:%M:%S%z 2>/dev/null || date)
 
 INPUT=$(cat)
 
 # jq is NOT bundled with Git for Windows, and without this guard a missing jq
 # yields an empty FILE and the hook exits 0 having done nothing at all.
-if command -v jq >/dev/null 2>&1; then
+# VAULT_FORCE_NO_JQ=1 takes the no-jq branch even when jq is installed, so the
+# fallback can be tested on a machine that has jq (run-tests.sh does exactly that).
+if [ -z "${VAULT_FORCE_NO_JQ:-}" ] && command -v jq >/dev/null 2>&1; then
   FILE=$(printf '%s' "$INPUT" | jq -r '.tool_input.file_path // .tool_input.path // empty' 2>/dev/null)
 else
-  # Minimal fallback parse: pull the first "file_path":"..." value with sed.
+  # Minimal parse without jq: pull the first "file_path":"..." value with sed,
+  # then undo JSON string escaping. That second step is not optional - on
+  # Windows every separator arrives as a doubled backslash, so skipping it
+  # yields C://Users//... , the -f test fails, and the hook lints nothing while
+  # still exiting 0. Git for Windows ships no jq, so this is a realistic
+  # default configuration, not an edge case.
+  # The same two keys the jq branch accepts, in the same order, so the two
+  # branches cannot disagree about which input names a file.
   FILE=$(printf '%s' "$INPUT" | sed -n 's/.*"file_path"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)
+  [ -z "$FILE" ] && FILE=$(printf '%s' "$INPUT" | sed -n 's/.*"path"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)
+  FILE=$(printf '%s' "$FILE" | sed -e 's/\\\\/\\/g' -e 's/\\\//\//g' -e 's/\\"/"/g')
   echo "[$TS] DEGRADED: jq not found — using fallback path parse. Install jq for reliable linting." >> "$LOG"
   echo "vault-lint: jq not found; path parsing is degraded. Install jq." >&2
 fi
-[ -z "$FILE" ] && exit 0
+# The hook is registered for Write|Edit only, and both always name a file. An
+# empty path is therefore an anomaly - malformed input or a parse failure - and
+# it goes on the record instead of vanishing into a silent exit 0.
+if [ -z "$FILE" ]; then
+  echo "[$TS] DEGRADED: could not read a file path from the hook input; nothing was linted." >> "$LOG"
+  exit 0
+fi
 
 # normalize backslashes -> forward slashes for git-bash / MSYS.
 # The backslash is written as the octal escape \134: spelled literally, GNU tr
@@ -48,17 +71,25 @@ case "$NORM" in
   01-inbox/*|10-daily/*|20-projects/*|30-knowledge/*|31-standards/*|40-llm-wiki/*) IS_CONTENT_TIER=1 ;;
 esac
 
-# character-scan scope: content tiers PLUS .claude/rules/ and .claude/agents/.
-# The Rules File Backdoor targets exactly these steering files, which the
-# tier-scoped frontmatter check above never reaches — widen this scan only,
-# not the frontmatter check.
+# character-scan scope: content tiers PLUS every file that steers the agent -
+# .claude/rules/, .claude/agents/, .claude/skills/, and any CLAUDE.md or
+# AGENTS.md. The Rules File Backdoor targets exactly these steering files, which
+# the tier-scoped frontmatter check above never reaches. CLAUDE.md, AGENTS.md
+# and the skills are the ones loaded most eagerly, so leaving them out would
+# scan the lazily-loaded files and skip the always-loaded ones. Widen this scan
+# only, not the frontmatter check.
 IS_CHAR_SCAN_SCOPE=$IS_CONTENT_TIER
 case "$NORM" in
-  *"/.claude/rules/"*|*"/.claude/agents/"*|.claude/rules/*|.claude/agents/*) IS_CHAR_SCAN_SCOPE=1 ;;
+  *"/.claude/rules/"*|*"/.claude/agents/"*|*"/.claude/skills/"*) IS_CHAR_SCAN_SCOPE=1 ;;
+  .claude/rules/*|.claude/agents/*|.claude/skills/*) IS_CHAR_SCAN_SCOPE=1 ;;
+  */CLAUDE.md|CLAUDE.md|*/AGENTS.md|AGENTS.md) IS_CHAR_SCAN_SCOPE=1 ;;
 esac
 
 [ "$IS_CONTENT_TIER" = 1 ] || [ "$IS_CHAR_SCAN_SCOPE" = 1 ] || exit 0
-[ -f "$NORM" ] || exit 0
+if [ ! -f "$NORM" ]; then
+  echo "[$TS] DEGRADED: in-scope path does not resolve to a file, nothing was linted: $NORM" >> "$LOG"
+  exit 0
+fi
 
 warn=""
 
@@ -66,7 +97,10 @@ if [ "$IS_CONTENT_TIER" = 1 ]; then
   if ! head -n1 "$NORM" | grep -q '^---[[:space:]]*$'; then
     warn="missing YAML frontmatter"
   else
-    FM=$(awk 'NR==1&&/^---/{f=1;next} f&&/^---/{exit} f{print}' "$NORM")
+    # Identical to fm_of() in .claude/scripts/vault-check.sh - both fences
+    # anchored - so the hook and the checker agree on where frontmatter ends.
+    # An unanchored /^---/ would end it at any line merely STARTING with dashes.
+    FM=$(awk 'NR==1&&/^---[ \t\r]*$/{f=1;next} f&&/^---[ \t\r]*$/{exit} f{print}' "$NORM")
     printf '%s\n' "$FM" | grep -q '^tier:' || warn="${warn:+$warn; }missing 'tier'"
     printf '%s\n' "$FM" | grep -q '^type:' || warn="${warn:+$warn; }missing 'type'"
   fi

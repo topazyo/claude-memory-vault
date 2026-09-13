@@ -22,8 +22,8 @@ knowledge.
 
 - **Three memory tiers** with distinct lifetimes: `short` (daily notes, inbox captures),
   `medium` (per-project session logs), `long` (standards and concept entities).
-- **Four skills** that move knowledge between tiers: `/obsidian-save`, `/wrap-up`, `/resume`,
-  `/preserve`.
+- **Five skills**: four that move knowledge between tiers — `/obsidian-save`, `/wrap-up`,
+  `/resume`, `/preserve` — plus `/onboard-project`, which wires a new codebase into the vault.
 - **Two scheduled agents**: a *dream agent* that consolidates and proposes, and a *promotion
   agent* that does the weekly medium → long pass — each with a shipped `.sh`/`.cmd` runner that
   fails loudly when a pass produces no artifact.
@@ -31,8 +31,9 @@ knowledge.
   a post-compaction stub writer so a compacted session leaves a trace, and an audit log of which
   instruction files loaded at session start.
 - **A conformance checker** (`vault-check.sh`) that checks five frontmatter invariants and exits
-  non-zero on violation, so you can wire it into a pre-commit hook or CI — the template does not
-  wire it for you — plus a **control test suite** (`run-tests.sh`, 18 assertions) with both
+  non-zero on violation. CI (`.github/workflows/ci.yml`) runs it on Linux, macOS and Windows,
+  plus a job using macOS's system bash 3.2; wiring it into a pre-commit hook is
+  wire it for you — plus a **control test suite** (`run-tests.sh`, 19 assertions) with both
   positive and negative controls, so a passing run is evidence the checks actually ran.
 - **Four rules files**: three path-scoped (the frontmatter contract when Claude edits a note, the
   verification discipline, and a prompt-injection boundary for captured content) plus one global
@@ -71,7 +72,7 @@ claude-memory-vault/
 │       ├── wrap-up/SKILL.md         # structured end-of-session summary
 │       ├── resume/SKILL.md          # rehydrate from recent logs at session start
 │       └── preserve/SKILL.md        # medium → long promotion
-├── .obsidian/                       # plugin + appearance config, tier-coloured graph
+├── .obsidian/                       # enabled-plugin list and the tier-coloured graph config
 ├── 01-inbox/                        # raw captures — treated as untrusted content
 ├── 10-daily/
 │   ├── EXAMPLE-2026-01-15.md
@@ -91,7 +92,8 @@ claude-memory-vault/
 │       └── templates/llm-wiki-entity.md
 ├── 90-auto-memory/                  # Claude Code's own auto-memory directory, machine-managed
 ├── 99-archive/                      # retired notes; prefer archiving over deleting
-└── docs/                            # concepts.md, setup.md, customizing.md, reference.md
+├── AGENTS.md                        # orientation for coding agents landing in this repo
+└── docs/                            # setup, concepts, reference, customizing, agent-onboarding
 ```
 
 The five `EXAMPLE-` notes live in their real tier folders on purpose, so the dashboards and the
@@ -196,7 +198,7 @@ recommended — `jq`. See [Requirements](#requirements--platform-notes) before y
    green even if you have renamed a tier folder out from under the vault. `vault-check.sh` is the
    only thing that reads your real notes, and it is report-only: it never edits a note, it prints
    violations and exits 1 if it found any. On a fresh clone the correct output is
-   `0 violation(s) across 8 file(s) checked` — if you see *0 files checked*, that is a vacuous
+   `0 violation(s) across 9 file(s) checked` — if you see *0 files checked*, that is a vacuous
    result, not a pass, and it means nothing was scanned.
 
 6. **Write your first note.** Copy a template from the matching `templates/` folder, fill the
@@ -373,7 +375,7 @@ the template's single biggest customization cost:
 > hardcoded independently across the repo. The *minimum* set is `CLAUDE.md`,
 > `.claude/hooks/vault-lint.sh`, `.claude/scripts/vault-check.sh` (its `TIERS=` line),
 > `.claude/hooks/postcompact-wrap-up.sh`, both files in `.claude/agents/`, all four
-> `.claude/rules/*.md`, all four skills, `30-knowledge/moc/VAULT-INDEX.md` (every Dataview query
+> `.claude/rules/*.md`, all five skills, `30-knowledge/moc/VAULT-INDEX.md` (every Dataview query
 > names folders), the four pass scripts, the fixtures in `.claude/scripts/run-tests.sh`,
 > `.obsidian/daily-notes.json`, and `.gitignore`. Treat that list as a floor, not an inventory:
 > grep for the old name across the whole repo and fix every hit. A missed one turns into a hook
@@ -395,6 +397,8 @@ the most expensive.
 | [`docs/concepts.md`](docs/concepts.md) | The tier model, the promotion path, and why each boundary sits where it does |
 | [`docs/reference.md`](docs/reference.md) | Full reference: frontmatter keys, the C1–C5 invariants, the hooks, the skills, and the agents |
 | [`docs/customizing.md`](docs/customizing.md) | Renaming tiers, adding a tier, changing the frontmatter contract |
+| [`docs/agent-onboarding.md`](docs/agent-onboarding.md) | Copy-paste prompts for running the vault with an agent: install check, onboarding a codebase, capture, promotion, consolidation |
+| [`AGENTS.md`](AGENTS.md) | What a coding agent should read first, the rules it must not break, and how it verifies its own work |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | How to propose a change to the template itself |
 
 The five `EXAMPLE-` notes are the fastest way to see the contract in practice — read them in

@@ -34,6 +34,11 @@ bash .claude/scripts/vault-check.sh   # frontmatter invariants
 Both must pass. For `vault-check.sh`, read the file count as well as the violation count:
 `0 violations across 0 files` means it scanned nothing, which is a broken invocation, not a pass.
 
+CI (`.github/workflows/ci.yml`) runs both on ubuntu-latest, macos-latest and windows-latest, plus a
+separate job that runs them under macOS's system `/bin/bash` 3.2. It deliberately does **not**
+install `jq`, because `jq` is absent by default on macOS and in Git for Windows and the hooks are
+written to degrade loudly without it — installing it in CI would hide the case most users hit.
+
 ## Changing a shell script
 
 The hooks run on macOS, Linux, and Windows via Git Bash, and the differences bite in ways that

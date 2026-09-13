@@ -98,7 +98,7 @@ is the authoritative list.
 | `.claude/rules/untrusted-captures.md` | The rule's `paths:` frontmatter scope — `01-inbox/**/*.md` and `40-llm-wiki/raw/**/*.md` only. This one is a **security boundary**: if the scope no longer matches the folder holding captured content, the prompt-injection rule stops loading for exactly the notes that need it. |
 | `.claude/rules/security.md` | Names folders in its body. (It has no `paths:` frontmatter — it is global and always loads.) |
 | `30-knowledge/moc/VAULT-INDEX.md` | Every Dataview dashboard names its folders in a `from` clause. Miss this and each dashboard quietly returns an empty table. |
-| The four skills in `.claude/skills/` | `obsidian-save`, `wrap-up`, `resume` and `preserve` all name tier folders in their filing and reading instructions. |
+| The five skills in `.claude/skills/` | `obsidian-save`, `wrap-up`, `resume`, `preserve` and `onboard-project` all name tier folders in their filing and reading instructions. |
 | `.claude/scripts/dream-pass.{sh,cmd}`, `promotion-pass.{sh,cmd}` | Paths used for the artifact assertion and for logging. |
 | `.claude/scripts/run-tests.sh` | Its synthetic fixture paths. These are *not* your vault, but leaving them stale means the suite stops testing the paths you actually use. |
 | `.obsidian/daily-notes.json` | The daily-note folder and template path (vault-root-relative). Obsidian will happily create daily notes in a folder that no longer matches your tier layout. |
@@ -113,7 +113,7 @@ into it get linted).
 Do not trust the absence of errors. Run both checkers — but know what each one can and cannot see:
 
 ```bash
-bash .claude/scripts/run-tests.sh      # hook logic: positive AND negative controls (18 assertions)
+bash .claude/scripts/run-tests.sh      # hook logic: positive AND negative controls (19 assertions)
 bash .claude/scripts/vault-check.sh    # frontmatter invariants over your real notes; exits 1 on violation
 ```
 
@@ -131,7 +131,7 @@ That leaves two probes that do see your vault:
 > skipping the missing ones, so renaming *one* folder leaves the other five contributing files and
 > the total stays comfortably non-zero — it only reaches zero when every tier is gone. A shrinking
 > count is the signal; "0 violations across 0 files" is a vacuous result, not a pass. Against the
-> shipped example notes, correct output is `0 violation(s) across 8 file(s) checked`.
+> shipped example notes, correct output is `0 violation(s) across 9 file(s) checked`.
 
 > **2. Write a deliberately broken note (missing `tier:`) into the renamed folder and confirm the
 > lint hook comments on it.** This is the primary evidence, because it is the only check that

@@ -35,6 +35,12 @@ These four are the ones that cost the most when broken:
    `last_reviewed`. An unearned stamp suppresses its own detection by every later pass.
 4. **Every note links out to at least one peer or index.** A note with no links is a defect.
 
+## If you are an agent
+
+Read `AGENTS.md` in the repository root. It is the short orientation: what to read first,
+the frontmatter contract, the rules that must not be broken, and how to verify your own
+work. `docs/agent-onboarding.md` holds ready-to-paste prompts for the common operations.
+
 ## Checking your work
 
 ```bash

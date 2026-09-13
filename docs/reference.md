@@ -1,7 +1,7 @@
 # Reference
 
 Component-by-component reference for the vault: the frontmatter contract, the folder map, the
-three hooks, the scripts, the four skills, the two agents, the dashboard queries, the rules
+three hooks, the scripts, the five skills, the two agents, the dashboard queries, the rules
 files, and the exit codes and log paths.
 
 For *why* the design looks like this, see the README. For *how to change it*, see
@@ -100,7 +100,7 @@ Templater.
 **Renaming a tier folder is a multi-file edit.** The folder names are hardcoded independently in,
 **at minimum**: `CLAUDE.md`, `.claude/hooks/vault-lint.sh`, `.claude/scripts/vault-check.sh` (its
 `TIERS=` line), `.claude/hooks/postcompact-wrap-up.sh`, `.claude/agents/dream-agent.md`,
-`.claude/agents/promotion-agent.md`, all four `.claude/rules/*.md`, all four skills,
+`.claude/agents/promotion-agent.md`, all four `.claude/rules/*.md`, all five skills,
 `30-knowledge/moc/VAULT-INDEX.md` (every Dataview query names folders), the four pass scripts in
 `.claude/scripts/`, the fixtures in `.claude/scripts/run-tests.sh`, `.obsidian/daily-notes.json`,
 and `.gitignore`. Treat that as a floor, not an inventory — grep the whole repo for the old name
@@ -243,7 +243,8 @@ act — an automated fix here would clear the alarm without establishing the fac
 as an unearned freshness stamp.
 
 Exit status: **0** when there are no violations, **1** when there is at least one, so it *can* gate
-a pass in CI or a pre-commit hook. Nothing in this repo wires it into either — no CI workflow, no
+a pass in CI or a pre-commit hook. `.github/workflows/ci.yml` wires it into CI for this
+repository's own example notes; no `pre-commit` config and no
 `pre-commit` config, no git hook ships here. If you want it enforced, that is your wiring to add.
 It also exits **1** if no content-tier folder was found at all.
 
@@ -254,7 +255,7 @@ indistinguishable from a clean vault unless you read the count. Against the vaul
 correct output is:
 
 ```
-vault-check: 0 violation(s) across 8 file(s) checked (as of YYYY-MM-DD).
+vault-check: 0 violation(s) across 9 file(s) checked (as of YYYY-MM-DD).
 ```
 
 `run-tests.sh` asserts against `across 0 file` explicitly.
@@ -262,7 +263,7 @@ vault-check: 0 violation(s) across 8 file(s) checked (as of YYYY-MM-DD).
 ### 4.2 `run-tests.sh` — control suite
 
 Run it: `bash .claude/scripts/run-tests.sh`. Exit **0** if every control passed, **1** if any
-failed. Currently **18 assertions**, all passing. It writes nothing outside a temporary directory,
+failed. Currently **19 assertions**, all passing. It writes nothing outside a temporary directory,
 which is removed on exit — including on `INT` (exit 130) and `TERM` (exit 143), where the trap
 cleans up *and then exits*, rather than letting the script continue against fixtures that no longer
 exist.
@@ -340,6 +341,7 @@ Skills live in `.claude/skills/<name>/SKILL.md` and are invoked as `/<name>`.
 | `wrap-up` | Produces a structured end-of-session summary: objective, changes, decisions, open questions, **what this session could not determine**, links. It does **not** write a log itself — the output is for a human, or for `obsidian-save`, to place. | none (authoring aid) | Yes |
 | `resume` | Reads the three most recent logs from `20-projects/_logs/` — skipping `templates/` and `compaction-*.md` — and produces a start-of-session briefing. Says so explicitly if a session-memory tool was unavailable. | **medium** → session | No (`disable-model-invocation: true`) |
 | `preserve` | Scans **Promotion candidates** sections and proposes long-term notes into `31-standards/` or `40-llm-wiki/wiki/`, with backlinks. Candidates below the bar are reported as still-pending **with the reason**. | **medium → long** | No (`disable-model-invocation: true`) |
+| `onboard-project` | Wires a codebase into the vault: project slug, `PROJECT-INDEX.md` row and log subsection, `90-auto-memory/<slug>/`, and the first medium-term log. Reports anything it could not verify rather than assuming. | registers a project | Yes |
 
 Three of the four carry `disable-model-invocation: true` and can only be triggered by you;
 `wrap-up` is the exception, because a summary costs nothing and writes nothing. Promotion is an act

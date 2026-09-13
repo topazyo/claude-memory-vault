@@ -13,7 +13,13 @@
 #   C2  frontmatter contains a `tier:` key
 #   C3  frontmatter contains a `type:` key
 #   C4  if both `created:` and `last_verified:` exist, last_verified >= created
+#       (a non-empty `created:` that is not a YYYY-MM-DD date is also a C4 violation)
 #   C5  if `last_verified:` exists, it is not later than today
+#       (a non-empty `last_verified:` that is not a YYYY-MM-DD date is also a C5 violation)
+#
+# Exit:   0 = at least one note scanned and no violations
+#         1 = any violation, OR no notes scanned at all. "0 violations across
+#             0 files" is a vacuous result, not a pass, so it fails like one.
 #
 # Usage:  bash .claude/scripts/vault-check.sh   # do not pipe: a pipe would report
 #                                               # the pager's status, not ours
@@ -41,8 +47,16 @@ fi
 
 # Frontmatter extraction matches .claude/hooks/vault-lint.sh line for line, so the
 # two checkers can never disagree about where a note's frontmatter ends.
+#
+# The awk regexes below spell whitespace as [ \t\r] rather than [[:space:]].
+# macOS ships the "one true awk" as /usr/bin/awk, and the version shipped through
+# macOS 13 does not implement POSIX bracket expressions - it would read
+# [[:space:]] as the literal characters : a c e p s, so a frontmatter fence would
+# never match and EVERY note would be reported as missing tier and type. The
+# explicit list is understood identically by BWK awk, mawk and gawk. Keep \r in
+# the set or notes checked out with CRLF endings stop matching.
 fm_of() {
-  awk 'NR==1&&/^---[[:space:]]*$/{f=1;next} f&&/^---[[:space:]]*$/{exit} f{print}' "$1"
+  awk 'NR==1&&/^---[ \t\r]*$/{f=1;next} f&&/^---[ \t\r]*$/{exit} f{print}' "$1"
 }
 
 # Count occurrences with awk, never `grep -c`: grep -c prints 0 AND exits 1 on
@@ -57,15 +71,26 @@ count_key() {
 value_of() {
   printf '%s\n' "$2" | awk -v k="^$1:" '
     $0 ~ k {
-      sub(/^[^:]*:[[:space:]]*/, "")
+      sub(/^[^:]*:[ \t]*/, "")
       gsub(/\r/, "")
-      sub(/[[:space:]]+$/, "")
+      sub(/[ \t\r]+$/, "")
       if (length($0) >= 2) {
         a = substr($0, 1, 1); b = substr($0, length($0), 1)
         if (a == b && (a == "\"" || a == "\047")) $0 = substr($0, 2, length($0) - 2)
       }
       print; exit
     }'
+}
+
+# True when the value is shaped like an ISO calendar date. The C4/C5 comparisons
+# below are string comparisons, which are only date comparisons when both sides
+# are YYYY-MM-DD. Without this guard a value like "Jan 5" or "2026-1-5" is
+# compared as text, and a malformed stamp silently switches both checks off.
+is_iso_date() {
+  case "$1" in
+    [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 violations=0
@@ -81,7 +106,7 @@ while IFS= read -r -d '' file; do
   files=$((files + 1))
   rel="${file#"$ROOT"/}"
 
-  if [ "$(awk 'NR==1{if ($0 ~ /^---[[:space:]]*$/) print 1; else print 0} END{if (NR==0) print 0}' "$file")" != "1" ]; then
+  if [ "$(awk 'NR==1{if ($0 ~ /^---[ \t\r]*$/) print 1; else print 0} END{if (NR==0) print 0}' "$file")" != "1" ]; then
     report "$rel" "C1" "first line is not a bare --- fence"
     # Without an opening fence there is no frontmatter to inspect; C2-C5 would
     # otherwise read the note body and report nonsense.
@@ -98,22 +123,42 @@ while IFS= read -r -d '' file; do
 
   # An empty value is treated as absent. A bare `last_verified:` compares as ""
   # against created, and "" sorts before every date, which would invent a C4
-  # violation for a key that carries no claim at all.
-  if [ -n "$created" ] && [ -n "$verified" ]; then
-    # ISO YYYY-MM-DD sorts lexicographically, so string comparison is the date
-    # comparison — no date parsing, no locale dependency.
-    if [ "$verified" \< "$created" ]; then
-      report "$rel" "C4" "last_verified $verified is earlier than created $created"
-    fi
+  # violation for a key that carries no claim at all. Templates ship
+  # `last_verified: ""` for exactly this reason: no stamp until a real re-probe.
+  created_ok=0
+  verified_ok=0
+  if [ -n "$created" ]; then
+    if is_iso_date "$created"; then created_ok=1
+    else report "$rel" "C4" "created '$created' is not a YYYY-MM-DD date"; fi
+  fi
+  if [ -n "$verified" ]; then
+    if is_iso_date "$verified"; then verified_ok=1
+    else report "$rel" "C5" "last_verified '$verified' is not a YYYY-MM-DD date"; fi
   fi
 
-  if [ -n "$verified" ] && [ "$verified" \> "$TODAY" ]; then
+  # ISO YYYY-MM-DD sorts lexicographically, so string comparison is the date
+  # comparison — no date parsing, no locale dependency. TODAY is the local date,
+  # so a stamp made in a timezone ahead of this machine's can read as one day in
+  # the future for a few hours; that is a reason to look, not a defect.
+  if [ "$created_ok" -eq 1 ] && [ "$verified_ok" -eq 1 ] && [ "$verified" \< "$created" ]; then
+    report "$rel" "C4" "last_verified $verified is earlier than created $created"
+  fi
+
+  if [ "$verified_ok" -eq 1 ] && [ "$verified" \> "$TODAY" ]; then
     report "$rel" "C5" "last_verified $verified is later than today $TODAY"
   fi
 done < <(find "${DIRS[@]}" \( -path '*/templates/*' -o -name 'compaction-*.md' \) -prune -o -type f -name '*.md' -print0)
 
 printf 'vault-check: %s violation(s) across %s file(s) checked (as of %s).\n' \
   "$violations" "$files" "$TODAY"
+
+# A scan that examined nothing proves nothing. Fail it, so a caller that only
+# reads the exit code - a CI step, a pre-commit hook, an agent - cannot mistake
+# a path or folder-name problem for a clean vault.
+if [ "$files" -eq 0 ]; then
+  printf 'vault-check: VACUOUS - no notes were scanned, so this is not a pass. Check CLAUDE_PROJECT_DIR and the TIERS list.\n' >&2
+  exit 1
+fi
 
 [ "$violations" -gt 0 ] && exit 1
 exit 0

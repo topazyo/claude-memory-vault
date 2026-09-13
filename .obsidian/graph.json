@@ -22,10 +22,17 @@
       }
     },
     {
-      "query": "tag:#llm/wiki tag:#tier/long  ",
+      "query": "tag:#tier/long",
       "color": {
         "a": 1,
         "rgb": 11657298
+      }
+    },
+    {
+      "query": "tag:#llm/wiki",
+      "color": {
+        "a": 1,
+        "rgb": 7188218
       }
     }
   ],

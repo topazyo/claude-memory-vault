@@ -19,18 +19,45 @@ today="$(date '+%Y-%m-%d' 2>/dev/null || echo unknown)"
 trigger="?"
 session_id=""
 transcript_path=""
-if command -v jq >/dev/null 2>&1; then
+# VAULT_FORCE_NO_JQ=1 takes the no-jq branch even when jq is installed, so the
+# fallback can be tested on a machine that has jq.
+if [ -z "${VAULT_FORCE_NO_JQ:-}" ] && command -v jq >/dev/null 2>&1; then
   trigger="$(printf '%s' "$input" | jq -r '.trigger // "?"' 2>/dev/null || echo '?')"
   session_id="$(printf '%s' "$input" | jq -r '.session_id // empty' 2>/dev/null)"
   transcript_path="$(printf '%s' "$input" | jq -r '.transcript_path // empty' 2>/dev/null)"
+else
+  # No jq - the default on macOS and in Git for Windows. Without this branch the
+  # session id stayed empty and the fallback below keyed the stub on the wall
+  # clock, so every compaction wrote a NEW file: the "one idempotent stub per
+  # session, capped at 50 entries" contract silently became "one file per
+  # compaction, never capped". Pull the three string fields with sed and undo
+  # JSON string escaping, the same way vault-lint.sh does.
+  json_field() {
+    printf '%s' "$input" \
+      | sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" \
+      | head -n 1 \
+      | sed -e 's/\\\\/\\/g' -e 's/\\\//\//g' -e 's/\\"/"/g'
+  }
+  trigger="$(json_field trigger)"; [ -z "$trigger" ] && trigger="?"
+  session_id="$(json_field session_id)"
+  transcript_path="$(json_field transcript_path)"
+  printf '%s  PostCompact: DEGRADED - jq not found, fields parsed with sed. Install jq for reliable parsing.\n' \
+    "$ts" >> "$LOG_DIR/hook-events.log" 2>/dev/null
 fi
 
 printf '%s  PostCompact (trigger=%s). Consider /wrap-up or /obsidian-save to capture this block into 20-projects/_logs/.\n' \
   "$ts" "$trigger" >> "$LOG_DIR/hook-events.log" 2>/dev/null
 
-# Degrade loudly, not silently: a missing jq or unset session_id must still
-# produce a visibly-wrong-but-present stub, never a dropped write.
-[ -z "$session_id" ] && session_id="unknown-$(date '+%Y%m%d%H%M%S' 2>/dev/null || echo unknown)"
+# Degrade loudly, not silently: an unreadable session_id must still produce a
+# visibly-wrong-but-present stub, never a dropped write. Key it on the DATE, not
+# the time: a per-second key would give every compaction its own file and defeat
+# the one-stub-per-session cap. Grouping one day's unidentified compactions into
+# a single capped stub is the honest degraded form of that contract.
+if [ -z "$session_id" ]; then
+  session_id="unknown-$today"
+  printf '%s  PostCompact: DEGRADED - no session_id in hook input; grouping into %s.\n' \
+    "$ts" "compaction-$session_id.md" >> "$LOG_DIR/hook-events.log" 2>/dev/null
+fi
 [ -z "$transcript_path" ] && transcript_path="?"
 
 # Sanitize before the value ever reaches a filesystem path. A '/' or '..' in a
@@ -43,7 +70,7 @@ printf '%s  PostCompact (trigger=%s). Consider /wrap-up or /obsidian-save to cap
 raw_session_id="$session_id"
 session_id=$(printf '%s' "$session_id" | tr -c 'A-Za-z0-9._-' '_')
 session_id=$(printf '%s' "$session_id" | sed 's/^\.*//')
-[ -z "$session_id" ] && session_id="sanitized-$(date '+%Y%m%d%H%M%S' 2>/dev/null || echo unknown)"
+[ -z "$session_id" ] && session_id="sanitized-$today"
 [ "$session_id" != "$raw_session_id" ] && printf '%s  PostCompact: session_id sanitized (%s -> %s) before filename interpolation.\n' \
   "$ts" "$raw_session_id" "$session_id" >> "$LOG_DIR/hook-events.log" 2>/dev/null
 

@@ -99,7 +99,7 @@ first push, not after.
 ## 3. Open it as an Obsidian vault, and install Dataview
 
 1. Open Obsidian → **Open folder as vault** → select `<your-vault>`.
-2. Obsidian will read the checked-in `.obsidian/` config: appearance, the tier-coloured graph, and
+2. Obsidian will read the checked-in `.obsidian/` config: the tier-coloured graph, and
    the list of community plugins the vault expects.
 3. Go to **Settings → Community plugins**, turn off Restricted Mode if prompted, and install
    **Dataview**. Then **enable** it — installing is not enabling, and this catches people.
@@ -282,7 +282,7 @@ content tiers genuinely hold nothing but templates, or a tier folder was renamed
 updating the `TIERS=` line in the script.
 
 On a fresh clone the five `EXAMPLE-*.md` notes already live in their tiers, so the expected
-output is `0 violation(s) across 8 file(s) checked`. That non-zero count **is** your positive
+output is `0 violation(s) across 9 file(s) checked`. That non-zero count **is** your positive
 control for the checker. Once you delete the examples with `find . -name 'EXAMPLE-*.md' -delete`,
 create a throwaway note by hand before re-running, or the count drops back toward zero and the
 result becomes vacuous again.
@@ -306,7 +306,7 @@ git snapshot before writing so a bad pass is reversible, but read
 `.claude/agents/promotion-agent.md` in full before you put it on a timer, and run it manually a
 few times first.
 
-### Unix — cron
+### Linux — cron
 
 Use the shipped runners. They resolve the vault from their own location, guard for a `claude`
 binary that a scheduler's minimal PATH cannot see, log to `.claude/logs/`, and — the part that
@@ -328,8 +328,124 @@ easy to get subtly wrong. And a direct call has no artifact assertion: the runne
 pass exits 0 having written nothing, which is the only thing that distinguishes "ran and had
 nothing to do" from "did not run at all". Without it, a broken schedule looks green indefinitely.
 
-On macOS, a `launchd` job with `StartCalendarInterval` is more reliable than cron for machines
-that sleep: launchd runs a missed job at wake, cron simply skips it.
+### macOS — launchd (use this, not cron)
+
+On macOS prefer `launchd`. It runs a missed job when the machine wakes, whereas cron simply skips
+it — and on modern macOS, cron additionally cannot read a vault in `~/Documents`, `~/Desktop` or
+iCloud Drive unless you grant **Full Disk Access** to `/usr/sbin/cron` in System Settings →
+Privacy & Security. A cron job that silently reads nothing is exactly the failure this project
+argues against, so use launchd.
+
+Put both files in `~/Library/LaunchAgents/`. Replace `/Users/YOU/Vaults/my-vault` with your
+vault's **absolute** path — launchd does not expand `~`, and a job whose paths contain a tilde
+simply never runs.
+
+`~/Library/LaunchAgents/com.claude-memory-vault.dream-pass.plist`
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.claude-memory-vault.dream-pass</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/YOU/Vaults/my-vault/.claude/scripts/dream-pass.sh</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/YOU/Vaults/my-vault</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/Users/YOU/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>CLAUDE_BIN</key>
+    <string>/Users/YOU/.local/bin/claude</string>
+    <key>HOME</key>
+    <string>/Users/YOU</string>
+  </dict>
+
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key><integer>2</integer>
+    <key>Minute</key><integer>30</integer>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>/Users/YOU/Vaults/my-vault/.claude/logs/dream-pass.launchd.out</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/YOU/Vaults/my-vault/.claude/logs/dream-pass.launchd.err</string>
+
+  <key>RunAtLoad</key>
+  <false/>
+  <key>ProcessType</key>
+  <string>Standard</string>
+</dict>
+</plist>
+```
+
+The promotion runner's plist is identical except for these keys — weekly on Sunday rather than
+nightly:
+
+```xml
+  <key>Label</key>
+  <string>com.claude-memory-vault.promotion-pass</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/YOU/Vaults/my-vault/.claude/scripts/promotion-pass.sh</string>
+  </array>
+
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Weekday</key><integer>0</integer>
+    <key>Hour</key><integer>3</integer>
+    <key>Minute</key><integer>30</integer>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>/Users/YOU/Vaults/my-vault/.claude/logs/promotion-pass.launchd.out</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/YOU/Vaults/my-vault/.claude/logs/promotion-pass.launchd.err</string>
+```
+
+`Weekday` 0 is Sunday; omit the key entirely for a daily job.
+
+Load them:
+
+```bash
+mkdir -p ~/Library/LaunchAgents "/Users/YOU/Vaults/my-vault/.claude/logs"
+chmod 644 ~/Library/LaunchAgents/com.claude-memory-vault.dream-pass.plist
+plutil -lint ~/Library/LaunchAgents/com.claude-memory-vault.dream-pass.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.claude-memory-vault.dream-pass.plist
+launchctl enable  gui/$(id -u)/com.claude-memory-vault.dream-pass
+```
+
+Three things that will otherwise cost you an evening:
+
+- **launchd creates the log file, not its directory.** `StandardOutPath` and `StandardErrorPath`
+  are opened before your script runs, so the `.claude/logs/` directory must already exist — hence
+  the `mkdir -p` above.
+- **The plist must be mode 0644 and owned by you**, or `bootstrap` fails with
+  `Path had bad ownership/permissions`.
+- **A launchd job gets a minimal PATH and no login shell**, so a bare `claude` will usually not be
+  found. That is what the `CLAUDE_BIN` entry above is for. Find the right value with
+  `command -v claude` in a normal Terminal window and paste the absolute path in.
+
+Run it once by hand, while logged in, before trusting the schedule:
+
+```bash
+launchctl kickstart -p gui/$(id -u)/com.claude-memory-vault.dream-pass
+```
+
+Then check `.claude/logs/dream-agent.log` for a timestamped line. As on Windows, the presence of a
+log line is the evidence — a job that launchd lists as loaded has not necessarily ever run.
+
 
 ### Windows — Task Scheduler, and two traps that will cost you a week
 
