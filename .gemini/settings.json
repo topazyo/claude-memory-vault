@@ -1,0 +1,32 @@
+{
+  "context": {
+    "fileName": ["AGENTS.md"]
+  },
+  "hooks": {
+    "AfterTool": [
+      {
+        "matcher": "write_file|replace",
+        "hooks": [
+          {
+            "name": "vault-lint",
+            "type": "command",
+            "command": "bash \"$GEMINI_PROJECT_DIR/.claude/hooks/vault-lint.sh\"",
+            "timeout": 15000
+          }
+        ]
+      }
+    ],
+    "PreCompress": [
+      {
+        "hooks": [
+          {
+            "name": "vault-compaction-stub",
+            "type": "command",
+            "command": "bash \"$GEMINI_PROJECT_DIR/.claude/hooks/postcompact-wrap-up.sh\"",
+            "timeout": 60000
+          }
+        ]
+      }
+    ]
+  }
+}

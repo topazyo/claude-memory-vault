@@ -1,0 +1,9 @@
+# Codex CLI project config for this vault. Codex reads this file only after you
+# trust the project. Setup and verification: docs/harnesses/codex.md.
+#
+# AGENTS.md needs no setting here: Codex reads it natively.
+
+[features]
+# Load lifecycle hooks from .codex/hooks.json: the note lint after each
+# apply_patch edit, and the compaction stub.
+hooks = true

@@ -171,6 +171,8 @@ The five skills in `.claude/skills/` cover the session lifecycle: `resume` (star
 and `onboard-project` (wiring a new codebase into the vault). Claude Code offers them as slash
 commands. In any other harness, open the skill's `SKILL.md` and follow it as a checklist. Its
 body is the procedure, and frontmatter keys your harness does not recognise can be ignored.
+`.agents/skills/` holds byte-identical copies for the harnesses that read skills only from there.
+**Edit a skill in both places**: `run-tests.sh` fails when the copies differ.
 
 `run-tests.sh` runs every test whether or not `jq` and `perl` are installed: the hooks are
 written to degrade loudly, and the suite checks that they say so. It exercises the no-jq code path
@@ -183,15 +185,20 @@ The contract above is the same in every harness. What differs is which parts a h
 mechanically and which parts rest on you following this file. Know which case you are in: a
 control you believe is enforced, but is not, is worse than one you know you must apply yourself.
 
-| Mechanism | Claude Code | Any other harness |
+**`docs/harnesses/` has one guide per harness** (Claude Code, Codex CLI, Gemini CLI, Cursor, GitHub
+Copilot, OpenCode, Windsurf / Devin Desktop, Aider, Hermes Agent): the config this template ships
+for it, what that config enforces, and an onboarding prompt that proves the wiring works. Start
+there. The table below is the summary.
+
+| Mechanism | Claude Code | Other harnesses |
 | --- | --- | --- |
-| These instructions | `CLAUDE.md` imports this file | Read `AGENTS.md` natively, or point the harness at it |
-| Rules in `.claude/rules/` | Loaded automatically, path-scoped | Read them yourself before the first write (§2) |
-| Lint after each write | PostToolUse hook in `.claude/settings.json` | Call `bash .claude/hooks/vault-lint.sh <file>` from the harness's post-write hook if it has one, or rely on the commit gate |
-| Commit gate | Opt-in: `git config core.hooksPath .claude/githooks` | The same |
-| Compaction stub | PostCompact hook | A harness with a compaction event can pipe JSON carrying `session_id` into `.claude/hooks/postcompact-wrap-up.sh` |
-| Read deny for `.env`, `secrets/**` | Enforced by `.claude/settings.json` | **Guidance only**, unless the harness has its own ignore or deny list |
-| Skills | Slash commands | Follow `SKILL.md` as a checklist |
+| These instructions | `CLAUDE.md` imports this file | Read natively by Codex, Cursor, Copilot, OpenCode, Windsurf and Hermes; Gemini CLI via `.gemini/settings.json`, Aider via `.aider.conf.yml` |
+| Rules in `.claude/rules/` | Loaded automatically, path-scoped | Loaded by OpenCode (`opencode.json`), Aider and Copilot in VS Code. Everywhere else, read them yourself before the first write (§2) |
+| Lint after each write | PostToolUse hook in `.claude/settings.json` | Shipped hooks for Codex, Gemini CLI, Cursor, Copilot and Windsurf; an opt-in plugin for OpenCode; a user-config snippet for Hermes. Anything else: `bash .claude/hooks/vault-lint.sh <file>`, or the commit gate |
+| Commit gate | Opt-in: `git config core.hooksPath .claude/githooks` | The same, and the only mechanical check for Aider |
+| Compaction stub | PostCompact hook | Shipped for Codex, Gemini CLI and Cursor; OpenCode's opt-in plugin |
+| Read deny for `.env`, `.env.*`, `secrets/` | Enforced by `.claude/settings.json` for its file-read tool | Blocked by Windsurf's read hook and OpenCode's opt-in plugin; hidden from Cursor's agent and Gemini CLI's search by ignore files; **guidance only** everywhere else. No harness stops a shell command from reading them |
+| Skills | Slash commands | Read natively from `.agents/skills/` by Codex, Gemini CLI, Cursor, Copilot, OpenCode and Hermes; elsewhere follow `SKILL.md` as a checklist |
 | Scheduled passes | `VAULT_AGENT=claude` (default); the agents' `tools:` allowlists are enforced | `VAULT_AGENT=command` with your own wrapper. **Refused** (exit 3) until `VAULT_ALLOW_UNENFORCED_TOOLS=1`, which you set only after sandboxing the wrapper: no shell and no network for the dream pass, `git` and no network for the promotion pass |
 
 The runners' snapshot fence works the same under every harness, but it only sees files that change

@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "pre_read_code": [
+      {
+        "command": "bash .claude/hooks/read-guard.sh",
+        "powershell": "& \"$env:ProgramFiles\\Git\\bin\\bash.exe\" .claude/hooks/read-guard.sh"
+      }
+    ],
+    "post_write_code": [
+      {
+        "command": "bash .claude/hooks/vault-lint.sh",
+        "powershell": "& \"$env:ProgramFiles\\Git\\bin\\bash.exe\" .claude/hooks/vault-lint.sh"
+      }
+    ]
+  }
+}

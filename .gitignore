@@ -10,6 +10,8 @@
 # none of it; these directories simply never appear.
 .omc/
 .aider*
+# ...except the shipped Aider config, which the pattern above would hide.
+!.aider.conf.yml
 
 # ── Obsidian ─────────────────────────────────────────────────
 # Per-machine UI/workspace state (churny). The rest of .obsidian/

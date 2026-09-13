@@ -126,7 +126,9 @@ under `.claude/logs/` (gitignored).
 | Matcher | `Write\|Edit` |
 | Timeout | 15 s |
 | Arguments | `vault-lint.sh [--] <file>...` lints each named file and **never reads stdin**, so a git hook, editor task, CI step or another harness's hook can call it with an open stdin |
-| stdin (no arguments) | Hook JSON only; reads `file_path`, then `path`, under `tool_input` or at the top level. With a terminal on stdin it prints usage instead of waiting, but an open pipe that never closes is read until the caller's timeout, so anything that is not a JSON hook should pass paths as arguments |
+| stdin (no arguments) | Hook JSON only. With a terminal on stdin it prints usage instead of waiting, but an open pipe that never closes is read until the caller's timeout, so anything that is not a JSON hook should pass paths as arguments |
+| Input shapes | `tool_input.file_path` / `tool_input.path` (Claude Code, Gemini CLI, Copilot PascalCase events, Hermes); top-level `file_path` / `path` (Cursor); `tool_info.file_path` (Windsurf); `toolArgs.path` / `toolArgs.file_path`, as an object, or as a JSON string when `jq` is installed (Copilot camelCase events). Patch text in `tool_input.command`, `tool_input.patch` or `tool_input.patchText` (Codex `apply_patch`, OpenCode, Hermes `patch`): every `*** Add File:`, `*** Update File:` and `*** Move to:` header is linted, `*** Delete File:` is not. A relative path that does not resolve from the current directory is resolved against the payload's `cwd`, then the vault root |
+| `--ack-json` | First argument only. Prints `{}` on stdout before exiting, for Hermes, which reads hook stdout as JSON. Everything else wants stdout empty |
 | Writes | Nothing. Read-only against the note. |
 | Logs | `.claude/logs/vault-lint.log` — one `OK:` or `CONFORMANCE:` line per checked file |
 | Exit | Always 0 |
@@ -200,6 +202,22 @@ The stub is **not** a substitute for `/wrap-up` or `/obsidian-save`. Both the dr
 `resume` skill deliberately exclude `compaction-*.md` from their scans, as does `vault-check.sh`:
 counting machine-written stubs as authored capture would feed the consolidation pass with its own
 output.
+
+### 3.2a `read-guard.sh` — pre-read secrets guard
+
+| | |
+| --- | --- |
+| Wired in | `.windsurf/hooks.json` (`pre_read_code`), the one shipped harness whose read hook documents exit 2 as blocking |
+| Arguments | `read-guard.sh [--] <path>...` checks the named paths and never reads stdin |
+| stdin (no arguments) | Hook JSON: `tool_info.file_path`, `tool_input.file_path` / `tool_input.path`, or top-level `file_path` / `path` |
+| Blocks | Exit **2** with a reason on stderr for a basename of `.env` or `.env.*`, or any path with a `secrets` directory component, at any depth, with either separator and in any letter case (`.ENV`, `Secrets/`, since Windows and macOS file systems ignore case). Logged as `BLOCKED:` |
+| Allows | Exit 0 for everything else, including a note merely named `secrets.md` |
+| Fails | **Closed, loudly**, in hook mode: hook input with no readable path is blocked (exit 2) and logged as `DEGRADED: no path`, so a broken setup refuses every read instead of silently checking none. It cannot fail closed if it never starts: a harness that cannot launch `bash` gets a different exit code and, in Windsurf, lets the read through. The onboarding check in `docs/harnesses/windsurf.md` is what proves it runs |
+| Logs | `.claude/logs/read-guard.log` |
+
+Claude Code does not use it: `.claude/settings.json` denies the same paths natively. OpenCode's
+plugin applies the same test in JavaScript. Like every deny here, it does not stop a shell command
+such as `cat`.
 
 ### 3.3 `instructions-loaded-log.sh` — instruction-load audit
 
@@ -636,6 +654,7 @@ while a note under `40-llm-wiki/wiki/` is covered by the six-tier rules only.
 | `.claude/hooks/vault-lint.sh` | always `0` | `.claude/logs/vault-lint.log` (`OK:`, `CONFORMANCE:`, `DEGRADED:`); warnings also to stderr |
 | `.claude/hooks/postcompact-wrap-up.sh` | always `0` | `20-projects/_logs/compaction-<session_id>.md`; events to `.claude/logs/hook-events.log` |
 | `.claude/hooks/instructions-loaded-log.sh` | always `0` | `.claude/logs/instructions-loaded.log` |
+| `.claude/hooks/read-guard.sh` | `2` blocked (`.env`, `.env.*`, `secrets/`) · `0` allowed, or no path to check | `.claude/logs/read-guard.log` (`BLOCKED:`, `DEGRADED:`); the reason also to stderr |
 | `.claude/scripts/vault-check.sh` | `0` notes scanned, no violations · `1` one or more violations (including a malformed date), no content-tier folder found, or zero notes scanned (`VACUOUS`) | stdout, plus the `VACUOUS` line on stderr — never writes to a note |
 | `.claude/scripts/run-tests.sh` | `0` all controls passed · `1` at least one failed · `130` SIGINT · `143` SIGTERM | stdout only; fixtures in a temp dir, removed on exit |
 | `.claude/scripts/dream-pass.sh` / `.cmd` | `0` OK · `1` NO-ARTIFACT · `2` VIOLATION · `3` REFUSED · `64` unknown `VAULT_AGENT` · `124` TIMEOUT · `127` `claude`, wrapper or Git Bash not found · otherwise the agent's code | `.claude/logs/dream-agent.log`; agent output in `dream-agent.run.log`; `dream-pass.git-state.txt`; `dream-pass.prompt.md` in command mode |

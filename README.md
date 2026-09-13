@@ -19,10 +19,12 @@ your own knowledge.
 **It works with any harness.** The contract, the checker, the rules and the skills are plain
 Markdown and bash, and `AGENTS.md` is the entry point every agent reads. Claude Code gets the
 most automation, because the template ships hooks, subagents and a Read deny for it in `.claude/`.
-Any other harness (Codex, Cursor, Copilot, Gemini CLI and the rest) gets the same contract once
-it reads `AGENTS.md`, natively or because you point it there, plus an opt-in git pre-commit gate
-and a wrapper hook for the scheduled passes. The
-[harness support table](AGENTS.md#8-harness-support) lists exactly what each side enforces. The
+The template also ships working config for Codex CLI, Gemini CLI, Cursor, GitHub Copilot, OpenCode,
+Windsurf / Devin Desktop and Aider, plus a setup snippet for Hermes Agent. Each gets hooks or a
+plugin for the lint where the harness supports one, and every harness gets an opt-in git
+pre-commit gate. [`docs/harnesses/`](docs/harnesses/README.md) has a guide for each, with a prompt
+that has the agent onboard the vault and prove the wiring works, and the
+[harness support table](AGENTS.md#8-harness-support) lists exactly what each harness enforces. The
 repository name and the `.claude/` folder are historical: Claude Code requires that location, and
 nothing in the folder except `settings.json` and one audit hook is Claude-only.
 
@@ -134,18 +136,30 @@ claude-memory-vault/
 ├── AGENTS.md                        # instructions for every harness: tiers, contract, rules, commands
 ├── CLAUDE.md                        # Claude Code bridge: imports AGENTS.md, lists the Claude adapter
 ├── CONTRIBUTING.md
+├── .agents/skills/                  # byte-identical copies of the five skills, for harnesses that read only here
+├── .codex/                          # Codex CLI: config.toml (hooks on) and hooks.json
+├── .gemini/settings.json            # Gemini CLI: loads AGENTS.md, lint and compaction hooks
+├── .geminiignore                    # Gemini CLI: keeps .env and secrets/ out of search
+├── .cursor/hooks.json               # Cursor: lint and compaction hooks
+├── .cursorignore                    # Cursor: blocks agent access to .env and secrets/
+├── opencode.json                    # OpenCode: loads .claude/rules/*.md
+├── .windsurf/hooks.json             # Windsurf / Devin Desktop: lint and secrets read guard
+├── .aider.conf.yml                  # Aider: loads AGENTS.md and the rules; keeps git hooks running
 ├── .github/
+│   ├── hooks/vault.json             # GitHub Copilot: lint hook
 │   ├── workflows/ci.yml             # checks on Linux, macOS, Windows, bash 3.2, plus repo hygiene
 │   └── ISSUE_TEMPLATE/bug_report.yml
 ├── .claude/                         # shared tooling; only settings.json and one hook are Claude-only
 │   ├── settings.json                # Claude Code: registers the three hooks; denies reads of .env and secrets/
 │   ├── githooks/pre-commit          # opt-in commit gate for any harness: runs vault-check.sh
+│   ├── adapters/opencode/vault.js   # OpenCode plugin, opt-in: copy to .opencode/plugins/ to enable
 │   ├── agents/
 │   │   ├── dream-agent.md           # scheduled consolidation; READ-AND-PROPOSE ONLY, one output file
 │   │   └── promotion-agent.md       # weekly medium → long promotion; git-snapshots before writing
 │   ├── hooks/
 │   │   ├── vault-lint.sh            # advisory lint; hook JSON on stdin or file paths as arguments; exits 0
 │   │   ├── postcompact-wrap-up.sh   # one idempotent, size-capped compaction stub per session
+│   │   ├── read-guard.sh            # pre-read hook: blocks .env, .env.*, secrets/ (Windsurf)
 │   │   └── instructions-loaded-log.sh # Claude Code only: audit log of instruction files loaded at start
 │   ├── rules/
 │   │   ├── vault-notes.md           # frontmatter contract, wikilinks, Dataview, filing (path-scoped)
@@ -185,6 +199,7 @@ claude-memory-vault/
 ├── 90-auto-memory/                  # a harness's own auto-memory (e.g. Claude Code's), machine-managed
 ├── 99-archive/                      # retired notes; prefer archiving over deleting
 └── docs/                            # setup, concepts, reference, customizing, agent-onboarding
+    └── harnesses/                   # one guide per harness, each with an onboarding prompt
 ```
 
 The five `EXAMPLE-` notes live in their real tier folders on purpose, so the dashboards and the
@@ -276,9 +291,9 @@ Code gets the most automation), and (strongly recommended) `jq`. See [Requiremen
      `.claude/settings.json` registers the three hooks. `.claude/rules/security.md` loads every
      session; the other three rules files are path-scoped and load only when you touch matching
      paths.
-   - **Any other harness:** make sure it loads `AGENTS.md`. Many do so natively; otherwise add it
-     to the harness's context-file setting. `AGENTS.md` tells the agent to read the four rules
-     files itself, because nothing loads them automatically. Then enable the commit gate, which is
+   - **Any other harness:** open its guide in [`docs/harnesses/`](docs/harnesses/README.md). It
+     lists the one-time setup (usually trusting the project), and a prompt you paste so the agent
+     onboards the vault and proves the hooks fire. Whatever the harness, enable the commit gate,
      the one mechanical check that works without harness hooks:
 
      ```bash
@@ -513,6 +528,7 @@ the most expensive.
 | [`docs/concepts.md`](docs/concepts.md) | The tier model, the promotion path, and why each boundary sits where it does |
 | [`docs/reference.md`](docs/reference.md) | Full reference: frontmatter keys, the C1–C5 invariants, the hooks, the skills, and the agents |
 | [`docs/customizing.md`](docs/customizing.md) | Renaming tiers, adding a tier, changing the frontmatter contract |
+| [`docs/harnesses/`](docs/harnesses/README.md) | One guide per coding-agent harness: the shipped config, what it enforces, one-time setup, and an onboarding prompt with checks |
 | [`docs/agent-onboarding.md`](docs/agent-onboarding.md) | Copy-paste prompts for running the vault with an agent: install check, onboarding a codebase, capture, promotion, consolidation |
 | [`AGENTS.md`](AGENTS.md) | What a coding agent should read first, the rules it must not break, and how it verifies its own work |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | How to propose a change to the template itself |

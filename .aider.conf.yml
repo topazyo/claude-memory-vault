@@ -1,0 +1,17 @@
+# Aider config for this vault. Setup and verification: docs/harnesses/aider.md.
+
+# Load the vault's instructions and rules as read-only context in every session.
+read:
+  - AGENTS.md
+  - .claude/rules/security.md
+  - .claude/rules/untrusted-captures.md
+  - .claude/rules/vault-notes.md
+  - .claude/rules/verification.md
+
+# Aider commits with --no-verify by default, which would skip the vault's
+# commit gate (.claude/githooks/pre-commit). Keep git hooks running.
+git-commit-verify: true
+
+# .gitignore already ignores .aider* (with an exception for this file), so
+# Aider has no reason to rewrite it.
+gitignore: false

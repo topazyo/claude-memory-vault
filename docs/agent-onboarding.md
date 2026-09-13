@@ -16,6 +16,10 @@ that reports success is not evidence of success.
 > [`setup.md`](setup.md) if the vault is not installed yet. `AGENTS.md` in the repository root is
 > the short version an agent reads on arrival.
 
+> **Onboarding the vault into a specific harness?** Use that harness's prompt in
+> [`harnesses/`](harnesses/README.md) instead of section 1 below. Those prompts include this
+> install check and add the harness's own proof that its hooks fire.
+
 ---
 
 ## 1. First run — verify the install
