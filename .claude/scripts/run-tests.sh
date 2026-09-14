@@ -729,6 +729,10 @@ case "${FAKE_MODE:-nothing}" in
                   printf -- '---\ntier: long\ntype: standard\n---\n\nnew\n' > "31-standards/new4.md" ;;
   gitlink)        printf 'gitdir: ../evil-gitdir\n' > "31-standards/ext/.git"
                   printf 'PROMOTION-SUMMARY: promoted=0 pending=0\n' ;;
+  extlink)        mv 31-standards/ext "$FAKE_OUTSIDE"
+                  ln -s "$FAKE_OUTSIDE" 31-standards/ext
+                  printf '#!/bin/sh\ntouch hook-ran\n' > "$FAKE_OUTSIDE/.git/hooks/post-checkout"
+                  printf 'PROMOTION-SUMMARY: promoted=0 pending=0\n' ;;
   hookslink)      rm -rf 31-standards/ext/.git/hooks
                   mkdir -p 31-standards/h
                   printf '#!/bin/sh\ntouch hook-ran\n' > 31-standards/h/post-checkout
@@ -1276,8 +1280,29 @@ if [ -L "$TMP/hookslink-probe" ]; then
   fi
   tripwire_clear
   rm -rf "$RV/31-standards/ext" "$RV/31-standards/h"
+
+  # A whole folder in an allowed area moved outside the vault and replaced by a
+  # link to it. Containment must not follow the link. The link is quarantined, the
+  # pre-pass git files come back as a real folder, and the folder outside is left
+  # as the pass left it.
+  mkdir -p "$RV/31-standards/ext/.git/hooks"
+  printf '[core]\n\tbare = false\n' > "$RV/31-standards/ext/.git/config"
+  printf '#!/bin/sh\n' > "$RV/31-standards/ext/.git/hooks/pre-commit.sample"
+  rm -rf "$TMP/outside-ext"
+  new_case_state extlink
+  expect_rc "promotion-pass: agent swaps a folder holding a nested repository for a link outside the vault -> VIOLATION" 2 \
+    "$(runner promotion-pass.sh extlink FAKE_OUTSIDE="$TMP/outside-ext")"
+  if [ -d "$RV/31-standards/ext" ] && [ ! -L "$RV/31-standards/ext" ] && [ -f "$RV/31-standards/ext/.git/config" ] \
+     && quarantined 31-standards/ext && [ -f "$TMP/outside-ext/.git/config" ] \
+     && [ -f "$TMP/outside-ext/.git/hooks/pre-commit.sample" ]; then
+    ok "the link is quarantined, the git files are restored in the vault, and nothing is moved through the link"
+  else
+    bad "a folder replaced by a link outside the vault was contained through the link, or not at all"
+  fi
+  tripwire_clear
+  rm -rf "$RV/31-standards/ext" "$TMP/outside-ext"
 else
-  printf '  SKIP  nested hooks folder replaced by a symlink: ln -s does not create symlinks here (not counted)\n'
+  printf '  SKIP  nested hooks folder or its parent replaced by a symlink: ln -s does not create symlinks here (not counted)\n'
 fi
 rm -f "$TMP/hookslink-probe"
 
@@ -1355,7 +1380,8 @@ sf_got="$( . "$ROOT/.claude/scripts/lib/runner-common.sh" && printf '%s\n' \
   '31-standards/ext/.git/modules/refs/config' '31-standards/ext/.git/modules/refs/hooks/post-checkout' \
   '31-standards/ext/.git/worktrees/logs/commondir' '31-standards/ext/.git/logs/refs/heads/config' \
   '31-standards/ext/.git/info/attributes' '31-standards/ext/.git/objects/info/alternates' \
-  '31-standards/ext/.git/refs/tags/hooks/x' '31-standards/ext/.git/refs/remotes/origin/config' | steering_filter | tr '\n' '|')"
+  '31-standards/ext/.git/refs/tags/hooks/x' '31-standards/ext/.git/refs/remotes/origin/config' \
+  '31-standards/ext/.git/refs/prefetch/remotes/origin/config' '31-standards/ext/.git/refs/notes/hooks' | steering_filter | tr '\n' '|')"
 if [ "$sf_got" = '31-standards/.claude|40-llm-wiki/wiki/sub/.agents|notes/AGENTS.override.md|.GitHub|40-llm-wiki/wiki/ext/.git|31-standards/ext/.git/config|31-standards/ext/.git/hooks/post-checkout|31-standards/ext/.git/modules/refs/config|31-standards/ext/.git/modules/refs/hooks/post-checkout|31-standards/ext/.git/worktrees/logs/commondir|31-standards/ext/.git/info/attributes|31-standards/ext/.git/objects/info/alternates|' ]; then
   ok "steering_filter matches harness folders as the last component, AGENTS.override.md, nested .git entries and their code files (in a submodule or worktree named refs or logs too), and ignores notes, logs, branches, tags and objects"
 else
@@ -1383,16 +1409,46 @@ printf 'x\n' > "$SNR/.git/modules/ext/refs/heads/config"
 printf 'x\n' > "$SNR/.git/modules/ext/logs/refs/heads/config"
 printf 'x\n' > "$SNR/.git/modules/refs/config"
 printf 'x\n' > "$SNR/.git/modules/refs/hooks/post-checkout"
+mkdir -p "$SNR/.git/modules/ext/refs/prefetch/remotes/origin"
+printf 'x\n' > "$SNR/.git/modules/ext/refs/prefetch/remotes/origin/config"
+ln -s ../../../elsewhere "$SNR/.git/modules/ext/info" 2>/dev/null
 ( . "$ROOT/.claude/scripts/lib/runner-common.sh" && snapshot_tree "$SNR" "$TMP/snap-refs.txt" )
 if grep -q ' \./\.git/modules/ext/config$' "$TMP/snap-refs.txt" \
    && grep -q ' \./\.git/modules/refs/config$' "$TMP/snap-refs.txt" \
    && grep -q ' \./\.git/modules/refs/hooks/post-checkout$' "$TMP/snap-refs.txt" \
-   && ! grep -q 'refs/heads/config' "$TMP/snap-refs.txt"; then
-  ok "the git-directory fence keeps a submodule named refs and leaves out branches named config"
+   && ! grep -q 'refs/heads/config' "$TMP/snap-refs.txt" \
+   && ! grep -q 'refs/prefetch' "$TMP/snap-refs.txt"; then
+  ok "the git-directory fence keeps a submodule named refs and leaves out branches and prefetched refs named config"
 else
   bad "the git-directory fence got refs wrong -- snapshot: $(tr '\n' '|' < "$TMP/snap-refs.txt")"
 fi
+if [ -L "$SNR/.git/modules/ext/info" ]; then
+  if grep -q '^L[0-9]* 0 \./\.git/modules/ext/info$' "$TMP/snap-refs.txt"; then
+    ok "a symlink under .git/modules is fenced as a link"
+  else
+    bad "a symlink under .git/modules was left out of the fence"
+  fi
+else
+  printf '  SKIP  symlink under .git/modules: ln -s does not create symlinks here (not counted)\n'
+fi
 rm -rf "$SNR"
+# For a vault that is a linked worktree, the shared git directory's modules are
+# fenced by their path inside it, so a folder named refs/heads above that
+# directory does not hide them.
+WTC="$TMP/refs/heads/common"
+WTV="$TMP/wt-vault"
+rm -rf "$TMP/refs" "$WTV"
+mkdir -p "$WTC/worktrees/wt" "$WTC/modules/m/hooks" "$WTV"
+printf '../..\n' > "$WTC/worktrees/wt/commondir"
+printf '#!/bin/sh\n' > "$WTC/modules/m/hooks/post-checkout"
+printf 'gitdir: %s\n' "$WTC/worktrees/wt" > "$WTV/.git"
+( . "$ROOT/.claude/scripts/lib/runner-common.sh" && snapshot_tree "$WTV" "$TMP/snap-wt.txt" )
+if grep -q ' \./\.git-common/modules/m/hooks/post-checkout$' "$TMP/snap-wt.txt"; then
+  ok "a worktree vault's shared submodule hooks are fenced under .git-common, even below a folder named refs/heads"
+else
+  bad "a worktree vault's shared submodule hooks were not fenced -- snapshot: $(tr '\n' '|' < "$TMP/snap-wt.txt")"
+fi
+rm -rf "$TMP/refs" "$WTV"
 
 # PATH shims that break one tool in one way, so a failure the runner must handle
 # can be produced on every platform without root or a full disk.
@@ -2071,8 +2127,33 @@ if [ -n "$(find "$TMP/state-open" -maxdepth 0 -perm -0002 2>/dev/null)" ]; then
   else
     bad "a world-writable state directory was refused for another reason, or silently"
   fi
+  # A private state directory inside a folder every account can write, with no
+  # sticky bit, can be renamed away by another account and replaced.
+  mkdir -p "$TMP/open-no-sticky"
+  chmod 777 "$TMP/open-no-sticky" 2>/dev/null
+  rm -rf "$TMP/open-no-sticky/state"
+  expect_rc "VAULT_STATE_DIR inside a world-writable folder with no sticky bit -> refused" 1 \
+    "$(runner dream-pass.sh journal VAULT_STATE_DIR="$TMP/open-no-sticky/state")"
+  if grep -q "state directory $TMP/open-no-sticky/state is inside a folder every account can write that has no sticky bit" "$RV/.claude/logs/dream-agent.log" 2>/dev/null; then
+    ok "the refusal says the state directory is inside a world-writable folder with no sticky bit"
+  else
+    bad "a state directory in a world-writable folder with no sticky bit was refused for another reason, or silently"
+  fi
+  rm -rf "$TMP/open-no-sticky"
 else
-  printf '  SKIP  world-writable state directory: chmod 777 sets no such mode here (not counted)\n'
+  printf '  SKIP  world-writable state directory and folder: chmod 777 sets no such mode here (not counted)\n'
+fi
+# A mode check that cannot run refuses the run, rather than passing it.
+mkdir -p "$SHIM/find-perm"
+printf '#!/bin/sh\nfor a in "$@"; do case "$a" in -perm) exit 1 ;; esac; done\nexec "%s" "$@"\n' "$(command -v find)" > "$SHIM/find-perm/find"
+chmod +x "$SHIM/find-perm/find"
+rm -f "$REC.argv"
+expect_rc "find cannot check the state directory's mode -> refused" 1 \
+  "$(runner dream-pass.sh journal FAKE_RECORD="$REC" PATH="$SHIM/find-perm:$PATH")"
+if [ ! -f "$REC.argv" ] && grep -q 'could not be checked for write access by other accounts' "$RV/.claude/logs/dream-agent.log" 2>/dev/null; then
+  ok "a failed mode check never starts the agent, and the log says why"
+else
+  bad "a failed mode check started the agent, or logged no reason"
 fi
 
 # The state directory's id comes from the vault's resolved path, so every
