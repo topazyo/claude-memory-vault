@@ -11,7 +11,12 @@
 # Its own definition (.claude/agents/promotion-agent.md) requires a git snapshot
 # before any write. This runner adds a second, mechanical fence: it snapshots
 # the vault before the run and fails the run if anything changed OUTSIDE the
-# areas a promotion pass may write. Run it manually a few times first.
+# areas a promotion pass may write. A change to a steering or execution surface
+# - including an instruction file nested inside the long tier, such as
+# 31-standards/CLAUDE.md - is also CONTAINED: quarantined outside the vault,
+# restored from a pre-pass backup, and a tripwire stops every later run until a
+# human clears it. A normal commit by the agent is fine; a rewritten HEAD is not.
+# See "Containment" in lib/runner-common.sh. Run it manually a few times first.
 #
 # EXAMPLE cron entry (Saturday 20:00):
 #   0 20 * * 6 /path/to/your-vault/.claude/scripts/promotion-pass.sh
@@ -23,112 +28,211 @@
 #   VAULT_ALLOW_UNENFORCED_TOOLS  command mode: set to 1 once the wrapper is
 #                           sandboxed (git only, no network), or the run is refused
 #   PROMOTION_PASS_TIMEOUT  seconds before a hung run is killed (default 5400)
+#   VAULT_STATE_DIR         per-vault state outside the vault: quarantine,
+#                           tripwire copy, in-flight marker (default under
+#                           %LOCALAPPDATA% or ~/.local/state)
 #
 # Exit codes:
 #   0    the pass reported a summary or changed the long tier, and wrote nowhere else
-#   1    NO-ARTIFACT: exited 0 with no summary line and no long-tier change
+#   1    NO-ARTIFACT: exited 0 with no summary line and no long-tier change,
+#        or the runner could not set itself up (temp dir, state directory, backup,
+#        prompt file, in-flight marker)
 #   2    VIOLATION: files outside the allowed write areas changed during the run
+#        (steering surfaces among them are contained and the tripwire is set)
 #   3    REFUSED: command mode without VAULT_ALLOW_UNENFORCED_TOOLS=1
 #   64   VAULT_AGENT is not claude or command
+#   70   TRIPWIRE-ERROR: containment was needed but no tripwire could be written
+#   75   LOCKED: another pass is still running
+#   78   TRIPWIRE: a tripwire is set, or an earlier pass died before containment
 #   124  TIMEOUT: the watchdog killed a run that exceeded PROMOTION_PASS_TIMEOUT
 #   127  the claude binary or the VAULT_AGENT_CMD wrapper was not found
 #   *    any other non-zero status is the agent's own
 
 set -u
 
-ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-cd "$ROOT" || exit 1
-# shellcheck source=lib/runner-common.sh
-. "$ROOT/.claude/scripts/lib/runner-common.sh"
+RUNNER=promotion-pass
+CONTAINMENT_CHECKED=0
+INFLIGHT=0
+SNAP_DIR=""
 
-LOG_DIR="$ROOT/.claude/logs"
-mkdir -p "$LOG_DIR" 2>/dev/null
-LOG="$LOG_DIR/promotion-agent.log"
-RUN_OUT="$LOG_DIR/promotion-agent.run.log"
-TIMEOUT="${PROMOTION_PASS_TIMEOUT:-5400}"
-
-# The agent is asked to end with this exact line. It is the positive evidence
-# that a pass reached its end: an error dump, however long, does not contain it.
-SUMMARY_MARKER='PROMOTION-SUMMARY:'
-
-agent_preflight "$LOG"
-preflight_rc=$?
-[ "$preflight_rc" -eq 0 ] || exit "$preflight_rc"
-
-TASK="Run this week's promotion pass per your instructions: scan 20-projects/_logs/ for promotion candidates, run the trust sweep over the long-term notes, and write the ones that meet the promotion bar. Follow your write-safety rules -- take a git snapshot before any write and abort on unexpected drift. End your final message with one line of the form: ${SUMMARY_MARKER} promoted=<n> pending=<n>"
-PROMPT_REL=".claude/logs/promotion-pass.prompt.md"
-if [ "$AGENT_KIND" = command ]; then
-  DEF="$ROOT/.claude/agents/promotion-agent.md"
-  if [ ! -f "$DEF" ]; then
-    printf '[%s] ERROR: agent definition not found: %s\n' "$(ts)" "$DEF" >> "$LOG"
-    exit 1
+# On any exit: clear the in-flight marker only once containment has checked the
+# pass, then remove the temporary directory.
+on_exit() {
+  if [ "$CONTAINMENT_CHECKED" -eq 1 ]; then
+    clear_inflight "$ROOT" "$STATE"
+    rm -f "$STATE/inflight-backup.tar" 2>/dev/null
   fi
-  # Remove any earlier prompt first, so a failed write can never leave the
-  # agent reading a stale one.
-  rm -f "$ROOT/$PROMPT_REL"
-  if ! write_agent_prompt "$DEF" "$TASK" "$ROOT/$PROMPT_REL"; then
-    printf '[%s] ERROR: could not write the prompt file %s\n' "$(ts)" "$PROMPT_REL" >> "$LOG"
-    exit 1
-  fi
-fi
-
-SNAP_DIR="$(mktemp -d 2>/dev/null || mktemp -d -t promopass)" || {
-  printf '[%s] ERROR: could not create a temporary directory\n' "$(ts)" >> "$LOG"
-  exit 1
+  [ -n "$SNAP_DIR" ] && rm -rf "$SNAP_DIR"
 }
-trap 'rm -rf "$SNAP_DIR"' EXIT
-trap 'rm -rf "$SNAP_DIR"; exit 130' INT
-trap 'rm -rf "$SNAP_DIR"; exit 143' TERM
 
-snapshot_tree "$ROOT" "$SNAP_DIR/before" "$AGENT_KIND"
-printf '[%s] starting promotion-agent weekly pass via %s (timeout %ss)\n' "$(ts)" "$AGENT_KIND" "$TIMEOUT" >> "$LOG"
+# On INT or TERM: stop the agent, and if it had started, containment cannot be
+# trusted to have run, so set the tripwire now rather than leave the vault to the
+# next pass's baseline.
+on_signal() {
+  [ -n "${RUN_PID:-}" ] && kill -TERM "$RUN_PID" 2>/dev/null
+  if [ "$INFLIGHT" -eq 1 ] && [ "$CONTAINMENT_CHECKED" -eq 0 ]; then
+    : > "$SNAP_DIR/empty"
+    if write_tripwire "$ROOT" "$STATE" "$RUNNER" \
+         "the pass was interrupted by a signal before containment ran, so the vault's steering surfaces are unverified (the pre-pass backup is $STATE/inflight-backup.tar)" \
+         "(none, because containment did not run)" "$SNAP_DIR/empty"; then
+      clear_inflight "$ROOT" "$STATE"
+      printf '[%s] INTERRUPTED before containment. Tripwire set.\n' "$(ts)" >> "$LOG"
+    else
+      # With no tripwire the marker stays, so the next run still refuses.
+      printf '[%s] TRIPWIRE-ERROR: interrupted before containment and no tripwire could be written. The in-flight marker is kept.\n' "$(ts)" >> "$LOG"
+    fi
+  fi
+  exit "$1"
+}
 
-# This run's output goes to its own file, so the evidence checked below is the
-# agent's output from THIS run - never the runner's own log lines, never a
-# previous run's. It is appended to the history log afterwards.
-: > "$SNAP_DIR/run"
+# Everything else runs inside main, and the script's last lines call it and
+# exit. Bash reads a script as it executes it, so a change made to this file
+# while a pass runs could otherwise be executed by this very run. A function
+# body is parsed in full before any of it runs.
+main() {
+  ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+  cd "$ROOT" || exit 1
+  # shellcheck source=lib/runner-common.sh
+  . "$ROOT/.claude/scripts/lib/runner-common.sh"
 
-run_agent "$TIMEOUT" "$SNAP_DIR/run" promotion-agent "$TASK" "$PROMPT_REL"
+  LOG_DIR="$ROOT/.claude/logs"
+  mkdir -p "$LOG_DIR" 2>/dev/null
+  LOG="$LOG_DIR/promotion-agent.log"
+  RUN_OUT="$LOG_DIR/promotion-agent.run.log"
+  TIMEOUT="${PROMOTION_PASS_TIMEOUT:-5400}"
+  STATE="$(vault_state_dir "$ROOT" 2>>"$LOG")"
+  # From here on the resolved path that was checked, so pointing a symlink
+  # elsewhere after the check changes nothing.
+  STATE_REAL="$(state_dir_ready "$STATE" "$ROOT")"
+  state_rc=$?
+  if [ "$state_rc" -ne 0 ]; then
+    printf '[%s] ERROR: the state directory %s %s. Refusing to run.\n' "$(ts)" "$STATE" "$(state_dir_problem "$state_rc")" >> "$LOG"
+    exit 1
+  fi
+  STATE="$STATE_REAL"
 
-cat "$SNAP_DIR/run" >> "$RUN_OUT" 2>/dev/null
+  # The agent is asked to end with this exact line. It is the positive evidence
+  # that a pass reached its end: an error dump, however long, does not contain it.
+  SUMMARY_MARKER='PROMOTION-SUMMARY:'
 
-snapshot_tree "$ROOT" "$SNAP_DIR/after" "$AGENT_KIND"
-changed_paths "$SNAP_DIR/before" "$SNAP_DIR/after" > "$SNAP_DIR/changed"
+  tripwire_check "$ROOT" "$STATE" "$RUNNER" "$LOG"
+  guard_rc=$?
+  [ "$guard_rc" -eq 0 ] || exit "$guard_rc"
 
-if [ "$RUN_TIMED_OUT" -eq 1 ]; then
-  printf '[%s] TIMEOUT: promotion-agent exceeded %ss and was killed (status %s)\n' \
-    "$(ts)" "$TIMEOUT" "$RUN_RC" >> "$LOG"
-  exit 124
-fi
+  agent_preflight "$LOG"
+  preflight_rc=$?
+  [ "$preflight_rc" -eq 0 ] || exit "$preflight_rc"
 
-printf '[%s] promotion-agent exited with code %s\n' "$(ts)" "$RUN_RC" >> "$LOG"
+  TASK="Run this week's promotion pass per your instructions: scan 20-projects/_logs/ for promotion candidates, run the trust sweep over the long-term notes, and write the ones that meet the promotion bar. Follow your write-safety rules -- take a git snapshot before any write and abort on unexpected drift. End your final message with one line of the form: ${SUMMARY_MARKER} promoted=<n> pending=<n>"
+  PROMPT_REL=".claude/logs/promotion-pass.prompt.md"
+  if [ "$AGENT_KIND" = command ]; then
+    DEF="$ROOT/.claude/agents/promotion-agent.md"
+    if [ ! -f "$DEF" ]; then
+      printf '[%s] ERROR: agent definition not found: %s\n' "$(ts)" "$DEF" >> "$LOG"
+      exit 1
+    fi
+    # Remove any earlier prompt first, so a failed write can never leave the
+    # agent reading a stale one.
+    rm -f "$ROOT/$PROMPT_REL"
+    if ! write_agent_prompt "$DEF" "$TASK" "$ROOT/$PROMPT_REL"; then
+      printf '[%s] ERROR: could not write the prompt file %s\n' "$(ts)" "$PROMPT_REL" >> "$LOG"
+      exit 1
+    fi
+  fi
 
-# WRITE FENCE. A promotion pass may write long-tier notes (never their
-# templates), a promotion report in 20-projects/_logs/, and nothing else. An
-# auto-written compaction stub is tolerated. Anything else - a rule, an agent
-# definition, CLAUDE.md, someone's daily note - is a violation.
-grep -vE '^(31-standards|40-llm-wiki/wiki)/' "$SNAP_DIR/changed" \
-  | grep -vE '^20-projects/_logs/(promotion-|compaction-)[^/]*\.md$' > "$SNAP_DIR/outside"
-grep -E '^(31-standards|40-llm-wiki/wiki)/(.*/)?templates/' "$SNAP_DIR/changed" >> "$SNAP_DIR/outside"
-if [ -s "$SNAP_DIR/outside" ]; then
-  printf '[%s] VIOLATION: files outside the allowed write areas changed during the run:\n' "$(ts)" >> "$LOG"
-  LC_ALL=C sort -u "$SNAP_DIR/outside" | sed 's/^/    /' >> "$LOG"
-  exit 2
-fi
+  SNAP_DIR="$(mktemp -d 2>/dev/null || mktemp -d -t promopass)" || {
+    SNAP_DIR=""
+    printf '[%s] ERROR: could not create a temporary directory\n' "$(ts)" >> "$LOG"
+    exit 1
+  }
+  trap on_exit EXIT
+  trap 'on_signal 130' INT
+  trap 'on_signal 143' TERM
+  mkdir -p "$SNAP_DIR/nohooks"
 
-[ "$RUN_RC" -ne 0 ] && exit "$RUN_RC"
+  snapshot_tree "$ROOT" "$SNAP_DIR/before"
+  # Containment needs the pre-pass copy. Without it, refuse rather than run a pass
+  # whose planted files could not be undone.
+  if ! backup_steering "$ROOT" "$SNAP_DIR/before" "$SNAP_DIR/steering.tar"; then
+    printf '[%s] ERROR: could not back up the steering surfaces (tar missing, or the archive is incomplete). Refusing to run without containment.\n' "$(ts)" >> "$LOG"
+    exit 1
+  fi
+  HEAD_BEFORE="$(head_state "$ROOT" "$SNAP_DIR/nohooks")"
+  cp "$SNAP_DIR/steering.tar" "$STATE/inflight-backup.tar" 2>/dev/null
+  # Without the marker outside the vault, a pass killed mid-run would leave no
+  # trace the next run can trust. Refuse rather than start the agent.
+  if ! mark_inflight "$ROOT" "$STATE" "$RUNNER"; then
+    clear_inflight "$ROOT" "$STATE"
+    printf '[%s] ERROR: could not write the in-flight marker in the state directory %s. Refusing to run.\n' "$(ts)" "$STATE" >> "$LOG"
+    exit 1
+  fi
+  INFLIGHT=1
+  printf '[%s] starting promotion-agent weekly pass via %s (timeout %ss)\n' "$(ts)" "$AGENT_KIND" "$TIMEOUT" >> "$LOG"
 
-# ARTIFACT ASSERTION. Promoting nothing is a legitimate outcome, so a pass may
-# change no note at all - but then it must say so with the summary line. A pass
-# with neither a long-tier change nor a summary produced no evidence it ran.
-summary="$(grep -E "^${SUMMARY_MARKER}" "$SNAP_DIR/run" | tail -n 1)"
-long_changes="$(awk '/^(31-standards|40-llm-wiki\/wiki)\//{n++} END{print n+0}' "$SNAP_DIR/changed")"
-if [ -z "$summary" ] && [ "${long_changes:-0}" -eq 0 ]; then
-  printf '[%s] NO-ARTIFACT: exited 0 with no %s line and no long-tier change\n' \
-    "$(ts)" "$SUMMARY_MARKER" >> "$LOG"
-  exit 1
-fi
+  # This run's output goes to its own file, so the evidence checked below is the
+  # agent's output from THIS run - never the runner's own log lines, never a
+  # previous run's. It is appended to the history log afterwards.
+  : > "$SNAP_DIR/run"
 
-printf '[%s] OK: %s long-tier file(s) changed; %s\n' \
-  "$(ts)" "${long_changes:-0}" "${summary:-no summary line}" >> "$LOG"
-exit 0
+  run_agent "$TIMEOUT" "$SNAP_DIR/run" promotion-agent "$TASK" "$PROMPT_REL"
+
+  cat "$SNAP_DIR/run" >> "$RUN_OUT" 2>/dev/null
+
+  snapshot_tree "$ROOT" "$SNAP_DIR/after"
+  changed_paths "$SNAP_DIR/before" "$SNAP_DIR/after" > "$SNAP_DIR/changed"
+
+  # CONTAINMENT comes first, before the exit code is even looked at: a pass that
+  # timed out may still have planted something, and nothing from the vault may
+  # run until it has been put back.
+  contain_pass "$ROOT" "$STATE" "$RUNNER" "$SNAP_DIR" "$LOG" "$HEAD_BEFORE"
+  contain_rc=$?
+  if [ "$contain_rc" -ne 0 ]; then
+    exit "$contain_rc"
+  fi
+  CONTAINMENT_CHECKED=1
+  if [ "$CONTAINED" -eq 1 ]; then
+    [ "$RUN_TIMED_OUT" -eq 1 ] && printf '[%s] (the run had also exceeded %ss and was killed)\n' "$(ts)" "$TIMEOUT" >> "$LOG"
+    exit 2
+  fi
+
+  if [ "$RUN_TIMED_OUT" -eq 1 ]; then
+    printf '[%s] TIMEOUT: promotion-agent exceeded %ss and was killed (status %s)\n' \
+      "$(ts)" "$TIMEOUT" "$RUN_RC" >> "$LOG"
+    exit 124
+  fi
+
+  printf '[%s] promotion-agent exited with code %s\n' "$(ts)" "$RUN_RC" >> "$LOG"
+
+  # WRITE FENCE. A promotion pass may write long-tier notes (never their
+  # templates), a promotion report in 20-projects/_logs/, and nothing else. An
+  # auto-written compaction stub is tolerated. Anything else - a rule, an agent
+  # definition, CLAUDE.md, someone's daily note - is a violation.
+  grep -vE '^(31-standards|40-llm-wiki/wiki)/' "$SNAP_DIR/changed" \
+    | grep -vE '^20-projects/_logs/(promotion-|compaction-)[^/]*\.md$' > "$SNAP_DIR/outside"
+  grep -E '^(31-standards|40-llm-wiki/wiki)/(.*/)?templates/' "$SNAP_DIR/changed" >> "$SNAP_DIR/outside"
+  if [ -s "$SNAP_DIR/outside" ]; then
+    printf '[%s] VIOLATION: files outside the allowed write areas changed during the run:\n' "$(ts)" >> "$LOG"
+    LC_ALL=C sort -u "$SNAP_DIR/outside" | sed 's/^/    /' >> "$LOG"
+    exit 2
+  fi
+
+  [ "$RUN_RC" -ne 0 ] && exit "$RUN_RC"
+
+  # ARTIFACT ASSERTION. Promoting nothing is a legitimate outcome, so a pass may
+  # change no note at all - but then it must say so with the summary line. A pass
+  # with neither a long-tier change nor a summary produced no evidence it ran.
+  summary="$(grep -E "^${SUMMARY_MARKER}" "$SNAP_DIR/run" | tail -n 1)"
+  long_changes="$(awk '/^(31-standards|40-llm-wiki\/wiki)\//{n++} END{print n+0}' "$SNAP_DIR/changed")"
+  if [ -z "$summary" ] && [ "${long_changes:-0}" -eq 0 ]; then
+    printf '[%s] NO-ARTIFACT: exited 0 with no %s line and no long-tier change\n' \
+      "$(ts)" "$SUMMARY_MARKER" >> "$LOG"
+    exit 1
+  fi
+
+  printf '[%s] OK: %s long-tier file(s) changed; %s\n' \
+    "$(ts)" "${long_changes:-0}" "${summary:-no summary line}" >> "$LOG"
+  exit 0
+}
+
+main "$@"
+exit $?
