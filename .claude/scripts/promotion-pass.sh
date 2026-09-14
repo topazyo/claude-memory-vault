@@ -44,8 +44,8 @@
 #   3    REFUSED: command mode without VAULT_ALLOW_UNENFORCED_TOOLS=1
 #   64   VAULT_AGENT is not claude or command
 #   70   TRIPWIRE-ERROR: containment was needed but no tripwire could be written
-#   75   LOCKED: another pass held the run lock for RUN_LOCK_WAIT seconds, or
-#        git's index.lock is more than 10 minutes old
+#   75   LOCKED: another pass held the run lock, or git's index.lock stayed, for
+#        RUN_LOCK_WAIT seconds, or the index.lock is more than 10 minutes old
 #   78   TRIPWIRE: a tripwire is set, or an earlier pass died before containment
 #   124  TIMEOUT: the watchdog killed a run that exceeded PROMOTION_PASS_TIMEOUT
 #   127  the claude binary or the VAULT_AGENT_CMD wrapper was not found
@@ -103,7 +103,12 @@ main() {
   mkdir -p "$LOG_DIR" 2>/dev/null
   LOG="$LOG_DIR/promotion-agent.log"
   RUN_OUT="$LOG_DIR/promotion-agent.run.log"
-  TIMEOUT="${PROMOTION_PASS_TIMEOUT:-5400}"
+  # Settings that reach arithmetic are checked first. A value that is not a whole
+  # number would abort the runner with nothing in the log, and bash evaluates a
+  # variable in arithmetic as an expression.
+  TIMEOUT="$(uint_setting PROMOTION_PASS_TIMEOUT 5400 1 "$LOG")"
+  WATCHDOG_GRACE="$(uint_setting WATCHDOG_GRACE 15 0 "$LOG")"
+  WATCHDOG_POLL="$(uint_setting WATCHDOG_POLL 5 1 "$LOG")"
   STATE="$(vault_state_dir "$ROOT" 2>>"$LOG")"
   if ! state_dir_ready "$STATE"; then
     printf '[%s] ERROR: the state directory %s could not be created, or is not a directory this account owns and can write. Refusing to run.\n' "$(ts)" "$STATE" >> "$LOG"
@@ -120,7 +125,7 @@ main() {
   trap on_exit EXIT
   trap 'on_signal 130' INT
   trap 'on_signal 143' TERM
-  run_lock_acquire "$STATE" "$ROOT" "$RUNNER" "$LOG" "$((TIMEOUT + ${WATCHDOG_GRACE:-15} + 900))"
+  run_lock_acquire "$STATE" "$ROOT" "$RUNNER" "$LOG" "$((TIMEOUT + WATCHDOG_GRACE + 900))"
   lock_rc=$?
   [ "$lock_rc" -eq 0 ] || exit "$lock_rc"
 

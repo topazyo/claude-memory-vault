@@ -1362,9 +1362,9 @@ plant_lock() {  # plant_lock <runner> <pid> <started> <longest> [nonce]
   printf 'runner=%s\npid=%s\nwinpid=\nstarted=%s\nlongest=%s\nnonce=%s\n' "$1" "$2" "$3" "$4" "${5:-planted}" > "$LOCK/owner"
 }
 now_s="$(date +%s)"
-# A live holder: a process whose command line names the runner's script (the
-# trailing ":" keeps bash from replacing itself with sleep). And a process that
-# merely has a pid, as a reused one would: its command line names no runner.
+# The live holder is a process whose command line names the runner's script (the
+# trailing ":" keeps bash from replacing itself with sleep). The second process
+# merely has a pid, as a reused one would, and its command line names no runner.
 bash -c 'sleep 600; :' dream-pass.sh &
 holder_pid=$!
 sleep 600 &
@@ -1409,11 +1409,13 @@ plant_lock promotion-pass 999999 "$((now_s - 5000))" 10
 expect_rc "a dead runner's lock older than the longest run it declared -> reclaimed, OK" 0 "$(runner dream-pass.sh journal)"
 
 # Owner fields are data. Bash arithmetic on a raw value evaluates it, and an
-# array subscript in it runs a command substitution.
+# array subscript in it runs a command substitution. The start time is not a
+# number, so the lock's age comes from its directory, and that path does
+# arithmetic on the declared longest run, which holds the payload.
 new_case_state lock-inject
 rm -rf "$RV/lock-payload-ran"
-plant_lock dream-pass 999999 'now[$(mkdir lock-payload-ran)]' 10
-expect_rc "a start time holding an arithmetic payload -> LOCKED (judged by the lock's own age)" 75 "$(runner dream-pass.sh journal)"
+plant_lock dream-pass 999999 'now[$(mkdir lock-payload-ran)]' 'x[$(mkdir lock-payload-ran)]'
+expect_rc "owner fields holding an arithmetic payload -> LOCKED (judged by the lock's own age)" 75 "$(runner dream-pass.sh journal)"
 touch -t 200001010000 "$LOCK" 2>/dev/null
 expect_rc "the same lock once its directory is old -> reclaimed, OK" 0 "$(runner dream-pass.sh journal)"
 if [ ! -e "$RV/lock-payload-ran" ]; then ok "the payload in the owner file never ran"
@@ -1424,15 +1426,43 @@ mkdir -p "$CASE_STATE/run.lock"
 touch -t 200001010000 "$CASE_STATE/run.lock" 2>/dev/null
 expect_rc "a lock directory with no owner file, older than two minutes -> reclaimed, OK" 0 "$(runner dream-pass.sh journal)"
 
-# The reclaim itself: it never touches a lock while another reclaim holds the
+# An owner file with no nonce is treated as no owner file. A fresh one is a runner
+# still writing it, and must not be reclaimed.
+new_case_state lock-nononce
+mkdir -p "$CASE_STATE/run.lock"
+printf 'runner=dream-pass\npid=999999\nstarted=1\nlongest=10\n' > "$CASE_STATE/run.lock/owner"
+expect_rc "a fresh lock whose owner file has no nonce -> LOCKED" 75 "$(runner dream-pass.sh journal)"
+touch -t 200001010000 "$CASE_STATE/run.lock" 2>/dev/null
+expect_rc "the same lock once older than two minutes -> reclaimed, OK" 0 "$(runner dream-pass.sh journal)"
+
+# An owner file this account cannot read belongs to someone, however old.
+new_case_state lock-unreadable
+plant_lock dream-pass 999999 1 10
+chmod 000 "$LOCK/owner" 2>/dev/null
+if [ ! -r "$LOCK/owner" ]; then
+  touch -t 200001010000 "$LOCK" 2>/dev/null
+  expect_rc "an old lock whose owner file cannot be read -> LOCKED, never reclaimed" 75 "$(runner dream-pass.sh journal)"
+  chmod 644 "$LOCK/owner" 2>/dev/null
+else
+  printf '  SKIP  unreadable owner file: chmod 000 leaves files readable here (not counted)\n'
+fi
+
+# The clock was set back after a dead runner took the lock, so its start time and
+# its directory are both in the future. The runner being gone decides.
+new_case_state lock-future
+plant_lock dream-pass 999999 "$((now_s + 400000))" 10
+touch -t 209901010000 "$LOCK" 2>/dev/null
+expect_rc "a dead runner's lock dated in the future -> reclaimed, OK" 0 "$(runner dream-pass.sh journal)"
+
+# The reclaim itself never touches a lock while another reclaim holds the
 # guard, never touches a lock it did not judge, and removes one it did.
 new_case_state lock-units
 plant_lock dream-pass 999999 1 10 judged-nonce
 mkdir "$LOCK.reclaim"
-( . "$RV/.claude/scripts/lib/runner-common.sh"; run_lock_reclaim "$LOCK" judged-nonce "$TMP/unit.log" )
+( . "$RV/.claude/scripts/lib/runner-common.sh"; run_lock_reclaim "$LOCK" judged-nonce "$CASE_STATE" "$TMP/unit.log" )
 guard_rc=$?
 rmdir "$LOCK.reclaim"
-( . "$RV/.claude/scripts/lib/runner-common.sh"; run_lock_reclaim "$LOCK" some-other-nonce "$TMP/unit.log" )
+( . "$RV/.claude/scripts/lib/runner-common.sh"; run_lock_reclaim "$LOCK" some-other-nonce "$CASE_STATE" "$TMP/unit.log" )
 other_rc=$?
 if [ "$guard_rc" -ne 0 ] && [ "$other_rc" -ne 0 ] && grep -q 'nonce=judged-nonce' "$LOCK/owner" 2>/dev/null \
    && [ -z "$(ls -d "$LOCK".stale.* 2>/dev/null)" ]; then
@@ -1440,12 +1470,53 @@ if [ "$guard_rc" -ne 0 ] && [ "$other_rc" -ne 0 ] && grep -q 'nonce=judged-nonce
 else
   bad "a reclaim touched a lock it must not (guard rc $guard_rc, other-nonce rc $other_rc)"
 fi
-( . "$RV/.claude/scripts/lib/runner-common.sh"; run_lock_reclaim "$LOCK" judged-nonce "$TMP/unit.log" )
+( . "$RV/.claude/scripts/lib/runner-common.sh"; run_lock_reclaim "$LOCK" judged-nonce "$CASE_STATE" "$TMP/unit.log" )
 judged_rc=$?
 if [ "$judged_rc" -eq 0 ] && [ ! -e "$LOCK" ] && [ ! -e "$LOCK.reclaim" ]; then
   ok "a reclaim of the lock it judged removes it, and releases its guard"
 else
   bad "a reclaim of the judged lock failed (rc $judged_rc)"
+fi
+# A lock that changes between the check and the move. A mv function stands in for
+# another runner. It releases the judged lock and takes a new one just before the
+# move, and in the second case yet another runner takes the empty slot just before
+# the lock is put back.
+race_reclaim() {  # race_reclaim <also-fill-slot: 0|1>
+  plant_lock dream-pass 999999 1 10 judged-nonce
+  : > "$TMP/unit.log"
+  ( . "$RV/.claude/scripts/lib/runner-common.sh"
+    mv_calls=0
+    fill="$1"
+    mv() {
+      mv_calls=$((mv_calls + 1))
+      if [ "$mv_calls" -eq 1 ]; then
+        rm -rf "$LOCK" && mkdir "$LOCK" && printf 'nonce=new-holder\n' > "$LOCK/owner"
+      elif [ "$mv_calls" -eq 2 ] && [ "$fill" = 1 ]; then
+        mkdir "$LOCK" && printf 'nonce=third-holder\n' > "$LOCK/owner"
+      fi
+      command mv "$@"
+    }
+    run_lock_reclaim "$LOCK" judged-nonce "$CASE_STATE" "$TMP/unit.log" )
+}
+new_case_state lock-race-putback
+race_reclaim 0
+race_rc=$?
+if [ "$race_rc" -ne 0 ] && grep -q 'nonce=new-holder' "$LOCK/owner" 2>/dev/null \
+   && [ -z "$(ls -d "$LOCK".stale.* 2>/dev/null)" ] && [ ! -s "$TMP/unit.log" ]; then
+  ok "a lock replaced between the check and the move is put back, not deleted"
+else
+  bad "a lock replaced during a reclaim was deleted or not put back (rc $race_rc)"
+fi
+new_case_state lock-race-nested
+race_reclaim 1
+race_rc=$?
+if [ "$race_rc" -ne 0 ] && grep -q 'nonce=third-holder' "$LOCK/owner" 2>/dev/null \
+   && [ -z "$(ls -d "$LOCK"/run.lock.stale.* 2>/dev/null)" ] \
+   && grep -q 'nonce=new-holder' "$LOCK".stale.*/owner 2>/dev/null \
+   && grep -q 'RUN-LOCK-RACE' "$TMP/unit.log"; then
+  ok "a lock that cannot be put back is kept aside, never nested in the new one, and the race is logged"
+else
+  bad "a lock that could not be put back was nested, deleted, or not logged (rc $race_rc)"
 fi
 
 # Every early exit releases the lock the runner took.
@@ -1471,14 +1542,84 @@ rm -rf "$RV/.obsidian/plugins"
 # A bad RUN_LOCK_POLL must neither spin nor stretch the wait past RUN_LOCK_WAIT.
 new_case_state lock-poll
 plant_lock dream-pass "$holder_pid" "$now_s" 100000
+poll_t0="$(date +%s)"
 expect_rc "RUN_LOCK_POLL=0 while the lock is held -> LOCKED within the wait" 75 "$(runner dream-pass.sh journal RUN_LOCK_POLL=0 RUN_LOCK_WAIT=2)"
+poll_s=$(( $(date +%s) - poll_t0 ))
 if grep -q 'WARNING: RUN_LOCK_POLL "0"' "$RV/.claude/logs/dream-agent.log" 2>/dev/null; then
   ok "an invalid RUN_LOCK_POLL is logged and replaced"
 else
   bad "an invalid RUN_LOCK_POLL was not logged"
 fi
+# The replacement poll is 30 s, and the wait is 2 s. A sleep that is not cut to
+# the time remaining would take 30 s.
+if [ "$poll_s" -lt 20 ]; then
+  ok "the wait ends on time although one poll is longer than the time left (${poll_s}s)"
+else
+  bad "the wait overran RUN_LOCK_WAIT by a whole poll (${poll_s}s)"
+fi
 
-# A signal while waiting for the lock: the runner exits, and the lock it never
+# Numbers from the environment. A leading zero would be octal in arithmetic, and
+# a timeout with a unit would abort the runner before it logged anything.
+new_case_state lock-settings
+expect_rc "RUN_LOCK_WAIT=08 with no lock held -> OK" 0 "$(runner dream-pass.sh journal RUN_LOCK_WAIT=08)"
+if grep -q 'WARNING: RUN_LOCK_WAIT "08"' "$RV/.claude/logs/dream-agent.log" 2>/dev/null; then
+  ok "a RUN_LOCK_WAIT with a leading zero is logged and replaced"
+else
+  bad "a RUN_LOCK_WAIT with a leading zero was not logged"
+fi
+new_case_state timeout-unit
+expect_rc "DREAM_PASS_TIMEOUT=90m and WATCHDOG_GRACE=abc -> OK with the defaults" 0 \
+  "$(runner dream-pass.sh journal DREAM_PASS_TIMEOUT=90m WATCHDOG_GRACE=abc)"
+if grep -q 'WARNING: DREAM_PASS_TIMEOUT "90m"' "$RV/.claude/logs/dream-agent.log" 2>/dev/null \
+   && grep -q 'WARNING: WATCHDOG_GRACE "abc"' "$RV/.claude/logs/dream-agent.log"; then
+  ok "invalid timeout settings are logged and replaced"
+else
+  bad "invalid timeout settings were not logged"
+fi
+
+# The traps are set before the lock is taken, so a signal during the acquire still
+# releases a lock the runner has just made.
+for s in dream-pass.sh promotion-pass.sh; do
+  trap_line="$(grep -n "^  trap on_exit EXIT" "$ROOT/.claude/scripts/$s" | head -n 1 | cut -d: -f1)"
+  lock_line="$(grep -n "^  run_lock_acquire " "$ROOT/.claude/scripts/$s" | head -n 1 | cut -d: -f1)"
+  if [ -n "$trap_line" ] && [ -n "$lock_line" ] && [ "$trap_line" -lt "$lock_line" ]; then
+    ok "$s sets its exit trap before it takes the run lock"
+  else
+    bad "$s takes the run lock before its exit trap is set"
+  fi
+done
+
+# A lock whose owner file cannot be written is not a lock. The runner removes the
+# directory it made and exits 1.
+mkdir -p "$SHIM/mv-owner"
+printf '#!/bin/sh\nfor a in "$@"; do case "$a" in */run.lock/owner) exit 1 ;; esac; done\nexec "%s" "$@"\n' "$(command -v mv)" > "$SHIM/mv-owner/mv"
+chmod +x "$SHIM/mv-owner/mv"
+new_case_state lock-nowrite
+expect_rc "the run lock's owner file cannot be written -> refused" 1 "$(runner dream-pass.sh journal PATH="$SHIM/mv-owner:$PATH")"
+if [ ! -e "$CASE_STATE/run.lock" ] && grep -q "ERROR: could not write the run lock's owner file" "$RV/.claude/logs/dream-agent.log" 2>/dev/null; then
+  ok "a lock with no owner file is removed by the runner that made it, and the log says why"
+else
+  bad "a lock whose owner file failed was left behind, or not logged"
+fi
+
+# On Windows, a runner that Git Bash cannot see (another logon session) is still
+# found by its Windows process id, unless that process started after the lock.
+holder_winpid="$(cat "/proc/$holder_pid/winpid" 2>/dev/null)"
+if [ -n "$holder_winpid" ] && command -v powershell.exe >/dev/null 2>&1; then
+  new_case_state lock-winpid-alive
+  plant_lock dream-pass 999999 "$(date +%s)" 1
+  sed -i "s/^winpid=.*/winpid=$holder_winpid/" "$LOCK/owner"
+  sleep 2
+  expect_rc "a lock whose pid Git Bash cannot see, but whose Windows process is the runner -> LOCKED" 75 "$(runner dream-pass.sh journal)"
+  new_case_state lock-winpid-reused
+  plant_lock dream-pass 999999 "$((now_s - 5000))" 1
+  sed -i "s/^winpid=.*/winpid=$holder_winpid/" "$LOCK/owner"
+  expect_rc "a lock whose Windows process id now belongs to a later bash -> reclaimed, OK" 0 "$(runner dream-pass.sh journal)"
+else
+  printf '  SKIP  Windows process id checks: not Git Bash on Windows (not counted)\n'
+fi
+
+# A signal while waiting for the lock. The runner exits, and the lock it never
 # held is left to its holder.
 new_case_state lock-signal
 plant_lock dream-pass "$holder_pid" "$now_s" 100000
@@ -1524,10 +1665,14 @@ if [ "$RV_GIT" -eq 1 ]; then
     touch -t 202001010000 "$wt_gitdir/index.lock" 2>/dev/null
     expect_rc "worktree vault: an old index.lock in its own git directory -> LOCKED" 75 "$(RUNNER_VAULT="$WT" runner dream-pass.sh journal)"
     rm -f "$wt_gitdir/index.lock"
+  else
+    printf '  SKIP  worktree index.lock: no worktree vault was created here (not counted)\n'
   fi
+else
+  printf '  SKIP  git index.lock checks: git is unavailable or the test vault could not be committed (not counted)\n'
 fi
 
-# Two real runners at once: the first holds the lock while its agent hangs, the
+# Two real runners at once. The first holds the lock while its agent hangs, the
 # second must give up with LOCKED instead of racing it.
 new_case_state serial
 runner dream-pass.sh hang DREAM_PASS_TIMEOUT=6 > "$TMP/serial-first.rc" &

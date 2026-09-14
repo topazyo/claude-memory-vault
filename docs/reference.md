@@ -382,19 +382,33 @@ Around that call, each runner does several things an exit code cannot:
 - **Run lock.** Before it checks any vault state, a runner takes one lock per vault, the directory
   `run.lock` in the state directory, so two passes never race each other's fences or git's index.
   The lock lives outside the vault because a pass that could rewrite it could stall or unlock
-  every later run. Give both scheduled tasks the same `VAULT_STATE_DIR`, or leave it unset for
-  both, because runners with different state directories take different locks. A runner that finds the lock held waits up to `RUN_LOCK_WAIT` seconds and then
-  exits **75** (LOCKED) without starting its agent. A lock is reclaimed only when its runner is gone
-  and the lock is older than the longest run that runner declared (its timeout, plus the watchdog
-  grace period, plus 15 minutes). "Gone" means no process has the recorded pid, or the process that
-  has it is not that runner's script, which covers a runner killed by Task Scheduler whose pid was
-  reused. A runner that is still alive is never reclaimed, however old its lock, because the age
-  includes time the machine spent asleep. A lock directory with no owner file is reclaimed after two
-  minutes. One reclaim runs at a time and re-reads the lock before removing it, so a lock another
-  runner has just taken is never touched. Every owner field is checked before use. A
-  `.git/index.lock` older than 10 minutes also exits 75, because a crashed git command blocks every
-  commit until it is removed. A younger one is waited on like the run lock. For a linked worktree
-  the index lock in its own git directory is the one checked.
+  every later run. The state directory follows the vault's resolved path, so every spelling of
+  that path takes the same lock, but runners given different `VAULT_STATE_DIR` values take
+  different locks. Give both scheduled tasks the same value, or leave it unset for both. A runner
+  that finds the lock held waits up to `RUN_LOCK_WAIT` seconds and then exits **75** (LOCKED)
+  without starting its agent.
+
+  A lock is reclaimed only when its runner is gone and the lock is older than the longest run that
+  runner declared (its timeout, plus the watchdog grace period, plus 15 minutes). "Gone" means no
+  process has the recorded pid, whichever account owns it, or the process that has it is not that
+  runner's script, which covers a runner killed by Task Scheduler whose pid was reused. On Windows
+  a pid that Git Bash cannot see, as with a runner in another logon session, is also looked up by
+  its Windows process id, and a bash process that started no later than the lock counts as the
+  runner. A runner that is still alive is never reclaimed, however old its lock, because the age
+  includes time the machine spent asleep. A lock dated in the future, because the clock was set
+  back, is reclaimed as soon as its runner is gone. A lock directory whose owner file is missing or
+  has no nonce is reclaimed after two minutes, and one whose owner file this account cannot read
+  is treated as held. One reclaim runs at a time. It checks the lock again before moving it aside
+  and once more after, and a lock that changed in between is put back, or kept beside the lock
+  with a `RUN-LOCK-RACE` line in the log, never deleted. Every owner field is checked before use,
+  and so are the timeout, watchdog and lock settings, which fall back to their defaults with a
+  warning.
+
+  A `.git/index.lock` older than 10 minutes also exits 75, because a crashed git command blocks
+  every commit until it is removed. A younger one is waited on like the run lock, and one that
+  stays for the whole wait exits 75 too. For a linked worktree the index lock in its own git
+  directory is the one checked. As a known limit, a runner in another pid namespace, such as a
+  container, or on a Linux system that hides other users' processes, reads as gone.
 - **Watchdog.** The agent runs with stdin from `/dev/null` under a timer. A run that exceeds its
   timeout gets `TERM`, then `KILL` after a grace period, and the runner exits **124**.
 - **Write fence.** The runner checksums every file in the vault before and after the run and exits
@@ -527,7 +541,7 @@ harness session cannot point an unattended pass, and its fence, at a different v
 | `3` | REFUSED: `VAULT_AGENT=command` without `VAULT_ALLOW_UNENFORCED_TOOLS=1`; the agent was not started |
 | `64` | `VAULT_AGENT` is neither `claude` nor `command` |
 | `70` | TRIPWIRE-ERROR: containment was needed but neither copy of the tripwire could be written. The in-flight marker is left, so the next run refuses |
-| `75` | LOCKED: the run lock stayed held for `RUN_LOCK_WAIT` seconds, or git's `index.lock` is older than 10 minutes. The agent was not started |
+| `75` | LOCKED: the run lock stayed held, or git's `index.lock` stayed, for `RUN_LOCK_WAIT` seconds, or the `index.lock` is older than 10 minutes. The agent was not started |
 | `78` | TRIPWIRE: a tripwire exists, or an earlier pass died before containment and this run turned its marker into one; the agent was not started |
 | `124` | TIMEOUT: the watchdog killed the run |
 | `127` | the `claude` binary, the `VAULT_AGENT_CMD` wrapper, or (from a `.cmd`) Git Bash was not found |
@@ -541,7 +555,7 @@ harness session cannot point an unattended pass, and its fence, at a different v
 | `VAULT_ALLOW_UNENFORCED_TOOLS` | unset | both runners in command mode: `1` confirms the wrapper is sandboxed; anything else refuses the run |
 | `DREAM_PASS_TIMEOUT` | `3600` seconds | `dream-pass.sh` |
 | `PROMOTION_PASS_TIMEOUT` | `5400` seconds | `promotion-pass.sh` |
-| `WATCHDOG_POLL` | `5` seconds | `lib/runner-common.sh`: how often the watchdog checks the clock |
+| `WATCHDOG_POLL` | `5` seconds | `lib/runner-common.sh`: how often the watchdog checks the clock. The runners replace a value that is not a whole number of at least 1 with the default and log a warning, as they do for the timeouts, `WATCHDOG_GRACE` and the `RUN_LOCK_` settings |
 | `WATCHDOG_GRACE` | `15` seconds | `lib/runner-common.sh`: wait between `TERM` and `KILL` |
 | `RUN_LOCK_WAIT` | `1800` seconds | both runners: how long to wait for the run lock before exiting 75 |
 | `RUN_LOCK_POLL` | `30` seconds | both runners: how often to check the run lock while waiting |
