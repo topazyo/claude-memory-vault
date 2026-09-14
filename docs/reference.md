@@ -390,7 +390,9 @@ Around that call, each runner does three things an exit code cannot:
   trips the fence too; the logged paths tell you which.
 
   The fence checksums symlinks by their target, so swapping a file for a link, or retargeting one,
-  counts as a change. Only `.claude/logs` is left out of the vault-wide scan, and in `.obsidian/`
+  counts as a change. A `.obsidian` or `.git` that is itself a symlink is fenced as a link as well,
+  and the files described below are still fenced through it. Only `.claude/logs` is left out of
+  the vault-wide scan, and in `.obsidian/`
   only what carries or enables code is fenced: `community-plugins.json` and the `plugins/`,
   `themes/` and `snippets/` folders. Obsidian rewrites its workspace, graph and app settings while it
   is open, and none of them runs anything. The code-bearing part must be fenced, because `.obsidian/`
@@ -436,11 +438,19 @@ Around that call, each runner does three things an exit code cannot:
 
   For each changed steering path the runner moves the file or link as the pass left it into a
   quarantine outside the vault (it never deletes it), then restores the pre-pass copy from a backup
-  taken before the agent started. A symlink the pass left in place of a folder above a steering
-  path, such as `31-standards/ext` pointed at a folder outside the vault, is quarantined first, and
-  the files under it are restored into a real folder, so neither step follows the link. A path
-  whose folder still resolves somewhere else is neither moved nor restored, and the tripwire lists
-  it as a containment error. If the quarantine cannot be written, the file is renamed in place
+  taken before the agent started. Any symlink the pass made or retargeted is a steering change
+  wherever it is, even in an area the pass may write, because a link such as `31-standards/ext2`
+  pointed at a folder outside the vault can hand a later session instructions from there. Those
+  links are quarantined first. A folder the pass swapped for a link, such as `31-standards/ext`,
+  then gets the steering files that were under it restored into a real folder, so neither step
+  follows the link. Only the backed-up steering files and links come back. The rest of what was
+  in that folder stays where the link pointed, reachable through the quarantined link, so check it
+  before you rely on the folder again, for example before `git add -A` in a repository whose
+  `info/` was swapped. A path is moved or restored through a symlink only when the link is the
+  same before and after the pass, so a `.obsidian` you keep as a link to shared settings is still
+  contained in place. A path below any other link that is still standing, because it could not be
+  quarantined, is neither moved nor restored, and the tripwire lists it as a containment error.
+  If the quarantine cannot be written, the file is renamed in place
   with the suffix `.runner-quarantined`, so Obsidian and git stop loading it. After that, and only
   while git's own config and hooks are known to be the pre-pass ones, the runner asks git whether
   HEAD was rewound: a different branch, a branch that no longer resolves, or a commit that does not
@@ -502,8 +512,9 @@ Around that call, each runner does three things an exit code cannot:
   - The watchdog stops the agent's own process. A command-mode wrapper's children, or a native
     Windows process started from Git Bash, can outlive it and write after the second snapshot.
     Killing the whole process tree is planned as separate work.
-  - A directory symlink that existed before the pass is fenced as a link, not by what it points
-    to. A write through a link such as `.claude/skills -> ~/shared-skills` is not seen.
+  - A directory symlink that existed before the pass, other than `.obsidian` or `.git` itself, is
+    fenced as a link, not by what it points to. A write through a link such as
+    `.claude/skills -> ~/shared-skills` is not seen. Retargeting or replacing the link is.
   - Rebasing, pulling with rebase, or switching branches while a pass runs moves HEAD in a way the
     runner cannot tell apart from a rewrite, so it sets the tripwire. That fails closed. Avoid it
     during a scheduled pass, or clear the tripwire after checking `git reflog`.

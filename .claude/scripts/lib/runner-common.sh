@@ -156,18 +156,23 @@ relabel() {
 #
 # In .git/ only the files that make git run code are fenced. They are config,
 # config.worktree, commondir (git reads config and hooks from the directory it
-# names), hooks/, info/attributes, info/grafts and objects/info/alternates. The
-# same files, and every symlink, are fenced in every linked worktree's git
-# directory under .git/worktrees/ and every submodule's under .git/modules/. The
-# rest of info/ is not, because `git gc --auto` after an ordinary commit rewrites
+# names), hooks/, info/attributes, info/grafts and objects/info/alternates, and
+# info/, objects/ and objects/info/ as links when they are symlinks. The same
+# files, and every symlink, are fenced in every linked worktree's git directory
+# under .git/worktrees/ and every submodule's under .git/modules/, except inside
+# the ref folders heads, tags, remotes, prefetch, notes and rewritten. The rest
+# of info/ is not, because `git gc --auto` after an ordinary commit rewrites
 # info/refs. HEAD and refs are NOT fenced, because a pass may commit (the
 # promotion agent takes a snapshot) and a human may commit while it runs. A
 # rewound HEAD is caught separately (head_moved_backwards). For a worktree vault,
 # whose .git is a file, the pointer is fenced and the same files in the common
 # git directory appear under the label .git-common/.
 #
-# Known limit: a directory symlink that existed before the pass is fenced as a
-# link, not by its target's contents, so a write through it is not seen.
+# A .obsidian or .git that is itself a symlink is fenced as a link, and the files
+# above are still fenced through it, so swapping or retargeting it is a change.
+#
+# Known limit: any other directory symlink that existed before the pass is fenced
+# as a link, not by its target's contents, so a write through it is not seen.
 CODE_PLUGINS="dataview templater-obsidian obsidian-shellcommands quickadd customjs obsidian-git execute-code terminal"
 
 # code_plugin_dirs
@@ -213,6 +218,9 @@ snapshot_tree() {
   (
     cd "$root" || exit 1
     fence_find . \( -path ./.git -o -path ./.claude/logs -o -path ./.obsidian \) -prune -o
+    # The scan above prunes .obsidian by name, so a .obsidian that is a symlink
+    # gets its own line here. The files below are still read through it.
+    [ -L .obsidian ] && fence_find ./.obsidian
     [ -e .obsidian/community-plugins.json ] && fence_find ./.obsidian/community-plugins.json
     if [ -e .obsidian/plugins ] || [ -L .obsidian/plugins ]; then
       # A plugin's settings file, a FILE named data.json directly in its folder,
@@ -250,6 +258,7 @@ EOF
       { [ -e "$d" ] || [ -L "$d" ]; } && fence_find "./$d"
     done
     if [ -d .git ]; then
+      [ -L .git ] && fence_find ./.git
       for f in .git/config .git/config.worktree .git/commondir .git/objects/info/alternates .git/info/attributes .git/info/grafts; do
         { [ -e "$f" ] || [ -L "$f" ]; } && fence_find "./$f"
       done
@@ -418,15 +427,35 @@ is_restorable_path() {
 }
 
 # backup_steering <root> <before-snapshot> <tarball>
-# Archives every steering file and symlink the before-snapshot lists, and writes
-# <tarball>.list. Returns non-zero, after which the runner must refuse to start,
-# when tar is missing or the archive does not hold every listed member. GNU tar
-# exits 1 when a file changed while it was read, which is not a failure if the
-# member is there, so the archive's own listing is the evidence, not the status.
+# Archives every steering file the before-snapshot lists, and every symlink it
+# lists, because containment treats any link the pass changes as steering and
+# puts the old one back. A link with other listed paths below it, such as a
+# .obsidian that is a symlink, is left out: those paths are read through it, and
+# extracting the link first would carry them through it. Writes <tarball>.list.
+# Returns non-zero, after which the runner must refuse to start, when tar is
+# missing or the archive does not hold every listed member. GNU tar exits 1 when
+# a file changed while it was read, which is not a failure if the member is
+# there, so the archive's own listing is the evidence, not the status.
 backup_steering() {
   local root="$1" snap="$2" tarball="$3" want have
   command -v tar >/dev/null 2>&1 || return 1
-  snapshot_paths "$snap" | steering_filter "$snap" | grep -v '^\.git-common' > "$tarball.list"
+  {
+    snapshot_paths "$snap" | steering_filter "$snap"
+    awk '/^L/ { sub(/^[^ ]* [^ ]* /, ""); sub(/^\.\//, ""); print }' "$snap"
+  } | grep -v '^\.git-common' | LC_ALL=C sort -u | awk '
+    # Sorted, so the paths below a path follow it, with only names that start
+    # with the same text in between. A path with any path below it is dropped.
+    { lines[NR] = $0 }
+    END {
+      for (i = 1; i <= NR; i++) {
+        below = 0
+        for (j = i + 1; j <= NR; j++) {
+          if (index(lines[j], lines[i] "/") == 1) { below = 1; break }
+          if (substr(lines[j], 1, length(lines[i])) != lines[i]) break
+        }
+        if (!below) print lines[i]
+      }
+    }' > "$tarball.list"
   if [ ! -s "$tarball.list" ]; then
     : > "$tarball"
     return 0
@@ -695,46 +724,37 @@ tripwire_check() {
   return 0
 }
 
-# contain_steering_changes <root> <changed-list> <tarball> <quarantine-dir> <handled-out> <errors-out> [snapshot...]
+# contain_steering_changes <root> <changed-list> <tarball> <quarantine-dir> <handled-out> <errors-out> <before-snapshot> <after-snapshot>
 # For each changed steering path: quarantine the current file or symlink, then
 # restore the pre-pass copy when one existed and the path is restorable. Writes
 # the handled paths and the paths that could not be contained. Returns 0 when at
-# least one steering path changed. The snapshots, before and after the pass,
-# tell steering_filter which paths are symlinks.
+# least one steering path changed. The snapshots tell steering_filter which
+# paths are symlinks.
 #
-# A symlink the pass left above a steering path, such as a folder in an allowed
-# area replaced by a link to a folder outside the vault, would carry the
-# quarantine move and the restore through it. So such a link is handled as a
-# steering path itself, sorted before the paths under it, and no path is moved or
-# restored unless its folder resolves to its own place in the vault.
+# Every changed path that is a symlink after the pass counts as steering,
+# wherever it is. A link the pass made or retargeted, even in an area it may
+# write, can point a later session or git at files outside the vault, and a
+# folder the pass swapped for a link would carry the quarantine move and the
+# restore through it. Those links are handled first, so the paths under them are
+# restored into a real folder. After that nothing is moved or restored through a
+# symlink unless the link is the same in both snapshots. A link the owner keeps,
+# such as a .obsidian shared from elsewhere, is still followed.
 contain_steering_changes() {
-  local root="$1" changed="$2" tarball="$3" qdir="$4" handled="$5" errors="$6" rel restore rdirs d skip rroot l
-  shift 6
+  local root="$1" changed="$2" tarball="$3" qdir="$4" handled="$5" errors="$6" before="$7" after="$8"
+  local rel restore rdirs d skip via
   : > "$handled"
   : > "$errors"
-  steering_filter "$@" < "$changed" > "$handled.direct"
-  : > "$handled.links"
-  if [ -s "$handled.direct" ] && [ "$#" -gt 0 ]; then
-    awk '
-      phase == 1 {
-        if ($0 ~ /^L/) { p = $0; sub(/^[^ ]* [^ ]* /, "", p); sub(/^\.\//, "", p); link[p] = 1 }
-        next
-      }
-      {
-        n = split($0, part, "/")
-        a = ""
-        for (i = 1; i < n; i++) {
-          a = (i == 1) ? part[1] : a "/" part[i]
-          if (a in link) print a
-        }
-      }' phase=1 "$@" phase=2 "$handled.direct" | while IFS= read -r l; do
-        [ -L "$root/$l" ] && printf '%s\n' "$l"
-      done > "$handled.links"
-  fi
-  LC_ALL=C sort -u "$handled.direct" "$handled.links" > "$handled"
+  steering_filter "$before" "$after" < "$changed" > "$handled.direct"
+  awk 'phase == 1 { if ($0 ~ /^L/) { p = $0; sub(/^[^ ]* [^ ]* /, "", p); sub(/^\.\//, "", p); link[p] = 1 } next }
+    ($0 in link)' phase=1 "$after" phase=2 "$changed" | LC_ALL=C sort -u > "$handled.links"
+  {
+    cat "$handled.links"
+    awk 'phase == 1 { l[$0] = 1; next } !($0 in l)' phase=1 "$handled.links" phase=2 "$handled.direct" | LC_ALL=C sort -u
+  } > "$handled"
   rm -f "$handled.direct" "$handled.links"
   [ -s "$handled" ] || return 1
-  rroot="$(cd "$root" && pwd -P)"
+  # The links the pass left as they were, the only ones a path may be reached through.
+  LC_ALL=C comm -12 "$before" "$after" | awk '/^L/ { sub(/^[^ ]* [^ ]* /, ""); sub(/^\.\//, ""); print }' > "$handled.kept"
 
   restore="$(dirname "$tarball")/restore"
   rdirs="$(dirname "$tarball")/restored-dirs"
@@ -757,9 +777,17 @@ contain_steering_changes() {
       case "$rel" in "$d"/*) skip=1 ;; esac
     done < "$rdirs"
     [ "$skip" -eq 1 ] && continue
+    # A link still standing above the path, other than one the pass left as it
+    # was, is one that could not be quarantined or that appeared after the
+    # second snapshot. Following it could move or write files outside the vault.
+    via=""
     d="$(dirname "$rel")"
-    if [ "$d" != . ] && [ "$(resolved_path "$rroot/$d")" != "$rroot/$d" ]; then
-      printf '%s (its folder resolves through a symlink to somewhere outside its place in the vault, so it was neither moved nor restored)\n' "$rel" >> "$errors"
+    while [ "$d" != . ] && [ "$d" != / ] && [ -n "$d" ]; do
+      if [ -L "$root/$d" ] && ! grep -qxF -- "$d" "$handled.kept"; then via="$d"; fi
+      d="$(dirname "$d")"
+    done
+    if [ -n "$via" ]; then
+      printf '%s (the folder %s above it is a symlink the pass made or changed, so it was neither moved nor restored)\n' "$rel" "$via" >> "$errors"
       continue
     fi
     if [ -e "$root/$rel" ] || [ -L "$root/$rel" ]; then
@@ -781,6 +809,7 @@ contain_steering_changes() {
       printf '%s (backed up before the pass, but missing from the extracted backup, so not restored)\n' "$rel" >> "$errors"
     fi
   done < "$handled"
+  rm -f "$handled.kept"
   return 0
 }
 
