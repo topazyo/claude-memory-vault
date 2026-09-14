@@ -1776,15 +1776,35 @@ done
 
 # A lock whose owner file cannot be written is not a lock. The runner removes the
 # directory it made and exits 1.
-mkdir -p "$SHIM/mv-owner"
+mkdir -p "$SHIM/mv-owner" "$SHIM/ln-none"
 printf '#!/bin/sh\nfor a in "$@"; do case "$a" in */run.lock/owner) exit 1 ;; esac; done\nexec "%s" "$@"\n' "$(command -v mv)" > "$SHIM/mv-owner/mv"
-chmod +x "$SHIM/mv-owner/mv"
+printf '#!/bin/sh\nfor a in "$@"; do case "$a" in */run.lock/owner) exit 1 ;; esac; done\nexec "%s" "$@"\n' "$(command -v ln)" > "$SHIM/mv-owner/ln"
+printf '#!/bin/sh\nexit 1\n' > "$SHIM/ln-none/ln"
+chmod +x "$SHIM/mv-owner/mv" "$SHIM/mv-owner/ln" "$SHIM/ln-none/ln"
 new_case_state lock-nowrite
 expect_rc "the run lock's owner file cannot be written -> refused" 1 "$(runner dream-pass.sh journal PATH="$SHIM/mv-owner:$PATH")"
 if [ ! -e "$CASE_STATE/run.lock" ] && grep -q "ERROR: could not write the run lock's owner file" "$RV/.claude/logs/dream-agent.log" 2>/dev/null; then
   ok "a lock with no owner file is removed by the runner that made it, and the log says why"
 else
   bad "a lock whose owner file failed was left behind, or not logged"
+fi
+# Where no hard link can be made, the owner file is renamed into place instead.
+new_case_state lock-no-hardlink
+expect_rc "no hard link can be made for the owner file -> OK through the rename" 0 "$(runner dream-pass.sh journal PATH="$SHIM/ln-none:$PATH")"
+# A runner whose owner write failed removes the directory only when it is empty.
+# One stalled after its mkdir cannot tell its directory from another runner's.
+new_case_state lock-release-empty
+mkdir -p "$CASE_STATE/run.lock"
+printf 'nonce=just-made\n' > "$CASE_STATE/run.lock/owner.other-runner"
+( . "$RV/.claude/scripts/lib/runner-common.sh"
+  RUN_LOCK_DIR="$CASE_STATE/run.lock"
+  RUN_LOCK_NONCE=dream-pass-1-1-1
+  RUN_LOCK_MADE=1
+  run_lock_release )
+if [ -f "$CASE_STATE/run.lock/owner.other-runner" ]; then
+  ok "a runner whose owner write failed leaves a lock directory another runner is writing into"
+else
+  bad "a runner whose owner write failed removed a directory holding another runner's file"
 fi
 
 # On Windows, a runner that Git Bash cannot see (another logon session) is still
@@ -1823,24 +1843,29 @@ plant_lock dream-pass 999999 "$((now_s - 5000))" 1 planted 12345
 expect_rc "PowerShell answers none inside a byte-order mark, followed by a progress record -> reclaimed, OK" 0 \
   "$(runner dream-pass.sh journal PATH="$SHIM/ps-noisy:$PATH")"
 
-# Another runner's owner file lands in a directory this runner has just made. It
-# is that runner's lock now, so this one waits and never removes it. A mv function
-# stands in for the race.
+# Another runner's owner file lands in a directory this runner has just made,
+# as when this runner stalled after its mkdir and another reclaimed and remade
+# the directory. It is that runner's lock now, so this one neither writes over
+# its owner file nor removes it, and waits. An ln function stands in for the
+# race, placing the other owner file first and failing as a hard link onto an
+# existing file does. The real mv stays, so an owner file renamed over the other
+# one fails this test.
 new_case_state lock-same-moment
 mkdir -p "$CASE_STATE"
 : > "$TMP/same-moment.log"
 ( . "$RV/.claude/scripts/lib/runner-common.sh"
-  mv() {
-    case "${3:-}" in
-      */run.lock/owner) printf 'runner=promotion-pass\npid=999999\nnonce=other-runner\n' > "$3"; rm -f "$2"; return 0 ;;
+  ln() {
+    case "${2:-}" in
+      */run.lock/owner) printf 'runner=promotion-pass\npid=999999\nnonce=other-runner\n' > "$2"; return 1 ;;
     esac
-    command mv "$@"
+    command ln "$@"
   }
   RUN_LOCK_WAIT=0
   RUN_LOCK_POLL=1
   run_lock_acquire "$CASE_STATE" "$TMP/no-such-vault" dream-pass "$TMP/same-moment.log" 100 )
 same_rc=$?
 if [ "$same_rc" -eq 75 ] && grep -q 'nonce=other-runner' "$CASE_STATE/run.lock/owner" 2>/dev/null \
+   && ! ls "$CASE_STATE/run.lock"/owner.* >/dev/null 2>&1 \
    && grep -q 'held by a runner that took the lock at the same moment' "$TMP/same-moment.log"; then
   ok "a runner whose directory another runner's owner file claimed waits, and leaves that lock alone"
 else
@@ -1852,14 +1877,15 @@ fi
 new_case_state lock-near-future
 mkdir -p "$CASE_STATE/run.lock"
 soon=$(( $(date +%s) + 60 ))
-soon_stamp="$(date -d "@$soon" +%Y%m%d%H%M.%S 2>/dev/null || date -r "$soon" +%Y%m%d%H%M.%S 2>/dev/null)"
-if [ -n "$soon_stamp" ] && touch -t "$soon_stamp" "$CASE_STATE/run.lock" 2>/dev/null; then
+soon_stamp="$(TZ=UTC0 date -d "@$soon" +%Y%m%d%H%M.%S 2>/dev/null || TZ=UTC0 date -r "$soon" +%Y%m%d%H%M.%S 2>/dev/null)"
+if [ -n "$soon_stamp" ] && TZ=UTC0 touch -t "$soon_stamp" "$CASE_STATE/run.lock" 2>/dev/null; then
   expect_rc "an owner-less lock dated a minute ahead -> LOCKED, not taken for a clock set back" 75 "$(runner dream-pass.sh journal)"
 else
   printf '  SKIP  near-future lock: this date or touch cannot set a time a minute ahead (not counted)\n'
 fi
 
-# A file where the lock directory belongs is an error, not a lock held by nobody.
+# A file where the lock directory belongs is an error, not a lock held by nobody,
+# and it stops the run at once rather than after the retries.
 new_case_state lock-file
 mkdir -p "$CASE_STATE"
 : > "$CASE_STATE/run.lock"
@@ -1869,6 +1895,35 @@ if grep -q 'ERROR: could not create the run lock' "$RV/.claude/logs/dream-agent.
 else
   bad "a run lock that cannot be created was not reported"
 fi
+file_start="$(date +%s)"
+( . "$RV/.claude/scripts/lib/runner-common.sh"
+  RUN_LOCK_WAIT=0
+  run_lock_acquire "$CASE_STATE" "$TMP/no-such-vault" dream-pass "$TMP/lock-file.log" 100
+  file_rc=$?
+  RUN_LOCK_DIR=""
+  exit "$file_rc" )
+file_rc=$?
+file_took=$(( $(date +%s) - file_start ))
+if [ "$file_rc" -eq 1 ] && [ "$file_took" -lt 3 ]; then
+  ok "a file named run.lock stops the lock at once, without the retries"
+else
+  bad "a file named run.lock was retried or not refused (rc $file_rc after ${file_took}s)"
+fi
+# A symlink named run.lock is never read as a lock directory, even one pointing
+# at a folder.
+new_case_state lock-symlink
+mkdir -p "$CASE_STATE/elsewhere"
+if ln -s "$CASE_STATE/elsewhere" "$CASE_STATE/run.lock" 2>/dev/null && [ -L "$CASE_STATE/run.lock" ]; then
+  expect_rc "a symlink named run.lock that points at a folder -> refused" 1 "$(runner dream-pass.sh journal)"
+  if [ -z "$(ls -A "$CASE_STATE/elsewhere")" ] && grep -q 'ERROR: could not create the run lock' "$RV/.claude/logs/dream-agent.log" 2>/dev/null; then
+    ok "a symlinked run lock is reported as an error, and nothing is written where it points"
+  else
+    bad "a symlinked run lock was used as a lock, or not reported"
+  fi
+else
+  printf '  SKIP  symlinked run lock: ln -s does not create symlinks here (not counted)\n'
+fi
+rm -rf "$CASE_STATE/run.lock"
 
 # A settings value too long to add safely falls back like any other bad value.
 new_case_state timeout-overflow
@@ -1892,20 +1947,23 @@ fi
 
 # A lock directory whose creation fails for a moment, as when antivirus still holds
 # the folder a runner just removed, is retried rather than skipping the pass. One
-# that never succeeds, as on a full disk, stops the run.
+# that never succeeds, as on a full disk, stops the run. Four misses are one short
+# of the limit, and the three to four seconds between them show the retries wait.
 mkdir -p "$SHIM/mkdir-flaky" "$SHIM/mkdir-broken"
-printf '#!/bin/sh\nfor a in "$@"; do case "$a" in */run.lock)\n  n="$(cat "%s" 2>/dev/null || echo 0)"\n  if [ "$n" -lt 2 ]; then echo $((n + 1)) > "%s"; exit 1; fi ;;\nesac; done\nexec "%s" "$@"\n' \
+printf '#!/bin/sh\nfor a in "$@"; do case "$a" in */run.lock)\n  n="$(cat "%s" 2>/dev/null || echo 0)"\n  if [ "$n" -lt 4 ]; then echo $((n + 1)) > "%s"; exit 1; fi ;;\nesac; done\nexec "%s" "$@"\n' \
   "$TMP/mkdir-flaky.count" "$TMP/mkdir-flaky.count" "$(command -v mkdir)" > "$SHIM/mkdir-flaky/mkdir"
 printf '#!/bin/sh\nfor a in "$@"; do case "$a" in */run.lock) exit 1 ;; esac; done\nexec "%s" "$@"\n' "$(command -v mkdir)" > "$SHIM/mkdir-broken/mkdir"
 chmod +x "$SHIM/mkdir-flaky/mkdir" "$SHIM/mkdir-broken/mkdir"
 new_case_state lock-mkdir-flaky
 rm -f "$TMP/mkdir-flaky.count"
-expect_rc "the run lock directory cannot be created twice, then can -> OK" 0 \
+flaky_start="$(date +%s)"
+expect_rc "the run lock directory cannot be created four times, then can -> OK" 0 \
   "$(runner dream-pass.sh journal PATH="$SHIM/mkdir-flaky:$PATH")"
-if [ "$(cat "$TMP/mkdir-flaky.count" 2>/dev/null)" = 2 ]; then
-  ok "a lock directory that failed twice was retried until it could be made"
+flaky_took=$(( $(date +%s) - flaky_start ))
+if [ "$(cat "$TMP/mkdir-flaky.count" 2>/dev/null)" = 4 ] && [ "$flaky_took" -ge 3 ]; then
+  ok "a lock directory that failed four times was retried a second apart until it could be made"
 else
-  bad "the lock directory retries did not happen as expected -- misses: $(cat "$TMP/mkdir-flaky.count" 2>/dev/null)"
+  bad "the lock directory retries did not happen as expected -- misses: $(cat "$TMP/mkdir-flaky.count" 2>/dev/null), ${flaky_took}s"
 fi
 new_case_state lock-mkdir-broken
 expect_rc "the run lock directory can never be created -> refused" 1 \
@@ -1935,6 +1993,27 @@ for s in dream-pass.sh promotion-pass.sh; do
     ok "$s checks that it still holds the run lock before it marks the pass in flight"
   else
     bad "$s does not check the run lock before it marks the pass in flight"
+  fi
+done
+# The same check in a running pass. A tar stand-in writes another runner's owner
+# file over this one's while the steering backup is taken, which is after the
+# lock is held and before that check.
+for s in dream-pass.sh:journal promotion-pass.sh:summary; do
+  new_case_state "lock-taken-over-${s%%.*}"
+  mkdir -p "$SHIM/tar-takeover-${s%%.*}"
+  printf '#!/bin/sh\nif [ "$1" = -cf ] && [ "$3" = -T ]; then\n  "%s" "$@" || exit $?\n  printf '"'"'runner=promotion-pass\\npid=999999\\nnonce=other-runner\\n'"'"' > "%s/run.lock/owner"\n  exit 0\nfi\nexec "%s" "$@"\n' \
+    "$REAL_TAR" "$CASE_STATE" "$REAL_TAR" > "$SHIM/tar-takeover-${s%%.*}/tar"
+  chmod +x "$SHIM/tar-takeover-${s%%.*}/tar"
+  rm -f "$REC.argv"
+  expect_rc "${s%%:*}: another runner's owner file replaces this one's before the pass starts -> LOCKED" 75 \
+    "$(runner "${s%%:*}" "${s#*:}" FAKE_RECORD="$REC" PATH="$SHIM/tar-takeover-${s%%.*}:$PATH")"
+  takeover_log="$RV/.claude/logs/dream-agent.log"
+  case "$s" in promotion-pass*) takeover_log="$RV/.claude/logs/promotion-agent.log" ;; esac
+  if [ ! -f "$REC.argv" ] && grep -q 'nonce=other-runner' "$CASE_STATE/run.lock/owner" 2>/dev/null \
+     && grep -q "LOCKED: another runner's owner file replaced this one's" "$takeover_log" 2>/dev/null; then
+    ok "${s%%:*} whose lock was taken over never starts the agent, leaves the other lock, and says why"
+  else
+    bad "${s%%:*} whose lock was taken over started the agent, removed the other lock, or logged nothing"
   fi
 done
 

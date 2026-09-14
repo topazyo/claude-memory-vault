@@ -866,8 +866,9 @@ pid_exists() {
 #
 # The watchdog writes stderr into the same file, so the answer is the first line
 # that is exactly none, unknown or a number, read past a byte-order mark and a
-# carriage return. A progress record or an error printed around it changes
-# nothing.
+# carriage return. A progress record or an error on its own line changes
+# nothing. One that ends without a line break just before the answer joins the
+# answer's line, and the runner then counts as alive, which is the safe mistake.
 windows_runner_alive() {
   local out start
   is_uint "$1" || return 1
@@ -1021,12 +1022,19 @@ run_lock_acquire() {
       RUN_LOCK_MADE=1
       winpid=""
       [ -r "/proc/$$/winpid" ] && winpid="$(cat "/proc/$$/winpid" 2>/dev/null)"
-      printf 'runner=%s\npid=%s\nwinpid=%s\nstarted=%s\nlongest=%s\nnonce=%s\n' \
-        "$runner" "$$" "$winpid" "$(date +%s)" "$longest" "$RUN_LOCK_NONCE" > "$lock/owner.$RUN_LOCK_NONCE" 2>/dev/null \
-        && mv -f "$lock/owner.$RUN_LOCK_NONCE" "$lock/owner" 2>/dev/null
+      # The owner file is placed with a hard link, which fails when an owner file
+      # is already there. A runner that stalled after its mkdir, and whose
+      # directory another runner reclaimed and made again, then finds that
+      # runner's owner file instead of writing over it. Where no hard link can be
+      # made, the rename is used, and only while no owner file is there.
+      if printf 'runner=%s\npid=%s\nwinpid=%s\nstarted=%s\nlongest=%s\nnonce=%s\n' \
+        "$runner" "$$" "$winpid" "$(date +%s)" "$longest" "$RUN_LOCK_NONCE" > "$lock/owner.$RUN_LOCK_NONCE" 2>/dev/null; then
+        ln "$lock/owner.$RUN_LOCK_NONCE" "$lock/owner" 2>/dev/null \
+          || { [ ! -e "$lock/owner" ] && mv -f "$lock/owner.$RUN_LOCK_NONCE" "$lock/owner" 2>/dev/null; }
+      fi
+      rm -f "$lock/owner.$RUN_LOCK_NONCE" 2>/dev/null
       cur="$(owner_field "$(cat "$lock/owner" 2>/dev/null)" nonce)"
       if [ "$cur" != "$RUN_LOCK_NONCE" ]; then
-        rm -f "$lock/owner.$RUN_LOCK_NONCE" 2>/dev/null
         if ! is_nonce "$cur"; then
           run_lock_release
           printf '[%s] ERROR: could not write the run lock'"'"'s owner file in %s. Refusing to run.\n' "$(ts)" "$state" >> "$log"
@@ -1051,12 +1059,13 @@ run_lock_acquire() {
         fi
         holder="git (its index.lock is present)"
       fi
-    elif [ ! -d "$lock" ]; then
+    elif [ -L "$lock" ] || [ ! -d "$lock" ]; then
       # mkdir failed, yet there is no lock directory. Its holder may have released
       # it a moment ago, antivirus or an indexer may still hold the old folder
       # open, or the state directory cannot take the entry (a full disk, or a file
-      # named run.lock). Give up at once on a file in the way, and otherwise after
-      # five misses in a row, a second apart.
+      # or symlink named run.lock). A symlink to a folder is never read as a lock.
+      # Give up at once on a file or symlink in the way, and otherwise after five
+      # misses in a row, a second apart.
       mkdir_misses=$((mkdir_misses + 1))
       if [ -e "$lock" ] || [ -L "$lock" ] || [ "$mkdir_misses" -ge 5 ]; then
         printf '[%s] ERROR: could not create the run lock %s. Refusing to run.\n' "$(ts)" "$lock" >> "$log"
@@ -1116,12 +1125,11 @@ run_lock_acquire() {
 }
 
 # run_lock_held
-# True while the lock's owner file still carries this runner's nonce. A runner
-# stalled between taking the directory and writing its owner file for longer
-# than the two minutes an owner-less lock is given can find another runner's
-# owner file in its place, or its own written over another runner's. The runners
-# check just before they mark a pass in flight, so at most one of two such
-# runners starts an agent unless both pass that check at nearly the same moment.
+# True while the lock's owner file still carries this runner's nonce. The hard
+# link in run_lock_acquire already keeps a stalled runner from writing its owner
+# file over another runner's. Where the rename is used instead, one can still
+# land over another between its check and the rename, so the runners check again
+# just before they mark a pass in flight.
 run_lock_held() {
   [ -n "${RUN_LOCK_DIR:-}" ] && [ -n "${RUN_LOCK_NONCE:-}" ] \
     && [ "$(owner_field "$(cat "$RUN_LOCK_DIR/owner" 2>/dev/null)" nonce)" = "$RUN_LOCK_NONCE" ]
@@ -1131,14 +1139,17 @@ run_lock_held() {
 # Removes the lock only while this runner holds it, which means the owner file
 # carries this runner's current nonce, or this runner made the directory and no
 # owner file landed. A runner whose lock was reclaimed never deletes the new
-# holder's.
+# holder's. In the second case only this runner's own temporary file is removed,
+# and then the directory only if it is empty, because a runner that stalled after
+# its mkdir cannot tell its directory from one another runner has just made.
 run_lock_release() {
   [ -n "${RUN_LOCK_DIR:-}" ] || return 0
   if [ -n "${RUN_LOCK_NONCE:-}" ] \
      && [ "$(owner_field "$(cat "$RUN_LOCK_DIR/owner" 2>/dev/null)" nonce)" = "$RUN_LOCK_NONCE" ]; then
     rm -rf "$RUN_LOCK_DIR"
   elif [ "${RUN_LOCK_MADE:-0}" -eq 1 ] && [ ! -e "$RUN_LOCK_DIR/owner" ]; then
-    rm -rf "$RUN_LOCK_DIR"
+    rm -f "$RUN_LOCK_DIR/owner.${RUN_LOCK_NONCE:-}" 2>/dev/null
+    rmdir "$RUN_LOCK_DIR" 2>/dev/null
   fi
   RUN_LOCK_MADE=0
 }

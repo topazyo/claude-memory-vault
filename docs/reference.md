@@ -405,13 +405,18 @@ Around that call, each runner does several things an exit code cannot:
   file is missing or has no well-formed nonce is reclaimed after two minutes, or at once when it
   is dated that far in the future, and one whose owner file this account cannot read is treated
   as held. A lock directory that cannot be created is retried once a second, and after five
-  misses in a row, as with a full disk, the run stops with exit 1. A file named `run.lock` in the
-  state directory stops it at once. One reclaim runs at a time. It checks the lock again before
-  moving it aside and once more after, and a lock that changed in between is put back, or kept
-  beside the lock with a `RUN-LOCK-RACE` line in the log, never deleted. Just before a runner
-  marks its pass in flight, it checks that the lock still carries its own owner file, and exits
-  75 if another runner's has replaced it. That narrows, but does not close, the case of a runner
-  that stalls for over two minutes between taking the lock and writing its owner file. Every
+  misses in a row, as with a full disk, the run stops with exit 1. A file or symlink named
+  `run.lock` in the state directory stops it at once, even a symlink to a folder. One reclaim runs
+  at a time. It checks the lock again before moving it aside and once more after, and a lock that
+  changed in between is put back, or kept beside the lock with a `RUN-LOCK-RACE` line in the log,
+  never deleted. The owner file is placed with a hard link, which fails when one is already there,
+  so the first owner file placed holds the lock. A runner that stalls for over two minutes between
+  taking the lock and writing its owner file, and whose lock another runner reclaims meanwhile,
+  finds that runner's owner file and waits. It removes only its own temporary file, and the lock
+  directory only if it is empty. On a file system where no hard link can be made, the owner file
+  is renamed into place while none is there, and could still land over one placed a moment
+  earlier. So just before a runner marks its pass in flight, it checks that the lock still carries
+  its own owner file, and exits 75 if another runner's has replaced it. Every
   owner field is checked before use, and so are the timeout, watchdog and lock settings, which
   fall back to their defaults with a warning.
 
