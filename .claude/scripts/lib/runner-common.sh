@@ -233,15 +233,19 @@ EOF
     fi
     # The files in a git directory that make git run code, or read config and
     # hooks from somewhere else, and every symlink, because a linked hooks or
-    # info folder moves those files where the fence does not look. A branch, tag
-    # or remote-tracking ref may be named config or hooks/x, and refs change
-    # whenever someone commits, so refs/heads, refs/tags and refs/remotes (and
-    # their reflogs under logs/refs) are left out. Only those three, because a
-    # submodule or worktree may itself be named refs. Callers pass relative
-    # paths, so a folder named refs above the git directory changes nothing.
+    # info folder moves those files where the fence does not look. A ref may be
+    # named config or hooks/x, and refs change whenever someone commits or git
+    # maintenance prefetches, so the ref folders heads, tags, remotes, prefetch,
+    # notes and rewritten under refs/ (and their reflogs under logs/refs) are left
+    # out. Only those, because a submodule or worktree may itself be named refs.
+    # Callers pass relative paths, so a folder named refs above the git directory
+    # changes nothing. Known limit: a submodule whose own path contains one of
+    # those pairs, such as vendor/refs/tags/lib, is left out too, because find
+    # cannot tell where a submodule's name ends.
     gitdir_code=( \( -type l -o -name config -o -name config.worktree -o -name commondir \
       -o -path '*/info/attributes' -o -path '*/info/grafts' -o -path '*/objects/info/alternates' \
-      -o -path '*/hooks/*' \) ! -path '*/refs/heads/*' ! -path '*/refs/tags/*' ! -path '*/refs/remotes/*' )
+      -o -path '*/hooks/*' \) ! -path '*/refs/heads/*' ! -path '*/refs/tags/*' ! -path '*/refs/remotes/*' \
+      ! -path '*/refs/prefetch/*' ! -path '*/refs/notes/*' ! -path '*/refs/rewritten/*' )
     for d in .obsidian/themes .obsidian/snippets; do
       { [ -e "$d" ] || [ -L "$d" ]; } && fence_find "./$d"
     done
@@ -250,6 +254,10 @@ EOF
         { [ -e "$f" ] || [ -L "$f" ]; } && fence_find "./$f"
       done
       { [ -e .git/hooks ] || [ -L .git/hooks ]; } && fence_find ./.git/hooks
+      # A folder that holds a fenced file, replaced by a link, is fenced as the link.
+      for d in .git/info .git/objects .git/objects/info; do
+        [ -L "$d" ] && fence_find "./$d"
+      done
       for d in .git/worktrees .git/modules; do
         [ -d "$d" ] && fence_find "./$d" "${gitdir_code[@]}"
       done
@@ -264,6 +272,9 @@ EOF
           [ -e "$cdir/$f" ] && fence_find "$cdir/$f" | relabel "$cdir" ./.git-common
         done
         [ -e "$cdir/hooks" ] && fence_find "$cdir/hooks" | relabel "$cdir" ./.git-common
+        for d in info objects objects/info; do
+          [ -L "$cdir/$d" ] && fence_find "$cdir/$d" | relabel "$cdir" ./.git-common
+        done
         for d in worktrees modules; do
           [ -d "$cdir/$d" ] && ( cd "$cdir" && fence_find "./$d" "${gitdir_code[@]}" ) | relabel ./ ./.git-common/
         done
@@ -349,13 +360,17 @@ steering_filter() {
       # repository, and rewriting it points git at another config and hooks.
       # Inside a nested git directory only the files that run code or redirect
       # git count, and any symlink. Its index, objects, refs and logs change in
-      # normal use. A branch, tag or remote-tracking ref may have any name, config
-      # included, so refs/heads, refs/tags and refs/remotes are left out, as the
+      # normal use. A ref may have any name, config included, so the ref folders
+      # heads, tags, remotes, prefetch, notes and rewritten are left out, as the
       # fence leaves them out of .git/modules and .git/worktrees.
       if (base == ".git") return 1
       for (i = 1; i < n; i++) {
         if (part[i] != ".git") continue
-        for (j = i + 1; j < n - 1; j++) if (part[j] == "refs" && (part[j + 1] == "heads" || part[j + 1] == "tags" || part[j + 1] == "remotes")) return 0
+        for (j = i + 1; j < n - 1; j++) {
+          if (part[j] != "refs") continue
+          ns = part[j + 1]
+          if (ns == "heads" || ns == "tags" || ns == "remotes" || ns == "prefetch" || ns == "notes" || ns == "rewritten") return 0
+        }
         if (islink) return 1
         if (base == "config" || base == "config.worktree" || base == "commondir") return 1
         for (j = i + 1; j < n; j++) if (part[j] == "hooks") return 1
@@ -509,19 +524,23 @@ vault_state_dir() {
 # reports every file as owned by the current user and its mode bits are not
 # ACLs, so on Windows only the check against the vault means anything.
 #
-# The path is resolved first, every check runs on the resolved path, and the
-# runners use the printed path from then on, so pointing a symlink elsewhere
-# after the check changes nothing. A symlink in a folder every account can write,
-# such as the shared temp folder, is refused outright, because another account
-# may have planted it.
+# A symlink named as the state directory in a folder every account can write,
+# such as the shared temp folder, is refused before anything else, because
+# another account may have planted it. Then the path is resolved, every other
+# check runs on the resolved path, and the runners use the printed path from then
+# on, so pointing a symlink elsewhere after the check changes nothing. A folder
+# above the resolved directory that every account can write and that has no
+# sticky bit is refused too, because another account could rename the directory
+# and put its own in its place. A folder above it that another account owns is
+# not checked, so do not put the state directory under one.
 #
 # Returns 0 when ready, 1 when it could not be created or entered, 2 when this
 # account does not own it or cannot write it, 3 when it is world-writable, 4 when
 # it resolves into the vault, 5 when it is a symlink in a world-writable folder,
-# and 6 when find could not check the mode. state_dir_problem turns the code
-# into words.
+# 6 when find could not check the mode, and 7 when a folder above it is
+# world-writable with no sticky bit. state_dir_problem turns the code into words.
 state_dir_ready() {
-  local name parent real kroot open
+  local name parent real kroot open up
   name="$(printf '%s' "$1" | sed 's|//*$||')"
   parent="${name%/*}"
   [ -n "$parent" ] || parent=/
@@ -538,6 +557,13 @@ state_dir_ready() {
   [ -O "$real" ] && [ -w "$real" ] || return 2
   open="$(find "$real" -maxdepth 0 -perm -0002 -print 2>/dev/null)" || return 6
   [ -z "$open" ] || return 3
+  up="$real"
+  while [ "$up" != / ] && [ -n "$up" ]; do
+    up="${up%/*}"
+    [ -n "$up" ] || up=/
+    open="$(find "$up" -maxdepth 0 -perm -0002 ! -perm -1000 -print 2>/dev/null)" || return 6
+    [ -z "$open" ] || return 7
+  done
   kroot="$(path_key "$(cd "$2" 2>/dev/null && pwd -P)")"
   [ -n "$kroot" ] || return 1
   case "$(path_key "$real")" in "$kroot"|"$kroot"/*) return 4 ;; esac
@@ -550,6 +576,7 @@ state_dir_problem() {
     4) printf 'resolves into the vault' ;;
     5) printf 'is a symlink in a folder every account can write' ;;
     6) printf 'could not be checked for write access by other accounts' ;;
+    7) printf 'is inside a folder every account can write that has no sticky bit' ;;
     *) printf 'could not be created, or cannot be entered' ;;
   esac
 }
@@ -674,13 +701,40 @@ tripwire_check() {
 # the handled paths and the paths that could not be contained. Returns 0 when at
 # least one steering path changed. The snapshots, before and after the pass,
 # tell steering_filter which paths are symlinks.
+#
+# A symlink the pass left above a steering path, such as a folder in an allowed
+# area replaced by a link to a folder outside the vault, would carry the
+# quarantine move and the restore through it. So such a link is handled as a
+# steering path itself, sorted before the paths under it, and no path is moved or
+# restored unless its folder resolves to its own place in the vault.
 contain_steering_changes() {
-  local root="$1" changed="$2" tarball="$3" qdir="$4" handled="$5" errors="$6" rel restore rdirs d skip
+  local root="$1" changed="$2" tarball="$3" qdir="$4" handled="$5" errors="$6" rel restore rdirs d skip rroot l
   shift 6
   : > "$handled"
   : > "$errors"
-  steering_filter "$@" < "$changed" > "$handled"
+  steering_filter "$@" < "$changed" > "$handled.direct"
+  : > "$handled.links"
+  if [ -s "$handled.direct" ] && [ "$#" -gt 0 ]; then
+    awk '
+      phase == 1 {
+        if ($0 ~ /^L/) { p = $0; sub(/^[^ ]* [^ ]* /, "", p); sub(/^\.\//, "", p); link[p] = 1 }
+        next
+      }
+      {
+        n = split($0, part, "/")
+        a = ""
+        for (i = 1; i < n; i++) {
+          a = (i == 1) ? part[1] : a "/" part[i]
+          if (a in link) print a
+        }
+      }' phase=1 "$@" phase=2 "$handled.direct" | while IFS= read -r l; do
+        [ -L "$root/$l" ] && printf '%s\n' "$l"
+      done > "$handled.links"
+  fi
+  LC_ALL=C sort -u "$handled.direct" "$handled.links" > "$handled"
+  rm -f "$handled.direct" "$handled.links"
   [ -s "$handled" ] || return 1
+  rroot="$(cd "$root" && pwd -P)"
 
   restore="$(dirname "$tarball")/restore"
   rdirs="$(dirname "$tarball")/restored-dirs"
@@ -703,6 +757,11 @@ contain_steering_changes() {
       case "$rel" in "$d"/*) skip=1 ;; esac
     done < "$rdirs"
     [ "$skip" -eq 1 ] && continue
+    d="$(dirname "$rel")"
+    if [ "$d" != . ] && [ "$(resolved_path "$rroot/$d")" != "$rroot/$d" ]; then
+      printf '%s (its folder resolves through a symlink to somewhere outside its place in the vault, so it was neither moved nor restored)\n' "$rel" >> "$errors"
+      continue
+    fi
     if [ -e "$root/$rel" ] || [ -L "$root/$rel" ]; then
       if ! { mkdir -p "$qdir/$(dirname "$rel")" && mv -f "$root/$rel" "$qdir/$rel"; } 2>/dev/null; then
         if mv -f "$root/$rel" "$root/$rel.runner-quarantined" 2>/dev/null; then

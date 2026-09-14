@@ -407,11 +407,12 @@ Around that call, each runner does three things an exit code cannot:
   it loads into later sessions. Claude mode starts the agent with
   `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`, so Claude Code itself writes no memory during the pass.
   Inside `.git/`, only the files that make git run code are fenced: `config`, `config.worktree`,
-  `commondir`, `hooks/`, `info/attributes`, `info/grafts` and `objects/info/alternates`. The same
-  files, and every symlink, are fenced in every linked worktree's git directory under
-  `.git/worktrees/` and every submodule's under `.git/modules/`, except under `refs/heads/`,
-  `refs/tags/` and `refs/remotes/`, where a branch may be named `config`. Git reads config and
-  hooks from the directory `commondir` names. The rest of `info/` is not fenced, because
+  `commondir`, `hooks/`, `info/attributes`, `info/grafts` and `objects/info/alternates`, and
+  `info/`, `objects/` or `objects/info/` when one of them is a symlink. The same files, and every
+  symlink, are fenced in every linked worktree's git directory under `.git/worktrees/` and every
+  submodule's under `.git/modules/`, except under the ref folders `heads`, `tags`, `remotes`,
+  `prefetch`, `notes` and `rewritten` inside `refs/`, where a ref may be named `config`. Git reads
+  config and hooks from the directory `commondir` names. The rest of `info/` is not fenced, because
   `git gc --auto` after an ordinary commit rewrites `info/refs`. For a vault that is a linked
   worktree, the same files in the shared git directory are fenced too, and appear in logs under
   `.git-common/`. HEAD and refs are not fenced, because a pass may commit (the promotion agent
@@ -435,7 +436,11 @@ Around that call, each runner does three things an exit code cannot:
 
   For each changed steering path the runner moves the file or link as the pass left it into a
   quarantine outside the vault (it never deletes it), then restores the pre-pass copy from a backup
-  taken before the agent started. If the quarantine cannot be written, the file is renamed in place
+  taken before the agent started. A symlink the pass left in place of a folder above a steering
+  path, such as `31-standards/ext` pointed at a folder outside the vault, is quarantined first, and
+  the files under it are restored into a real folder, so neither step follows the link. A path
+  whose folder still resolves somewhere else is neither moved nor restored, and the tripwire lists
+  it as a containment error. If the quarantine cannot be written, the file is renamed in place
   with the suffix `.runner-quarantined`, so Obsidian and git stop loading it. After that, and only
   while git's own config and hooks are known to be the pre-pass ones, the runner asks git whether
   HEAD was rewound: a different branch, a branch that no longer resolves, or a commit that does not
@@ -478,9 +483,12 @@ Around that call, each runner does three things an exit code cannot:
   directory it resolves to, and uses that directory for the rest of the run, so a symlink pointed
   elsewhere after the check changes nothing. It refuses to start with exit 1, and logs which check
   failed, when the state directory cannot be created, resolves into the vault (a symlink planted
-  at the temp-folder fallback, for example), is a symlink in a folder every account can write, or
-  on Linux and macOS is not owned and writable by the runner's account or is writable by every
-  account. Another account could otherwise plant a forged tripwire there. A group-writable
+  at the temp-folder fallback, for example), is a symlink in a folder every account can write, sits
+  inside a folder every account can write that has no sticky bit, or on Linux and macOS is not
+  owned and writable by the runner's account or is writable by every account. Another account
+  could otherwise plant a forged tripwire there, or rename the directory and put its own in its
+  place. A folder above it that another account owns is not checked, so keep the state directory
+  under your own home folder or the default location. A group-writable
   directory is allowed, because many Linux systems give each user a private group. Git Bash
   reports every file as the current user's and its mode bits are not Windows permissions, so on
   Windows only the check against the vault applies. `vault-check.sh` prints a warning when it
@@ -514,6 +522,10 @@ Around that call, each runner does three things an exit code cannot:
     to the quarantine, so the clone loses its config or the submodule checkout loses its `.git`
     file until you copy them back from the quarantine path the tripwire names. Avoid these
     commands during a scheduled pass.
+  - A submodule whose own path contains `refs/heads`, `refs/tags`, `refs/remotes`,
+    `refs/prefetch`, `refs/notes` or `refs/rewritten`, such as `vendor/refs/tags/lib`, has its git
+    directory's config and hooks left out of the fence, as a ref of that name would be. Nothing in
+    a path tells where a submodule's name ends and its refs begin.
   - Some plugins run code that lives in ordinary notes or vault folders. DataviewJS runs
     JavaScript blocks from any note, and Templater, QuickAdd and CustomJS load user scripts from a
     folder you choose. A pass that writes such a note or script outside its allowed areas is
