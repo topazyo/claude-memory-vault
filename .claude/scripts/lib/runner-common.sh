@@ -155,10 +155,10 @@ relabel() {
 # pass, which is what makes fencing it in claude mode possible.
 #
 # In .git/ only the files that make git run code are fenced. They are config,
-# config.worktree, hooks/, info/attributes and info/grafts, objects/info/alternates
-# and commondir (git reads config and hooks from the directory it names), and
-# the same files in every linked worktree's git directory (.git/worktrees/*/) and
-# every submodule's (.git/modules/). The rest of info/ is not, because
+# config.worktree, commondir (git reads config and hooks from the directory it
+# names), hooks/, info/attributes, info/grafts and objects/info/alternates. The
+# same files are fenced in every linked worktree's git directory under
+# .git/worktrees/ and every submodule's under .git/modules/. The rest of info/ is not, because
 # `git gc --auto` after an ordinary commit rewrites info/refs. HEAD and refs are
 # NOT fenced, because a pass may commit (the promotion agent takes a snapshot)
 # and a human may commit while it runs. A rewound HEAD is caught separately
@@ -183,7 +183,8 @@ code_plugin_dirs() {
   for d in .obsidian/plugins/*/ .obsidian/plugins/.[!.]*/; do
     [ -d "$d" ] || continue
     dirs+=("${d%/}")
-    [ -f "${d}manifest.json" ] && manifests+=("${d}manifest.json")
+    # Only readable manifests, because some awk versions stop at one they cannot open.
+    [ -f "${d}manifest.json" ] && [ -r "${d}manifest.json" ] && manifests+=("${d}manifest.json")
   done
   [ "${#dirs[@]}" -gt 0 ] || return 0
   {
@@ -232,8 +233,11 @@ EOF
     fi
     # The files in a git directory that make git run code, or read config and
     # hooks from somewhere else.
+    # A ref or reflog that happens to be named config, or to sit under a folder
+    # named hooks, is left out, because refs change whenever someone commits.
     gitdir_code=( \( -name config -o -name config.worktree -o -name commondir -o -path '*/info/attributes' \
-      -o -path '*/info/grafts' -o -path '*/objects/info/alternates' -o -path '*/hooks/*' \) )
+      -o -path '*/info/grafts' -o -path '*/objects/info/alternates' -o -path '*/hooks/*' \) \
+      ! -path '*/refs/*/*' )
     for d in .obsidian/themes .obsidian/snippets; do
       { [ -e "$d" ] || [ -L "$d" ]; } && fence_find "./$d"
     done
@@ -335,6 +339,20 @@ steering_filter() {
       n = split(lp, part, "/")
       base = part[n]
       if (base == "claude.md" || base == "claude.local.md" || base == "agents.md" || base == "agents.override.md" || base == "gemini.md" || base == ".mcp.json" || base == ".gitattributes" || base == ".gitignore") return 1
+      # A .git entry below the vault root is a submodule gitlink or an embedded
+      # repository, and rewriting it points git at another config and hooks.
+      # Inside a nested git directory only the files that run code or redirect
+      # git count. Its index, objects, refs and logs change in normal use.
+      if (base == ".git") return 1
+      for (i = 1; i < n; i++) {
+        if (part[i] != ".git") continue
+        for (j = i + 1; j <= n; j++) if (part[j] == "refs" || part[j] == "logs") return 0
+        if (base == "config" || base == "config.worktree" || base == "commondir") return 1
+        for (j = i + 1; j < n; j++) if (part[j] == "hooks") return 1
+        if (part[n - 1] == "info" && (base == "attributes" || base == "grafts")) return 1
+        if (n >= 3 && part[n - 2] == "objects" && part[n - 1] == "info" && base == "alternates") return 1
+        break
+      }
       # Every component, the last included: a symlink named .claude is a harness
       # folder too, wherever it points.
       for (i = 1; i <= n; i++) {
@@ -469,18 +487,33 @@ vault_state_dir() {
 # systems give each user a private group. Git Bash reports every file as owned by
 # the current user and its mode bits are not ACLs, so on Windows only the check
 # against the vault means anything.
+#
+# Returns 0 when ready, 1 when it could not be created, 2 when this account does
+# not own it or cannot write it, 3 when it is world-writable, and 4 when it
+# resolves into the vault. state_dir_problem turns the code into words. The
+# mode is read through a symlink (find -H), and the runners switch to the
+# resolved path once the check passes, so a link cannot be retargeted after it.
 state_dir_ready() {
   local canon kroot
   if [ ! -d "$1" ]; then
     ( umask 077 && mkdir -p "$1" ) 2>/dev/null || return 1
   fi
-  [ -d "$1" ] && [ -O "$1" ] && [ -w "$1" ] || return 1
-  [ -z "$(find "$1" -maxdepth 0 -perm -0002 2>/dev/null)" ] || return 1
+  [ -d "$1" ] || return 1
+  [ -O "$1" ] && [ -w "$1" ] || return 2
+  [ -z "$(find -H "$1" -maxdepth 0 -perm -0002 2>/dev/null)" ] || return 3
   canon="$(path_key "$(cd "$1" 2>/dev/null && pwd -P)")"
   kroot="$(path_key "$(cd "$2" 2>/dev/null && pwd -P)")"
   [ -n "$canon" ] && [ -n "$kroot" ] || return 1
-  case "$canon" in "$kroot"|"$kroot"/*) return 1 ;; esac
+  case "$canon" in "$kroot"|"$kroot"/*) return 4 ;; esac
   return 0
+}
+state_dir_problem() {
+  case "$1" in
+    2) printf 'is not owned by this account, or this account cannot write it' ;;
+    3) printf 'is writable by every account' ;;
+    4) printf 'resolves into the vault' ;;
+    *) printf 'could not be created, or cannot be entered' ;;
+  esac
 }
 
 # write_file_atomic <path> <content-file>
@@ -735,7 +768,7 @@ contain_pass() {
     return 70
   fi
   CONTAINED=1
-  printf '[%s] VIOLATION: steering or execution surfaces changed during the run; contained, quarantine %s, tripwire set:\n' "$(ts)" "$qdir" >> "$log"
+  printf '[%s] VIOLATION: steering or execution surfaces changed during the run. They were contained (quarantine %s) and the tripwire is set. The paths follow.\n' "$(ts)" "$qdir" >> "$log"
   sed 's/^/    /' "$snap/contained" >> "$log"
   if [ -s "$snap/contain-errors" ]; then
     printf '[%s] CONTAINMENT-ERROR:\n' "$(ts)" >> "$log"
@@ -799,7 +832,7 @@ agent_preflight() {
           "$(ts)" "$AGENT_BIN" >> "$log"
         return 127
       fi
-      printf '[%s] WARNING: command mode (%s). The tool allowlist is NOT enforced by this runner; it relies on the wrapper'"'"'s sandbox and the snapshot fence.\n' \
+      printf '[%s] WARNING: command mode (%s). The tool allowlist is NOT enforced by this runner, which relies on the wrapper'"'"'s sandbox and the snapshot fence.\n' \
         "$(ts)" "$AGENT_BIN" >> "$log"
       ;;
     *)
