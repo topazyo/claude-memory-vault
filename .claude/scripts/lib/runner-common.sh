@@ -430,11 +430,13 @@ clear_inflight() {
 # Returns 0 when the vault is clear. Otherwise logs why and returns:
 #   78  a tripwire exists, or an in-flight marker from a run that died before
 #       containment (turned into a tripwire here)
-#   75  an in-flight marker whose runner is still alive: another pass is running
 #   70  an in-flight marker needed a tripwire and none could be written; the
 #       marker is kept, so the next run refuses too
+#
+# Call it while holding the run lock. No other pass can then be running, so any
+# in-flight marker belongs to a pass that died, whatever process now has its pid.
 tripwire_check() {
-  local root="$1" state="$2" runner="$3" log="$4" marker pid empty wrote
+  local root="$1" state="$2" runner="$3" log="$4" marker empty wrote
   if guard_exists "$root" "$state" "$TRIPWIRE_REL"; then
     printf '[%s] TRIPWIRE: refusing to run. A previous pass changed a steering or execution surface; read %s, then delete it.\n' \
       "$(ts)" "$TRIPWIRE_REL" >> "$log"
@@ -445,12 +447,6 @@ tripwire_check() {
     # in the vault is a file the pass itself could have rewritten.
     marker="$state/$(basename "$INFLIGHT_REL")"
     [ -f "$marker" ] || marker="$root/$INFLIGHT_REL"
-    pid="$(sed -n 's/^pid=//p' "$marker" 2>/dev/null | head -n 1)"
-    case "$pid" in ''|*[!0-9]*) pid="" ;; esac
-    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-      printf '[%s] LOCKED: another pass (pid %s) is still running; not starting.\n' "$(ts)" "$pid" >> "$log"
-      return 75
-    fi
     empty="$(mktemp 2>/dev/null || mktemp -t empty)"
     : > "$empty"
     wrote=1
@@ -527,126 +523,206 @@ contain_steering_changes() {
 # ---------------------------------------------------------------------------
 # Run lock.
 #
-# Every writer to the vault (both passes now, the retention mover and the
-# harvester later) takes one vault-wide lock, so two passes never race each
-# other's fences or git's index. The lock is a directory, because mkdir is
-# atomic on every platform the runners support, and it lives in .claude/logs/,
-# which is gitignored and outside the fence.
+# One pass at a time per vault, so two passes never race each other's fences or
+# git's index. The lock is the directory run.lock in the state directory,
+# outside the vault: a pass that could rewrite the lock's owner file could make
+# every later runner wait, or have one reclaim a live lock. mkdir is atomic on
+# every platform the runners support.
 #
-# Stale locks are judged by AGE, not by whether a pid is alive: a runner killed
-# by Task Scheduler runs no trap, and its pid can be reused by an unrelated
-# process. A lock is stale when it is older than the longest a run can take and
-# either its runner is gone or it is twice that old. A lock marked KILL_FAILED
-# (a runner that could not stop its agent) is never stale: that agent may still
-# be writing.
+# A lock is stale only when its runner is gone AND the lock is older than the
+# longest run that runner declared. "Gone" means no process has the recorded
+# pid, or the process that has it is not that runner: its command line does not
+# name the runner's script, so a reused pid does not keep a lock alive. A runner
+# that is still alive is never reclaimed, however old its lock, because wall
+# clock age includes time the machine spent asleep.
 #
-#   RUN_LOCK_WAIT  seconds to wait for a live lock before exiting 75 (default 1800)
+# Every owner field is checked before use. Bash evaluates a variable used in
+# arithmetic as an expression, and an expression can run a command.
+#
+#   RUN_LOCK_WAIT  seconds to wait for a held lock before exiting 75 (default 1800)
 #   RUN_LOCK_POLL  seconds between checks (default 30)
 
-RUN_LOCK_REL=".claude/logs/run.lock"
+RUN_LOCK_NAME="run.lock"
 
-# lock_field <lock-dir> <key>
-lock_field() {
-  sed -n "s/^$2=//p" "$1/owner" 2>/dev/null | head -n 1
+# is_uint <value>: true for a non-empty string of digits.
+is_uint() {
+  case "$1" in ''|*[!0-9]*) return 1 ;; *) return 0 ;; esac
 }
 
-# run_lock_reclaim <lock-dir> <nonce-that-was-judged-stale>
-# Moves a stale lock aside atomically. Two runners may judge the same lock stale;
-# only one rename succeeds. The winner then checks it moved the lock it judged:
-# if another runner had already reclaimed it and taken a fresh lock in between,
-# the moved lock carries a different nonce, and it is put back untouched.
-# Returns 0 when the stale lock is gone, 1 otherwise.
+# owner_field <owner-text> <key>
+# One field from an owner file that was read once, so every field comes from
+# the same lock.
+owner_field() {
+  printf '%s\n' "$1" | sed -n "s/^$2=//p" | head -n 1
+}
+
+# runner_alive <pid> <runner-name>
+# True when the pid is running and its command line names <runner-name>.sh.
+runner_alive() {
+  local pid="$1" name="$2" cmd
+  is_uint "$pid" || return 1
+  case "$name" in dream-pass|promotion-pass) ;; *) return 1 ;; esac
+  [ "$pid" = "$$" ] && return 1
+  kill -0 "$pid" 2>/dev/null || return 1
+  if [ -r "/proc/$pid/cmdline" ]; then
+    cmd="$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null)"
+  else
+    cmd="$(ps -o command= -p "$pid" 2>/dev/null)"
+  fi
+  case "$cmd" in
+    *"$name.sh"*) return 0 ;;
+    # The process exists but its command line cannot be read: assume it is the
+    # runner. Waiting is the safe mistake. Reclaiming a live lock is not.
+    "") return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# git_index_lock_path <root>
+# Where git keeps the index lock for this vault: .git/index.lock, or for a
+# linked worktree its own git directory. Prints nothing outside git.
+git_index_lock_path() {
+  local dirs
+  if [ -d "$1/.git" ]; then
+    printf '%s\n' "$1/.git/index.lock"
+  elif dirs="$(git_dirs_of "$1")"; then
+    printf '%s/index.lock\n' "$(printf '%s\n' "$dirs" | sed -n 1p)"
+  fi
+}
+
+# run_lock_reclaim <lock-dir> <nonce-judged-stale> <log>
+# Removes a stale lock. A guard directory lets one reclaim run at a time, and
+# the owner is read again inside it, so a lock another runner has just taken is
+# never touched. Returns 0 when the stale lock is gone.
 run_lock_reclaim() {
-  local lock="$1" judged="$2" aside moved
-  aside="$lock.stale.$$"
-  mv "$lock" "$aside" 2>/dev/null || return 1
-  moved="$(lock_field "$aside" nonce)"
-  if [ "$moved" != "$judged" ]; then
-    mv "$aside" "$lock" 2>/dev/null || rm -rf "$aside"
+  local lock="$1" judged="$2" log="$3" guard="$1.reclaim" aside rc=1
+  if ! mkdir "$guard" 2>/dev/null; then
+    # A reclaim takes milliseconds, so a guard older than two minutes was left
+    # by a runner killed during one.
+    [ -n "$(find "$guard" -maxdepth 0 -mmin +2 2>/dev/null)" ] && rmdir "$guard" 2>/dev/null
     return 1
   fi
-  rm -rf "$aside"
-  return 0
+  if [ -d "$lock" ] && [ "$(owner_field "$(cat "$lock/owner" 2>/dev/null)" nonce)" = "$judged" ]; then
+    aside="$lock.stale.$$.$(date +%s)"
+    if [ ! -e "$aside" ] && mv "$lock" "$aside" 2>/dev/null; then
+      if [ "$(owner_field "$(cat "$aside/owner" 2>/dev/null)" nonce)" = "$judged" ]; then
+        rm -rf "$aside"
+        rc=0
+      elif [ ! -e "$lock" ] && mv "$aside" "$lock" 2>/dev/null; then
+        :
+      else
+        # Never delete a lock whose nonce did not match: it belongs to a runner.
+        printf '[%s] RUN-LOCK-RACE: a lock changed while it was being reclaimed; it was left at %s\n' "$(ts)" "$aside" >> "$log"
+      fi
+    fi
+  fi
+  rmdir "$guard" 2>/dev/null
+  return "$rc"
 }
 
-# run_lock_acquire <root> <runner> <log> <longest-run-seconds>
-# Returns 0 holding the lock (RUN_LOCK_NONCE set), or 75 after logging why.
+# run_lock_acquire <state-dir> <root> <runner> <log> <longest-run-seconds>
+# Returns 0 holding the lock, 75 after logging who holds it, or 1 when the lock
+# could not be written at all.
 run_lock_acquire() {
-  local root="$1" runner="$2" log="$3" longest="$4"
-  local lock="$root/$RUN_LOCK_REL" waited=0 wait_max="${RUN_LOCK_WAIT:-1800}" poll="${RUN_LOCK_POLL:-30}"
-  local now started age pid nonce winpid holder idx_age
-  mkdir -p "$(dirname "$lock")" 2>/dev/null
+  local state="$1" root="$2" runner="$3" log="$4" longest="$5"
+  local lock="$1/$RUN_LOCK_NAME" wait_max="${RUN_LOCK_WAIT:-1800}" poll="${RUN_LOCK_POLL:-30}"
+  local deadline now remaining owner o_runner o_pid o_started o_longest o_nonce aged holder idx winpid
+  if ! is_uint "$wait_max"; then
+    printf '[%s] WARNING: RUN_LOCK_WAIT "%s" is not a whole number of seconds; using 1800\n' "$(ts)" "$wait_max" >> "$log"
+    wait_max=1800
+  fi
+  if ! is_uint "$poll" || [ "$poll" -lt 1 ]; then
+    printf '[%s] WARNING: RUN_LOCK_POLL "%s" is not a whole number of seconds above 0; using 30\n' "$(ts)" "$poll" >> "$log"
+    poll=30
+  fi
+  RUN_LOCK_DIR="$lock"
+  RUN_LOCK_NONCE="$runner-$$-$(date +%s)-${RANDOM:-0}${RANDOM:-0}"
+  RUN_LOCK_MADE=0
+  mkdir -p "$state" 2>/dev/null
+  deadline=$(( $(date +%s) + wait_max ))
   while :; do
+    holder=""
     if mkdir "$lock" 2>/dev/null; then
-      RUN_LOCK_NONCE="$runner-$$-$(date +%s)-${RANDOM:-0}"
+      RUN_LOCK_MADE=1
       winpid=""
       [ -r "/proc/$$/winpid" ] && winpid="$(cat "/proc/$$/winpid" 2>/dev/null)"
-      printf 'runner=%s\npid=%s\nwinpid=%s\nstarted=%s\nnonce=%s\n' \
-        "$runner" "$$" "$winpid" "$(date +%s)" "$RUN_LOCK_NONCE" > "$lock/owner.tmp" \
-        && mv -f "$lock/owner.tmp" "$lock/owner"
-      if [ "$(lock_field "$lock" nonce)" = "$RUN_LOCK_NONCE" ]; then
-        # git's own index lock: a fresh one is another git command finishing, an
-        # old one is a crashed git that will block every commit until removed.
-        if [ -e "$root/.git/index.lock" ]; then
-          if [ -n "$(find "$root/.git/index.lock" -mmin +10 2>/dev/null)" ]; then
-            run_lock_release "$root"
-            printf '[%s] LOCKED: %s is more than 10 minutes old. A git command crashed; remove it once no git process is running.\n' \
-              "$(ts)" ".git/index.lock" >> "$log"
-            return 75
-          fi
-          run_lock_release "$root"
-        else
-          return 0
-        fi
+      printf 'runner=%s\npid=%s\nwinpid=%s\nstarted=%s\nlongest=%s\nnonce=%s\n' \
+        "$runner" "$$" "$winpid" "$(date +%s)" "$longest" "$RUN_LOCK_NONCE" > "$lock/owner.tmp" 2>/dev/null \
+        && mv -f "$lock/owner.tmp" "$lock/owner" 2>/dev/null
+      if [ "$(owner_field "$(cat "$lock/owner" 2>/dev/null)" nonce)" != "$RUN_LOCK_NONCE" ]; then
+        rm -rf "$lock"
+        RUN_LOCK_MADE=0
+        printf '[%s] ERROR: could not write the run lock in %s; refusing to run\n' "$(ts)" "$state" >> "$log"
+        return 1
       fi
+      # git's own index lock: a fresh one is a git command finishing, an old one
+      # is a crashed git that blocks every commit until someone removes it.
+      idx="$(git_index_lock_path "$root")"
+      if [ -z "$idx" ] || [ ! -e "$idx" ]; then
+        return 0
+      fi
+      run_lock_release
+      if [ -n "$(find "$idx" -mmin +10 2>/dev/null)" ]; then
+        printf '[%s] LOCKED: %s is more than 10 minutes old. A git command crashed; remove it once no git process is running.\n' \
+          "$(ts)" "$idx" >> "$log"
+        return 75
+      fi
+      holder="git (its index.lock is present)"
     else
+      owner="$(cat "$lock/owner" 2>/dev/null)"
+      o_runner="$(owner_field "$owner" runner)"
+      o_pid="$(owner_field "$owner" pid)"
+      o_started="$(owner_field "$owner" started)"
+      o_longest="$(owner_field "$owner" longest)"
+      o_nonce="$(owner_field "$owner" nonce)"
+      case "$o_runner" in dream-pass|promotion-pass) ;; *) o_runner="" ;; esac
+      is_uint "$o_pid" || o_pid=""
+      is_uint "$o_longest" || o_longest="$longest"
       now="$(date +%s)"
-      started="$(lock_field "$lock" started)"
-      pid="$(lock_field "$lock" pid)"
-      nonce="$(lock_field "$lock" nonce)"
-      holder="$(lock_field "$lock" runner)"
-      if [ -n "$started" ]; then
-        age=$((now - started))
-      elif [ -n "$(find "$lock" -maxdepth 0 -mmin +2 2>/dev/null)" ]; then
-        # A lock directory with no owner file: a runner died between mkdir and
-        # writing it. Treat it as ancient.
-        age=$((longest * 3))
+      aged=no
+      if [ -z "$owner" ]; then
+        # No owner file: a runner between mkdir and its first write, or one that
+        # died there. Only the second lasts two minutes.
+        [ -n "$(find "$lock" -maxdepth 0 -mmin +2 2>/dev/null)" ] && aged=yes
+      elif is_uint "$o_started" && [ "$o_started" -le "$now" ]; then
+        [ $((now - o_started)) -gt "$o_longest" ] && aged=yes
       else
-        age=0
+        # A start time that is missing, malformed or in the future: judge by the
+        # lock directory's own age instead.
+        [ -n "$(find "$lock" -maxdepth 0 -mmin +$(( (o_longest + 59) / 60 )) 2>/dev/null)" ] && aged=yes
       fi
-      if ! grep -q '^KILL_FAILED' "$lock/owner" 2>/dev/null && [ "$age" -gt "$longest" ]; then
-        if { [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; } || [ "$age" -gt $((longest * 2)) ]; then
-          if run_lock_reclaim "$lock" "$nonce"; then
-            printf '[%s] reclaimed a stale run lock (runner %s, pid %s, %ss old)\n' \
-              "$(ts)" "${holder:-unknown}" "${pid:-unknown}" "$age" >> "$log"
-            continue
-          fi
+      if [ "$aged" = yes ] && ! runner_alive "$o_pid" "$o_runner"; then
+        if run_lock_reclaim "$lock" "$o_nonce" "$log"; then
+          printf '[%s] reclaimed a stale run lock (runner %s, pid %s)\n' "$(ts)" "${o_runner:-unknown}" "${o_pid:-unknown}" >> "$log"
+          continue
         fi
       fi
+      holder="${o_runner:-an unknown runner} (pid ${o_pid:-unknown})"
     fi
-    if [ "$waited" -ge "$wait_max" ]; then
-      holder="$(lock_field "$lock" runner)"
-      idx_age=""
-      [ -e "$root/.git/index.lock" ] && idx_age=" (.git/index.lock is also present)"
-      printf '[%s] LOCKED: the run lock is held by %s (pid %s) after waiting %ss%s; not starting.\n' \
-        "$(ts)" "${holder:-git}" "$(lock_field "$lock" pid)" "$waited" "$idx_age" >> "$log"
+    now="$(date +%s)"
+    if [ "$now" -ge "$deadline" ]; then
+      printf '[%s] LOCKED: the run lock is held by %s after waiting %ss; not starting.\n' \
+        "$(ts)" "$holder" "$wait_max" >> "$log"
       return 75
     fi
-    sleep "$poll"
-    waited=$((waited + poll))
+    remaining=$((deadline - now))
+    if [ "$poll" -lt "$remaining" ]; then sleep "$poll"; else sleep "$remaining"; fi
   done
 }
 
-# run_lock_release <root>
-# Removes the lock only when this runner holds it, so a runner whose stale lock
-# was reclaimed can never delete the new holder's lock on its way out.
+# run_lock_release
+# Removes the lock only while this runner holds it: the owner file carries this
+# runner's nonce, or this runner made the directory and no owner file landed.
+# A runner whose lock was reclaimed never deletes the new holder's.
 run_lock_release() {
-  local lock="$1/$RUN_LOCK_REL"
-  [ -n "${RUN_LOCK_NONCE:-}" ] || return 0
-  if [ "$(lock_field "$lock" nonce)" = "$RUN_LOCK_NONCE" ]; then
-    rm -rf "$lock"
+  [ -n "${RUN_LOCK_DIR:-}" ] || return 0
+  if [ -n "${RUN_LOCK_NONCE:-}" ] \
+     && [ "$(owner_field "$(cat "$RUN_LOCK_DIR/owner" 2>/dev/null)" nonce)" = "$RUN_LOCK_NONCE" ]; then
+    rm -rf "$RUN_LOCK_DIR"
+  elif [ "${RUN_LOCK_MADE:-0}" -eq 1 ] && [ ! -e "$RUN_LOCK_DIR/owner" ]; then
+    rm -rf "$RUN_LOCK_DIR"
   fi
-  RUN_LOCK_NONCE=""
+  RUN_LOCK_MADE=0
 }
 
 # safe_git <empty-hooks-dir> <git args...>

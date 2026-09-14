@@ -1254,8 +1254,8 @@ rm -f "$CASE_STATE/quarantine"
 expect_rc "the next run after a TRIPWIRE-ERROR -> TRIPWIRE" 78 "$(runner dream-pass.sh journal)"
 tripwire_clear
 
-# A pass that died before containment leaves an in-flight marker. With its pid
-# gone, the next run must set the tripwire; with its pid alive, it must wait.
+# A pass that died before containment leaves an in-flight marker, and the next
+# run must turn it into a tripwire.
 new_case_state interrupted
 printf 'runner=dream-pass\npid=999999\nstarted=earlier\n' > "$RV/.claude/logs/runner-inflight"
 expect_rc "a marker from a pass that died before containment -> TRIPWIRE" 78 "$(runner dream-pass.sh journal)"
@@ -1265,75 +1265,192 @@ else
   bad "no tripwire explaining the interrupted pass"
 fi
 tripwire_clear
+# A runner checks markers only while it holds the run lock, when no other pass
+# can be running. A marker whose pid is alive (reused by any process) is still a
+# pass that died, and must not read as LOCKED.
+new_case_state marker-live-pid
 printf 'runner=promotion-pass\npid=%s\nstarted=now\n' "$$" > "$RV/.claude/logs/runner-inflight"
-expect_rc "a marker whose runner is still alive -> LOCKED" 75 "$(runner dream-pass.sh journal)"
+expect_rc "a marker whose pid is alive, found under the run lock -> TRIPWIRE" 78 "$(runner dream-pass.sh journal)"
 tripwire_clear
 
 # --- run lock ---
 #
-# One pass at a time across the vault. A lock is judged stale by age, never by
-# pid alone, and is reclaimed by an atomic rename that puts back a lock it did
-# not judge.
+# One pass at a time per vault. The lock lives in the state directory, outside
+# the vault. It is reclaimed only when its runner is gone AND it is older than
+# the longest run that runner declared, and every owner field is treated as data.
 
 printf '\n=== scheduled runners: run lock ===\n'
 
-LOCK="$RV/.claude/logs/run.lock"
-plant_lock() {  # plant_lock <pid> <started-epoch> [extra owner line]
+plant_lock() {  # plant_lock <runner> <pid> <started> <longest> [nonce]
+  LOCK="$CASE_STATE/run.lock"
   rm -rf "$LOCK"
   mkdir -p "$LOCK"
-  printf 'runner=planted\npid=%s\nwinpid=\nstarted=%s\nnonce=planted-%s\n%s' "$1" "$2" "$2" "${3:-}" > "$LOCK/owner"
+  printf 'runner=%s\npid=%s\nwinpid=\nstarted=%s\nlongest=%s\nnonce=%s\n' "$1" "$2" "$3" "$4" "${5:-planted}" > "$LOCK/owner"
 }
 now_s="$(date +%s)"
+# A live holder: a process whose command line names the runner's script (the
+# trailing ":" keeps bash from replacing itself with sleep). And a process that
+# merely has a pid, as a reused one would: its command line names no runner.
+bash -c 'sleep 600; :' dream-pass.sh &
+holder_pid=$!
+sleep 600 &
+reuse_pid=$!
 
-new_case_state lock
-plant_lock "$$" "$now_s"
+new_case_state lock-held
+plant_lock dream-pass "$holder_pid" "$now_s" 100000
 rm -f "$REC.argv"
-expect_rc "a fresh lock held by a live runner -> LOCKED after the wait" 75 "$(runner dream-pass.sh journal FAKE_RECORD="$REC")"
-if [ ! -f "$REC.argv" ] && grep -q 'LOCKED: the run lock is held by planted' "$RV/.claude/logs/dream-agent.log" 2>/dev/null; then
+expect_rc "a lock held by a live runner -> LOCKED after the wait" 75 "$(runner dream-pass.sh journal FAKE_RECORD="$REC")"
+if [ ! -f "$REC.argv" ] && grep -q "LOCKED: the run lock is held by dream-pass (pid $holder_pid)" "$RV/.claude/logs/dream-agent.log" 2>/dev/null; then
   ok "a LOCKED run never starts the agent and names the holder"
 else
   bad "a LOCKED run started the agent or did not name the holder"
 fi
-if [ -d "$LOCK" ] && grep -q 'nonce=planted' "$LOCK/owner" 2>/dev/null; then
+if grep -q 'nonce=planted' "$LOCK/owner" 2>/dev/null; then
   ok "a runner that did not get the lock leaves the holder's lock alone"
 else
   bad "a runner that did not get the lock removed or replaced the holder's lock"
 fi
 
-plant_lock 999999 "$((now_s - 100000))"
-expect_rc "a stale lock whose runner is gone is reclaimed -> OK" 0 "$(runner dream-pass.sh journal)"
-if [ ! -d "$LOCK" ] && grep -q 'reclaimed a stale run lock' "$RV/.claude/logs/dream-agent.log" 2>/dev/null; then
-  ok "the reclaimed lock is logged, and the run released its own lock on exit"
+# Wall-clock age includes sleep and hibernation, so a live holder is never reclaimed.
+new_case_state lock-alive-old
+plant_lock dream-pass "$holder_pid" 1 10
+expect_rc "an ancient lock whose runner is still alive -> LOCKED, never reclaimed" 75 "$(runner promotion-pass.sh summary)"
+
+new_case_state lock-reused
+plant_lock dream-pass "$reuse_pid" "$((now_s - 5000))" 10
+expect_rc "an old lock whose pid now belongs to another program -> reclaimed, OK" 0 "$(runner dream-pass.sh journal)"
+if [ ! -e "$LOCK" ] && grep -q "reclaimed a stale run lock (runner dream-pass, pid $reuse_pid)" "$RV/.claude/logs/dream-agent.log" 2>/dev/null; then
+  ok "the reclaim is logged, and the run released its own lock on exit"
 else
-  bad "stale lock not logged as reclaimed, or the run left its lock behind"
+  bad "the reclaim was not logged, or the run left its lock behind"
 fi
 
-plant_lock "$$" "$((now_s - 100000))"
-expect_rc "a lock twice the longest run old is reclaimed even with a live pid (pid reuse) -> OK" 0 \
-  "$(runner dream-pass.sh journal DREAM_PASS_TIMEOUT=10 WATCHDOG_GRACE=1)"
+# The judge's own longest run is 4502 s here. The holder declared a longer one,
+# and the holder's figure is the one that counts.
+new_case_state lock-young
+plant_lock promotion-pass 999999 "$((now_s - 5000))" 100000
+expect_rc "a dead runner's lock younger than the longest run it declared -> LOCKED" 75 "$(runner dream-pass.sh journal)"
+new_case_state lock-dead-old
+plant_lock promotion-pass 999999 "$((now_s - 5000))" 10
+expect_rc "a dead runner's lock older than the longest run it declared -> reclaimed, OK" 0 "$(runner dream-pass.sh journal)"
 
-plant_lock 999999 "$((now_s - 100000))" "KILL_FAILED agent could not be stopped
-"
-expect_rc "a KILL_FAILED lock is never reclaimed -> LOCKED" 75 "$(runner dream-pass.sh journal)"
-rm -rf "$LOCK"
+# Owner fields are data. Bash arithmetic on a raw value evaluates it, and an
+# array subscript in it runs a command substitution.
+new_case_state lock-inject
+rm -rf "$RV/lock-payload-ran"
+plant_lock dream-pass 999999 'now[$(mkdir lock-payload-ran)]' 10
+expect_rc "a start time holding an arithmetic payload -> LOCKED (judged by the lock's own age)" 75 "$(runner dream-pass.sh journal)"
+touch -t 200001010000 "$LOCK" 2>/dev/null
+expect_rc "the same lock once its directory is old -> reclaimed, OK" 0 "$(runner dream-pass.sh journal)"
+if [ ! -e "$RV/lock-payload-ran" ]; then ok "the payload in the owner file never ran"
+else bad "a payload planted in the lock's owner file was executed"; rm -rf "$RV/lock-payload-ran"; fi
+
+new_case_state lock-ownerless
+mkdir -p "$CASE_STATE/run.lock"
+touch -t 200001010000 "$CASE_STATE/run.lock" 2>/dev/null
+expect_rc "a lock directory with no owner file, older than two minutes -> reclaimed, OK" 0 "$(runner dream-pass.sh journal)"
+
+# The reclaim itself: it never touches a lock while another reclaim holds the
+# guard, never touches a lock it did not judge, and removes one it did.
+new_case_state lock-units
+plant_lock dream-pass 999999 1 10 judged-nonce
+mkdir "$LOCK.reclaim"
+( . "$RV/.claude/scripts/lib/runner-common.sh"; run_lock_reclaim "$LOCK" judged-nonce "$TMP/unit.log" )
+guard_rc=$?
+rmdir "$LOCK.reclaim"
+( . "$RV/.claude/scripts/lib/runner-common.sh"; run_lock_reclaim "$LOCK" some-other-nonce "$TMP/unit.log" )
+other_rc=$?
+if [ "$guard_rc" -ne 0 ] && [ "$other_rc" -ne 0 ] && grep -q 'nonce=judged-nonce' "$LOCK/owner" 2>/dev/null \
+   && [ -z "$(ls -d "$LOCK".stale.* 2>/dev/null)" ]; then
+  ok "a reclaim leaves the lock alone while the guard is held, or when the nonce is not the one it judged"
+else
+  bad "a reclaim touched a lock it must not (guard rc $guard_rc, other-nonce rc $other_rc)"
+fi
+( . "$RV/.claude/scripts/lib/runner-common.sh"; run_lock_reclaim "$LOCK" judged-nonce "$TMP/unit.log" )
+judged_rc=$?
+if [ "$judged_rc" -eq 0 ] && [ ! -e "$LOCK" ] && [ ! -e "$LOCK.reclaim" ]; then
+  ok "a reclaim of the lock it judged removes it, and releases its guard"
+else
+  bad "a reclaim of the judged lock failed (rc $judged_rc)"
+fi
+
+# Every early exit releases the lock the runner took.
+new_case_state lock-exits
+mkdir -p "$CASE_STATE"
+printf 'set by test\n' > "$CASE_STATE/runner-tripwire"
+expect_rc "the lock is released after TRIPWIRE" 78 "$(runner dream-pass.sh journal)"
+[ ! -e "$CASE_STATE/run.lock" ] && ok "no run lock remains after exit 78" || bad "the run lock remained after exit 78"
+tripwire_clear
+expect_rc "the lock is released after REFUSED" 3 "$(runner dream-pass.sh journal VAULT_AGENT=command VAULT_AGENT_CMD="$FAKE")"
+[ ! -e "$CASE_STATE/run.lock" ] && ok "no run lock remains after exit 3" || bad "the run lock remained after exit 3"
+expect_rc "the lock is released after an unknown VAULT_AGENT" 64 "$(runner dream-pass.sh journal VAULT_AGENT=bogus)"
+[ ! -e "$CASE_STATE/run.lock" ] && ok "no run lock remains after exit 64" || bad "the run lock remained after exit 64"
+expect_rc "the lock is released after a missing claude binary" 127 "$(runner dream-pass.sh journal CLAUDE_BIN="$TMP/no-such-claude")"
+[ ! -e "$CASE_STATE/run.lock" ] && ok "no run lock remains after exit 127" || bad "the run lock remained after exit 127"
 
 new_case_state lock-violation
 expect_rc "the lock is released after a contained violation too" 2 "$(runner dream-pass.sh plugin)"
-if [ ! -d "$LOCK" ]; then ok "no run lock remains after exit 2"
-else bad "the run lock remained after exit 2"; fi
+[ ! -e "$CASE_STATE/run.lock" ] && ok "no run lock remains after exit 2" || bad "the run lock remained after exit 2"
 tripwire_clear
 rm -rf "$RV/.obsidian/plugins"
 
+# A bad RUN_LOCK_POLL must neither spin nor stretch the wait past RUN_LOCK_WAIT.
+new_case_state lock-poll
+plant_lock dream-pass "$holder_pid" "$now_s" 100000
+expect_rc "RUN_LOCK_POLL=0 while the lock is held -> LOCKED within the wait" 75 "$(runner dream-pass.sh journal RUN_LOCK_POLL=0 RUN_LOCK_WAIT=2)"
+if grep -q 'WARNING: RUN_LOCK_POLL "0"' "$RV/.claude/logs/dream-agent.log" 2>/dev/null; then
+  ok "an invalid RUN_LOCK_POLL is logged and replaced"
+else
+  bad "an invalid RUN_LOCK_POLL was not logged"
+fi
+
+# A signal while waiting for the lock: the runner exits, and the lock it never
+# held is left to its holder.
+new_case_state lock-signal
+plant_lock dream-pass "$holder_pid" "$now_s" 100000
+env CLAUDE_BIN="$FAKE" FAKE_MODE=journal VAULT_AGENT=claude VAULT_AGENT_CMD= VAULT_ALLOW_UNENFORCED_TOOLS= \
+  VAULT_STATE_DIR="$CASE_STATE" RUN_LOCK_WAIT=30 RUN_LOCK_POLL=1 \
+  bash "$RV/.claude/scripts/dream-pass.sh" >/dev/null 2>&1 &
+waiting_pid=$!
+sleep 3
+kill -TERM "$waiting_pid" 2>/dev/null
+wait "$waiting_pid"
+expect_rc "TERM while waiting for the run lock -> exit 143" 143 "$?"
+if grep -q 'nonce=planted' "$LOCK/owner" 2>/dev/null; then
+  ok "a runner stopped while waiting leaves the holder's lock in place"
+else
+  bad "a runner stopped while waiting removed the holder's lock"
+fi
+
 if [ "$RV_GIT" -eq 1 ]; then
+  new_case_state lock-index-old
   : > "$RV/.git/index.lock"
   touch -t 202001010000 "$RV/.git/index.lock" 2>/dev/null
   expect_rc "a .git/index.lock older than 10 minutes -> LOCKED" 75 "$(runner dream-pass.sh journal)"
-  if grep -q 'index.lock is more than 10 minutes old' "$RV/.claude/logs/dream-agent.log" 2>/dev/null && [ ! -d "$LOCK" ]; then
+  if grep -q 'index.lock is more than 10 minutes old' "$RV/.claude/logs/dream-agent.log" 2>/dev/null && [ ! -e "$CASE_STATE/run.lock" ]; then
     ok "the stale git index lock is named, and the run lock is not left behind"
   else
     bad "the stale git index lock was not named, or the run lock was left behind"
   fi
+  new_case_state lock-index-young
+  : > "$RV/.git/index.lock"
+  expect_rc "a fresh .git/index.lock that outlasts the wait -> LOCKED" 75 "$(runner dream-pass.sh journal)"
+  if grep -q 'held by git (its index.lock is present)' "$RV/.claude/logs/dream-agent.log" 2>/dev/null && [ ! -e "$CASE_STATE/run.lock" ]; then
+    ok "a fresh index.lock is waited on like the run lock, and the run lock is released while waiting"
+  else
+    bad "a fresh index.lock was not waited on, or the run lock was left behind"
+  fi
   rm -f "$RV/.git/index.lock"
+
+  # A linked worktree keeps its index.lock in its own git directory.
+  if [ -f "${WT:-}/.git" ]; then
+    wt_gitdir="$(git -C "$WT" rev-parse --git-dir 2>/dev/null)"
+    new_case_state lock-index-worktree
+    : > "$wt_gitdir/index.lock"
+    touch -t 202001010000 "$wt_gitdir/index.lock" 2>/dev/null
+    expect_rc "worktree vault: an old index.lock in its own git directory -> LOCKED" 75 "$(RUNNER_VAULT="$WT" runner dream-pass.sh journal)"
+    rm -f "$wt_gitdir/index.lock"
+  fi
 fi
 
 # Two real runners at once: the first holds the lock while its agent hangs, the
@@ -1342,24 +1459,16 @@ new_case_state serial
 runner dream-pass.sh hang DREAM_PASS_TIMEOUT=6 > "$TMP/serial-first.rc" &
 serial_pid=$!
 waited=0
-while [ ! -d "$LOCK" ] && [ "$waited" -lt 20 ]; do sleep 1; waited=$((waited + 1)); done
+while [ ! -d "$CASE_STATE/run.lock" ] && [ "$waited" -lt 20 ]; do sleep 1; waited=$((waited + 1)); done
 expect_rc "a second runner while the first holds the lock -> LOCKED" 75 "$(runner promotion-pass.sh summary RUN_LOCK_WAIT=1)"
 wait "$serial_pid"
 expect_rc "the first runner is unaffected by the second -> TIMEOUT" 124 "$(cat "$TMP/serial-first.rc")"
 tripwire_clear
-rm -rf "$LOCK"
 
-# The reclaim race itself: a runner that judged lock A stale must not move lock
-# B, which another runner took in between.
-plant_lock "$$" "$now_s"
-( . "$RV/.claude/scripts/lib/runner-common.sh"; run_lock_reclaim "$LOCK" "some-other-nonce" )
-reclaim_rc=$?
-if [ "$reclaim_rc" -ne 0 ] && grep -q "nonce=planted-$now_s" "$LOCK/owner" 2>/dev/null; then
-  ok "a reclaim that finds a different lock than it judged puts it back untouched"
-else
-  bad "a reclaim moved a lock it had not judged stale (rc $reclaim_rc)"
-fi
-rm -rf "$LOCK"
+kill "$holder_pid" "$reuse_pid" 2>/dev/null
+wait "$holder_pid" "$reuse_pid" 2>/dev/null
+
+printf '\n=== scheduled runners: markers, signals and the state directory ===\n'
 
 # The state-directory copy is the one the agent cannot reach, so it wins: a live
 # pid planted in the vault copy must not turn a needed tripwire into LOCKED.

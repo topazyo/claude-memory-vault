@@ -379,17 +379,22 @@ Two details of claude mode are load-bearing:
 
 Around that call, each runner does several things an exit code cannot:
 
-- **Run lock.** Before anything else, a runner takes one vault-wide lock, the directory
-  `.claude/logs/run.lock`, so two passes never race each other's fences or git's index. A runner
-  that finds the lock held waits up to `RUN_LOCK_WAIT` seconds and then exits **75** (LOCKED)
-  without starting its agent. A lock is judged stale by age: older than the longest a run can take
-  (its timeout, plus the watchdog grace period, plus 15 minutes) and either its runner is gone or it
-  is twice that old. The second rule is there because a runner killed by Task Scheduler runs no
-  cleanup and its pid can be reused. A stale lock is moved aside atomically and the move is checked,
-  so two runners reclaiming the same lock cannot remove each other's fresh one. A lock whose owner
-  file says `KILL_FAILED` is never treated as stale. A `.git/index.lock` older than 10 minutes also
-  exits 75, because a crashed git command blocks every commit until it is removed. A younger one is
-  waited on like the run lock.
+- **Run lock.** Before it checks any vault state, a runner takes one lock per vault, the directory
+  `run.lock` in the state directory, so two passes never race each other's fences or git's index.
+  The lock lives outside the vault because a pass that could rewrite it could stall or unlock
+  every later run. Give both scheduled tasks the same `VAULT_STATE_DIR`, or leave it unset for
+  both, because runners with different state directories take different locks. A runner that finds the lock held waits up to `RUN_LOCK_WAIT` seconds and then
+  exits **75** (LOCKED) without starting its agent. A lock is reclaimed only when its runner is gone
+  and the lock is older than the longest run that runner declared (its timeout, plus the watchdog
+  grace period, plus 15 minutes). "Gone" means no process has the recorded pid, or the process that
+  has it is not that runner's script, which covers a runner killed by Task Scheduler whose pid was
+  reused. A runner that is still alive is never reclaimed, however old its lock, because the age
+  includes time the machine spent asleep. A lock directory with no owner file is reclaimed after two
+  minutes. One reclaim runs at a time and re-reads the lock before removing it, so a lock another
+  runner has just taken is never touched. Every owner field is checked before use. A
+  `.git/index.lock` older than 10 minutes also exits 75, because a crashed git command blocks every
+  commit until it is removed. A younger one is waited on like the run lock. For a linked worktree
+  the index lock in its own git directory is the one checked.
 - **Watchdog.** The agent runs with stdin from `/dev/null` under a timer. A run that exceeds its
   timeout gets `TERM`, then `KILL` after a grace period, and the runner exits **124**.
 - **Write fence.** The runner checksums every file in the vault before and after the run and exits
@@ -453,7 +458,8 @@ Around that call, each runner does several things an exit code cannot:
   that never gets there, because the scheduler ended the task, the machine stopped, or a signal
   arrived, leaves the marker behind. The next runner reads the state-directory copy first, because
   the pass cannot reach it, and sets the tripwire instead of adopting the unknown state as its
-  baseline, or exits **75** (LOCKED) when the marker's runner is still alive. If that tripwire cannot
+  baseline. A runner checks for the marker only while it holds the run lock, when no other pass can
+  be running, so a marker whose pid now belongs to another process still counts. If that tripwire cannot
   be written, it exits **70** and keeps the marker. A runner that cannot write the marker's
   state-directory copy refuses to start with exit 1. A copy of the pre-pass backup is kept in the
   state directory while a pass runs.
@@ -507,7 +513,7 @@ harness session cannot point an unattended pass, and its fence, at a different v
 | `3` | REFUSED: `VAULT_AGENT=command` without `VAULT_ALLOW_UNENFORCED_TOOLS=1`; the agent was not started |
 | `64` | `VAULT_AGENT` is neither `claude` nor `command` |
 | `70` | TRIPWIRE-ERROR: containment was needed but neither copy of the tripwire could be written. The in-flight marker is left, so the next run refuses |
-| `75` | LOCKED: the run lock stayed held for `RUN_LOCK_WAIT` seconds, a `.git/index.lock` is older than 10 minutes, or an in-flight marker names a runner that is still alive; the agent was not started |
+| `75` | LOCKED: the run lock stayed held for `RUN_LOCK_WAIT` seconds, or git's `index.lock` is older than 10 minutes. The agent was not started |
 | `78` | TRIPWIRE: a tripwire exists, or an earlier pass died before containment and this run turned its marker into one; the agent was not started |
 | `124` | TIMEOUT: the watchdog killed the run |
 | `127` | the `claude` binary, the `VAULT_AGENT_CMD` wrapper, or (from a `.cmd`) Git Bash was not found |
@@ -525,7 +531,7 @@ harness session cannot point an unattended pass, and its fence, at a different v
 | `WATCHDOG_GRACE` | `15` seconds | `lib/runner-common.sh`: wait between `TERM` and `KILL` |
 | `RUN_LOCK_WAIT` | `1800` seconds | both runners: how long to wait for the run lock before exiting 75 |
 | `RUN_LOCK_POLL` | `30` seconds | both runners: how often to check the run lock while waiting |
-| `VAULT_STATE_DIR` | per-vault directory under `%LOCALAPPDATA%` or `~/.local/state` | both runners: the quarantine, the tripwire and in-flight copies, and the pre-pass backup of a running pass, all outside the vault, and `vault-check.sh`, which looks for the tripwire copy there. An absolute path is required, and a Windows path is converted. A relative one, one containing `..`, or one inside the vault is replaced with a directory under the system temp folder, and the runner logs a warning |
+| `VAULT_STATE_DIR` | per-vault directory under `%LOCALAPPDATA%` or `~/.local/state` | both runners: the run lock, the quarantine, the tripwire and in-flight copies, and the pre-pass backup of a running pass, all outside the vault, and `vault-check.sh`, which looks for the tripwire copy there. An absolute path is required, and a Windows path is converted. A relative one, one containing `..`, or one inside the vault is replaced with a directory under the system temp folder, and the runner logs a warning |
 | `BASH_EXE` | standard Git for Windows paths | the `.cmd` wrappers |
 | `VAULT_FORCE_NO_JQ` | unset | `vault-lint.sh` and `postcompact-wrap-up.sh`: take the no-jq branch even when `jq` is installed |
 
