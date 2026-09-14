@@ -32,12 +32,24 @@ TODAY="$(date +%F)"
 # and deleted it, a clean report here would read as "the vault is fine", and the
 # commit gate would let the aftermath be committed. So refuse, loudly.
 # -L as well as -e: a dangling symlink planted at the path is not -e, and must
-# not read as "no tripwire".
-if [ -e "$ROOT/.claude/logs/runner-tripwire" ] || [ -L "$ROOT/.claude/logs/runner-tripwire" ]; then
-  printf 'vault-check: TRIPWIRE - a scheduled pass changed a steering or execution surface.\n' >&2
-  printf 'vault-check: read .claude/logs/runner-tripwire, then delete it. Nothing was checked.\n' >&2
-  exit 1
+# not read as "no tripwire". The runners keep a second copy in their state
+# directory outside the vault, so a deleted in-vault copy does not clear it.
+TRIPWIRES="$ROOT/.claude/logs/runner-tripwire"
+RUNNER_LIB="$(dirname "$0")/lib/runner-common.sh"
+if [ -f "$RUNNER_LIB" ]; then
+  state_dir="$( . "$RUNNER_LIB" && vault_state_dir "$(cd "$ROOT" 2>/dev/null && pwd)" 2>/dev/null)"
+  [ -n "$state_dir" ] && TRIPWIRES="$TRIPWIRES
+$state_dir/runner-tripwire"
 fi
+while IFS= read -r tw; do
+  if [ -e "$tw" ] || [ -L "$tw" ]; then
+    printf 'vault-check: TRIPWIRE - a scheduled pass changed a steering or execution surface.\n' >&2
+    printf 'vault-check: read %s, then delete it and its copy. Nothing was checked.\n' "$tw" >&2
+    exit 1
+  fi
+done <<EOF
+$TRIPWIRES
+EOF
 
 # Content tiers only. 90-auto-memory/ is machine-managed under Claude Code's own
 # schema and is deliberately out of scope (see the freshness standard § 2).

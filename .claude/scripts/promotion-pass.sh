@@ -72,11 +72,15 @@ on_signal() {
   [ -n "${RUN_PID:-}" ] && kill -TERM "$RUN_PID" 2>/dev/null
   if [ "$INFLIGHT" -eq 1 ] && [ "$CONTAINMENT_CHECKED" -eq 0 ]; then
     : > "$SNAP_DIR/empty"
-    write_tripwire "$ROOT" "$STATE" "$RUNNER" \
-      "the pass was interrupted by a signal before containment ran; the vault's steering surfaces are unverified (pre-pass backup: $STATE/inflight-backup.tar)" \
-      "(none: containment did not run)" "$SNAP_DIR/empty"
-    clear_inflight "$ROOT" "$STATE"
-    printf '[%s] INTERRUPTED before containment; tripwire set\n' "$(ts)" >> "$LOG"
+    if write_tripwire "$ROOT" "$STATE" "$RUNNER" \
+         "the pass was interrupted by a signal before containment ran; the vault's steering surfaces are unverified (pre-pass backup: $STATE/inflight-backup.tar)" \
+         "(none: containment did not run)" "$SNAP_DIR/empty"; then
+      clear_inflight "$ROOT" "$STATE"
+      printf '[%s] INTERRUPTED before containment; tripwire set\n' "$(ts)" >> "$LOG"
+    else
+      # No tripwire: keep the marker, so the next run still refuses.
+      printf '[%s] INTERRUPTED before containment; no tripwire could be written, in-flight marker kept\n' "$(ts)" >> "$LOG"
+    fi
   fi
   exit "$1"
 }
@@ -96,7 +100,7 @@ main() {
   LOG="$LOG_DIR/promotion-agent.log"
   RUN_OUT="$LOG_DIR/promotion-agent.run.log"
   TIMEOUT="${PROMOTION_PASS_TIMEOUT:-5400}"
-  STATE="$(vault_state_dir "$ROOT")"
+  STATE="$(vault_state_dir "$ROOT" 2>>"$LOG")"
   mkdir -p "$STATE" 2>/dev/null
 
   # The agent is asked to end with this exact line. It is the positive evidence
@@ -153,7 +157,13 @@ main() {
   fi
   HEAD_BEFORE="$(head_state "$ROOT" "$SNAP_DIR/nohooks")"
   cp "$SNAP_DIR/steering.tar" "$STATE/inflight-backup.tar" 2>/dev/null
-  mark_inflight "$ROOT" "$STATE" "$RUNNER"
+  # Without the marker outside the vault, a pass killed mid-run would leave no
+  # trace the next run can trust. Refuse rather than start the agent.
+  if ! mark_inflight "$ROOT" "$STATE" "$RUNNER"; then
+    clear_inflight "$ROOT" "$STATE"
+    printf '[%s] ERROR: could not write the in-flight marker in the state directory %s; refusing to run\n' "$(ts)" "$STATE" >> "$LOG"
+    exit 1
+  fi
   INFLIGHT=1
   printf '[%s] starting promotion-agent weekly pass via %s (timeout %ss)\n' "$(ts)" "$AGENT_KIND" "$TIMEOUT" >> "$LOG"
 

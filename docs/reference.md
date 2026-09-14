@@ -405,22 +405,29 @@ Around that call, each runner does several things an exit code cannot:
   only what carries or enables code is fenced: `community-plugins.json` and the `plugins/`,
   `themes/` and `snippets/` folders. Obsidian rewrites its workspace, graph and app settings while it
   is open, and none of them runs anything. The code-bearing part must be fenced, because `.obsidian/`
-  is not a path Claude Code protects. Memory (`.claude/agent-memory*` and `90-auto-memory/`) is
-  fenced in both modes, because it loads into later sessions. Claude mode starts the agent with
-  `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`, so Claude Code itself writes no memory during the pass. Inside
-  `.git/`, only the files that make git run code are fenced: `config`, `config.worktree`, `hooks/`,
-  `info/`, `objects/info/alternates`, and each submodule's `config` and `hooks/`. For a vault that is
-  a linked worktree, the real `config` and `hooks/` in the shared git directory are fenced too, and
-  appear in logs under `.git-common/`. HEAD and refs are not fenced, because a pass may commit (the
-  promotion agent takes a snapshot) and you may commit while it runs.
+  is not a path Claude Code protects. A plugin's `data.json` holds its settings and many plugins
+  rewrite it in normal use, so it is fenced only for plugins that run code or commands named in their
+  settings: `dataview`, `templater-obsidian`, `obsidian-shellcommands`, `quickadd`, `customjs`,
+  `obsidian-git`, `execute-code` and `terminal` (the `CODE_PLUGINS` list in
+  `lib/runner-common.sh`). Every other file in a plugin folder is fenced for every plugin. Memory
+  (`.claude/agent-memory*` and `90-auto-memory/`) is fenced in both modes, because it loads into
+  later sessions. Claude mode starts the agent with `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`, so Claude
+  Code itself writes no memory during the pass. Inside `.git/`, only the files that make git run
+  code are fenced: `config`, `config.worktree`, `hooks/`, `info/attributes`, `info/grafts`,
+  `objects/info/alternates`, and each submodule's `config` and `hooks/`. The rest of `info/` is not,
+  because `git gc --auto` after an ordinary commit rewrites `info/refs`. For a vault that is a linked
+  worktree, the same files in the shared git directory are fenced too, and appear in logs under
+  `.git-common/`. HEAD and refs are not fenced, because a pass may commit (the promotion agent takes
+  a snapshot) and you may commit while it runs.
 - **Containment.** A fence that only reports leaves a planted file in place, where it runs the next
   time something opens the vault. So when the changed paths include a *steering or execution
   surface*, the runner contains it before anything else, including before it looks at the agent's
   exit code. Steering surfaces are the fenced Obsidian and git files above, memory, `.claude/`
   except `logs/`, `.agents/`, each shipped harness's configuration folder or file, `.github/`,
-  `.vscode/`, and, **at any depth**, `CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md`, `GEMINI.md`,
-  `.mcp.json`, `.gitattributes`, `.gitignore` and any `.claude/` or other harness folder. Matching
-  ignores case. A nested file counts because Claude Code loads `31-standards/CLAUDE.md` for work in
+  `.vscode/`, and, **at any depth**, `CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md`,
+  `AGENTS.override.md`, `GEMINI.md`, `.mcp.json`, `.gitattributes`, `.gitignore` and any `.claude/`
+  or other harness folder, including one that is the last part of the path, such as a symlink named
+  `.claude`. Matching ignores case. A nested file counts because Claude Code loads `31-standards/CLAUDE.md` for work in
   that folder and registers skills from a nested `.claude/skills/`, so the promotion pass's
   permission to write `31-standards/` does not cover them. Inside `.claude/worktrees/<name>/` the
   same rules apply to the rest of the path.
@@ -444,20 +451,33 @@ Around that call, each runner does several things an exit code cannot:
   The **in-flight marker** (`.claude/logs/runner-inflight`, also copied to the state directory) is
   written just before the agent starts and removed only once containment has checked the pass. A pass
   that never gets there, because the scheduler ended the task, the machine stopped, or a signal
-  arrived, leaves the marker behind. The next runner sets the tripwire instead of adopting the unknown
-  state as its baseline, or exits **75** (LOCKED) when the marker's runner is still alive. A copy of
-  the pre-pass backup is kept in the state directory while a pass runs.
+  arrived, leaves the marker behind. The next runner reads the state-directory copy first, because
+  the pass cannot reach it, and sets the tripwire instead of adopting the unknown state as its
+  baseline, or exits **75** (LOCKED) when the marker's runner is still alive. If that tripwire cannot
+  be written, it exits **70** and keeps the marker. A runner that cannot write the marker's
+  state-directory copy refuses to start with exit 1. A copy of the pre-pass backup is kept in the
+  state directory while a pass runs.
 
   The state directory is `%LOCALAPPDATA%\claude-memory-vault\<id>\` on Windows and
   `${XDG_STATE_HOME:-~/.local/state}/claude-memory-vault/<id>/` elsewhere, where `<id>` is a checksum
-  of the vault's path. A value inside the vault is never used. A runner that cannot take the backup,
-  for example because `tar` is missing, refuses to start with exit 1. Ordinary notes are not
-  contained. They run no code, a human may be editing one at the same moment, and git already shows
-  their diff.
+  of the vault's path. `VAULT_STATE_DIR` overrides it, and a Windows path such as `C:/Users/...` is
+  accepted. A value inside the vault, a relative one, or one containing `..` is never used. The
+  runner logs a warning and uses a directory under the system temp folder instead. Set
+  `VAULT_STATE_DIR` the same way for both runners and for the shells where you run `vault-check.sh`,
+  or they look for the tripwire in different places. A runner that cannot take the backup, for
+  example because `tar` is missing, refuses to start with exit 1. A backup that cannot be restored
+  is listed in the tripwire as a containment error. Ordinary notes are not contained. They run no
+  code, a human may be editing one at the same moment, and git already shows their diff.
 
-  Known limit: the watchdog stops the agent's own process. A command-mode wrapper's children, or a
-  native Windows process started from Git Bash, can outlive it and write after the second snapshot.
-  Killing the whole process tree is planned as separate work.
+  Known limits:
+  - The watchdog stops the agent's own process. A command-mode wrapper's children, or a native
+    Windows process started from Git Bash, can outlive it and write after the second snapshot.
+    Killing the whole process tree is planned as separate work.
+  - A directory symlink that existed before the pass is fenced as a link, not by what it points
+    to. A write through a link such as `.claude/skills -> ~/shared-skills` is not seen.
+  - Rebasing, pulling with rebase, or switching branches while a pass runs moves HEAD in a way the
+    runner cannot tell apart from a rewrite, so it sets the tripwire. That fails closed. Avoid it
+    during a scheduled pass, or clear the tripwire after checking `git reflog`.
 - **Script integrity.** Each runner's body is a function called on the script's last lines, so an
   edit made to the script while it runs is never executed by that run. Every git command a runner
   issues runs with no hooks, no fsmonitor, no signature checks and no prompts (`core.hooksPath` set
@@ -505,7 +525,7 @@ harness session cannot point an unattended pass, and its fence, at a different v
 | `WATCHDOG_GRACE` | `15` seconds | `lib/runner-common.sh`: wait between `TERM` and `KILL` |
 | `RUN_LOCK_WAIT` | `1800` seconds | both runners: how long to wait for the run lock before exiting 75 |
 | `RUN_LOCK_POLL` | `30` seconds | both runners: how often to check the run lock while waiting |
-| `VAULT_STATE_DIR` | per-vault directory under `%LOCALAPPDATA%` or `~/.local/state` | both runners: the quarantine, the tripwire and in-flight copies, and the pre-pass backup of a running pass, all outside the vault. An absolute path is required; a relative one, or one inside the vault, is replaced with a directory under the system temp folder |
+| `VAULT_STATE_DIR` | per-vault directory under `%LOCALAPPDATA%` or `~/.local/state` | both runners: the quarantine, the tripwire and in-flight copies, and the pre-pass backup of a running pass, all outside the vault, and `vault-check.sh`, which looks for the tripwire copy there. An absolute path is required, and a Windows path is converted. A relative one, one containing `..`, or one inside the vault is replaced with a directory under the system temp folder, and the runner logs a warning |
 | `BASH_EXE` | standard Git for Windows paths | the `.cmd` wrappers |
 | `VAULT_FORCE_NO_JQ` | unset | `vault-lint.sh` and `postcompact-wrap-up.sh`: take the no-jq branch even when `jq` is installed |
 
