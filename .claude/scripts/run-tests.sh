@@ -702,7 +702,7 @@ if [ -n "${FAKE_RECORD:-}" ]; then
   [ -f "${1:-}" ] && cp "$1" "$FAKE_RECORD.prompt"
   printf '%s\n' "${CLAUDE_CODE_DISABLE_AUTO_MEMORY:-unset}" > "$FAKE_RECORD.automemory"
 fi
-journal() { printf 'journal\n' >> "20-projects/_logs/dream-$(date +%F).md"; }
+journal() { mkdir -p 20-projects/_logs; printf 'journal\n' >> "20-projects/_logs/dream-$(date +%F).md"; }
 case "${FAKE_MODE:-nothing}" in
   # Containment modes: each plants one way a steered pass could run code or
   # steer later sessions, next to a legitimate journal write.
@@ -731,9 +731,21 @@ case "${FAKE_MODE:-nothing}" in
                   rm -f .claude/githooks/pre-commit ;;
   obsidianapp)    journal
                   printf '{"showLineNumber":true}\n' > .obsidian/app.json ;;
-  tripblock)      journal
-                  mkdir -p .obsidian/plugins/evil .claude/logs/runner-tripwire
-                  printf 'module.exports = class {}\n' > .obsidian/plugins/evil/main.js ;;
+  gcinfo)         journal
+                  git update-server-info >/dev/null 2>&1 ;;
+  gitattr)        journal
+                  printf '* filter=planted\n' > .git/info/attributes ;;
+  plugindata)     journal
+                  mkdir -p .obsidian/plugins/extended-graph
+                  printf '{"view":"3d"}\n' > .obsidian/plugins/extended-graph/data.json ;;
+  codeplugindata) journal
+                  mkdir -p .obsidian/plugins/dataview
+                  printf '{"enableDataviewJs":true}\n' > .obsidian/plugins/dataview/data.json ;;
+  lastlink)       ln -s ../40-llm-wiki/wiki 31-standards/.claude
+                  printf 'PROMOTION-SUMMARY: promoted=0 pending=0\n' ;;
+  commonhook)     journal
+                  common="$(git rev-parse --git-common-dir 2>/dev/null)"
+                  printf '#!/bin/sh\ntouch common-hook-ran\n' > "$common/hooks/post-commit" ;;
   promote-commit) printf -- '---\ntier: long\ntype: standard\n---\n\ncommitted\n' > "31-standards/committed.md"
                   git add -- 31-standards/committed.md >/dev/null 2>&1
                   git -c user.name=agent -c user.email=agent@example.invalid -c commit.gpgsign=false \
@@ -744,7 +756,7 @@ case "${FAKE_MODE:-nothing}" in
                   printf 'planted\n' > .claude/agent-memory/dream-agent/MEMORY.md ;;
   vaulthook)      journal
                   printf 'touch vaulthook-ran\n' >> .claude/githooks/pre-commit ;;
-  journal)        printf 'journal\n' >> "20-projects/_logs/dream-$(date +%F).md" ;;
+  journal)        journal ;;
   memory)         printf 'journal\n' >> "20-projects/_logs/dream-$(date +%F).md"
                   mkdir -p 90-auto-memory && printf 'planted\n' >> "90-auto-memory/note.md" ;;
   stray)          printf 'journal\n' >> "20-projects/_logs/dream-$(date +%F).md"
@@ -767,10 +779,11 @@ runner() {  # runner <script> <mode> [extra env...]
   # The harness variables are reset first so an exported VAULT_AGENT on the
   # machine running the suite cannot change which path a test exercises. Extra
   # assignments passed in "$@" come later, and env lets the later one win.
+  # RUNNER_VAULT runs the copy of the runners in another vault (a worktree).
   env CLAUDE_BIN="$FAKE" FAKE_MODE="$mode" WATCHDOG_POLL=1 WATCHDOG_GRACE=2 \
     VAULT_AGENT=claude VAULT_AGENT_CMD= VAULT_ALLOW_UNENFORCED_TOOLS= FAKE_RECORD= \
     VAULT_STATE_DIR="${CASE_STATE:-$TMP/state}" CLAUDE_CODE_DISABLE_AUTO_MEMORY= "$@" \
-    bash "$RV/.claude/scripts/$script" >/dev/null 2>&1
+    bash "${RUNNER_VAULT:-$RV}/.claude/scripts/$script" >/dev/null 2>&1
   echo $?
 }
 # A tripwire and an in-flight marker live in the vault AND in the state
@@ -1047,6 +1060,51 @@ if [ "$RV_GIT" -eq 1 ]; then
     printf '  SKIP  ref containment: the test vault has no loose branch ref (not counted)\n'
   fi
 
+  # git gc --auto after an ordinary commit rewrites .git/info/refs. That runs
+  # nothing, so it must pass. .git/info/attributes can select a filter, so it
+  # must not. The info/refs file is removed first, so its rewrite is a real change.
+  rm -f "$RV/.git/info/refs"
+  new_case_state gcinfo
+  expect_rc "git rewrites .git/info/refs during the pass (auto-gc) -> OK" 0 "$(runner dream-pass.sh gcinfo)"
+  if [ -f "$RV/.git/info/refs" ] && [ ! -e "$RV/.claude/logs/runner-tripwire" ]; then
+    ok "a rewritten .git/info/refs sets no tripwire"
+  elif [ ! -f "$RV/.git/info/refs" ]; then
+    printf '  SKIP  info/refs negative control: git update-server-info wrote nothing here (not counted)\n'
+  else
+    bad "a rewritten .git/info/refs set the tripwire"
+    tripwire_clear
+  fi
+  new_case_state gitattr
+  expect_rc "command mode: agent writes .git/info/attributes -> VIOLATION" 2 \
+    "$(runner dream-pass.sh gitattr VAULT_AGENT=command VAULT_AGENT_CMD="$FAKE" VAULT_ALLOW_UNENFORCED_TOOLS=1)"
+  if [ ! -e "$RV/.git/info/attributes" ] && quarantined .git/info/attributes; then
+    ok ".git/info/attributes is fenced by name and quarantined"
+  else
+    bad ".git/info/attributes was not contained"
+  fi
+  tripwire_clear
+
+  # A vault that is a linked worktree: its .git is a file, and the hooks git runs
+  # live in the common git directory outside the vault. A hook planted there is
+  # reported under .git-common/ and never restored by the runner.
+  WT="$TMP/worktree-vault"
+  if git -C "$RV" worktree add -q -b wt-vault "$WT" >/dev/null 2>&1 && [ -f "$WT/.git" ]; then
+    new_case_state worktree-ok
+    expect_rc "worktree vault: journal written -> OK" 0 "$(RUNNER_VAULT="$WT" runner dream-pass.sh journal)"
+    new_case_state worktree-hook
+    expect_rc "worktree vault: agent plants a hook in the common git directory -> VIOLATION" 2 \
+      "$(RUNNER_VAULT="$WT" runner dream-pass.sh commonhook VAULT_AGENT=command VAULT_AGENT_CMD="$FAKE" VAULT_ALLOW_UNENFORCED_TOOLS=1)"
+    if grep -q '\.git-common/hooks/post-commit' "$WT/.claude/logs/runner-tripwire" 2>/dev/null; then
+      ok "the tripwire names the hook under .git-common/"
+    else
+      bad "a hook planted in the common git directory was not reported"
+    fi
+    rm -f "$RV/.git/hooks/post-commit" "$WT/.claude/logs/runner-tripwire" "$WT/.claude/logs/runner-inflight"
+    tripwire_clear
+  else
+    printf '  SKIP  worktree vault containment: git worktree add failed here (not counted)\n'
+  fi
+
   # A symlinked hook: the link's target is an allowed note, so only a fence that
   # sees links catches it. Git Bash makes a copy instead of a link unless native
   # symlinks are enabled; a copy would test nothing, so check first.
@@ -1060,6 +1118,17 @@ if [ "$RV_GIT" -eq 1 ]; then
     else
       bad "the symlinked hook is still in .git/hooks, or not in the quarantine"
     fi
+    tripwire_clear
+
+    # A link whose own name is a harness folder, inside an area the pass may write.
+    new_case_state lastlink
+    expect_rc "promotion-pass: agent symlinks 31-standards/.claude to the wiki -> VIOLATION" 2 "$(runner promotion-pass.sh lastlink)"
+    if [ ! -L "$RV/31-standards/.claude" ] && quarantined 31-standards/.claude; then
+      ok "a symlink named .claude is contained, not allowed as a long-tier write"
+    else
+      bad "the symlink named .claude is still in 31-standards, or not in the quarantine"
+    fi
+    rm -f "$RV/31-standards/.claude"
     tripwire_clear
   else
     printf '  SKIP  symlinked-hook containment: ln -s does not create symlinks here (not counted)\n'
@@ -1095,25 +1164,92 @@ tripwire_clear
 new_case_state obsidianapp
 expect_rc "Obsidian app.json rewritten during the pass -> OK" 0 "$(runner dream-pass.sh obsidianapp)"
 
-# A tripwire that cannot be written must not read as a clean containment. Here
-# the vault's tripwire path is a directory the agent created and the state
-# directory cannot be created (its parent is a file), so both copies fail and the
-# quarantine falls back to renaming the planted file in place.
-printf 'not a directory\n' > "$TMP/statefile"
-CASE_STATE="$TMP/statefile/state"
-expect_rc "no tripwire can be written -> TRIPWIRE-ERROR" 70 "$(runner dream-pass.sh tripblock)"
+# Plugin settings: most plugins rewrite their data.json in normal use, and that
+# runs nothing. The plugins that run code named in their settings stay fenced.
+new_case_state plugindata
+expect_rc "a graph plugin rewrites its data.json during the pass -> OK" 0 "$(runner dream-pass.sh plugindata)"
+if [ ! -e "$RV/.claude/logs/runner-tripwire" ]; then ok "an ordinary plugin's data.json sets no tripwire"
+else bad "an ordinary plugin's data.json set the tripwire"; tripwire_clear; fi
+new_case_state codeplugindata
+expect_rc "agent writes Dataview's data.json (it can enable JavaScript) -> VIOLATION" 2 "$(runner dream-pass.sh codeplugindata)"
+if [ ! -e "$RV/.obsidian/plugins/dataview/data.json" ] && quarantined .obsidian/plugins/dataview/data.json; then
+  ok "a code-running plugin's data.json is contained"
+else
+  bad "Dataview's data.json was not contained"
+fi
+tripwire_clear
+rm -rf "$RV/.obsidian/plugins"
+
+# The steering classifier itself, over paths no fixture needs to create. A
+# harness folder is steering as the LAST component too (a symlink named .claude).
+sf_got="$( . "$ROOT/.claude/scripts/lib/runner-common.sh" && printf '%s\n' \
+  '31-standards/.claude' '40-llm-wiki/wiki/sub/.agents' 'notes/AGENTS.override.md' \
+  '.GitHub' '10-daily/2026-01-01.md' '.claude/logs/runner-tripwire' '31-standards/claude-notes.md' \
+  '.obsidian/app.json' | steering_filter | tr '\n' '|')"
+if [ "$sf_got" = '31-standards/.claude|40-llm-wiki/wiki/sub/.agents|notes/AGENTS.override.md|.GitHub|' ]; then
+  ok "steering_filter matches harness folders as the last component, AGENTS.override.md, and ignores notes and logs"
+else
+  bad "steering_filter classification -- got: $sf_got"
+fi
+
+# PATH shims that break one tool in one way, so a failure the runner must handle
+# can be produced on every platform without root or a full disk.
+SHIM="$TMP/shims"
+mkdir -p "$SHIM/cp-tripwire" "$SHIM/tar-create" "$SHIM/tar-extract"
+REAL_CP="$(command -v cp)"
+REAL_TAR="$(command -v tar)"
+printf '#!/bin/sh\nfor a in "$@"; do case "$a" in *runner-tripwire*) exit 1 ;; esac; done\nexec "%s" "$@"\n' "$REAL_CP" > "$SHIM/cp-tripwire/cp"
+printf '#!/bin/sh\ncase "$1" in -cf) : > "$2"; exit 0 ;; esac\nexec "%s" "$@"\n' "$REAL_TAR" > "$SHIM/tar-create/tar"
+printf '#!/bin/sh\ncase "$1" in -xf) exit 2 ;; esac\nexec "%s" "$@"\n' "$REAL_TAR" > "$SHIM/tar-extract/tar"
+chmod +x "$SHIM/cp-tripwire/cp" "$SHIM/tar-create/tar" "$SHIM/tar-extract/tar"
+
+# A backup that does not hold every steering file cannot undo a planted one, so
+# the runner refuses before the agent starts.
+new_case_state tar-create
+rm -f "$REC.argv"
+expect_rc "the steering backup comes out incomplete -> refused" 1 \
+  "$(runner dream-pass.sh journal FAKE_RECORD="$REC" PATH="$SHIM/tar-create:$PATH")"
+if [ ! -f "$REC.argv" ] && grep -q 'could not back up the steering surfaces' "$RV/.claude/logs/dream-agent.log" 2>/dev/null; then
+  ok "an incomplete backup never starts the agent, and the log says why"
+else
+  bad "an incomplete backup started the agent, or logged nothing"
+fi
+
+# A restore that fails must be reported, not described as restored.
+new_case_state tar-extract
+cp "$RV/.obsidian/community-plugins.json" "$TMP/plugins-before.json"
+expect_rc "planted plugin, and the backup cannot be extracted -> VIOLATION" 2 \
+  "$(runner dream-pass.sh plugin PATH="$SHIM/tar-extract:$PATH")"
+if grep -q 'could not be extracted' "$RV/.claude/logs/runner-tripwire" 2>/dev/null \
+   && grep -q 'community-plugins.json (backed up before the pass, but missing' "$RV/.claude/logs/runner-tripwire"; then
+  ok "a failed restore is listed as a containment error in the tripwire"
+else
+  bad "a failed restore is not reported in the tripwire"
+fi
+cp "$TMP/plugins-before.json" "$RV/.obsidian/community-plugins.json"
+rm -rf "$RV/.obsidian/plugins"
+tripwire_clear
+
+# A tripwire that cannot be written must not read as a clean containment. Both
+# copies fail (cp refuses them), and the quarantine directory cannot be created
+# (a file sits where it should be), so the planted file is renamed in place.
+new_case_state tripwire-error
+mkdir -p "$CASE_STATE"
+printf 'not a directory\n' > "$CASE_STATE/quarantine"
+expect_rc "no tripwire can be written -> TRIPWIRE-ERROR" 70 "$(runner dream-pass.sh plugin PATH="$SHIM/cp-tripwire:$PATH")"
 if [ ! -e "$RV/.obsidian/plugins/evil/main.js" ] && [ -e "$RV/.obsidian/plugins/evil/main.js.runner-quarantined" ]; then
   ok "with no quarantine available the planted file is renamed in place, not left live"
 else
   bad "the planted file is still live after a failed quarantine"
 fi
-if [ -f "$RV/.claude/logs/runner-inflight" ]; then
+if [ -f "$CASE_STATE/runner-inflight" ]; then
   ok "after TRIPWIRE-ERROR the in-flight marker stays, so the next run still refuses"
 else
   bad "the in-flight marker was cleared although no tripwire exists"
 fi
-rm -rf "$RV/.obsidian/plugins" "$RV/.claude/logs/runner-tripwire"
-new_case_state after-error
+cp "$TMP/plugins-before.json" "$RV/.obsidian/community-plugins.json"
+rm -rf "$RV/.obsidian/plugins"
+rm -f "$CASE_STATE/quarantine"
 expect_rc "the next run after a TRIPWIRE-ERROR -> TRIPWIRE" 78 "$(runner dream-pass.sh journal)"
 tripwire_clear
 
@@ -1132,6 +1268,71 @@ printf 'runner=promotion-pass\npid=%s\nstarted=now\n' "$$" > "$RV/.claude/logs/r
 expect_rc "a marker whose runner is still alive -> LOCKED" 75 "$(runner dream-pass.sh journal)"
 tripwire_clear
 
+# The state-directory copy is the one the agent cannot reach, so it wins: a live
+# pid planted in the vault copy must not turn a needed tripwire into LOCKED.
+new_case_state marker-state
+mkdir -p "$CASE_STATE"
+printf 'runner=dream-pass\npid=999999\nstarted=earlier\n' > "$CASE_STATE/runner-inflight"
+printf 'runner=dream-pass\npid=%s\nstarted=now\n' "$$" > "$RV/.claude/logs/runner-inflight"
+expect_rc "a dead marker outside the vault and a live one planted inside -> TRIPWIRE" 78 "$(runner dream-pass.sh journal)"
+tripwire_clear
+
+# A stale marker whose tripwire cannot be written keeps the marker.
+new_case_state marker-noway
+mkdir -p "$CASE_STATE"
+printf 'runner=dream-pass\npid=999999\nstarted=earlier\n' > "$CASE_STATE/runner-inflight"
+expect_rc "a stale marker and no tripwire can be written -> TRIPWIRE-ERROR" 70 \
+  "$(runner dream-pass.sh journal PATH="$SHIM/cp-tripwire:$PATH")"
+if [ -f "$CASE_STATE/runner-inflight" ]; then
+  ok "the marker is kept when its tripwire could not be written"
+else
+  bad "the marker was cleared although no tripwire was written"
+fi
+expect_rc "the next run, once a tripwire can be written -> TRIPWIRE" 78 "$(runner dream-pass.sh journal)"
+tripwire_clear
+
+# A signal during the pass: containment never runs, so the handler sets the
+# tripwire itself before the runner exits.
+new_case_state signal
+env CLAUDE_BIN="$FAKE" FAKE_MODE=hang WATCHDOG_POLL=1 WATCHDOG_GRACE=2 \
+  VAULT_AGENT=claude VAULT_AGENT_CMD= VAULT_ALLOW_UNENFORCED_TOOLS= FAKE_RECORD= \
+  VAULT_STATE_DIR="$CASE_STATE" CLAUDE_CODE_DISABLE_AUTO_MEMORY= DREAM_PASS_TIMEOUT=60 \
+  bash "$RV/.claude/scripts/dream-pass.sh" >/dev/null 2>&1 &
+sig_pid=$!
+sig_wait=0
+while [ ! -f "$CASE_STATE/runner-inflight" ] && [ "$sig_wait" -lt 30 ]; do
+  sleep 1
+  sig_wait=$((sig_wait + 1))
+done
+kill -TERM "$sig_pid" 2>/dev/null
+wait "$sig_pid"
+sig_rc=$?
+expect_rc "TERM while the agent runs -> exit 143" 143 "$sig_rc"
+if [ -f "$CASE_STATE/runner-tripwire" ] && grep -q 'interrupted by a signal' "$CASE_STATE/runner-tripwire" \
+   && [ ! -f "$CASE_STATE/runner-inflight" ]; then
+  ok "an interrupted pass sets the tripwire and replaces its marker with it"
+else
+  bad "TERM during the pass left no tripwire, or left the marker"
+fi
+tripwire_clear
+
+# VAULT_STATE_DIR: a Windows-style path (what a .cmd wrapper sets) is converted,
+# and a path inside the vault is refused out loud.
+if command -v cygpath >/dev/null 2>&1; then
+  rm -rf "$TMP/state-winpath"
+  expect_rc "VAULT_STATE_DIR as a Windows path -> OK" 0 \
+    "$(runner dream-pass.sh journal VAULT_STATE_DIR="$(cygpath -m "$TMP/state-winpath")")"
+  if [ -d "$TMP/state-winpath" ]; then ok "a Windows-style VAULT_STATE_DIR is used, not replaced with a temp directory"
+  else bad "a Windows-style VAULT_STATE_DIR was not used"; fi
+fi
+expect_rc "VAULT_STATE_DIR inside the vault -> OK, with the state kept elsewhere" 0 \
+  "$(runner dream-pass.sh journal VAULT_STATE_DIR="$RV/state-in-vault" TMPDIR="$TMP")"
+if [ ! -e "$RV/state-in-vault" ] && grep -q 'WARNING: VAULT_STATE_DIR' "$RV/.claude/logs/dream-agent.log" 2>/dev/null; then
+  ok "a state directory inside the vault is refused, and the log says so"
+else
+  bad "a state directory inside the vault was used, or silently replaced"
+fi
+
 # vault-check refuses while the tripwire is set, so neither a report nor the
 # commit gate can read "fine" before a human has looked.
 TWV="$TMP/tripwirevault"
@@ -1145,6 +1346,17 @@ tw_rc=$?
 expect_rc "vault-check while the tripwire is set refuses" 1 "$tw_rc"
 if printf '%s' "$tw_out" | grep -q 'TRIPWIRE'; then ok "vault-check says why it refused"
 else bad "vault-check refused without naming the tripwire"; fi
+# The runners keep a second copy outside the vault. Deleting the one in the vault
+# must not make the report read clean.
+rm -f "$TWV/.claude/logs/runner-tripwire"
+mkdir -p "$TWV/.claude/scripts/lib" "$TMP/tw-state"
+cp "$ROOT/.claude/scripts/lib/runner-common.sh" "$TWV/.claude/scripts/lib/"
+printf 'TRIPWIRE set by test\n' > "$TMP/tw-state/runner-tripwire"
+expect_rc "vault-check refuses while only the state-directory copy of the tripwire exists" 1 \
+  "$(VAULT_STATE_DIR="$TMP/tw-state" bash "$TWV/.claude/scripts/vault-check.sh" >/dev/null 2>&1; echo $?)"
+rm -f "$TMP/tw-state/runner-tripwire"
+expect_rc "vault-check with the runner library present and no tripwire anywhere" 0 \
+  "$(VAULT_STATE_DIR="$TMP/tw-state" bash "$TWV/.claude/scripts/vault-check.sh" >/dev/null 2>&1; echo $?)"
 
 # Structure the containment depends on. A runner whose body is not wrapped in
 # main could execute an edit made to it mid-run; an unattended agent with memory
