@@ -38,15 +38,19 @@
 #   0    the pass reported a summary or changed the long tier, and wrote nowhere else
 #   1    NO-ARTIFACT: exited 0 with no summary line and no long-tier change,
 #        or the runner could not set itself up (temp dir, state directory, backup,
-#        prompt file, run lock, in-flight marker)
+#        prompt file, run lock, in-flight marker, git status)
 #   2    VIOLATION: files outside the allowed write areas changed during the run
-#        (steering surfaces among them are contained and the tripwire is set)
+#        (steering surfaces among them are contained and the tripwire is set),
+#        or the pass changed a long-tier note or promotion report that already
+#        had uncommitted changes
 #   3    REFUSED: command mode without VAULT_ALLOW_UNENFORCED_TOOLS=1
 #   64   VAULT_AGENT is not claude or command
 #   70   TRIPWIRE-ERROR: containment was needed but no tripwire could be written
 #   75   LOCKED: another pass held the run lock, or git's index.lock stayed, for
-#        RUN_LOCK_WAIT seconds, the index.lock is more than 10 minutes old, or
-#        another runner took the lock over before the pass started
+#        RUN_LOCK_WAIT seconds, the index.lock is more than 10 minutes old,
+#        another runner took the lock over before the pass started, a git
+#        merge, rebase, cherry-pick, revert or bisect is in progress, or HEAD is
+#        detached
 #   78   TRIPWIRE: a tripwire is set, or an earlier pass died before containment
 #   124  TIMEOUT: the watchdog killed a run that exceeded PROMOTION_PASS_TIMEOUT
 #   127  the claude binary or the VAULT_AGENT_CMD wrapper was not found
@@ -167,6 +171,18 @@ main() {
   }
   mkdir -p "$SNAP_DIR/nohooks"
 
+  # A git operation in progress or a detached HEAD stops the run before the agent
+  # starts, because the pass commits.
+  git_preflight "$ROOT" "$SNAP_DIR/nohooks" "$LOG"
+  git_rc=$?
+  [ "$git_rc" -eq 0 ] || exit "$git_rc"
+  # Files someone was already editing, which the pass must not change.
+  : > "$SNAP_DIR/predirty"
+  if [ "$VAULT_GIT" -eq 1 ] && ! git_dirty_paths "$ROOT" "$SNAP_DIR/nohooks" "$SNAP_DIR/predirty"; then
+    printf '[%s] ERROR: git status failed, so the files already being edited are unknown. Refusing to run.\n' "$(ts)" >> "$LOG"
+    exit 1
+  fi
+
   snapshot_tree "$ROOT" "$SNAP_DIR/before"
   # Containment needs the pre-pass copy. Without it, refuse rather than run a pass
   # whose planted files could not be undone.
@@ -236,6 +252,13 @@ main() {
     printf '[%s] VIOLATION: files outside the allowed write areas changed during the run:\n' "$(ts)" >> "$LOG"
     LC_ALL=C sort -u "$SNAP_DIR/outside" | sed 's/^/    /' >> "$LOG"
     exit 2
+  fi
+
+  # A long-tier note or promotion report that already had uncommitted changes
+  # before the pass belongs to whoever was editing it.
+  grep -E '^(31-standards|40-llm-wiki/wiki)/|^20-projects/_logs/promotion-[^/]*\.md$' "$SNAP_DIR/changed" > "$SNAP_DIR/owned"
+  if [ "$VAULT_GIT" -eq 1 ]; then
+    owned_predirty "$SNAP_DIR/owned" "$SNAP_DIR/predirty" "$SNAP_DIR" "$LOG" || exit 2
   fi
 
   [ "$RUN_RC" -ne 0 ] && exit "$RUN_RC"

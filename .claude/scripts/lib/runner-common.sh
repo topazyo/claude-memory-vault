@@ -1242,6 +1242,212 @@ head_moved_backwards() {
   return 1
 }
 
+# ---------------------------------------------------------------------------
+# Runner commits.
+#
+# The runner commits a pass's output itself, and only the exact files the
+# snapshot diff says the pass changed in the areas it owns. It never stages
+# everything. A file that already had uncommitted changes before the pass
+# belongs to whoever was editing it, so a pass that changes one commits nothing.
+# Every other dirty or staged file is left as it was. The commit runs the vault's
+# own hooks, which containment has just shown to be the pre-pass ones, under a
+# watchdog, because a signing prompt or a hung hook must not stall a scheduled
+# run.
+
+# git_preflight <root> <empty-hooks-dir> <log>
+# Sets VAULT_GIT to 1 when the vault is inside a git work tree, else to 0.
+# Returns 75 after logging when a merge, rebase, cherry-pick, revert or bisect
+# is in progress, or HEAD is detached, because a commit would then land where the
+# owner did not choose.
+git_preflight() {
+  local root="$1" hooks="$2" log="$3" gd op
+  VAULT_GIT=0
+  command -v git >/dev/null 2>&1 || return 0
+  [ "$(safe_git "$hooks" -C "$root" rev-parse --is-inside-work-tree 2>/dev/null)" = true ] || return 0
+  VAULT_GIT=1
+  gd="$(safe_git "$hooks" -C "$root" rev-parse --absolute-git-dir 2>/dev/null)"
+  if [ -z "$gd" ]; then
+    printf '[%s] LOCKED: git did not name this vault'"'"'s git directory, so a git operation in progress cannot be ruled out. Not starting.\n' "$(ts)" >> "$log"
+    return 75
+  fi
+  for op in MERGE_HEAD rebase-merge rebase-apply CHERRY_PICK_HEAD REVERT_HEAD BISECT_LOG; do
+    if [ -e "$gd/$op" ]; then
+      printf '[%s] LOCKED: a git operation is in progress in this vault (%s exists). Finish or abort it, then run again.\n' "$(ts)" "$gd/$op" >> "$log"
+      return 75
+    fi
+  done
+  if ! safe_git "$hooks" -C "$root" symbolic-ref -q HEAD >/dev/null 2>&1; then
+    printf '[%s] LOCKED: HEAD is detached, so a commit would land on no branch. Check out a branch, then run again.\n' "$(ts)" >> "$log"
+    return 75
+  fi
+  return 0
+}
+
+# git_dirty_paths <root> <empty-hooks-dir> <out>
+# Writes the vault-relative path of every file git reports as modified, staged,
+# untracked or conflicted, and both sides of a rename or copy, sorted. Returns 1
+# when git status fails, because an unknown dirty set could let a pass commit
+# over someone's edit.
+git_dirty_paths() {
+  local root="$1" hooks="$2" out="$3" prefix
+  prefix="$(safe_git "$hooks" -C "$root" rev-parse --show-prefix 2>/dev/null)" || return 1
+  if ! safe_git "$hooks" -C "$root" status --porcelain -z --untracked-files=all > "$out.raw" 2>/dev/null; then
+    rm -f "$out.raw"
+    return 1
+  fi
+  # Porcelain paths are relative to the top of the repository, which is above
+  # the vault when the vault is a folder inside a larger repository.
+  tr '\0' '\n' < "$out.raw" | awk -v pre="$prefix" '
+    function emit(p) {
+      if (pre == "") print p
+      else if (substr(p, 1, length(pre)) == pre) print substr(p, length(pre) + 1)
+    }
+    from { from = 0; emit($0); next }
+    {
+      emit(substr($0, 4))
+      if (substr($0, 1, 2) ~ /[RC]/) from = 1
+    }' | LC_ALL=C sort -u > "$out"
+  rm -f "$out.raw"
+}
+
+# paths_in_both <list-a> <list-b>
+# Prints the lines of <list-b> that are also in <list-a>. The first list is told
+# apart by FILENAME, not by NR == FNR, which an empty first list would make true
+# for every line of the second.
+paths_in_both() {
+  awk 'FILENAME == ARGV[1] { seen[$0] = 1; next } ($0 in seen)' "$1" "$2"
+}
+
+# owned_predirty <owned-list> <predirty-list> <snap-dir> <log>
+# Returns 2 after logging when a path the pass owns and changed already had
+# uncommitted changes before the pass, else 0.
+owned_predirty() {
+  paths_in_both "$2" "$1" > "$3/owned-predirty"
+  [ -s "$3/owned-predirty" ] || return 0
+  printf '[%s] VIOLATION: the pass changed files that already had uncommitted changes before it started. Nothing was committed, and the files are left as they are:\n' "$(ts)" >> "$4"
+  sed 's/^/    /' "$3/owned-predirty" >> "$4"
+  return 2
+}
+
+# unstage_paths <root> <empty-hooks-dir> <path...>
+# Takes the paths back out of the index, also in a repository with no commit yet.
+unstage_paths() {
+  local root="$1" hooks="$2"
+  shift 2
+  if safe_git "$hooks" -C "$root" rev-parse -q --verify HEAD >/dev/null 2>&1; then
+    safe_git "$hooks" -C "$root" reset -q -- "$@" >/dev/null 2>&1
+  else
+    safe_git "$hooks" -C "$root" rm -q --cached --ignore-unmatch -- "$@" >/dev/null 2>&1
+  fi
+}
+
+# index_blob <root> <rev-or-empty> <path>
+# The blob id of a path in the index (empty rev) or in a commit. The revision is
+# given relative to the vault folder, from inside it, and with MSYS path
+# conversion off, because Git Bash would otherwise rewrite the argument.
+index_blob() {
+  ( cd "$1" && MSYS_NO_PATHCONV=1 GIT_TERMINAL_PROMPT=0 git rev-parse -q --verify "$2:./$3" 2>/dev/null )
+}
+
+# commit_owned <root> <pass-name> <owned-list> <predirty-list> <snap-dir> <log>
+# Checks and commits the files a pass owns, with the trailers
+#   Vault-Pass: <pass-name>
+#   Vault-Pass-Blob: <blob id> <path>
+# and then confirms each blob is what HEAD holds. Returns 0 when they were
+# committed or there was nothing to commit (not a git vault, nothing owned, or
+# every path ignored by git), 2 when a path was dirty before the pass or is not a
+# regular file, 5 when vault-check rejects a note, and 4 when staging or the
+# commit failed, after taking the paths back out of the index. The agent's
+# RUN_RC and RUN_TIMED_OUT are kept, because the git steps run under the same
+# watchdog.
+commit_owned() {
+  local root="$1" pass="$2" owned="$3" predirty="$4" snap="$5" log="$6"
+  local hooks="$5/nohooks" agent_rc="${RUN_RC:-0}" agent_timed_out="${RUN_TIMED_OUT:-0}" p blob got timeout step idx rc=0
+  local -a paths
+  paths=()
+  [ -s "$owned" ] || return 0
+  if [ "${VAULT_GIT:-0}" -ne 1 ]; then
+    printf '[%s] NOTE: the vault is not a git repository, so the pass'"'"'s files were not committed.\n' "$(ts)" >> "$log"
+    return 0
+  fi
+  owned_predirty "$owned" "$predirty" "$snap" "$log" || return 2
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    if [ -L "$root/$p" ] || [ ! -f "$root/$p" ]; then
+      printf '[%s] VIOLATION: %s is not a regular file after the pass (removed, or replaced by a link or a folder), so nothing was committed.\n' "$(ts)" "$p" >> "$log"
+      return 2
+    fi
+    if safe_git "$hooks" -C "$root" check-ignore -q -- "$p" 2>/dev/null; then
+      printf '[%s] NOTE: %s is ignored by git, so it was not committed.\n' "$(ts)" "$p" >> "$log"
+      continue
+    fi
+    paths+=("$p")
+  done < "$owned"
+  [ "${#paths[@]}" -gt 0 ] || return 0
+
+  # The gate reads exactly the files about to be committed.
+  if ! CLAUDE_PROJECT_DIR="$root" bash "$root/.claude/scripts/vault-check.sh" -- "${paths[@]}" > "$snap/check.out" 2>&1; then
+    printf '[%s] CHECK-FAILED: vault-check rejected the pass'"'"'s files, so they were not committed. They are left in place for review:\n' "$(ts)" >> "$log"
+    sed 's/^/    /' "$snap/check.out" >> "$log"
+    return 5
+  fi
+
+  timeout="$(uint_setting RUNNER_GIT_TIMEOUT 120 1 "$log")"
+  : > "$snap/git.out"
+  for step in add commit; do
+    if [ "$step" = add ]; then
+      run_with_watchdog "$timeout" "$snap/git.out" env GIT_TERMINAL_PROMPT=0 \
+        git -C "$root" -c core.fsmonitor=false add -- "${paths[@]}"
+    else
+      {
+        printf '%s pass: %s\n\nVault-Pass: %s\n' "$pass" "${paths[*]}" "$pass"
+        for p in "${paths[@]}"; do
+          blob="$(index_blob "$root" "" "$p")"
+          [ -n "$blob" ] || blob=unknown
+          printf 'Vault-Pass-Blob: %s %s\n' "$blob" "$p"
+        done
+      } > "$snap/commit-msg"
+      run_with_watchdog "$timeout" "$snap/git.out" env GIT_TERMINAL_PROMPT=0 \
+        git -C "$root" -c core.fsmonitor=false commit -q --only -F "$snap/commit-msg" -- "${paths[@]}"
+    fi
+    if [ "$RUN_TIMED_OUT" -eq 1 ] || [ "$RUN_RC" -ne 0 ]; then
+      if [ "$RUN_TIMED_OUT" -eq 1 ]; then
+        printf '[%s] COMMIT-FAILED: git %s did not finish within %ss (RUNNER_GIT_TIMEOUT) and was stopped. The pass'"'"'s files are left uncommitted and unstaged:\n' "$(ts)" "$step" "$timeout" >> "$log"
+      else
+        printf '[%s] COMMIT-FAILED: git %s exited %s. The pass'"'"'s files are left uncommitted and unstaged:\n' "$(ts)" "$step" "$RUN_RC" >> "$log"
+      fi
+      printf '    %s\n' "${paths[@]}" >> "$log"
+      sed 's/^/    git: /' "$snap/git.out" >> "$log"
+      unstage_paths "$root" "$hooks" "${paths[@]}"
+      idx="$(git_index_lock_path "$root")"
+      if [ -n "$idx" ] && [ -e "$idx" ]; then
+        printf '[%s] WARNING: %s was left behind by the stopped git command. Remove it once no git process is running.\n' "$(ts)" "$idx" >> "$log"
+      fi
+      rc=4
+      break
+    fi
+  done
+  RUN_PID=""
+  if [ "$rc" -eq 0 ]; then
+    grep '^Vault-Pass-Blob: ' "$snap/commit-msg" | while IFS=' ' read -r step blob p; do
+      got="$(index_blob "$root" HEAD "$p")"
+      if [ "$blob" = unknown ] || [ "$got" != "$blob" ]; then
+        printf '%s\n' "$p"
+      fi
+    done > "$snap/commit-mismatch"
+    if [ -s "$snap/commit-mismatch" ]; then
+      printf '[%s] COMMIT-FAILED: the commit was made, but HEAD does not hold the checked content of these files, so its Vault-Pass-Blob trailers are wrong:\n' "$(ts)" >> "$log"
+      sed 's/^/    /' "$snap/commit-mismatch" >> "$log"
+      rc=4
+    else
+      printf '[%s] COMMITTED: %s\n' "$(ts)" "${paths[*]}" >> "$log"
+    fi
+  fi
+  RUN_RC="$agent_rc"
+  RUN_TIMED_OUT="$agent_timed_out"
+  return "$rc"
+}
+
 # contain_pass <root> <state-dir> <runner> <snap-dir> <log> <head-before>
 # The whole post-agent sequence, in the only safe order: contain the fenced
 # steering surfaces with no git involved, then, if git's own config was not

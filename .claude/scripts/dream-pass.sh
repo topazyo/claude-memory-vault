@@ -32,20 +32,29 @@
 #                       %LOCALAPPDATA% or ~/.local/state)
 #   RUN_LOCK_WAIT       seconds to wait for another pass's run lock (default 1800)
 #   RUN_LOCK_POLL       seconds between checks while waiting (default 30)
+#   RUNNER_GIT_TIMEOUT  seconds each git step of the journal commit may take
+#                       (default 120)
 #
 # Exit codes:
-#   0    the pass changed a dream journal and nothing else
+#   0    the pass changed a dream journal and nothing else, and the journal was
+#        committed (or the vault is not a git repository, or git ignores it)
 #   1    NO-ARTIFACT: exited 0 but no dream journal was added or changed,
 #        or the runner could not set itself up (temp dir, state directory, backup,
-#        prompt file, run lock, in-flight marker)
+#        prompt file, run lock, in-flight marker, git status)
 #   2    VIOLATION: files outside the dream journals changed during the run
-#        (steering surfaces among them are contained and the tripwire is set)
+#        (steering surfaces among them are contained and the tripwire is set),
+#        or the pass changed a journal that already had uncommitted changes
 #   3    REFUSED: command mode without VAULT_ALLOW_UNENFORCED_TOOLS=1
+#   4    COMMIT-FAILED: staging or committing the journal failed or ran past
+#        RUNNER_GIT_TIMEOUT, and the journal is left uncommitted and unstaged
+#   5    CHECK-FAILED: vault-check rejected the journal, which is left uncommitted
 #   64   VAULT_AGENT is not claude or command
 #   70   TRIPWIRE-ERROR: containment was needed but no tripwire could be written
 #   75   LOCKED: another pass held the run lock, or git's index.lock stayed, for
-#        RUN_LOCK_WAIT seconds, the index.lock is more than 10 minutes old, or
-#        another runner took the lock over before the pass started
+#        RUN_LOCK_WAIT seconds, the index.lock is more than 10 minutes old,
+#        another runner took the lock over before the pass started, a git
+#        merge, rebase, cherry-pick, revert or bisect is in progress, or HEAD is
+#        detached
 #   78   TRIPWIRE: a tripwire is set, or an earlier pass died before containment
 #   124  TIMEOUT: the watchdog killed a run that exceeded DREAM_PASS_TIMEOUT
 #   127  the claude binary or the VAULT_AGENT_CMD wrapper was not found
@@ -162,6 +171,12 @@ main() {
   }
   mkdir -p "$SNAP_DIR/nohooks"
 
+  # The journal is committed at the end, so a git operation in progress or a
+  # detached HEAD stops the run before the agent starts.
+  git_preflight "$ROOT" "$SNAP_DIR/nohooks" "$LOG"
+  git_rc=$?
+  [ "$git_rc" -eq 0 ] || exit "$git_rc"
+
   # The agent is given no shell, so it cannot run git itself. Record the
   # repository state here for it to read, instead of widening its tool list.
   {
@@ -173,6 +188,13 @@ main() {
       printf 'This vault is not a git repository; no history is available.\n'
     fi
   } > "$LOG_DIR/dream-pass.git-state.txt" 2>/dev/null
+
+  # Files someone was already editing, which the pass must not commit over.
+  : > "$SNAP_DIR/predirty"
+  if [ "$VAULT_GIT" -eq 1 ] && ! git_dirty_paths "$ROOT" "$SNAP_DIR/nohooks" "$SNAP_DIR/predirty"; then
+    printf '[%s] ERROR: git status failed, so the files already being edited are unknown. Refusing to run.\n' "$(ts)" >> "$LOG"
+    exit 1
+  fi
 
   snapshot_tree "$ROOT" "$SNAP_DIR/before"
   # Containment needs the pre-pass copy. Without it, refuse rather than run a pass
@@ -249,7 +271,14 @@ main() {
     exit 1
   fi
 
-  printf '[%s] OK: %s\n' "$(ts)" "$(grep -E '^20-projects/_logs/dream-' "$SNAP_DIR/changed" | tr '\n' ' ')" >> "$LOG"
+  # COMMIT. Exactly the journals the pass changed, checked first, with trailers
+  # that let later tooling tell a pass's commit from a human's.
+  grep -E '^20-projects/_logs/dream-[^/]*\.md$' "$SNAP_DIR/changed" > "$SNAP_DIR/owned"
+  commit_owned "$ROOT" dream "$SNAP_DIR/owned" "$SNAP_DIR/predirty" "$SNAP_DIR" "$LOG"
+  commit_rc=$?
+  [ "$commit_rc" -eq 0 ] || exit "$commit_rc"
+
+  printf '[%s] OK: %s\n' "$(ts)" "$(tr '\n' ' ' < "$SNAP_DIR/owned")" >> "$LOG"
   exit 0
 }
 
