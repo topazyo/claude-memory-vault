@@ -3,7 +3,6 @@ name: promotion-agent
 description: Distills medium-term logs and recorded corrections into long-term standards and wiki entities. The weekly medium-to-long promotion pass.
 tools: Read, Glob, Grep, Write, Edit, Bash, Skill
 model: sonnet
-memory: project
 skills:
   - preserve
 maxTurns: 30

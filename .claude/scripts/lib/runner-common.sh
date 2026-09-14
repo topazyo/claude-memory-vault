@@ -78,29 +78,48 @@ run_with_watchdog() {
   return 0
 }
 
-# snapshot_tree <root> <output-file> [agent-kind]
+# snapshot_tree <root> <output-file>
 #
-# Writes one "checksum size path" line per file under <root>, sorted. Pruned:
-# .git/, .obsidian/ (Obsidian rewrites its workspace state while open),
-# .claude/logs/ (the runner writes there), and - in claude mode only -
-# .claude/agent-memory*/ and 90-auto-memory/ (machine-managed memory Claude Code
-# may update during a run). In command mode those two stay inside the fence:
-# nothing legitimate writes there during a wrapper run, and memory files are
-# loaded into later sessions, so an unseen write there would be a planted
-# instruction rather than noise.
+# Writes one "checksum size path" line per file under <root>, sorted.
+#
+# Pruned: .claude/logs/ (the runner writes there) and the three Obsidian
+# workspace files, which Obsidian rewrites whenever a pane moves and which carry
+# no code. Everything else in .obsidian/ stays inside the fence: a plugin's
+# main.js plus an entry in community-plugins.json is code Obsidian runs on its
+# next start, and .obsidian/ is not one of the paths Claude Code protects.
+#
+# Agent memory (.claude/agent-memory*) and 90-auto-memory/ are fenced in every
+# mode. Memory loads into later sessions, so an unseen write there would be a
+# planted instruction. run_agent turns Claude Code's own auto memory off for the
+# pass, which is what makes fencing it in claude mode possible.
+#
+# .git/ is pruned as a tree, but the files in it that run code or move history
+# are checksummed: config, hooks, info, HEAD, refs (not remote-tracking refs,
+# which a background fetch updates), packed-refs, alternates, and each
+# submodule's config and hooks. A vault whose .git is a file (a worktree
+# pointer) has that file checksummed instead.
+#
 # `find -exec ... +` rather than xargs: xargs with empty input runs cksum with
 # no arguments on some platforms, and cksum would then wait on stdin forever.
 snapshot_tree() {
-  local root="$1" out="$2" kind="${3:-claude}"
+  local root="$1" out="$2"
   (
     cd "$root" || exit 1
-    if [ "$kind" = command ]; then
-      find . \( -path ./.git -o -path ./.obsidian -o -path ./.claude/logs \) -prune \
-           -o -type f -exec cksum {} + 2>/dev/null
-    else
-      find . \( -path ./.git -o -path ./.obsidian -o -path ./.claude/logs \
-                -o -path './.claude/agent-memory*' -o -path ./90-auto-memory \) -prune \
-           -o -type f -exec cksum {} + 2>/dev/null
+    find . \( -path ./.git -o -path ./.claude/logs \
+              -o -path ./.obsidian/workspace.json -o -path ./.obsidian/workspace-mobile.json \
+              -o -path ./.obsidian/workspace.json.bak \) -prune \
+         -o -type f -exec cksum {} + 2>/dev/null
+    if [ -d .git ]; then
+      for f in .git/config .git/HEAD .git/packed-refs .git/objects/info/alternates; do
+        [ -f "$f" ] && cksum "./$f" 2>/dev/null
+      done
+      for d in .git/hooks .git/info .git/refs; do
+        [ -d "$d" ] && find "./$d" -path ./.git/refs/remotes -prune -o -type f -exec cksum {} + 2>/dev/null
+      done
+      [ -d .git/modules ] && find ./.git/modules \( -name config -o -path '*/hooks/*' \) -type f \
+        -exec cksum {} + 2>/dev/null
+    elif [ -f .git ]; then
+      cksum ./.git 2>/dev/null
     fi
   ) | LC_ALL=C sort >"$out"
 }
@@ -116,6 +135,176 @@ changed_paths() {
     | cut -d' ' -f3- \
     | sed 's|^\./||' \
     | LC_ALL=C sort -u
+}
+
+# ---------------------------------------------------------------------------
+# Containment.
+#
+# A fence that only reports leaves whatever a steered pass planted in place: the
+# run exits 2, the scheduler shows a task that ran, and the planted Obsidian
+# plugin or git hook runs the next time something opens the vault. So a change
+# to a STEERING or EXECUTION surface is contained before the runner exits:
+#
+#   1. the file as the pass left it is moved to a quarantine directory OUTSIDE
+#      the vault (never deleted, so nothing a human wrote at the same moment is
+#      lost);
+#   2. the pre-pass copy is restored from a backup taken before the agent ran;
+#   3. a tripwire file is written, and every runner and vault-check.sh refuse to
+#      run until a human has read it and deleted it.
+#
+# Changes to ordinary notes are not contained. They run no code, a human may be
+# editing one at the same moment, and git already shows the diff; the fence
+# reports them as before.
+
+TRIPWIRE_REL=".claude/logs/runner-tripwire"
+
+# is_steering_path <relative-path>
+# True for files that run code or steer later sessions: Obsidian configuration and
+# plugins (not the workspace files), everything under .claude/ except logs and
+# worktrees, every shipped harness's configuration, the instruction files, memory,
+# and git's config, hooks, info, refs and alternates.
+is_steering_path() {
+  case "$1" in
+    .obsidian/workspace.json|.obsidian/workspace-mobile.json|.obsidian/workspace.json.bak) return 1 ;;
+    .claude/logs/*|.claude/worktrees/*) return 1 ;;
+    .obsidian/*|.claude/*|.agents/*|.codex/*|.gemini/*|.cursor/*|.windsurf/*|.opencode/*|.github/*|.vscode/*) return 0 ;;
+    90-auto-memory/*) return 0 ;;
+    .mcp.json|opencode.json|.aider.conf.yml|AGENTS.md|CLAUDE.md|GEMINI.md) return 0 ;;
+    .gitattributes|.gitignore|.geminiignore|.cursorignore) return 0 ;;
+    .git|.git/*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# is_restorable_path <relative-path>
+# Git's HEAD, refs and packed-refs are contained by the tripwire alone. Rewriting
+# them back could undo a real commit made while the pass ran, and git's reflog is
+# the better recovery tool; with the tripwire set, no runner builds on them.
+is_restorable_path() {
+  case "$1" in
+    .git/HEAD|.git/packed-refs|.git/refs/*) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+# steering_files <root>
+# Prints every existing steering file as a relative path, one per line, sorted.
+# This is the list the pre-pass backup holds.
+steering_files() {
+  (
+    cd "$1" || exit 1
+    for d in .obsidian .claude .agents .codex .gemini .cursor .windsurf .opencode .github .vscode 90-auto-memory; do
+      [ -d "$d" ] && find "$d" \( -path .claude/logs -o -path .claude/worktrees \) -prune -o -type f -print 2>/dev/null
+    done
+    for f in .mcp.json opencode.json .aider.conf.yml AGENTS.md CLAUDE.md GEMINI.md \
+             .gitattributes .gitignore .geminiignore .cursorignore; do
+      [ -f "$f" ] && printf '%s\n' "$f"
+    done
+    if [ -d .git ]; then
+      for f in .git/config .git/objects/info/alternates; do [ -f "$f" ] && printf '%s\n' "$f"; done
+      for d in .git/hooks .git/info; do [ -d "$d" ] && find "$d" -type f -print 2>/dev/null; done
+      [ -d .git/modules ] && find .git/modules \( -name config -o -path '*/hooks/*' \) -type f -print 2>/dev/null
+    elif [ -f .git ]; then
+      printf '.git\n'
+    fi
+  ) | grep -vE '^\.obsidian/workspace(-mobile)?\.json(\.bak)?$' | LC_ALL=C sort
+}
+
+# backup_steering <root> <tarball>
+# Writes <tarball> and <tarball>.list. Returns non-zero, after which the runner
+# must refuse to start, when tar is missing or the archive cannot be written: a
+# pass whose containment cannot work must not run unattended.
+backup_steering() {
+  local root="$1" tarball="$2"
+  command -v tar >/dev/null 2>&1 || return 1
+  steering_files "$root" > "$tarball.list" || return 1
+  if [ -s "$tarball.list" ]; then
+    ( cd "$root" && tar -cf "$tarball" -T "$tarball.list" ) 2>/dev/null || return 1
+  else
+    : > "$tarball"
+  fi
+  return 0
+}
+
+# vault_state_dir <root>
+# Per-vault state directory OUTSIDE the vault, so nothing kept there is indexed by
+# Obsidian, synced with the vault folder, or reachable by an agent's file tools
+# in the vault. VAULT_STATE_DIR overrides it (the test suite uses that).
+vault_state_dir() {
+  local root="$1" base id
+  if [ -n "${VAULT_STATE_DIR:-}" ]; then
+    printf '%s\n' "$VAULT_STATE_DIR"
+    return 0
+  fi
+  if [ -n "${LOCALAPPDATA:-}" ]; then
+    base="$LOCALAPPDATA"
+    command -v cygpath >/dev/null 2>&1 && base="$(cygpath -u "$base")"
+  else
+    base="${XDG_STATE_HOME:-${HOME:-/tmp}/.local/state}"
+  fi
+  id="$(printf '%s' "$root" | cksum | cut -d' ' -f1)"
+  printf '%s/claude-memory-vault/%s\n' "$base" "$id"
+}
+
+# contain_steering_changes <root> <changed-list> <tarball> <quarantine-dir> <log>
+# For each changed steering path: quarantine the current file (if any), then
+# restore the pre-pass copy (if one existed and the path is restorable). Prints
+# each steering path it handled. Returns 0 when at least one was found.
+contain_steering_changes() {
+  local root="$1" changed="$2" tarball="$3" qdir="$4" log="$5" rel found=1
+  while IFS= read -r rel; do
+    [ -n "$rel" ] || continue
+    is_steering_path "$rel" || continue
+    found=0
+    printf '%s\n' "$rel"
+    is_restorable_path "$rel" || continue
+    if [ -e "$root/$rel" ]; then
+      if ! { mkdir -p "$qdir/$(dirname "$rel")" && mv -f "$root/$rel" "$qdir/$rel"; } 2>/dev/null; then
+        printf '[%s] CONTAINMENT-ERROR: could not quarantine %s\n' "$(ts)" "$rel" >> "$log"
+        continue
+      fi
+    fi
+    if grep -qxF -e "$rel" "$tarball.list" 2>/dev/null; then
+      if ! ( cd "$root" && tar -xf "$tarball" "$rel" ) 2>/dev/null; then
+        printf '[%s] CONTAINMENT-ERROR: could not restore %s from the pre-pass backup\n' "$(ts)" "$rel" >> "$log"
+      fi
+    fi
+  done < "$changed"
+  return "$found"
+}
+
+# write_tripwire <root> <runner> <quarantine-dir> <handled-list>
+write_tripwire() {
+  {
+    printf 'TRIPWIRE set by %s at %s\n\n' "$2" "$(ts)"
+    printf 'An unattended pass changed a steering or execution surface. The files below were\n'
+    printf 'moved to the quarantine and restored from the pre-pass backup where one existed.\n'
+    printf "Git HEAD and refs are never rewritten: check them with 'git reflog'.\n\n"
+    printf 'Quarantine: %s\n\nPaths:\n' "$3"
+    sed 's/^/  /' "$4"
+    printf '\nNo runner, and not vault-check.sh, will run while this file exists.\n'
+    printf 'Read the quarantined files, then delete this file to clear the tripwire.\n'
+  } > "$1/$TRIPWIRE_REL"
+}
+
+# tripwire_check <root> <log>
+# Returns 0 when clear, otherwise logs the refusal and returns 78.
+tripwire_check() {
+  if [ -e "$1/$TRIPWIRE_REL" ]; then
+    printf '[%s] TRIPWIRE: refusing to run. A previous pass changed a steering or execution surface; read %s, then delete it.\n' \
+      "$(ts)" "$TRIPWIRE_REL" >> "$2"
+    return 78
+  fi
+  return 0
+}
+
+# safe_git <empty-hooks-dir> <git args...>
+# Git as the runner calls it: no hooks, no fsmonitor, no prompts. Both are ways a
+# changed config or hook directory would otherwise run code in the runner's shell.
+safe_git() {
+  local hooks="$1"
+  shift
+  GIT_TERMINAL_PROMPT=0 git -c core.hooksPath="$hooks" -c core.fsmonitor=false "$@"
 }
 
 # ---------------------------------------------------------------------------
@@ -215,6 +404,10 @@ run_agent() {
       # exits 0 having done nothing, or waits on input that never arrives. Both
       # look like success to the scheduler, which is why each runner asserts an
       # artifact afterwards.
+      #
+      # Auto memory is switched off for the pass. Claude Code would otherwise
+      # write memory files the fence has to treat as a planted instruction.
+      export CLAUDE_CODE_DISABLE_AUTO_MEMORY=1
       run_with_watchdog "$timeout" "$out" \
         "$AGENT_BIN" -p "$task" --agent "$agent" --permission-mode acceptEdits
       ;;

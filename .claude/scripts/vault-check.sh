@@ -27,6 +27,16 @@
 ROOT="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "$0")/../.." && pwd)}"
 TODAY="$(date +%F)"
 
+# A scheduled pass sets this tripwire when it changed a steering or execution
+# surface (see "Containment" in lib/runner-common.sh). Until a human has read it
+# and deleted it, a clean report here would read as "the vault is fine", and the
+# commit gate would let the aftermath be committed. So refuse, loudly.
+if [ -e "$ROOT/.claude/logs/runner-tripwire" ]; then
+  printf 'vault-check: TRIPWIRE - a scheduled pass changed a steering or execution surface.\n' >&2
+  printf 'vault-check: read .claude/logs/runner-tripwire, then delete it. Nothing was checked.\n' >&2
+  exit 1
+fi
+
 # Content tiers only. 90-auto-memory/ is machine-managed under Claude Code's own
 # schema and is deliberately out of scope (see the freshness standard § 2).
 TIERS="01-inbox 10-daily 20-projects 30-knowledge 31-standards 40-llm-wiki"

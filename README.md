@@ -424,7 +424,11 @@ dated journal file of proposals. It never edits an existing note, never promotes
 deletes. That constraint is what makes running it unattended safe. The worst outcome of a
 bad run is one bad file you ignore, not a vault quietly rewritten overnight by a model nobody was
 watching. The runner backs that constraint mechanically: it fails the run if any other file
-changed. The promotion agent, which *does* write into the long tier, takes a git snapshot first so
+changed. When the changed file could run code or steer later sessions (an Obsidian plugin, a hook,
+an instruction file, memory, git's config), failing is not enough, because the file would still be
+there next time something opens the vault. So the runner restores it, keeps what the pass wrote in
+a quarantine outside the vault, and sets a tripwire that stops every later run until you have
+looked. The promotion agent, which *does* write into the long tier, takes a git snapshot first so
 every unattended write is revertible with one command, and its runner fails the run if it wrote
 anywhere but the long tier or a promotion report. The fence catches a write in the wrong place;
 only the snapshot can undo a bad write in the right one, which is why `git` is a hard requirement.

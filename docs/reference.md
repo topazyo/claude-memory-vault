@@ -381,16 +381,49 @@ Around that call, each runner does three things an exit code cannot:
 
 - **Watchdog.** The agent runs with stdin from `/dev/null` under a timer. A run that exceeds its
   timeout gets `TERM`, then `KILL` after a grace period, and the runner exits **124**.
-- **Write fence.** The runner checksums every file in the vault before and after the run (pruning
-  `.git`, `.obsidian` and `.claude/logs`, plus, in claude mode only, `.claude/agent-memory*` and
-  `90-auto-memory`, which Claude Code may update mid-run; in command mode a write to either is a
-  violation, because memory files load into later sessions) and exits
+- **Write fence.** The runner checksums every file in the vault before and after the run and exits
   **2** with the offending paths logged if anything changed outside the allowed areas. For
   `dream-pass` that is `20-projects/_logs/dream-*.md`. For `promotion-pass` it is `31-standards/`
   and `40-llm-wiki/wiki/` (never their `templates/`) plus `20-projects/_logs/promotion-*.md`. Both
   tolerate a `compaction-*.md` stub written by the compaction hook. Another writer active during
   the run, such as a sync client, or a harness that keeps state files in its working directory,
   trips the fence too; the logged paths tell you which.
+
+  Only `.claude/logs` and Obsidian's three workspace files (`workspace.json`,
+  `workspace-mobile.json`, `workspace.json.bak`) are left out of the checksums. The rest of
+  `.obsidian/` is inside the fence, because a plugin's `main.js` plus an entry in
+  `community-plugins.json` is code Obsidian runs, and `.obsidian/` is not a path Claude Code
+  protects. Memory (`.claude/agent-memory*` and `90-auto-memory/`) is fenced in both modes, because
+  it loads into later sessions. Claude mode starts the agent with `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`,
+  so Claude Code itself writes no memory during the pass. Inside `.git/`, the files that run code or
+  move history are checksummed as well: `config`, `hooks/`, `info/`, `HEAD`, `refs/` (except
+  `refs/remotes/`), `packed-refs`, `objects/info/alternates`, and each submodule's `config` and
+  `hooks/`.
+- **Containment.** A fence that only reports leaves a planted file in place, where it runs the next
+  time something opens the vault. So when the changed paths include a *steering or execution
+  surface*, the runner contains it before anything else, including before it looks at the agent's
+  exit code. Steering surfaces are everything in `.obsidian/` except the workspace files, `.claude/`
+  except `logs/` and `worktrees/`, `.agents/`, each shipped harness's configuration, `.github/`,
+  `.vscode/`, `.mcp.json`, `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, the ignore and attributes files,
+  memory, and the git files listed above. For each one the runner moves the file as the pass left
+  it into a quarantine outside the vault (it never deletes it), restores the pre-pass copy from a
+  backup taken before the agent started, and writes the tripwire `.claude/logs/runner-tripwire`,
+  which lists the paths and the quarantine. Git `HEAD`, `refs/` and `packed-refs` are listed in the
+  tripwire but neither moved nor rewritten, because rewriting them could undo a real commit made
+  during the run. Check them with `git reflog`.
+
+  While the tripwire exists, both runners exit **78** without starting an agent, `vault-check.sh`
+  exits 1 without checking anything, and `/resume` shows the tripwire instead of a briefing. Clear it
+  by reading the quarantined files and then deleting the tripwire. The quarantine is
+  `%LOCALAPPDATA%\claude-memory-vault\<id>\quarantine\` on Windows and
+  `${XDG_STATE_HOME:-~/.local/state}/claude-memory-vault/<id>/quarantine/` elsewhere, where `<id>` is
+  a checksum of the vault's path. A runner that cannot take the backup, for example because `tar` is
+  missing, refuses to start with exit 1. Ordinary notes are not contained. They run no code, a human
+  may be editing one at the same moment, and git already shows their diff.
+- **Script integrity.** Each runner's body is a function called on the script's last lines, so an
+  edit made to the script while it runs is never executed by that run. Every git command a runner
+  issues uses no hooks and no fsmonitor (`core.hooksPath` set to an empty temporary directory,
+  `core.fsmonitor=false`), so a changed config cannot run code in the runner's shell.
 - **Artifact assertion.** A pass that exits 0 but left no evidence it ran exits **1**
   (NO-ARTIFACT). For `dream-pass` a `dream-*.md` journal must have been added or changed during
   this run; matching any date rather than today's keeps a run that crosses midnight valid. For
@@ -409,10 +442,11 @@ harness session cannot point an unattended pass, and its fence, at a different v
 | Exit | Meaning (both runners) |
 | --- | --- |
 | `0` | OK: the artifact assertion held and nothing outside the fence changed |
-| `1` | NO-ARTIFACT, the runner could not create its temporary directory, or (command mode) the agent definition file is missing |
-| `2` | VIOLATION: a file outside the allowed write areas changed during the run |
+| `1` | NO-ARTIFACT, the runner could not create its temporary directory or back up the steering surfaces, or (command mode) the agent definition file is missing |
+| `2` | VIOLATION: a file outside the allowed write areas changed during the run. When steering surfaces are among them they are contained and the tripwire is set |
 | `3` | REFUSED: `VAULT_AGENT=command` without `VAULT_ALLOW_UNENFORCED_TOOLS=1`; the agent was not started |
 | `64` | `VAULT_AGENT` is neither `claude` nor `command` |
+| `78` | TRIPWIRE: `.claude/logs/runner-tripwire` exists from an earlier contained violation; the agent was not started |
 | `124` | TIMEOUT: the watchdog killed the run |
 | `127` | the `claude` binary, the `VAULT_AGENT_CMD` wrapper, or (from a `.cmd`) Git Bash was not found |
 | other | the agent's own non-zero status, when nothing above applies |
@@ -427,6 +461,7 @@ harness session cannot point an unattended pass, and its fence, at a different v
 | `PROMOTION_PASS_TIMEOUT` | `5400` seconds | `promotion-pass.sh` |
 | `WATCHDOG_POLL` | `5` seconds | `lib/runner-common.sh`: how often the watchdog checks the clock |
 | `WATCHDOG_GRACE` | `15` seconds | `lib/runner-common.sh`: wait between `TERM` and `KILL` |
+| `VAULT_STATE_DIR` | per-vault directory under `%LOCALAPPDATA%` or `~/.local/state` | both runners: where quarantined files are kept, outside the vault |
 | `BASH_EXE` | standard Git for Windows paths | the `.cmd` wrappers |
 | `VAULT_FORCE_NO_JQ` | unset | `vault-lint.sh` and `postcompact-wrap-up.sh`: take the no-jq branch even when `jq` is installed |
 
@@ -497,7 +532,7 @@ can point at what established it). A vivid one-off is not a standard.
 | --- | --- |
 | Cadence | Scheduled; nightly or daily is typical (`dream-pass.sh` / `.cmd`) |
 | Tools | Read, Glob, Grep, Write, Skill — no Bash |
-| Model | `sonnet`, `memory: project`, `maxTurns: 40` |
+| Model | `sonnet`, `maxTurns: 40`, no agent memory (memory loads into later passes, so an unattended agent gets none) |
 | Writes | **Exactly one file**: `20-projects/_logs/dream-<YYYY-MM-DD>.md`, fenced by `dream-pass.sh` |
 | Never | Modifies, stamps, or deletes an existing note |
 
@@ -550,7 +585,7 @@ to re-run or synthesize to close it: closing a gap is the owner's call.
 | --- | --- |
 | Cadence | Weekly (`promotion-pass.sh` / `.cmd`) |
 | Tools | Read, Glob, Grep, Write, Edit, Bash, Skill (declares the `preserve` skill) |
-| Model | `sonnet`, `memory: project`, `maxTurns: 30` |
+| Model | `sonnet`, `maxTurns: 30`, no agent memory (memory loads into later passes, so an unattended agent gets none) |
 | Writes | Notes in `31-standards/` and `40-llm-wiki/wiki/` (never their `templates/`); freshness stamps on notes it re-probed; optionally `20-projects/_logs/promotion-*.md` |
 | Never | Deletes or overwrites a note to resolve a conflict |
 
@@ -657,8 +692,8 @@ while a note under `40-llm-wiki/wiki/` is covered by the six-tier rules only.
 | `.claude/hooks/read-guard.sh` | `2` blocked (`.env`, `.env.*`, `secrets/`) · `0` allowed, or no path to check | `.claude/logs/read-guard.log` (`BLOCKED:`, `DEGRADED:`); the reason also to stderr |
 | `.claude/scripts/vault-check.sh` | `0` notes scanned, no violations · `1` one or more violations (including a malformed date), no content-tier folder found, or zero notes scanned (`VACUOUS`) | stdout, plus the `VACUOUS` line on stderr — never writes to a note |
 | `.claude/scripts/run-tests.sh` | `0` all controls passed · `1` at least one failed · `130` SIGINT · `143` SIGTERM | stdout only; fixtures in a temp dir, removed on exit |
-| `.claude/scripts/dream-pass.sh` / `.cmd` | `0` OK · `1` NO-ARTIFACT · `2` VIOLATION · `3` REFUSED · `64` unknown `VAULT_AGENT` · `124` TIMEOUT · `127` `claude`, wrapper or Git Bash not found · otherwise the agent's code | `.claude/logs/dream-agent.log`; agent output in `dream-agent.run.log`; `dream-pass.git-state.txt`; `dream-pass.prompt.md` in command mode |
-| `.claude/scripts/promotion-pass.sh` / `.cmd` | `0` OK · `1` NO-ARTIFACT · `2` VIOLATION · `3` REFUSED · `64` unknown `VAULT_AGENT` · `124` TIMEOUT · `127` `claude`, wrapper or Git Bash not found · otherwise the agent's code | `.claude/logs/promotion-agent.log`; agent output appended to `promotion-agent.run.log`; `promotion-pass.prompt.md` in command mode |
+| `.claude/scripts/dream-pass.sh` / `.cmd` | `0` OK · `1` NO-ARTIFACT · `2` VIOLATION · `3` REFUSED · `64` unknown `VAULT_AGENT` · `78` TRIPWIRE · `124` TIMEOUT · `127` `claude`, wrapper or Git Bash not found · otherwise the agent's code | `.claude/logs/dream-agent.log`; agent output in `dream-agent.run.log`; `dream-pass.git-state.txt`; `dream-pass.prompt.md` in command mode; `runner-tripwire` after a contained violation |
+| `.claude/scripts/promotion-pass.sh` / `.cmd` | `0` OK · `1` NO-ARTIFACT · `2` VIOLATION · `3` REFUSED · `64` unknown `VAULT_AGENT` · `78` TRIPWIRE · `124` TIMEOUT · `127` `claude`, wrapper or Git Bash not found · otherwise the agent's code | `.claude/logs/promotion-agent.log`; agent output appended to `promotion-agent.run.log`; `promotion-pass.prompt.md` in command mode; `runner-tripwire` after a contained violation |
 | `.claude/githooks/pre-commit` | `vault-check.sh`'s status: `0` commit proceeds · `1` commit refused | stdout/stderr only |
 | `dream-agent` | n/a (agent) | one file: `20-projects/_logs/dream-<YYYY-MM-DD>.md` |
 | `promotion-agent` | n/a (agent) | `31-standards/`, `40-llm-wiki/wiki/`, optionally `20-projects/_logs/promotion-*.md`; git snapshot before writing |
