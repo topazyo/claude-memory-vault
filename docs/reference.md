@@ -398,12 +398,17 @@ Around that call, each runner does three things an exit code cannot:
   rewrite it in normal use, so it is fenced only for plugins that run code or commands named in their
   settings: `dataview`, `templater-obsidian`, `obsidian-shellcommands`, `quickadd`, `customjs`,
   `obsidian-git`, `execute-code` and `terminal` (the `CODE_PLUGINS` list in
-  `lib/runner-common.sh`). Every other file in a plugin folder is fenced for every plugin. Memory
+  `lib/runner-common.sh`). A plugin is matched by its folder name or by the `id` in its
+  `manifest.json`, ignoring case, so it is recognised whatever folder it was installed in. Every
+  other file or folder in a plugin folder is fenced for every plugin, including a folder named
+  `data.json`. The list names known plugins, so a plugin that can run code but is not on it keeps
+  its `data.json` outside the fence until you add it. Memory
   (`.claude/agent-memory*` and `90-auto-memory/`) is fenced in both modes, because it loads into
   later sessions. Claude mode starts the agent with `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`, so Claude
   Code itself writes no memory during the pass. Inside `.git/`, only the files that make git run
-  code are fenced: `config`, `config.worktree`, `hooks/`, `info/attributes`, `info/grafts`,
-  `objects/info/alternates`, and each submodule's `config` and `hooks/`. The rest of `info/` is not,
+  code are fenced: `config`, `config.worktree`, `commondir`, `hooks/`, `info/attributes`,
+  `info/grafts`, `objects/info/alternates`, and each submodule's `config` and `hooks/`. Git reads
+  config and hooks from the directory `commondir` names. The rest of `info/` is not,
   because `git gc --auto` after an ordinary commit rewrites `info/refs`. For a vault that is a linked
   worktree, the same files in the shared git directory are fenced too, and appear in logs under
   `.git-common/`. HEAD and refs are not fenced, because a pass may commit (the promotion agent takes
@@ -416,8 +421,9 @@ Around that call, each runner does three things an exit code cannot:
   `.vscode/`, and, **at any depth**, `CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md`,
   `AGENTS.override.md`, `GEMINI.md`, `.mcp.json`, `.gitattributes`, `.gitignore` and any `.claude/`
   or other harness folder, including one that is the last part of the path, such as a symlink named
-  `.claude`. Matching ignores case. A nested file counts because Claude Code loads `31-standards/CLAUDE.md` for work in
-  that folder and registers skills from a nested `.claude/skills/`, so the promotion pass's
+  `.claude`. Matching ignores case. A nested file counts because Claude Code loads
+  `31-standards/CLAUDE.md` for work in that folder and registers skills from a nested
+  `.claude/skills/`, so the promotion pass's
   permission to write `31-standards/` does not cover them. Inside `.claude/worktrees/<name>/` the
   same rules apply to the rest of the path.
 
@@ -435,7 +441,8 @@ Around that call, each runner does three things an exit code cannot:
   copy exists, both runners exit **78** without starting an agent, `vault-check.sh` exits 1 without
   checking anything, and `/resume` shows the tripwire instead of a briefing. Clear it by reviewing
   the paths and then deleting both copies. If no copy can be written, the runner exits **70**
-  (TRIPWIRE-ERROR) and leaves its in-flight marker, so the next run still refuses.
+  (TRIPWIRE-ERROR) and leaves its in-flight marker, so the next run still refuses. A runner stopped
+  by a signal logs the same TRIPWIRE-ERROR line but exits with the signal's code, 130 or 143.
 
   The **in-flight marker** (`.claude/logs/runner-inflight`, also copied to the state directory) is
   written just before the agent starts and removed only once containment has checked the pass. A pass
@@ -449,12 +456,19 @@ Around that call, each runner does three things an exit code cannot:
 
   The state directory is `%LOCALAPPDATA%\claude-memory-vault\<id>\` on Windows and
   `${XDG_STATE_HOME:-~/.local/state}/claude-memory-vault/<id>/` elsewhere, where `<id>` is a checksum
-  of the vault's path. `VAULT_STATE_DIR` overrides it, and a Windows path such as `C:/Users/Some One/vault-state` is
-  accepted. A value inside the vault, a relative one, or one containing `..` is never used. The
+  of the vault's resolved path. Symlinks are resolved, and on Windows and macOS case is ignored, so
+  every spelling of one vault's path finds the same state directory. `VAULT_STATE_DIR` overrides
+  it, and a Windows path such as `C:/Users/Some One/vault-state` is accepted. A value inside the
+  vault, a relative one, or one containing `..` is never used. A value that does not exist yet is
+  judged by where it would be created, so a symlink into the vault does not get past the check. The
   runner logs a warning and uses a directory under the system temp folder instead. Set
   `VAULT_STATE_DIR` the same way for both runners and for the shells where you run `vault-check.sh`,
-  or they look for the tripwire in different places. A runner that cannot take the backup, for
-  example because `tar` is missing, refuses to start with exit 1. A backup that cannot be restored
+  or they look for the tripwire in different places, and give each vault its own value. A runner
+  refuses to start with exit 1 when the state directory cannot be created, or is not a directory
+  its own account owns and can write, because another account's directory could hold a forged
+  tripwire or read the quarantine. `vault-check.sh` prints a warning when it cannot work out the
+  state directory, since it then checks only the tripwire in the vault. A runner that cannot take
+  the backup, for example because `tar` is missing, refuses to start with exit 1. A backup that cannot be restored
   is listed in the tripwire as a containment error. Ordinary notes are not contained. They run no
   code, a human may be editing one at the same moment, and git already shows their diff.
 
@@ -491,7 +505,7 @@ harness session cannot point an unattended pass, and its fence, at a different v
 | Exit | Meaning (both runners) |
 | --- | --- |
 | `0` | OK: the artifact assertion held and nothing outside the fence changed |
-| `1` | NO-ARTIFACT, the runner could not create its temporary directory or back up the steering surfaces, or (command mode) the agent definition file is missing |
+| `1` | NO-ARTIFACT, the runner could not create its temporary directory, use its state directory, write its in-flight marker or back up the steering surfaces, or (command mode) the agent definition file is missing |
 | `2` | VIOLATION: a file outside the allowed write areas changed during the run. When steering surfaces are among them they are contained and the tripwire is set |
 | `3` | REFUSED: `VAULT_AGENT=command` without `VAULT_ALLOW_UNENFORCED_TOOLS=1`; the agent was not started |
 | `64` | `VAULT_AGENT` is neither `claude` nor `command` |
@@ -512,7 +526,7 @@ harness session cannot point an unattended pass, and its fence, at a different v
 | `PROMOTION_PASS_TIMEOUT` | `5400` seconds | `promotion-pass.sh` |
 | `WATCHDOG_POLL` | `5` seconds | `lib/runner-common.sh`: how often the watchdog checks the clock |
 | `WATCHDOG_GRACE` | `15` seconds | `lib/runner-common.sh`: wait between `TERM` and `KILL` |
-| `VAULT_STATE_DIR` | per-vault directory under `%LOCALAPPDATA%` or `~/.local/state` | both runners: the quarantine, the tripwire and in-flight copies, and the pre-pass backup of a running pass, all outside the vault, and `vault-check.sh`, which looks for the tripwire copy there. An absolute path is required, and a Windows path is converted. A relative one, one containing `..`, or one inside the vault is replaced with a directory under the system temp folder, and the runner logs a warning |
+| `VAULT_STATE_DIR` | per-vault directory under `%LOCALAPPDATA%` or `~/.local/state` | both runners: the quarantine, the tripwire and in-flight copies, and the pre-pass backup of a running pass, all outside the vault, and `vault-check.sh`, which looks for the tripwire copy there. An absolute path is required, and a Windows path is converted. A relative one, one containing `..`, or one inside the vault is replaced with a directory under the system temp folder, and the runner logs a warning. A state directory the runner's account does not own or cannot write stops the run with exit 1. Give each vault its own value |
 | `BASH_EXE` | standard Git for Windows paths | the `.cmd` wrappers |
 | `VAULT_FORCE_NO_JQ` | unset | `vault-lint.sh` and `postcompact-wrap-up.sh`: take the no-jq branch even when `jq` is installed |
 

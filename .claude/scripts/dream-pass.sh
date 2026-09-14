@@ -34,7 +34,8 @@
 # Exit codes:
 #   0    the pass changed a dream journal and nothing else
 #   1    NO-ARTIFACT: exited 0 but no dream journal was added or changed,
-#        or the runner could not set itself up (temp dir, backup, prompt file)
+#        or the runner could not set itself up (temp dir, state directory, backup,
+#        prompt file, in-flight marker)
 #   2    VIOLATION: files outside the dream journals changed during the run
 #        (steering surfaces among them are contained and the tripwire is set)
 #   3    REFUSED: command mode without VAULT_ALLOW_UNENFORCED_TOOLS=1
@@ -71,13 +72,13 @@ on_signal() {
   if [ "$INFLIGHT" -eq 1 ] && [ "$CONTAINMENT_CHECKED" -eq 0 ]; then
     : > "$SNAP_DIR/empty"
     if write_tripwire "$ROOT" "$STATE" "$RUNNER" \
-         "the pass was interrupted by a signal before containment ran; the vault's steering surfaces are unverified (pre-pass backup: $STATE/inflight-backup.tar)" \
-         "(none: containment did not run)" "$SNAP_DIR/empty"; then
+         "the pass was interrupted by a signal before containment ran, so the vault's steering surfaces are unverified (the pre-pass backup is $STATE/inflight-backup.tar)" \
+         "(none, because containment did not run)" "$SNAP_DIR/empty"; then
       clear_inflight "$ROOT" "$STATE"
-      printf '[%s] INTERRUPTED before containment; tripwire set\n' "$(ts)" >> "$LOG"
+      printf '[%s] INTERRUPTED before containment. Tripwire set.\n' "$(ts)" >> "$LOG"
     else
-      # No tripwire: keep the marker, so the next run still refuses.
-      printf '[%s] INTERRUPTED before containment; no tripwire could be written, in-flight marker kept\n' "$(ts)" >> "$LOG"
+      # With no tripwire the marker stays, so the next run still refuses.
+      printf '[%s] TRIPWIRE-ERROR: interrupted before containment and no tripwire could be written. The in-flight marker is kept.\n' "$(ts)" >> "$LOG"
     fi
   fi
   exit "$1"
@@ -99,7 +100,10 @@ main() {
   RUN_OUT="$LOG_DIR/dream-agent.run.log"
   TIMEOUT="${DREAM_PASS_TIMEOUT:-3600}"
   STATE="$(vault_state_dir "$ROOT" 2>>"$LOG")"
-  mkdir -p "$STATE" 2>/dev/null
+  if ! state_dir_ready "$STATE"; then
+    printf '[%s] ERROR: the state directory %s could not be created, or is not a directory this account owns and can write. Refusing to run.\n' "$(ts)" "$STATE" >> "$LOG"
+    exit 1
+  fi
 
   tripwire_check "$ROOT" "$STATE" "$RUNNER" "$LOG"
   guard_rc=$?
@@ -152,7 +156,7 @@ main() {
   # Containment needs the pre-pass copy. Without it, refuse rather than run a pass
   # whose planted files could not be undone.
   if ! backup_steering "$ROOT" "$SNAP_DIR/before" "$SNAP_DIR/steering.tar"; then
-    printf '[%s] ERROR: could not back up the steering surfaces (tar missing, or the archive is incomplete); refusing to run without containment\n' "$(ts)" >> "$LOG"
+    printf '[%s] ERROR: could not back up the steering surfaces (tar missing, or the archive is incomplete). Refusing to run without containment.\n' "$(ts)" >> "$LOG"
     exit 1
   fi
   HEAD_BEFORE="$(head_state "$ROOT" "$SNAP_DIR/nohooks")"
@@ -161,7 +165,7 @@ main() {
   # trace the next run can trust. Refuse rather than start the agent.
   if ! mark_inflight "$ROOT" "$STATE" "$RUNNER"; then
     clear_inflight "$ROOT" "$STATE"
-    printf '[%s] ERROR: could not write the in-flight marker in the state directory %s; refusing to run\n' "$(ts)" "$STATE" >> "$LOG"
+    printf '[%s] ERROR: could not write the in-flight marker in the state directory %s. Refusing to run.\n' "$(ts)" "$STATE" >> "$LOG"
     exit 1
   fi
   INFLIGHT=1

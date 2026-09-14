@@ -142,17 +142,22 @@ relabel() {
 #
 # A plugin's data.json holds its settings, and many plugins rewrite it during
 # normal use, so it is fenced only for the plugins in CODE_PLUGINS, which run
-# code or commands named in their settings. Everything else in a plugin folder
-# (main.js, manifest.json, styles.css) is fenced for every plugin.
+# code or commands named in their settings. A plugin counts as one of them when
+# its folder name or the id in its manifest.json is in the list, ignoring case,
+# because Obsidian takes the id from the manifest and a plugin can be installed
+# under any folder name. Everything else in a plugin folder (main.js,
+# manifest.json, styles.css, and any folder, even one named data.json) is fenced
+# for every plugin, so a pass that edits a manifest's id is caught by that edit.
 #
 # Agent memory (.claude/agent-memory*) and 90-auto-memory/ are fenced in every
 # mode. Memory loads into later sessions, so an unseen write there would be a
 # planted instruction. run_agent turns Claude Code's own auto memory off for the
 # pass, which is what makes fencing it in claude mode possible.
 #
-# In .git/ only the files that make git run code are fenced: config,
+# In .git/ only the files that make git run code are fenced. They are config,
 # config.worktree, hooks/, info/attributes and info/grafts, objects/info/alternates,
-# and each submodule's config and hooks/. The rest of info/ is not, because
+# commondir (git reads config and hooks from the directory it names), and each
+# submodule's config and hooks/. The rest of info/ is not, because
 # `git gc --auto` after an ordinary commit rewrites info/refs. HEAD and refs are
 # NOT fenced, because a pass may commit (the promotion agent takes a snapshot)
 # and a human may commit while it runs. A rewound HEAD is caught separately
@@ -163,6 +168,27 @@ relabel() {
 # Known limit: a directory symlink that existed before the pass is fenced as a
 # link, not by its target's contents, so a write through it is not seen.
 CODE_PLUGINS="dataview templater-obsidian obsidian-shellcommands quickadd customjs obsidian-git execute-code terminal"
+
+# code_plugin_dirs
+# Run from the vault root. Prints each folder under .obsidian/plugins/ whose
+# name, or the id in whose manifest.json, is in CODE_PLUGINS, ignoring case.
+code_plugin_dirs() {
+  local list d name id key
+  list=" $(printf '%s' "$CODE_PLUGINS" | tr '[:upper:]' '[:lower:]') "
+  for d in .obsidian/plugins/*/ .obsidian/plugins/.[!.]*/; do
+    [ -d "$d" ] || continue
+    d="${d%/}"
+    name="${d##*/}"
+    id="$(sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$d/manifest.json" 2>/dev/null | sed -n 1p)"
+    for key in "$name" "$id"; do
+      [ -n "$key" ] || continue
+      case "$list" in
+        *" $(printf '%s' "$key" | tr '[:upper:]' '[:lower:]') "*) printf '%s\n' "$d"; break ;;
+      esac
+    done
+  done
+}
+
 snapshot_tree() {
   local root="$1" out="$2" dirs gd cdir
   (
@@ -170,17 +196,24 @@ snapshot_tree() {
     fence_find . \( -path ./.git -o -path ./.claude/logs -o -path ./.obsidian \) -prune -o
     [ -e .obsidian/community-plugins.json ] && fence_find ./.obsidian/community-plugins.json
     if [ -e .obsidian/plugins ] || [ -L .obsidian/plugins ]; then
+      # A FILE named data.json is pruned from the fence unless its folder is a
+      # code plugin's. Glob characters in a folder name are escaped for -path.
       keep=()
-      for p in $CODE_PLUGINS; do
-        keep+=(! -path "./.obsidian/plugins/$p/data.json")
-      done
-      fence_find ./.obsidian/plugins \( -name data.json "${keep[@]}" \) -prune -o
+      while IFS= read -r p; do
+        [ -n "$p" ] || continue
+        keep+=(! -path "./$(printf '%s' "$p" | sed 's/[][\\*?]/\\&/g')/data.json")
+      done <<EOF
+$(code_plugin_dirs)
+EOF
+      # The ${keep[@]+...} form, because bash 3.2 treats an empty array as unset
+      # under set -u.
+      fence_find ./.obsidian/plugins \( -type f -name data.json ${keep[@]+"${keep[@]}"} \) -prune -o
     fi
     for d in .obsidian/themes .obsidian/snippets; do
       { [ -e "$d" ] || [ -L "$d" ]; } && fence_find "./$d"
     done
     if [ -d .git ]; then
-      for f in .git/config .git/config.worktree .git/objects/info/alternates .git/info/attributes .git/info/grafts; do
+      for f in .git/config .git/config.worktree .git/commondir .git/objects/info/alternates .git/info/attributes .git/info/grafts; do
         { [ -e "$f" ] || [ -L "$f" ]; } && fence_find "./$f"
       done
       { [ -e .git/hooks ] || [ -L .git/hooks ]; } && fence_find ./.git/hooks
@@ -191,6 +224,7 @@ snapshot_tree() {
         gd="$(printf '%s\n' "$dirs" | sed -n 1p)"
         cdir="$(printf '%s\n' "$dirs" | sed -n 2p)"
         [ -e "$gd/config.worktree" ] && fence_find "$gd/config.worktree" | relabel "$gd" ./.git-common/worktree
+        [ -e "$gd/commondir" ] && fence_find "$gd/commondir" | relabel "$gd" ./.git-common/worktree
         for f in config objects/info/alternates info/attributes info/grafts; do
           [ -e "$cdir/$f" ] && fence_find "$cdir/$f" | relabel "$cdir" ./.git-common
         done
@@ -318,18 +352,53 @@ backup_steering() {
   [ "$have" -ge "$want" ] && [ "$want" -gt 0 ]
 }
 
+# path_key <path>
+# The form in which two paths are compared. Repeated slashes are squeezed. On
+# Windows the path is first converted to its Windows form, because Git Bash can
+# spell one folder as /tmp/x or /c/Users/.../Temp/x. On Windows and macOS, whose
+# file systems ignore case by default, letters are lowercased.
+path_key() {
+  case "$(uname -s 2>/dev/null)" in
+    MINGW*|MSYS*|CYGWIN*)
+      { cygpath -m "$1" 2>/dev/null || printf '%s' "$1"; } | tr -s '/' | tr '[:upper:]' '[:lower:]' ;;
+    Darwin*) printf '%s' "$1" | tr -s '/' | tr '[:upper:]' '[:lower:]' ;;
+    *) printf '%s' "$1" | tr -s '/' ;;
+  esac
+}
+
+# resolved_path <absolute-path>
+# The path with symlinks resolved through its nearest existing ancestor, so a
+# directory that does not exist yet is judged by where it would be created.
+resolved_path() {
+  local p="$1" rest=""
+  while [ ! -d "$p" ]; do
+    case "$p" in /|"") break ;; esac
+    rest="/${p##*/}$rest"
+    p="${p%/*}"
+    [ -n "$p" ] || p="/"
+  done
+  printf '%s%s\n' "$(cd "$p" 2>/dev/null && pwd -P)" "$rest"
+}
+
 # vault_state_dir <root>
 # Per-vault state directory OUTSIDE the vault, so nothing kept there is indexed by
 # Obsidian, synced with the vault folder, or reachable by an agent's file tools
 # in the vault. VAULT_STATE_DIR overrides it (the test suite uses that). Only an
 # absolute path that is not inside the vault is accepted. A Windows path such as
-# "C:/Users/Some One/vault-state" is converted first. A rejected value is replaced with a directory
-# under the system temp folder, and a warning saying so goes to stderr, which the
-# runners append to their log. Set VAULT_STATE_DIR the same way for both runners
-# and for any shell that runs vault-check.sh, or they look in different places.
+# "C:/Users/Some One/vault-state" is converted first. A rejected value is replaced
+# with a directory under the system temp folder, and a warning saying so goes to
+# stderr, which the runners append to their log. Set VAULT_STATE_DIR the same way
+# for both runners and for any shell that runs vault-check.sh, or they look in
+# different places.
+#
+# The default <id> is a checksum of the vault's resolved path, compared as
+# path_key does, so a symlinked or differently cased spelling of the same vault
+# gets the same state directory in every runner and in vault-check.sh.
 vault_state_dir() {
-  local root="$1" base id dir croot
-  id="$(printf '%s' "$root" | cksum | cut -d' ' -f1)"
+  local root="$1" base id dir croot kroot
+  croot="$(cd "$root" 2>/dev/null && pwd -P)"
+  kroot="$(path_key "${croot:-$root}")"
+  id="$(printf '%s' "$kroot" | cksum | cut -d' ' -f1)"
   if [ -n "${VAULT_STATE_DIR:-}" ]; then
     dir="$VAULT_STATE_DIR"
     command -v cygpath >/dev/null 2>&1 && dir="$(cygpath -u "$dir" 2>/dev/null || printf '%s' "$dir")"
@@ -341,18 +410,29 @@ vault_state_dir() {
     case "$base" in /*) ;; *) base="${XDG_STATE_HOME:-${HOME:-}/.local/state}" ;; esac
     dir="$base/claude-memory-vault/$id"
   fi
-  croot="$(cd "$root" 2>/dev/null && pwd -P)"
   case "$dir" in
-    ""|/.local/state/*|*/../*|*/..|"$root"|"$root"/*|"$croot"|"$croot"/*) dir="" ;;
-    /*) [ -d "$dir" ] && case "$(cd "$dir" && pwd -P)" in "$croot"|"$croot"/*) dir="" ;; esac ;;
+    ""|/.local/state/*|*/../*|*/..|"$root"|"$root"/*) dir="" ;;
+    /*) case "$(path_key "$(resolved_path "$dir")")" in "$kroot"|"$kroot"/*) dir="" ;; esac ;;
     *) dir="" ;;
   esac
   if [ -z "$dir" ]; then
     dir="${TMPDIR:-/tmp}/claude-memory-vault-state-$id"
-    [ -n "${VAULT_STATE_DIR:-}" ] && printf '[%s] WARNING: VAULT_STATE_DIR "%s" is not an absolute path outside the vault; using %s\n' \
+    [ -n "${VAULT_STATE_DIR:-}" ] && printf '[%s] WARNING: VAULT_STATE_DIR "%s" is not an absolute path outside the vault. Using %s instead.\n' \
       "$(ts)" "$VAULT_STATE_DIR" "$dir" >&2
   fi
   printf '%s\n' "$dir"
+}
+
+# state_dir_ready <dir>
+# Creates the state directory, private to this account where the platform
+# allows, and fails unless it is a directory this account owns and can write. A
+# directory another account made, for example at the predictable temp-folder
+# fallback, could hold a forged tripwire or marker, or read the quarantine.
+state_dir_ready() {
+  if [ ! -d "$1" ]; then
+    ( umask 077 && mkdir -p "$1" ) 2>/dev/null || return 1
+  fi
+  [ -d "$1" ] && [ -O "$1" ] && [ -w "$1" ]
 }
 
 # write_file_atomic <path> <content-file>
@@ -411,7 +491,7 @@ write_tripwire() {
 # The marker names the runner and its pid. It is removed only once containment
 # has checked the pass, so any death before that leaves it behind. mark_inflight
 # fails unless the state-directory copy, which the agent cannot reach, is in
-# place; the runner must not start the agent without it.
+# place, because the runner must not start the agent without it.
 mark_inflight() {
   local body rc
   body="$(mktemp 2>/dev/null || mktemp -t inflight)" || return 1
@@ -431,18 +511,18 @@ clear_inflight() {
 #   78  a tripwire exists, or an in-flight marker from a run that died before
 #       containment (turned into a tripwire here)
 #   75  an in-flight marker whose runner is still alive: another pass is running
-#   70  an in-flight marker needed a tripwire and none could be written; the
+#   70  an in-flight marker needed a tripwire and none could be written. The
 #       marker is kept, so the next run refuses too
 tripwire_check() {
   local root="$1" state="$2" runner="$3" log="$4" marker pid empty wrote
   if guard_exists "$root" "$state" "$TRIPWIRE_REL"; then
-    printf '[%s] TRIPWIRE: refusing to run. A previous pass changed a steering or execution surface; read %s, then delete it.\n' \
+    printf '[%s] TRIPWIRE: refusing to run. A previous pass changed a steering or execution surface. Read %s, then delete it.\n' \
       "$(ts)" "$TRIPWIRE_REL" >> "$log"
     return 78
   fi
   if guard_exists "$root" "$state" "$INFLIGHT_REL"; then
-    # The state-directory copy first: the agent cannot reach it, while the copy
-    # in the vault is a file the pass itself could have rewritten.
+    # Read the state-directory copy first. The agent cannot reach it, while the
+    # copy in the vault is a file the pass itself could have rewritten.
     marker="$state/$(basename "$INFLIGHT_REL")"
     [ -f "$marker" ] || marker="$root/$INFLIGHT_REL"
     pid="$(sed -n 's/^pid=//p' "$marker" 2>/dev/null | head -n 1)"
@@ -455,15 +535,15 @@ tripwire_check() {
     : > "$empty"
     wrote=1
     write_tripwire "$root" "$state" "$runner" \
-      "a previous pass ended before containment ran (interrupted, killed, or the machine stopped); the vault's steering surfaces are unverified. $(tr '\n' ' ' < "$marker" 2>/dev/null)" \
-      "(none: containment did not run; a pre-pass backup may be in the state directory)" "$empty" && wrote=0
+      "a previous pass ended before containment ran (interrupted, killed, or the machine stopped), so the vault's steering surfaces are unverified. $(tr '\n' ' ' < "$marker" 2>/dev/null)" \
+      "(none, because containment did not run. A pre-pass backup may be in the state directory.)" "$empty" && wrote=0
     rm -f "$empty"
     if [ "$wrote" -ne 0 ]; then
-      printf '[%s] TRIPWIRE-ERROR: a previous pass never reached containment and no tripwire could be written; the in-flight marker is kept. Refusing to run.\n' "$(ts)" >> "$log"
+      printf '[%s] TRIPWIRE-ERROR: a previous pass never reached containment and no tripwire could be written. The in-flight marker is kept. Refusing to run.\n' "$(ts)" >> "$log"
       return 70
     fi
     clear_inflight "$root" "$state"
-    printf '[%s] TRIPWIRE: a previous pass never reached containment; tripwire set, refusing to run.\n' "$(ts)" >> "$log"
+    printf '[%s] TRIPWIRE: a previous pass never reached containment. Tripwire set, refusing to run.\n' "$(ts)" >> "$log"
     return 78
   fi
   return 0
@@ -488,7 +568,7 @@ contain_steering_changes() {
   : > "$rdirs"
   # Extract once, never by member name: bsdtar reads member names as patterns.
   if [ -s "$tarball" ] && ! ( cd "$restore" && tar -xf "$tarball" ) 2>/dev/null; then
-    printf '(the pre-pass backup could not be extracted: paths below may not have been restored)\n' >> "$errors"
+    printf '(the pre-pass backup could not be extracted, so the paths below may not have been restored)\n' >> "$errors"
   fi
 
   # Paths are sorted, so a symlink that replaced a whole directory (.git/hooks
@@ -518,7 +598,7 @@ contain_steering_changes() {
         printf '%s (pre-pass copy could not be restored)\n' "$rel" >> "$errors"
       fi
     elif grep -qxF -- "$rel" "$tarball.list" 2>/dev/null; then
-      printf '%s (backed up before the pass, but missing from the extracted backup: not restored)\n' "$rel" >> "$errors"
+      printf '%s (backed up before the pass, but missing from the extracted backup, so not restored)\n' "$rel" >> "$errors"
     fi
   done < "$handled"
   return 0

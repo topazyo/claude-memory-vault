@@ -347,8 +347,8 @@ masquerade as a green run. Roll your own and you lose all four; `docs/reference.
 details. If you add a harness whose configuration lives somewhere new, add that path to
 `steering_filter` in `.claude/scripts/lib/runner-common.sh`, or a pass could change it without
 being contained. The fence, the pre-pass backup and containment all read that one filter. If you
-install an Obsidian plugin that runs code or commands named in its settings, add its id to
-`CODE_PLUGINS` in the same file, so its `data.json` is fenced too.
+install an Obsidian plugin that runs code or commands named in its settings, add its id (the
+`id` in its `manifest.json`) to `CODE_PLUGINS` in the same file, so its `data.json` is fenced too.
 The runners start Claude Code by default; to run a new agent under another harness, give
 it the same write-only-what-you-must shape and use `VAULT_AGENT=command`, which refuses to run
 until you confirm a sandbox (`docs/setup.md` § 8). Three traps worth repeating if you write your
