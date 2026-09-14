@@ -101,8 +101,8 @@ main() {
   RUN_OUT="$LOG_DIR/promotion-agent.run.log"
   TIMEOUT="${PROMOTION_PASS_TIMEOUT:-5400}"
   STATE="$(vault_state_dir "$ROOT" 2>>"$LOG")"
-  if ! state_dir_ready "$STATE"; then
-    printf '[%s] ERROR: the state directory %s could not be created, or is not a directory this account owns and can write. Refusing to run.\n' "$(ts)" "$STATE" >> "$LOG"
+  if ! state_dir_ready "$STATE" "$ROOT"; then
+    printf '[%s] ERROR: the state directory %s could not be created, is not a directory this account owns and can write, is world-writable, or resolves into the vault. Refusing to run.\n' "$(ts)" "$STATE" >> "$LOG"
     exit 1
   fi
 
