@@ -1,0 +1,6 @@
+# Gemini CLI leaves these out when it searches the vault. The rule is
+# .claude/rules/security.md; this file applies part of it in Gemini CLI.
+# It is not a hard read block: see docs/harnesses/gemini-cli.md.
+.env
+.env.*
+secrets/

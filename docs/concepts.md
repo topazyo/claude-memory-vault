@@ -72,7 +72,8 @@ boundary. Instructions found inside a captured note are data, not commands. The 
 in `.claude/rules/untrusted-captures.md` states this, and the lint hook scans for zero-width and
 bidirectional-override codepoints, the mechanism behind the "rules file backdoor" class of
 attack, where invisible characters hide instructions inside text that looks innocuous to a human
-reader. Note the limit, though: the hook fires on writes Claude Code makes, so a file pasted into
+reader. Note the limit, though: the hook fires only on writes by a harness that runs it (Claude
+Code, out of the box), so a file pasted into
 Obsidian by hand, dropped into `01-inbox/` by a file manager, or downloaded there is not scanned
 until something inside the tool edits it. The durable boundary is the rule itself, and the scan is
 a backstop, not a gate.
@@ -426,7 +427,7 @@ produces needs an explicit rule against counting its own output, or it will manu
 consensus out of a single unverified observation.
 
 That is why the dream-agent excludes the auto-written compaction stubs from its own occurrence
-counting. Those stubs are produced by the PostCompact hook
+counting. Those stubs are produced by the compaction hook
 (`.claude/hooks/postcompact-wrap-up.sh`), one idempotent, size-capped stub per session, so that
 a compaction's material is recoverable rather than lost. They are machine-written artifacts of
 the session, not independent evidence that a topic mattered. Counting them would let a single
@@ -483,8 +484,9 @@ invisible to every future staleness pass.
 
 The same reasoning applies to the lint hook (`.claude/hooks/vault-lint.sh`): it runs on write,
 prints advice, and always exits 0. It will tell you a note is missing `tier:` or `type:`. It
-will not add them. And it could not block the write even if it wanted to, because it is registered as a
-PostToolUse hook, so the file is already on disk by the time it runs.
+will not add them. And it could not block the write even if it wanted to, because it runs as a
+post-write hook (Claude Code's `PostToolUse`), so the file is already on disk by the time it runs.
+The place a violation can stop something is the opt-in commit gate, which refuses the commit.
 
 A related discipline governs the checks themselves: **a check that cannot run must say so rather
 than report clean.** A "0 findings" result from a scanner that never scanned anything is
@@ -520,21 +522,22 @@ This is a **discipline supported by tooling**, not an enforced system. Be clear-
 that means before adopting it.
 
 - **The lint hook cannot stop a bad write.** It runs after the write has already landed
-  (PostToolUse), so no exit code could block it, and it always exits 0 so it never even surfaces
-  as a failure. It also only sees files Claude Code itself writes. A note you type in Obsidian
-  is never linted.
+  (a post-write hook), so no exit code could block it, and it always exits 0 so it never even
+  surfaces as a failure. It also only sees files written by a harness that runs it, which out of
+  the box means Claude Code. A note you type in Obsidian is never linted.
 - **Nothing stops you writing a bad note.** A standard with a fabricated `Sources /
   Verification` section passes every check in this repo. The checks read structure; they cannot
   read truth.
 - **`vault-check.sh` is report-only.** It exits 1 on violations, which is useful in a pre-commit
   hook or in CI. The shipped `.github/workflows/ci.yml` runs it against the template's own
-  example notes on Linux, macOS and Windows; wiring it into a pre-commit hook for *your*
-  notes is still yours to do.
+  example notes on Linux, macOS and Windows, and `.claude/githooks/pre-commit` runs it before
+  each commit of *your* notes, but only once you enable it with
+  `git config core.hooksPath .claude/githooks`.
 - **Promotion is manual by design, which means it can simply not happen.** The medium tier will
   fill with promotion candidates that nobody promotes. The dream-agent surfaces them; it cannot
   make you act.
 - **The tier folder names are hardcoded in many places.** Renaming a tier touches, at minimum,
-  `CLAUDE.md`, `.claude/hooks/vault-lint.sh`, `.claude/scripts/vault-check.sh` (its `TIERS=`
+  `AGENTS.md`, `.claude/hooks/vault-lint.sh`, `.claude/scripts/vault-check.sh` (its `TIERS=`
   line), `.claude/hooks/postcompact-wrap-up.sh`, both agents, all four files in
   `.claude/rules/`, all five skills, `30-knowledge/moc/VAULT-INDEX.md` (every Dataview query
   names folders), `dream-pass.sh` and `promotion-pass.sh`, the `run-tests.sh` fixtures,
@@ -561,7 +564,8 @@ That is a much lower promise than an enforced system. It is also one this design
 
 ## Where the rules live
 
-- `CLAUDE.md` — the operating instructions Claude Code loads for the whole vault.
+- `AGENTS.md` — the operating instructions every harness follows for the whole vault. `CLAUDE.md`
+  imports it for Claude Code and adds the Claude-only adapter notes.
 - `.claude/rules/vault-notes.md` — the frontmatter contract, wikilinks, Dataview, filing.
   Path-scoped to the six content tiers.
 - `.claude/rules/verification.md` — freshness, citation, and the earned-stamp discipline. Also

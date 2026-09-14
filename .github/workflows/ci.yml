@@ -90,7 +90,8 @@ jobs:
       - name: Every shell script parses
         run: |
           rc=0
-          for f in $(git ls-files '*.sh'); do
+          # Git hooks have no .sh extension, so they are listed separately.
+          for f in $(git ls-files '*.sh' '.claude/githooks/*'); do
             bash -n "$f" || { echo "::error file=$f::syntax error"; rc=1; }
           done
           exit $rc
@@ -104,7 +105,7 @@ jobs:
         continue-on-error: true
         run: |
           shellcheck --version
-          for f in $(git ls-files '*.sh'); do
+          for f in $(git ls-files '*.sh' '.claude/githooks/*'); do
             echo "--- $f"
             shellcheck --severity=warning "$f" || true
           done
@@ -118,12 +119,45 @@ jobs:
           done
           exit $rc
 
+      # OpenCode runs every file in .opencode/plugins/ at startup without a trust
+      # prompt, so the template must never ship one there: anyone opening a
+      # clone would run it. The plugin lives in .claude/adapters/ and a user
+      # copies it in deliberately (docs/harnesses/opencode.md).
+      - name: The OpenCode plugin ships opt-in
+        run: |
+          if [ -n "$(git ls-files '.opencode/plugins/*')" ]; then
+            echo "::error::.opencode/plugins/ is tracked; the template must ship the OpenCode plugin opt-in"
+            exit 1
+          fi
+
+      # The shipped harness configs are only useful if their harness can parse
+      # them, and a syntax error in each fails silently: the harness skips the
+      # file and runs with no hooks at all.
+      - name: Harness configs parse (TOML, YAML, plugin JavaScript)
+        run: |
+          rc=0
+          for f in $(git ls-files '*.toml'); do
+            python3 -c "import tomllib,sys; tomllib.load(open(sys.argv[1],'rb'))" "$f" \
+              || { echo "::error file=$f::invalid TOML"; rc=1; }
+          done
+          for f in $(git ls-files '*.yml' '*.yaml'); do
+            ruby -ryaml -e 'YAML.load_file(ARGV[0])' "$f" \
+              || { echo "::error file=$f::invalid YAML"; rc=1; }
+          done
+          # The plugin is an ES module; Node parses it as one only under .mjs.
+          for f in $(git ls-files '.claude/adapters/*.js'); do
+            cp "$f" "$RUNNER_TEMP/plugin-check.mjs"
+            node --check "$RUNNER_TEMP/plugin-check.mjs" \
+              || { echo "::error file=$f::invalid JavaScript"; rc=1; }
+          done
+          exit $rc
+
       # Windows has no executable bit, so scripts committed from a Windows
       # machine land as 100644 and `./script.sh` fails on a Linux clone.
       - name: Shell scripts are executable in the index
         run: |
           rc=0
-          for f in $(git ls-files '*.sh'); do
+          for f in $(git ls-files '*.sh' '.claude/githooks/*'); do
             mode=$(git ls-files -s "$f" | cut -d' ' -f1)
             [ "$mode" = "100755" ] || { echo "::error file=$f::mode $mode, expected 100755"; rc=1; }
           done

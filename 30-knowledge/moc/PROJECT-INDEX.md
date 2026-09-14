@@ -44,7 +44,8 @@ Wiring a new codebase into this vault means, roughly:
 
 1. Decide the project's short name. It becomes the `project:` frontmatter value everywhere, so
    pick something stable and lowercase.
-2. Point the project's own `CLAUDE.md` at whichever vault standards it should load.
+2. Point the project's agent instruction files (`AGENTS.md`, `CLAUDE.md`) at whichever vault
+   standards it should load.
 3. Create its auto-memory directory under `90-auto-memory/<project>/` if you use one.
 4. Add a row to the table above, and a subsection under **Project logs & notes**.
 5. Write the first log into `20-projects/_logs/` so the project has a memory from day one.

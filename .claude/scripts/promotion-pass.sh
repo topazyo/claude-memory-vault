@@ -17,15 +17,21 @@
 #   0 20 * * 6 /path/to/your-vault/.claude/scripts/promotion-pass.sh
 #
 # Environment:
+#   VAULT_AGENT             claude (default) or command; see lib/runner-common.sh
 #   CLAUDE_BIN              path to the claude binary (schedulers get a minimal PATH)
+#   VAULT_AGENT_CMD         command mode: your wrapper around another harness
+#   VAULT_ALLOW_UNENFORCED_TOOLS  command mode: set to 1 once the wrapper is
+#                           sandboxed (git only, no network), or the run is refused
 #   PROMOTION_PASS_TIMEOUT  seconds before a hung run is killed (default 5400)
 #
 # Exit codes:
 #   0    the pass reported a summary or changed the long tier, and wrote nowhere else
 #   1    NO-ARTIFACT: exited 0 with no summary line and no long-tier change
 #   2    VIOLATION: files outside the allowed write areas changed during the run
+#   3    REFUSED: command mode without VAULT_ALLOW_UNENFORCED_TOOLS=1
+#   64   VAULT_AGENT is not claude or command
 #   124  TIMEOUT: the watchdog killed a run that exceeded PROMOTION_PASS_TIMEOUT
-#   127  the claude binary was not found
+#   127  the claude binary or the VAULT_AGENT_CMD wrapper was not found
 #   *    any other non-zero status is the agent's own
 
 set -u
@@ -45,11 +51,25 @@ TIMEOUT="${PROMOTION_PASS_TIMEOUT:-5400}"
 # that a pass reached its end: an error dump, however long, does not contain it.
 SUMMARY_MARKER='PROMOTION-SUMMARY:'
 
-CLAUDE_BIN="${CLAUDE_BIN:-claude}"
-if ! command -v "$CLAUDE_BIN" >/dev/null 2>&1; then
-  printf '[%s] ERROR: claude binary not found (tried "%s"). Set CLAUDE_BIN.\n' \
-    "$(ts)" "$CLAUDE_BIN" >> "$LOG"
-  exit 127
+agent_preflight "$LOG"
+preflight_rc=$?
+[ "$preflight_rc" -eq 0 ] || exit "$preflight_rc"
+
+TASK="Run this week's promotion pass per your instructions: scan 20-projects/_logs/ for promotion candidates, run the trust sweep over the long-term notes, and write the ones that meet the promotion bar. Follow your write-safety rules -- take a git snapshot before any write and abort on unexpected drift. End your final message with one line of the form: ${SUMMARY_MARKER} promoted=<n> pending=<n>"
+PROMPT_REL=".claude/logs/promotion-pass.prompt.md"
+if [ "$AGENT_KIND" = command ]; then
+  DEF="$ROOT/.claude/agents/promotion-agent.md"
+  if [ ! -f "$DEF" ]; then
+    printf '[%s] ERROR: agent definition not found: %s\n' "$(ts)" "$DEF" >> "$LOG"
+    exit 1
+  fi
+  # Remove any earlier prompt first, so a failed write can never leave the
+  # agent reading a stale one.
+  rm -f "$ROOT/$PROMPT_REL"
+  if ! write_agent_prompt "$DEF" "$TASK" "$ROOT/$PROMPT_REL"; then
+    printf '[%s] ERROR: could not write the prompt file %s\n' "$(ts)" "$PROMPT_REL" >> "$LOG"
+    exit 1
+  fi
 fi
 
 SNAP_DIR="$(mktemp -d 2>/dev/null || mktemp -d -t promopass)" || {
@@ -60,23 +80,19 @@ trap 'rm -rf "$SNAP_DIR"' EXIT
 trap 'rm -rf "$SNAP_DIR"; exit 130' INT
 trap 'rm -rf "$SNAP_DIR"; exit 143' TERM
 
-snapshot_tree "$ROOT" "$SNAP_DIR/before"
-printf '[%s] starting promotion-agent weekly pass (timeout %ss)\n' "$(ts)" "$TIMEOUT" >> "$LOG"
+snapshot_tree "$ROOT" "$SNAP_DIR/before" "$AGENT_KIND"
+printf '[%s] starting promotion-agent weekly pass via %s (timeout %ss)\n' "$(ts)" "$AGENT_KIND" "$TIMEOUT" >> "$LOG"
 
 # This run's output goes to its own file, so the evidence checked below is the
 # agent's output from THIS run - never the runner's own log lines, never a
 # previous run's. It is appended to the history log afterwards.
 : > "$SNAP_DIR/run"
 
-# -p is REQUIRED; see the note in dream-pass.sh.
-run_with_watchdog "$TIMEOUT" "$SNAP_DIR/run" \
-  "$CLAUDE_BIN" -p "Run this week's promotion pass per your instructions: scan 20-projects/_logs/ for promotion candidates, run the trust sweep over the long-term notes, and write the ones that meet the promotion bar. Follow your write-safety rules -- take a git snapshot before any write and abort on unexpected drift. End your final message with one line of the form: ${SUMMARY_MARKER} promoted=<n> pending=<n>" \
-  --agent promotion-agent \
-  --permission-mode acceptEdits
+run_agent "$TIMEOUT" "$SNAP_DIR/run" promotion-agent "$TASK" "$PROMPT_REL"
 
 cat "$SNAP_DIR/run" >> "$RUN_OUT" 2>/dev/null
 
-snapshot_tree "$ROOT" "$SNAP_DIR/after"
+snapshot_tree "$ROOT" "$SNAP_DIR/after" "$AGENT_KIND"
 changed_paths "$SNAP_DIR/before" "$SNAP_DIR/after" > "$SNAP_DIR/changed"
 
 if [ "$RUN_TIMED_OUT" -eq 1 ]; then

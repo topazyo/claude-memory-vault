@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# PostCompact hook: persist one idempotent, size-capped stub per session into
+# Compaction hook (Claude Code and Codex PostCompact, Gemini CLI PreCompress,
+# Cursor preCompact, OpenCode session.compacted): persist one idempotent,
+# size-capped stub per session into
 # 20-projects/_logs/ so a compaction's material is recoverable even when no
 # summary was generated (Claude Code issue #34556: compactions can persist
 # nothing external). Also logs an advisory line, as before. Never blocks,
@@ -23,7 +25,9 @@ transcript_path=""
 # fallback can be tested on a machine that has jq.
 if [ -z "${VAULT_FORCE_NO_JQ:-}" ] && command -v jq >/dev/null 2>&1; then
   trigger="$(printf '%s' "$input" | jq -r '.trigger // "?"' 2>/dev/null || echo '?')"
-  session_id="$(printf '%s' "$input" | jq -r '.session_id // empty' 2>/dev/null)"
+  # session_id: Claude Code, Codex, Gemini CLI, OpenCode's plugin.
+  # conversation_id: Cursor, whose preCompact carries no session field.
+  session_id="$(printf '%s' "$input" | jq -r '.session_id // .conversation_id // empty' 2>/dev/null)"
   transcript_path="$(printf '%s' "$input" | jq -r '.transcript_path // empty' 2>/dev/null)"
 else
   # No jq - the default on macOS and in Git for Windows. Without this branch the
@@ -40,6 +44,7 @@ else
   }
   trigger="$(json_field trigger)"; [ -z "$trigger" ] && trigger="?"
   session_id="$(json_field session_id)"
+  [ -z "$session_id" ] && session_id="$(json_field conversation_id)"
   transcript_path="$(json_field transcript_path)"
   printf '%s  PostCompact: DEGRADED - jq not found, fields parsed with sed. Install jq for reliable parsing.\n' \
     "$ts" >> "$LOG_DIR/hook-events.log" 2>/dev/null

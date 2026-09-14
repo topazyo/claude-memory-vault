@@ -43,8 +43,8 @@ If you touched a note without re-checking what it asserts, move `last_reviewed` 
 
 ## Conformance
 
-- Keep the mandatory `tier` / `type` frontmatter. Dataview queries break without it, and the
-  PostToolUse lint will warn.
+- Keep the mandatory `tier` / `type` frontmatter. Dataview queries break without it, the lint
+  hook warns wherever it is wired, and `vault-check.sh` fails.
 - Optional additive keys allowed: `confidence: high|medium|low`, `last_verified: YYYY-MM-DD`.
 - Every note links out to at least one peer or index (standards and index notes link back to
   [[ARCH-INDEX]]); a note with no links is a defect.

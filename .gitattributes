@@ -6,6 +6,8 @@
 # Shell scripts must keep LF endings even when checked out on Windows, or the
 # hooks fail on any machine that actually runs bash.
 *.sh text eol=lf
+# Git hooks have no extension, so *.sh does not reach them.
+.claude/githooks/* text eol=lf
 
 # Windows batch files are the mirror image: they need CRLF.
 *.cmd text eol=crlf

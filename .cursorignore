@@ -1,0 +1,6 @@
+# Cursor blocks Agent, Tab and @-mention access to these. The rule is
+# .claude/rules/security.md. Cursor's terminal and MCP tools are not covered:
+# see docs/harnesses/cursor.md.
+.env
+.env.*
+secrets/

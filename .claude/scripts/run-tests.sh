@@ -36,6 +36,13 @@ fail=0
 
 ok()   { printf '  PASS  %s\n' "$1"; pass=$((pass + 1)); }
 bad()  { printf '  FAIL  %s\n' "$1"; fail=$((fail + 1)); }
+# Defined up here with the other helpers, before any section can call it: bash
+# resolves a function when the call runs, so a section that calls a helper
+# defined further down gets "command not found", which counts as neither a pass
+# nor a failure, and the run still ends green.
+expect_rc() {  # expect_rc <label> <expected> <actual>
+  if [ "$3" -eq "$2" ]; then ok "$1 (exit $3)"; else bad "$1 -- expected exit $2, got $3"; fi
+}
 
 # A temp dir with a SPACE in its name, on purpose: a vault living under
 # "C:/Users/Some One/" or macOS iCloud's "~/Library/Mobile Documents/" is the
@@ -57,6 +64,19 @@ cleanup() {
 trap cleanup EXIT
 trap 'cleanup; exit 130' INT
 trap 'cleanup; exit 143' TERM
+
+# A typo'd or misplaced helper prints "command not found" and is counted as
+# neither a pass nor a failure, so the run still ends green. Bash 4+ calls this
+# handler for every missing command. It runs in a subshell, so it records to a
+# file, and the summary turns each record into a failure. (Bash 3.2 has no such
+# hook; the CI jobs on newer bash cover it.)
+NOT_FOUND="$TMP/not-found"
+: > "$NOT_FOUND"
+command_not_found_handle() {
+  printf '%s\n' "$1" >> "$NOT_FOUND"
+  printf 'run-tests: command not found: %s\n' "$1" >&2
+  return 127
+}
 
 mkdir -p "$WORK/31-standards/templates" "$WORK/10-daily" "$WORK/20-projects/_logs"
 
@@ -150,6 +170,117 @@ else
   win=$(printf '%s' "$WORK/31-standards/bad.md" | sed 's|/|\\|g')
   expect_match  "Windows backslash path normalises"   "$win" "missing 'tier'"
 
+  # Argument mode: how a git hook, an editor, CI or any other harness calls it.
+  lint_args() { CLAUDE_PROJECT_DIR="$WORK" bash "$HOOK" "$@" </dev/null 2>&1; }
+
+  out_args=$(lint_args "$WORK/31-standards/bad.md" "$WORK/10-daily/nofm.md" | strip_notices)
+  if printf '%s' "$out_args" | grep -q "bad.md.*missing 'tier'" \
+     && printf '%s' "$out_args" | grep -q "nofm.md.*missing YAML frontmatter"; then
+    ok "argument mode lints every file named on the command line"
+  else
+    bad "argument mode -- got: ${out_args:-<silence>}"
+  fi
+
+  out_args=$(lint_args -- "$WORK/31-standards/clean.md" | strip_notices)
+  if [ -z "$out_args" ]; then ok "argument mode: conformant note after -- stays silent"
+  else bad "argument mode: conformant note -- expected silence, got: $out_args"; fi
+
+  # With arguments present, stdin must never be read. Feed hook JSON naming a
+  # BAD note while the argument names a clean one: any output means stdin won.
+  esc_bad=$(printf '%s' "$WORK/31-standards/bad.md" | sed 's|\\|\\\\|g')
+  out_args=$(printf '{"tool_input":{"file_path":"%s"}}' "$esc_bad" \
+    | CLAUDE_PROJECT_DIR="$WORK" bash "$HOOK" "$WORK/31-standards/clean.md" 2>&1 | strip_notices)
+  if [ -z "$out_args" ]; then ok "argument mode ignores stdin, so an open stdin cannot hang it"
+  else bad "argument mode read stdin -- got: $out_args"; fi
+
+  # A lone -- (an empty file list expanded after it) is still argument mode.
+  out_args=$(printf '{"tool_input":{"file_path":"%s"}}' "$esc_bad" \
+    | CLAUDE_PROJECT_DIR="$WORK" bash "$HOOK" -- 2>&1 | strip_notices)
+  if [ -z "$out_args" ]; then ok "a lone -- lints nothing and never falls through to stdin"
+  else bad "a lone -- read stdin -- got: $out_args"; fi
+
+  # Hook JSON with the path at the top level, not under tool_input.
+  out_top=$(printf '{"file_path":"%s"}' "$esc_bad" | CLAUDE_PROJECT_DIR="$WORK" bash "$HOOK" 2>&1 | strip_notices)
+  if printf '%s' "$out_top" | grep -q "missing 'tier'"; then ok "hook JSON with a top-level file_path is linted"
+  else bad "top-level file_path -- got: ${out_top:-<silence>}"; fi
+
+  # --- the input shapes of the other harnesses (docs/harnesses/) ---
+  # Each runs through the jq branch when jq exists and through the forced
+  # no-jq branch always, so both parsers are held to the same shapes.
+  lint_json() {  # lint_json <json> [extra env assignment]
+    printf '%s' "$1" | env CLAUDE_PROJECT_DIR="$WORK" ${2:+"$2"} bash "$HOOK" 2>&1 | strip_notices
+  }
+  esc_nofm=$(printf '%s' "$WORK/10-daily/nofm.md" | sed 's|\\|\\\\|g')
+  esc_clean_tmp=$(printf '%s' "$WORK/31-standards/clean.md" | sed 's|\\|\\\\|g')
+  esc_probe=$(printf '%s' "$WORK/31-standards/probe.md" | sed 's|\\|\\\\|g')
+
+  for branch in jq no-jq; do
+    extra=""; [ "$branch" = no-jq ] && extra="VAULT_FORCE_NO_JQ=1"
+
+    out_shape=$(lint_json "{\"agent_action_name\":\"post_write_code\",\"tool_info\":{\"file_path\":\"$esc_bad\",\"edits\":[]}}" "$extra")
+    if printf '%s' "$out_shape" | grep -q "missing 'tier'"; then ok "[$branch] Windsurf tool_info.file_path is linted"
+    else bad "[$branch] Windsurf shape -- got: ${out_shape:-<silence>}"; fi
+
+    out_shape=$(lint_json "{\"sessionId\":\"s\",\"toolName\":\"edit\",\"toolArgs\":{\"path\":\"$esc_bad\"}}" "$extra")
+    if printf '%s' "$out_shape" | grep -q "missing 'tier'"; then ok "[$branch] Copilot camelCase toolArgs.path is linted"
+    else bad "[$branch] Copilot camelCase shape -- got: ${out_shape:-<silence>}"; fi
+
+    # A Codex apply_patch: two written files and one deletion. The deleted path
+    # is the invisible-character probe, so linting it by mistake would show.
+    patch="*** Begin Patch\\n*** Add File: $esc_bad\\n+x\\n*** Update File: $esc_nofm\\n@@\\n*** Delete File: $esc_probe\\n*** End Patch\\n"
+    out_shape=$(lint_json "{\"tool_name\":\"apply_patch\",\"tool_input\":{\"command\":\"$patch\"}}" "$extra")
+    if printf '%s' "$out_shape" | grep -q "bad.md.*missing 'tier'" \
+       && printf '%s' "$out_shape" | grep -q "nofm.md.*missing YAML frontmatter" \
+       && ! printf '%s' "$out_shape" | grep -q "probe.md"; then
+      ok "[$branch] patch text: every Add/Update File is linted, Delete File is not"
+    else
+      bad "[$branch] patch text -- got: ${out_shape:-<silence>}"
+    fi
+
+    # A relative patch path, with the hook started outside the vault.
+    out_shape=$(cd / && printf '%s' "{\"tool_input\":{\"command\":\"*** Update File: 31-standards/bad.md\\n\"}}" \
+      | env CLAUDE_PROJECT_DIR="$WORK" ${extra:+"$extra"} bash "$HOOK" 2>&1 | strip_notices)
+    if printf '%s' "$out_shape" | grep -q "missing 'tier'"; then ok "[$branch] a relative path resolves against the vault root"
+    else bad "[$branch] relative path -- got: ${out_shape:-<silence>}"; fi
+
+    # A session started in a vault subfolder: the path is relative to the
+    # payload's cwd, and does not exist relative to the vault root.
+    esc_sub=$(printf '%s' "$WORK/31-standards" | sed 's|\\|\\\\|g')
+    out_shape=$(cd / && printf '%s' "{\"cwd\":\"$esc_sub\",\"tool_input\":{\"command\":\"*** Update File: bad.md\\n\"}}" \
+      | env CLAUDE_PROJECT_DIR="$WORK" ${extra:+"$extra"} bash "$HOOK" 2>&1 | strip_notices)
+    if printf '%s' "$out_shape" | grep -q "missing 'tier'"; then ok "[$branch] a relative path resolves against the payload's cwd first"
+    else bad "[$branch] payload cwd -- got: ${out_shape:-<silence>}"; fi
+
+    # A rename: the file named by "Move to:" is the one that now has the content.
+    out_shape=$(lint_json "{\"tool_input\":{\"command\":\"*** Update File: $esc_clean_tmp\\n*** Move to: $esc_bad\\n\"}}" "$extra")
+    if printf '%s' "$out_shape" | grep -q "bad.md.*missing 'tier'"; then ok "[$branch] the target of a Move to: header is linted"
+    else bad "[$branch] Move to -- got: ${out_shape:-<silence>}"; fi
+  done
+
+  # jq only: Copilot may send toolArgs as a JSON-encoded string.
+  if [ -z "${VAULT_FORCE_NO_JQ:-}" ] && command -v jq >/dev/null 2>&1; then
+    esc_esc_bad=$(printf '%s' "$esc_bad" | sed 's|\\|\\\\|g')
+    out_shape=$(lint_json "{\"toolName\":\"edit\",\"toolArgs\":\"{\\\"path\\\":\\\"$esc_esc_bad\\\"}\"}")
+    if printf '%s' "$out_shape" | grep -q "missing 'tier'"; then ok "[jq] Copilot toolArgs as a JSON string is linted"
+    else bad "[jq] Copilot string toolArgs -- got: ${out_shape:-<silence>}"; fi
+  else
+    printf '  SKIP  [jq] Copilot toolArgs as a JSON string (jq not installed; not counted)\n'
+  fi
+
+  # --ack-json: {} on stdout for Hermes, nothing on stdout otherwise.
+  esc_clean=$(printf '%s' "$WORK/31-standards/clean.md" | sed 's|\\|\\\\|g')
+  ack=$(printf '{"tool_input":{"file_path":"%s"}}' "$esc_clean" | CLAUDE_PROJECT_DIR="$WORK" bash "$HOOK" --ack-json 2>/dev/null)
+  noack=$(printf '{"tool_input":{"file_path":"%s"}}' "$esc_clean" | CLAUDE_PROJECT_DIR="$WORK" bash "$HOOK" 2>/dev/null)
+  if [ "$ack" = "{}" ] && [ -z "$noack" ]; then ok "--ack-json prints {} on stdout; without it stdout stays empty"
+  else bad "--ack-json stdout -- with: '${ack}' without: '${noack}'"; fi
+
+  # Mirrored skills are steering files too.
+  mkdir -p "$WORK/.agents/skills/probe"
+  printf -- '---\nname: probe\n---\nhidden:\342\200\213\n' > "$WORK/.agents/skills/probe/SKILL.md"
+  out_shape=$(lint_args "$WORK/.agents/skills/probe/SKILL.md" | strip_notices)
+  if printf '%s' "$out_shape" | grep -q "U+200B"; then ok "invisible-char scan covers .agents/skills/"
+  else bad ".agents/skills not scanned -- got: ${out_shape:-<silence>}"; fi
+
   if [ -f "$WORK/.claude/logs/vault-lint.log" ]; then
     ok "audit log written to .claude/logs/vault-lint.log"
   else
@@ -238,12 +369,34 @@ else
   bad "vault-lint no-jq path -- got: ${out_nojq:-<silence>}"
 fi
 
+out_nojq=$(printf '{"file_path":"%s"}' "$win2" \
+  | VAULT_FORCE_NO_JQ=1 CLAUDE_PROJECT_DIR="$WORK" bash "$HOOK" 2>&1)
+if printf '%s' "$out_nojq" | grep -q 'jq not found' \
+   && printf '%s' "$out_nojq" | grep -q "missing 'tier'"; then
+  ok "vault-lint no-jq path also reads a top-level file_path"
+else
+  bad "vault-lint no-jq top-level file_path -- got: ${out_nojq:-<silence>}"
+fi
+
 printf 'steering file with a hidden character:\342\200\213\n' > "$WORK/AGENTS.md"
 out_steer=$(lint "$WORK/AGENTS.md" | strip_notices)
 if printf '%s' "$out_steer" | grep -q "U+200B"; then
   ok "invisible-char scan covers AGENTS.md, an always-loaded steering file"
 else
   bad "AGENTS.md was not scanned -- got: ${out_steer:-<silence>}"
+fi
+
+# Other harnesses load their own instruction files at startup; those are
+# steering files too. Plain lint(), so this runs on whichever branch jq allows.
+printf 'steering file with a hidden character:\342\200\213\n' > "$WORK/GEMINI.md"
+mkdir -p "$WORK/.github"
+printf 'steering file with a hidden character:\342\200\256\n' > "$WORK/.github/copilot-instructions.md"
+out_steer=$(lint "$WORK/GEMINI.md" | strip_notices)
+out_steer2=$(lint "$WORK/.github/copilot-instructions.md" | strip_notices)
+if printf '%s' "$out_steer" | grep -q "U+200B" && printf '%s' "$out_steer2" | grep -q "U+202E"; then
+  ok "invisible-char scan covers GEMINI.md and .github/copilot-instructions.md"
+else
+  bad "harness instruction files not scanned -- got: ${out_steer:-<silence>} / ${out_steer2:-<silence>}"
 fi
 
 # ------------------------------------------------ postcompact-wrap-up.sh --
@@ -297,6 +450,217 @@ else
   else
     bad "cap handling wrong: $(awk '/CAP REACHED/{n++} END{print n+0}' "$CAP") CAP REACHED line(s)"
   fi
+
+  # Cursor's preCompact carries conversation_id and no session_id. It must key
+  # the stub, in both parser branches, rather than falling back to the date.
+  for branch in jq no-jq; do
+    extra=""; [ "$branch" = no-jq ] && extra="VAULT_FORCE_NO_JQ=1"
+    rm -f "$PC/20-projects/_logs/"compaction-*.md
+    compact '{"conversation_id":"conv-7","trigger":"auto","context_usage_percent":85}' "$extra"
+    if [ -f "$PC/20-projects/_logs/compaction-conv-7.md" ]; then
+      ok "[$branch] Cursor's conversation_id keys the compaction stub"
+    else
+      bad "[$branch] stub keys -- found: $(find "$PC/20-projects/_logs" -name 'compaction-*.md' | tr '\n' ' ')"
+    fi
+  done
+fi
+
+# ------------------------------------------------------- read-guard.sh --
+
+READ_GUARD="$ROOT/.claude/hooks/read-guard.sh"
+printf '\n=== read-guard.sh (pre-read secrets guard) ===\n'
+
+if [ ! -f "$READ_GUARD" ]; then
+  bad "read-guard.sh not found at $READ_GUARD"
+else
+  RG="$TMP/rg"
+  mkdir -p "$RG"
+  guard_rc() {  # guard_rc <args...> - exit status only
+    CLAUDE_PROJECT_DIR="$RG" bash "$READ_GUARD" "$@" </dev/null >/dev/null 2>&1
+    echo $?
+  }
+  guard_json_rc() {  # guard_json_rc <json> [extra env assignment]
+    printf '%s' "$1" | env CLAUDE_PROJECT_DIR="$RG" ${2:+"$2"} bash "$READ_GUARD" >/dev/null 2>"$TMP/guard-stderr"
+    echo $?
+  }
+  # On an unexpected status, show what the guard said, so a platform-specific
+  # failure can be diagnosed from a CI log alone.
+  guard_evidence() {
+    printf '        stderr: %s\n        log: %s\n' \
+      "$(tr '\n' ' ' < "$TMP/guard-stderr" 2>/dev/null)" \
+      "$(tail -n 2 "$RG/.claude/logs/read-guard.log" 2>/dev/null | tr '\n' ' ')"
+  }
+
+  expect_rc "a root .env is blocked"                2 "$(guard_rc "$RG/.env")"
+  expect_rc "a nested .env.local is blocked"        2 "$(guard_rc "$RG/sub/dir/.env.local")"
+  expect_rc "a file under secrets/ is blocked"      2 "$(guard_rc "$RG/secrets/api-key.txt")"
+  expect_rc "a Windows path under secrets\\ is blocked" 2 "$(guard_rc 'C:\vault\secrets\key.txt')"
+  expect_rc "an ordinary note is allowed"           0 "$(guard_rc "$RG/31-standards/clean.md")"
+  expect_rc "a note merely named secrets.md is allowed" 0 "$(guard_rc "$RG/31-standards/secrets.md")"
+  expect_rc "upper-case .ENV is blocked (case-insensitive file systems)" 2 "$(guard_rc "$RG/.ENV")"
+  expect_rc "a file under Secrets/ is blocked"      2 "$(guard_rc "$RG/Secrets/key.txt")"
+
+  for branch in jq no-jq; do
+    extra=""; [ "$branch" = no-jq ] && extra="VAULT_FORCE_NO_JQ=1"
+    # Assign first, never "$(... "{\"...\"}" ...)" inline: bash 3.2 keeps the
+    # backslashes of \" inside a command substitution nested in double quotes,
+    # so the guard would get broken JSON and block by failing closed - a pass
+    # that proved nothing. The BLOCKED log line is the evidence the path was read.
+    : > "$RG/.claude/logs/read-guard.log" 2>/dev/null
+    rc_env=$(guard_json_rc "{\"agent_action_name\":\"pre_read_code\",\"tool_info\":{\"file_path\":\"$RG/.env\"}}" "$extra")
+    expect_rc "[$branch] Windsurf pre_read_code on .env is blocked" 2 "$rc_env"
+    if grep -q "BLOCKED: .*/.env" "$RG/.claude/logs/read-guard.log" 2>/dev/null; then
+      ok "[$branch] ... because the path was read and matched, not because parsing failed"
+    else
+      bad "[$branch] .env was blocked without a BLOCKED line (parsing failed?)"
+      guard_evidence
+    fi
+    rc_note=$(guard_json_rc "{\"agent_action_name\":\"pre_read_code\",\"tool_info\":{\"file_path\":\"$RG/10-daily/x.md\"}}" "$extra")
+    expect_rc "[$branch] Windsurf pre_read_code on a note is allowed" 0 "$rc_note"
+    [ "$rc_note" -eq 0 ] || guard_evidence
+  done
+
+  # Fail closed: hook input with no path means broken wiring, not a safe read.
+  expect_rc "hook input with no path is blocked (fail closed)" 2 "$(guard_json_rc '{"agent_action_name":"pre_read_code"}')"
+  expect_rc "empty hook input is blocked (fail closed)"        2 "$(guard_json_rc '')"
+  if grep -q 'DEGRADED: no path' "$RG/.claude/logs/read-guard.log" 2>/dev/null; then
+    ok "a read the guard could not check is logged as DEGRADED"
+  else
+    bad "an unchecked read left no DEGRADED line"
+  fi
+fi
+
+# ------------------------------------------------ shipped harness configs --
+#
+# Each shipped config names hook scripts by path. A renamed or deleted script
+# would leave that harness's hook calling nothing, which looks exactly like a
+# hook that found nothing wrong.
+
+printf '\n=== shipped harness configs (docs/harnesses/) ===\n'
+
+missing_hook_refs() {  # missing_hook_refs <config> <root> - prints missing refs, or NO-REFS
+  local refs
+  refs=$(grep -oE '\.claude/hooks/[A-Za-z0-9_-]+\.sh' "$1" 2>/dev/null | sort -u)
+  if [ -z "$refs" ]; then echo "NO-REFS"; return; fi
+  printf '%s\n' "$refs" | while IFS= read -r r; do
+    [ -f "$2/$r" ] || echo "$r"
+  done
+}
+
+FAKECFG="$TMP/fake-hooks.json"
+printf '{"hooks":{"x":[{"command":"bash .claude/hooks/no-such-hook.sh"}]}}\n' > "$FAKECFG"
+if [ "$(missing_hook_refs "$FAKECFG" "$ROOT")" = ".claude/hooks/no-such-hook.sh" ]; then
+  ok "positive control: a config naming a missing hook script is caught"
+else
+  bad "positive control: a missing hook script was not caught"
+fi
+
+for cfg in .codex/hooks.json .gemini/settings.json .cursor/hooks.json .github/hooks/vault.json \
+           .windsurf/hooks.json .claude/adapters/opencode/vault.js; do
+  if [ ! -f "$ROOT/$cfg" ]; then
+    bad "$cfg is missing"
+    continue
+  fi
+  miss=$(missing_hook_refs "$ROOT/$cfg" "$ROOT")
+  if [ -z "$miss" ]; then ok "$cfg names only hook scripts that exist"
+  else bad "$cfg -- $(printf '%s' "$miss" | tr '\n' ' ')"; fi
+done
+
+# OpenCode runs .opencode/plugins/ with no trust prompt, so the plugin ships
+# opt-in, and enabling it means copying the reviewed adapter there. An enabled
+# copy that differs from the adapter is code nobody reviewed running on every
+# start. (That the template itself ships it disabled is a CI hygiene check.)
+plugin_copy_ok() {  # plugin_copy_ok <adapter> <enabled-copy> - true when absent or identical
+  [ ! -e "$2" ] || cmp -s "$1" "$2"
+}
+printf '// tampered\n' > "$TMP/enabled-plugin.js"
+if ! plugin_copy_ok "$ROOT/.claude/adapters/opencode/vault.js" "$TMP/enabled-plugin.js"; then
+  ok "positive control: an enabled plugin that differs from the adapter is caught"
+else
+  bad "positive control: a differing enabled plugin went unnoticed"
+fi
+if plugin_copy_ok "$ROOT/.claude/adapters/opencode/vault.js" "$ROOT/.opencode/plugins/vault.js"; then
+  if [ -e "$ROOT/.opencode/plugins/vault.js" ]; then ok "the enabled OpenCode plugin matches the reviewed adapter"
+  else ok "the OpenCode plugin is not enabled on this clone (opt-in)"; fi
+else
+  bad ".opencode/plugins/vault.js differs from .claude/adapters/opencode/vault.js"
+fi
+
+# No shipped config may switch a harness's approvals off. Those settings belong
+# to a user who chose them, never to a template someone cloned.
+bypass_hits() {  # bypass_hits <file>... - prints offending lines
+  grep -inE 'yolo|full-auto|danger-full-access|bypassPermissions|dangerously|yes-always|approval[_-]?(mode|policy)[^a-z]*never|"approvals"' "$@" 2>/dev/null
+}
+printf '{"tools":{"approvalMode":"yolo"}}\n' > "$TMP/fake-bypass.json"
+if [ -n "$(bypass_hits "$TMP/fake-bypass.json")" ]; then
+  ok "positive control: an approval bypass in a config is caught"
+else
+  bad "positive control: an approval bypass went unnoticed"
+fi
+hits=$(cd "$ROOT" && bypass_hits .codex/config.toml .codex/hooks.json .gemini/settings.json .cursor/hooks.json \
+  .github/hooks/vault.json .windsurf/hooks.json opencode.json .aider.conf.yml .claude/adapters/opencode/vault.js)
+if [ -z "$hits" ]; then ok "no shipped harness config turns approvals off"
+else bad "approval bypass in a shipped config -- $(printf '%s' "$hits" | tr '\n' ';')"; fi
+
+# Gemini CLI hook timeouts are in milliseconds. A value copied from a config
+# measured in seconds (15) would kill the hook after 15 ms.
+gem_timeouts=$(grep -oE '"timeout"[[:space:]]*:[[:space:]]*[0-9]+' "$ROOT/.gemini/settings.json" 2>/dev/null | grep -oE '[0-9]+$')
+if [ -n "$gem_timeouts" ] && ! printf '%s\n' "$gem_timeouts" | awk '$1 < 1000 {bad=1} END {exit !bad}'; then
+  ok "Gemini CLI hook timeouts are milliseconds, not seconds"
+else
+  bad "Gemini CLI timeouts missing or under 1000 ms: $(printf '%s' "$gem_timeouts" | tr '\n' ' ')"
+fi
+
+# Aider skips git hooks unless told otherwise, which would bypass the commit gate.
+if grep -qE '^git-commit-verify:[[:space:]]*true' "$ROOT/.aider.conf.yml" 2>/dev/null \
+   && grep -qE '^gitignore:[[:space:]]*false' "$ROOT/.aider.conf.yml"; then
+  ok ".aider.conf.yml keeps git hooks running and leaves .gitignore alone"
+else
+  bad ".aider.conf.yml lacks git-commit-verify: true or gitignore: false"
+fi
+
+# ------------------------------------------------ mirrored skills ----------
+#
+# Codex, Gemini CLI and Hermes read skills only from .agents/skills/, Claude
+# Code only from .claude/skills/. The two copies must stay byte-identical, or
+# harnesses silently follow different procedures.
+
+printf '\n=== mirrored skills (.claude/skills <-> .agents/skills) ===\n'
+
+skill_mirror_diff() {  # skill_mirror_diff <dirA> <dirB> - prints each mismatch
+  local a="$1" b="$2" f rel
+  for f in "$a"/*/SKILL.md "$b"/*/SKILL.md; do
+    [ -f "$f" ] || continue
+    case "$f" in
+      "$a"/*) rel="${f#"$a"/}" ;;
+      *)      rel="${f#"$b"/}" ;;
+    esac
+    if [ ! -f "$a/$rel" ] || [ ! -f "$b/$rel" ]; then
+      echo "only one copy: $rel"
+    elif ! cmp -s "$a/$rel" "$b/$rel"; then
+      echo "differs: $rel"
+    fi
+  done | sort -u
+}
+
+MIR="$TMP/mirror"
+mkdir -p "$MIR/a/s1" "$MIR/b/s1" "$MIR/a/s2"
+printf 'one\n' > "$MIR/a/s1/SKILL.md"
+printf 'uno\n' > "$MIR/b/s1/SKILL.md"
+printf 'two\n' > "$MIR/a/s2/SKILL.md"
+mir_out=$(skill_mirror_diff "$MIR/a" "$MIR/b")
+if printf '%s' "$mir_out" | grep -q 'differs: s1/SKILL.md' && printf '%s' "$mir_out" | grep -q 'only one copy: s2/SKILL.md'; then
+  ok "positive control: a differing and a one-sided skill copy are both caught"
+else
+  bad "positive control: mirror check missed a mismatch -- got: ${mir_out:-<silence>}"
+fi
+
+n_skills=$(find "$ROOT/.claude/skills" -name SKILL.md 2>/dev/null | awk 'END{print NR}')
+mir_out=$(skill_mirror_diff "$ROOT/.claude/skills" "$ROOT/.agents/skills")
+if [ "$n_skills" -gt 0 ] && [ -z "$mir_out" ]; then
+  ok "all $n_skills skills are byte-identical in .claude/skills and .agents/skills"
+else
+  bad "skill mirror (checked $n_skills) -- $(printf '%s' "$mir_out" | tr '\n' ';')"
 fi
 
 # ------------------------------------------------ scheduled runners --------
@@ -309,17 +673,26 @@ fi
 printf '\n=== scheduled runners (fake claude) ===\n'
 
 RV="$TMP/runnervault"
-mkdir -p "$RV/.claude/scripts/lib" "$RV/20-projects/_logs" "$RV/31-standards" "$RV/40-llm-wiki/wiki"
+mkdir -p "$RV/.claude/scripts/lib" "$RV/.claude/agents" "$RV/20-projects/_logs" "$RV/31-standards" "$RV/40-llm-wiki/wiki"
 cp "$ROOT/.claude/scripts/dream-pass.sh" "$ROOT/.claude/scripts/promotion-pass.sh" "$RV/.claude/scripts/" 2>/dev/null
 cp "$ROOT/.claude/scripts/lib/runner-common.sh" "$RV/.claude/scripts/lib/" 2>/dev/null
+cp "$ROOT/.claude/agents/dream-agent.md" "$ROOT/.claude/agents/promotion-agent.md" "$RV/.claude/agents/" 2>/dev/null
 printf -- '---\ntier: long\ntype: standard\n---\n\nexisting\n' > "$RV/31-standards/existing.md"
 printf '# vault\n' > "$RV/CLAUDE.md"
 
 FAKE="$TMP/fake-claude"
 cat > "$FAKE" <<'FAKE_EOF'
 #!/usr/bin/env bash
+# FAKE_RECORD=<path> keeps the evidence of how the agent was started: every
+# argument on its own line, and a copy of the prompt file when one was passed.
+if [ -n "${FAKE_RECORD:-}" ]; then
+  printf '%s\n' "$@" > "$FAKE_RECORD.argv"
+  [ -f "${1:-}" ] && cp "$1" "$FAKE_RECORD.prompt"
+fi
 case "${FAKE_MODE:-nothing}" in
   journal)        printf 'journal\n' >> "20-projects/_logs/dream-$(date +%F).md" ;;
+  memory)         printf 'journal\n' >> "20-projects/_logs/dream-$(date +%F).md"
+                  mkdir -p 90-auto-memory && printf 'planted\n' >> "90-auto-memory/note.md" ;;
   stray)          printf 'journal\n' >> "20-projects/_logs/dream-$(date +%F).md"
                   printf 'tampered\n' >> "31-standards/existing.md" ;;
   hang)           exec sleep 60 ;;
@@ -337,14 +710,14 @@ chmod +x "$FAKE"
 runner() {  # runner <script> <mode> [extra env...]
   local script="$1" mode="$2"
   shift 2
-  env CLAUDE_BIN="$FAKE" FAKE_MODE="$mode" WATCHDOG_POLL=1 WATCHDOG_GRACE=2 "$@" \
+  # The harness variables are reset first so an exported VAULT_AGENT on the
+  # machine running the suite cannot change which path a test exercises. Extra
+  # assignments passed in "$@" come later, and env lets the later one win.
+  env CLAUDE_BIN="$FAKE" FAKE_MODE="$mode" WATCHDOG_POLL=1 WATCHDOG_GRACE=2 \
+    VAULT_AGENT=claude VAULT_AGENT_CMD= VAULT_ALLOW_UNENFORCED_TOOLS= FAKE_RECORD= "$@" \
     bash "$RV/.claude/scripts/$script" >/dev/null 2>&1
   echo $?
 }
-expect_rc() {  # expect_rc <label> <expected> <actual>
-  if [ "$3" -eq "$2" ]; then ok "$1 (exit $3)"; else bad "$1 -- expected exit $2, got $3"; fi
-}
-
 expect_rc "dream-pass: journal written -> OK"                  0   "$(runner dream-pass.sh journal)"
 expect_rc "dream-pass: journal already exists, agent idle -> NO-ARTIFACT" 1 "$(runner dream-pass.sh nothing)"
 expect_rc "dream-pass: agent touches another note -> VIOLATION" 2  "$(runner dream-pass.sh stray)"
@@ -355,6 +728,125 @@ expect_rc "promotion-pass: summary line, no change -> OK"      0   "$(runner pro
 expect_rc "promotion-pass: new long-tier note -> OK"           0   "$(runner promotion-pass.sh promote)"
 expect_rc "promotion-pass: error output only -> NO-ARTIFACT"   1   "$(runner promotion-pass.sh errors)"
 expect_rc "promotion-pass: writes CLAUDE.md -> VIOLATION"      2   "$(runner promotion-pass.sh promote-stray)"
+
+# --- which harness runs the agent (VAULT_AGENT) ---
+#
+# A representative subset, not every mode twice: the fence, the watchdog and the
+# artifact checks do not depend on how the agent was started, and each runner
+# test costs several process starts on Windows.
+
+printf '\n=== scheduled runners: harness selection ===\n'
+
+REC="$TMP/record"
+rm -f "$REC.argv" "$REC.prompt"
+expect_rc "claude mode (default): journal written -> OK" 0 "$(runner dream-pass.sh journal FAKE_RECORD="$REC")"
+if grep -qx -- '--agent' "$REC.argv" 2>/dev/null && grep -qx 'dream-agent' "$REC.argv" \
+   && grep -qx 'acceptEdits' "$REC.argv" && grep -qx -- '-p' "$REC.argv"; then
+  ok "claude mode starts claude -p --agent dream-agent --permission-mode acceptEdits"
+else
+  bad "claude mode argv -- got: $(tr '\n' ' ' < "$REC.argv" 2>/dev/null)"
+fi
+
+rm -f "$REC.argv" "$REC.prompt"
+expect_rc "command mode without VAULT_ALLOW_UNENFORCED_TOOLS -> REFUSED" 3 \
+  "$(runner dream-pass.sh journal VAULT_AGENT=command VAULT_AGENT_CMD="$FAKE" FAKE_RECORD="$REC")"
+if [ ! -f "$REC.argv" ]; then ok "a refused run never starts the agent"
+else bad "a refused run started the agent anyway"; fi
+
+expect_rc "command mode, opted in: journal written -> OK" 0 \
+  "$(runner dream-pass.sh journal VAULT_AGENT=command VAULT_AGENT_CMD="$FAKE" VAULT_ALLOW_UNENFORCED_TOOLS=1 FAKE_RECORD="$REC")"
+if [ "$(cat "$REC.argv" 2>/dev/null)" = ".claude/logs/dream-pass.prompt.md" ]; then
+  ok "command mode passes exactly one argument, the relative prompt-file path"
+else
+  bad "command mode argv -- got: $(tr '\n' ' ' < "$REC.argv" 2>/dev/null)"
+fi
+if grep -q 'READ-AND-PROPOSE ONLY' "$REC.prompt" 2>/dev/null \
+   && grep -q "write today's dream journal" "$REC.prompt" \
+   && ! grep -q '^tools:' "$REC.prompt"; then
+  ok "the prompt file holds the agent's instructions and the task, without frontmatter"
+else
+  bad "prompt file content is wrong or missing"
+fi
+if grep -q 'WARNING: command mode' "$RV/.claude/logs/dream-agent.log" 2>/dev/null; then
+  ok "an opted-in command run logs that the tool allowlist is not enforced"
+else
+  bad "no allowlist warning in dream-agent.log"
+fi
+
+expect_rc "command mode: agent touches another note -> VIOLATION" 2 \
+  "$(runner dream-pass.sh stray VAULT_AGENT=command VAULT_AGENT_CMD="$FAKE" VAULT_ALLOW_UNENFORCED_TOOLS=1)"
+printf -- '---\ntier: long\ntype: standard\n---\n\nexisting\n' > "$RV/31-standards/existing.md"
+
+# Machine-managed memory is pruned from the fence for Claude Code, which may
+# legitimately update it mid-run. A wrapper has no such reason, and memory is
+# loaded into later sessions, so in command mode a write there is a violation.
+expect_rc "command mode: agent writes into 90-auto-memory -> VIOLATION" 2 \
+  "$(runner dream-pass.sh memory VAULT_AGENT=command VAULT_AGENT_CMD="$FAKE" VAULT_ALLOW_UNENFORCED_TOOLS=1)"
+rm -rf "$RV/90-auto-memory"
+expect_rc "claude mode: a write into 90-auto-memory stays outside the fence -> OK" 0 \
+  "$(runner dream-pass.sh memory)"
+rm -rf "$RV/90-auto-memory"
+
+expect_rc "command mode with no VAULT_AGENT_CMD -> 127" 127 \
+  "$(runner dream-pass.sh journal VAULT_AGENT=command VAULT_ALLOW_UNENFORCED_TOOLS=1)"
+expect_rc "claude mode with a missing claude binary -> 127" 127 \
+  "$(runner dream-pass.sh journal CLAUDE_BIN="$TMP/no-such-claude")"
+
+# CLAUDE_BIN still names the working fake here, so an unknown kind that fell
+# through to claude mode would start it and leave a record behind.
+rm -f "$REC.argv" "$REC.prompt"
+expect_rc "unknown VAULT_AGENT -> 64" 64 "$(runner dream-pass.sh journal VAULT_AGENT=bogus FAKE_RECORD="$REC")"
+if [ ! -f "$REC.argv" ]; then ok "an unknown VAULT_AGENT never starts the agent"
+else bad "an unknown VAULT_AGENT started the agent anyway"; fi
+
+rm -f "$REC.argv" "$REC.prompt"
+expect_rc "promotion-pass command mode, opted in: summary line -> OK" 0 \
+  "$(runner promotion-pass.sh summary VAULT_AGENT=command VAULT_AGENT_CMD="$FAKE" VAULT_ALLOW_UNENFORCED_TOOLS=1 FAKE_RECORD="$REC")"
+if grep -q 'The promotion bar' "$REC.prompt" 2>/dev/null && grep -q 'PROMOTION-SUMMARY:' "$REC.prompt"; then
+  ok "promotion-pass prompt file holds the promotion-agent's instructions and the summary contract"
+else
+  bad "promotion-pass prompt file content is wrong or missing"
+fi
+
+# The runners resolve the vault from their own location and nothing else. A
+# CLAUDE_PROJECT_DIR exported by a harness session, or a stale VAULT_ROOT in a
+# scheduler, must not redirect an unattended pass - or this suite - into
+# another vault, where the fence would then be checking the wrong tree.
+DECOY="$TMP/decoy"
+mkdir -p "$DECOY/20-projects/_logs" "$DECOY/31-standards"
+expect_rc "runner with CLAUDE_PROJECT_DIR and VAULT_ROOT set to a decoy -> OK" 0 \
+  "$(runner dream-pass.sh journal CLAUDE_PROJECT_DIR="$DECOY" VAULT_ROOT="$DECOY")"
+if [ -z "$(find "$DECOY" -type f 2>/dev/null)" ]; then
+  ok "the decoy vault is untouched: runners ignore inherited root variables"
+else
+  bad "a runner wrote into the decoy vault: $(find "$DECOY" -type f | tr '\n' ' ')"
+fi
+
+# ---------------------------------------------- githooks/pre-commit ---------
+
+printf '\n=== githooks/pre-commit (opt-in commit gate) ===\n'
+
+PRE="$ROOT/.claude/githooks/pre-commit"
+if [ ! -f "$PRE" ]; then
+  bad "pre-commit not found at $PRE"
+else
+  GV="$TMP/gatevault"
+  mkdir -p "$GV/.claude/scripts" "$GV/.claude/githooks" "$GV/31-standards"
+  cp "$CHECK" "$GV/.claude/scripts/"
+  cp "$PRE" "$GV/.claude/githooks/"
+  printf -- '---\ntier: long\ntype: standard\n---\n\nfine\n' > "$GV/31-standards/fine.md"
+
+  # $WORK is full of violations. Pointing the inherited variable at it proves
+  # the hook judges its own vault, not whatever CLAUDE_PROJECT_DIR names.
+  CLAUDE_PROJECT_DIR="$WORK" bash "$GV/.claude/githooks/pre-commit" >/dev/null 2>&1
+  rc_gate=$?
+  expect_rc "pre-commit on a conformant vault allows the commit" 0 "$rc_gate"
+
+  printf 'no frontmatter\n' > "$GV/31-standards/broken.md"
+  bash "$GV/.claude/githooks/pre-commit" >/dev/null 2>&1
+  rc_gate=$?
+  expect_rc "pre-commit on a vault with a violation refuses the commit" 1 "$rc_gate"
+fi
 
 # ------------------------------------------------------------ dependencies --
 
@@ -370,6 +862,22 @@ elif echo x | grep -qP x 2>/dev/null; then
   printf '  present  grep -P (invisible-character scan fallback)\n'
 else
   printf '  MISSING  perl and grep -P -- the invisible-character scan CANNOT RUN and will say so.\n'
+fi
+
+printf '\n=== the suite itself (missing commands) ===\n'
+if [ -n "${BASH_VERSINFO:-}" ] && [ "${BASH_VERSINFO[0]}" -ge 4 ]; then
+  ( vault_suite_missing_command_probe ) 2>/dev/null
+  if grep -qx 'vault_suite_missing_command_probe' "$NOT_FOUND"; then
+    ok "positive control: a missing command inside the suite is recorded"
+  else
+    bad "positive control: a missing command went unrecorded"
+  fi
+  while IFS= read -r missing; do
+    [ "$missing" = vault_suite_missing_command_probe ] && continue
+    bad "the suite called a command that does not exist: $missing"
+  done < "$NOT_FOUND"
+else
+  printf '  SKIP  missing-command check needs bash 4 or later (this is bash %s; not counted)\n' "${BASH_VERSION:-?}"
 fi
 
 printf '\n=== %s passed, %s failed ===\n' "$pass" "$fail"

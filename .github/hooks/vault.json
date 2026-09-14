@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "hooks": {
+    "PostToolUse": [
+      {
+        "type": "command",
+        "matcher": "Edit|Write",
+        "bash": "bash \"$(git rev-parse --show-toplevel)/.claude/hooks/vault-lint.sh\"",
+        "timeoutSec": 15
+      }
+    ]
+  }
+}

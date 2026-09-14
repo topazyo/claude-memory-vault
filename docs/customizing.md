@@ -20,13 +20,14 @@ These are local, reversible, and touch nothing the hooks or scripts depend on.
 hook's frontmatter check passes. It also flags invisible zero-width and bidi characters (which is
 how a note pasted from the web draws a warning despite correct frontmatter), and it only inspects
 files under the six content-tier folders. Silence on a note written anywhere else means it was
-never checked, not that it passed. And because the hook fires on Claude Code's own writes, a note
-you type directly in Obsidian is never linted at all; `vault-check.sh` is what sees those.
+never checked, not that it passed. And because the hook fires only on writes by a harness that
+runs it (Claude Code, out of the box), a note you type directly in Obsidian is never linted at
+all; `vault-check.sh` is what sees those.
 
-**Edit `CLAUDE.md`'s project description.** The top of the root `CLAUDE.md` describes what the
-vault is *for*. Replace it with your own description. Leave the tier-folder table, the
-`@`-import of `30-knowledge/moc/ARCH-INDEX.md`, and the promotion rules alone unless you are doing
-section 2 below.
+**Describe your vault in `AGENTS.md`.** Near the top of `AGENTS.md` is a placeholder comment for
+what the vault is *for*. Replace it with your own description, which every harness then reads.
+Leave the tier-folder table, the promotion rules, and the `@`-import of
+`30-knowledge/moc/ARCH-INDEX.md` in `CLAUDE.md` alone unless you are doing section 2 below.
 
 **Delete the example notes.** Five notes prefixed `EXAMPLE-` ship inside their real tier folders —
 deliberately, so the dashboards and graph colours populate on first run rather than showing you an
@@ -34,7 +35,7 @@ empty vault. They tell one fictional story (an "example-api" service double-char
 because its retries carried no idempotency key), and one of them,
 `31-standards/EXAMPLE-retry-on-any-5xx.md`, is marked `status: superseded` to demonstrate
 mark-never-delete. Nothing imports them. Remove them all once you have your own notes, or the
-fiction shows up in your dashboards and in Claude's search results:
+fiction shows up in your dashboards and in your agent's search results:
 
 ```bash
 find . -name 'EXAMPLE-*.md' -delete
@@ -87,7 +88,8 @@ is the authoritative list.
 
 | File | What is hardcoded, and what to change |
 |---|---|
-| `CLAUDE.md` | The tier table, the promotion rules, and every prose path reference. Change every folder name mentioned. |
+| `AGENTS.md` | The tier table, the promotion rules, and every prose path reference. Change every folder name mentioned. |
+| `CLAUDE.md` | The `@`-import path of `30-knowledge/moc/ARCH-INDEX.md`. |
 | `.claude/hooks/vault-lint.sh` | The path match that decides which written files get linted. Update the folder prefixes it tests against. |
 | `.claude/scripts/vault-check.sh` | Its `TIERS=` line — the directories it walks for the C1–C5 frontmatter invariants. Update the scan roots. |
 | `.claude/hooks/postcompact-wrap-up.sh` | The output directory for the compaction stub (`20-projects/_logs/` by default). Update the write target. |
@@ -104,8 +106,8 @@ is the authoritative list.
 | `.obsidian/daily-notes.json` | The daily-note folder and template path (vault-root-relative). Obsidian will happily create daily notes in a folder that no longer matches your tier layout. |
 | `.gitignore` | The commented note-exclusion block in section 8 below. |
 
-Adding a **new** tier folder touches the same files. At minimum, register it in `CLAUDE.md` (so
-Claude knows it exists), `vault-check.sh` (so it gets checked), and `vault-lint.sh` (so writes
+Adding a **new** tier folder touches the same files. At minimum, register it in `AGENTS.md` (so
+every agent knows it exists), `vault-check.sh` (so it gets checked), and `vault-lint.sh` (so writes
 into it get linted).
 
 ### Verify the rename
@@ -136,8 +138,9 @@ That leaves two probes that do see your vault:
 > **2. Write a deliberately broken note (missing `tier:`) into the renamed folder and confirm the
 > lint hook comments on it.** This is the primary evidence, because it is the only check that
 > exercises the renamed path end to end. If the hook stays quiet, `vault-lint.sh` is not seeing the
-> new path. Write it *through Claude Code* — the hook fires on `Write`/`Edit`, so a file you create
-> in Obsidian or from a shell proves nothing.
+> new path. Write it through a harness that runs the hook (Claude Code fires it on `Write`/`Edit`),
+> or call `bash .claude/hooks/vault-lint.sh <the-broken-note>` yourself, which runs the same path
+> match. Creating the file in Obsidian alone proves nothing, because nothing lints it.
 
 The shipped CI (`.github/workflows/ci.yml`) runs both checkers, but only against this template's
 own example notes and fixtures, and no pre-commit hook ships. If you want a rename in your vault to
@@ -254,7 +257,7 @@ empty result.
 
 ## 5. Turning hooks off, or changing what the lint does
 
-Three hooks are registered in `.claude/settings.json`: `PostToolUse` with matcher `Write|Edit`
+For Claude Code, three hooks are registered in `.claude/settings.json`: `PostToolUse` with matcher `Write|Edit`
 (vault-lint), `PostCompact` with matcher `*` (compaction stub), and `InstructionsLoaded` with
 matcher `*` (audit log). Each is registered with `"shell": "bash"`, which is what makes them run
 on Windows through Git Bash. All three log to `.claude/logs/`, which is gitignored.
@@ -264,20 +267,23 @@ governs the permission and hook surface, and assistants are routinely blocked fr
 Hook registrations are read at session start, so restart Claude Code and then confirm from
 `.claude/logs/` that the hook no longer fires; editing mid-session and watching it still run is
 not evidence the edit failed. Deleting the script without removing the registration leaves Claude
-Code invoking a missing file on every matching event.
+Code invoking a missing file on every matching event. If you wired a script into another harness,
+or enabled the commit gate, turn it off there too: that harness's own hook configuration, and
+`git config --unset core.hooksPath`.
 
 **`vault-lint.sh` always exits 0, by design.** It writes advice — missing `tier`/`type`
 frontmatter, and any zero-width or bidirectional-override codepoints it finds (the "Rules File
 Backdoor" class, where invisible characters hide instructions inside a note). The character scan
-is widened to `.claude/rules/`, `.claude/agents/`, `.claude/skills/`, and any `CLAUDE.md` or
-`AGENTS.md` — the steering files that attack targets.
+is widened to `.claude/rules/`, `.claude/agents/`, `.claude/skills/`, and any `AGENTS.md`,
+`CLAUDE.md`, `GEMINI.md` or `.github/copilot-instructions.md` — the steering files that attack
+targets.
 
 You could make it exit non-zero on a violation, but be clear about what that does and does not
 buy you:
 
 - **It cannot block the write.** `PostToolUse` fires *after* the tool has completed. The file is
   already on disk by the time the hook runs, so no exit code can prevent or roll back anything.
-  A non-zero exit surfaces the hook's output to Claude as an error, which usually prompts a
+  A non-zero exit surfaces the hook's output to the agent as an error, which usually prompts a
   follow-up correction pass. That is a nudge, not enforcement. (`PreToolUse` is the hook point that
   can deny an action, and it is not registered here.)
 - **It never sees notes you write yourself.** Anything typed in Obsidian or dropped into
@@ -305,7 +311,7 @@ must say so, never report clean.
 ```yaml
 ---
 name: my-skill
-description: One sentence on when to use this. Claude reads this to decide whether to invoke it.
+description: One sentence on when to use this. The agent reads this to decide whether to invoke it.
 ---
 ```
 
@@ -318,9 +324,10 @@ log), `wrap-up` (a structured end-of-session summary that a log or a human then 
 not itself write the log), `resume` (rehydrate from recent logs at session start), `preserve`
 (medium → long promotion), and `onboard-project` (wire a codebase into the vault). Three of them
 carry `disable-model-invocation: true`, so they run only when you ask for them by name;
-`wrap-up` and `onboard-project` do not, and Claude may reach for them on its own. Prefer `Read` in
-`allowed-tools` over a `Bash(cat *)` grant: the `permissions.deny` read rules cover the `Read`
-tool, not a shell `cat`.
+`wrap-up` and `onboard-project` do not, and the agent may reach for them on its own. Prefer `Read`
+in `allowed-tools` over a `Bash(cat *)` grant: the `permissions.deny` read rules cover the `Read`
+tool, not a shell `cat`. Those three keys are Claude Code's. Write the body so it still works as a
+plain checklist, because that is how any other harness will use it.
 
 **Agents** live in `.claude/agents/<agent-name>.md`, with `name` and `description` in
 frontmatter. If you write an agent meant to run **unattended** on a schedule, copy the constraint
@@ -336,8 +343,10 @@ For scheduling, use the shipped runners rather than a hand-rolled cron line: `dr
 fail a pass that wrote outside its allowed folders (exit 2), and carry an **artifact assertion**
 (if the pass exits 0 having produced no artifact, the runner exits 1), so a silent no-op cannot
 masquerade as a green run. Roll your own and you lose all three; `docs/reference.md` § 4.3 has the
-details. Three traps worth repeating if you
-write your own `.cmd` wrapper anyway:
+details. The runners start Claude Code by default; to run a new agent under another harness, give
+it the same write-only-what-you-must shape and use `VAULT_AGENT=command`, which refuses to run
+until you confirm a sandbox (`docs/setup.md` § 8). Three traps worth repeating if you write your
+own `.cmd` wrapper anyway:
 
 - `echo ... %ERRORLEVEL%>> "log"` makes cmd parse the trailing digit as a **file handle**, so the
   exit code silently vanishes. Capture it into a variable first and write `(echo ... %RC%)>> "log"`.
@@ -360,8 +369,8 @@ groups on this field, and Dataview's grouping is case- and spelling-sensitive.
 **Give each project a subfolder under `20-projects/_logs/<project-slug>/`** for session logs. Flat
 per-project files work at two projects and stop working at six. The `.gitignore` block in section 8
 already uses `**/*.md`, so nested logs are covered once you uncomment it.
-`90-auto-memory/` also grows per-project subdirectories, but those are created and maintained by
-Claude Code's own auto-memory, not by hand: nothing in there is linted or checked
+`90-auto-memory/` also grows per-project subdirectories when a harness keeps its auto-memory there
+(Claude Code's does, once pointed at it), but those are maintained by the harness, not by hand: nothing in there is linted or checked
 (`vault-check.sh` excludes the folder deliberately), so durable knowledge belongs in the long tier,
 never there.
 
@@ -370,13 +379,17 @@ vault covers, where each one's logs live, and what its slug is. A project is onb
 appears there — not when its first log file lands. `VAULT-INDEX.md` stays the structural map of
 the vault itself; `ARCH-INDEX.md` stays the map of long-term knowledge.
 
-Each codebase then points its own `CLAUDE.md` at the vault with an `@`-import — the same mechanism
-the vault's root `CLAUDE.md` uses to pull in `30-knowledge/moc/ARCH-INDEX.md`. From a repo that
-sits beside the vault on disk:
+Each codebase then points its own agent instruction file at the vault. In a `CLAUDE.md` that is
+an `@`-import, the same mechanism the vault's root `CLAUDE.md` uses to pull in `AGENTS.md` and
+`30-knowledge/moc/ARCH-INDEX.md`. From a repo that sits beside the vault on disk:
 
 ```markdown
 @../claude-memory-vault/30-knowledge/moc/ARCH-INDEX.md
 ```
+
+`AGENTS.md` has no import syntax, so in a repo that uses it, add a short section telling the agent
+to read the same relative paths before it starts work. A repo with both files needs the pointer in
+both.
 
 Use a **relative** path. An absolute one bakes your home directory, and your username, into a
 file you may later publish. One honest limit: an import shares the *text* of the long tier, not

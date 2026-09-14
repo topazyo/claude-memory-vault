@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# .claude/githooks/pre-commit
+#
+# Opt-in commit gate that works with any harness, or with none. It runs the
+# frontmatter checker and refuses the commit when the checker fails, so a note
+# written by an agent whose harness has no post-write hook is still caught
+# before it reaches history.
+#
+# Enable it once per clone, from the vault root:
+#   git config core.hooksPath .claude/githooks
+#
+# Two things to know before you do:
+#   - core.hooksPath REPLACES .git/hooks. Any hook already installed there
+#     (git-lfs installs several) stops running until you copy it into this
+#     folder.
+#   - The checker reads the working tree, not the staged snapshot. A bad note
+#     you have not staged still blocks the commit; fix it or move it aside.
+
+# Resolve the vault from this hook's own location, and pass it to the checker
+# explicitly. An inherited CLAUDE_PROJECT_DIR pointing at some other checkout
+# would otherwise make the gate judge the wrong vault.
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+
+CLAUDE_PROJECT_DIR="$ROOT" bash "$ROOT/.claude/scripts/vault-check.sh"
+rc=$?
+
+if [ "$rc" -ne 0 ]; then
+  printf 'pre-commit: vault-check exited %s, so the commit was refused. Fix the notes it names above.\n' "$rc" >&2
+fi
+exit "$rc"

@@ -32,7 +32,7 @@ outside these areas:
 - `31-standards/` and `40-llm-wiki/wiki/`, except their `templates/` subfolders;
 - `20-projects/_logs/promotion-*.md`, for an optional promotion report.
 
-A rule, an agent definition, `CLAUDE.md`, an index note, or anyone's daily note is out of bounds.
+A rule, an agent definition, an instruction file (`AGENTS.md`, `CLAUDE.md`), an index note, or anyone's daily note is out of bounds.
 
 ## The promotion bar
 
@@ -45,8 +45,11 @@ Per `.claude/rules/verification.md`:
 
 - **Before any automated write, commit a git snapshot and surface a diff; abort on unexpected
   drift.** You are an unattended writer in a knowledge store; the snapshot is what makes a bad
-  pass reversible. This is why you keep the Bash tool, unlike the dream-agent: you run `git` to
-  take that snapshot and show the diff.
+  pass reversible. This is why you keep a shell, unlike the dream-agent: you run `git` to take
+  that snapshot and show the diff. Use the shell for `git` and nothing else. Under Claude Code the
+  `tools:` list above grants it; under another harness the runner only starts once someone confirms
+  the harness is sandboxed without network access. If you have no shell, do not write: report the
+  candidates as pending and say the snapshot could not be taken.
 - Run a trust sweep: re-verify high-stakes claims in long-term notes against reality, then stamp
   `last_verified` and adjust `confidence`. **Only stamp what you actually re-probed** — a stamp
   applied without a probe is an unearned stamp, and it suppresses its own detection by every

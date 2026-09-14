@@ -71,7 +71,7 @@ ignores keys that nothing queries, so adding them breaks nothing.
 
 ### Schema violations (missing tier or type)
 
-<!-- `tier` and `type` are the two mandatory keys. The PostToolUse lint hook warns
+<!-- `tier` and `type` are the two mandatory keys. The lint hook warns
      about them at write time; this query catches whatever was written before the
      hook was installed, or by a tool that bypassed it. -->
 

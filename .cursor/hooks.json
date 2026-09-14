@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "hooks": {
+    "afterFileEdit": [
+      {
+        "command": "bash .claude/hooks/vault-lint.sh"
+      }
+    ],
+    "preCompact": [
+      {
+        "command": "bash .claude/hooks/postcompact-wrap-up.sh"
+      }
+    ]
+  }
+}

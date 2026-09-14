@@ -6,12 +6,15 @@ Applies to all work in this vault.
 
 - Never read, modify, or create: `.env`, `.env.*`, `secrets/**`, `**/credentials*`,
   `~/.aws/**`, `~/.ssh/**`, `/etc/**`.
-- **Enforced:** `.claude/settings.json` denies `Read(./.env)`, `Read(./.env.*)` and
-  `Read(./secrets/**)` at the vault root. A `Read` deny also blocks Edit and Write on those paths;
-  Claude Code applies it to Grep and Glob on a best-effort basis, and it does not stop a shell
-  command such as `cat`.
-- **Guidance only:** every other path in the list above. Nothing mechanical stops a read of
-  `**/credentials*` or `~/.ssh/**`; this rule and your own permission prompts are the control.
+- **Enforced under Claude Code only:** `.claude/settings.json` denies `Read(./.env)`,
+  `Read(./.env.*)` and `Read(./secrets/**)` at the vault root. A `Read` deny also blocks Edit and
+  Write on those paths; Claude Code applies it to Grep and Glob on a best-effort basis, and it does
+  not stop a shell command such as `cat`. **No other harness reads that file.** In any other
+  harness these three paths are guidance only, unless you configure that harness's own ignore or
+  deny list.
+- **Guidance only, in every harness:** every other path in the list above. Nothing mechanical
+  stops a read of `**/credentials*` or `~/.ssh/**`; this rule and your own permission prompts are
+  the control.
 - Never hardcode or echo secrets, tokens, API keys, passwords, or private keys.
 - If a note contains a secret, do not repeat it in output or logs; flag it for redaction.
 
