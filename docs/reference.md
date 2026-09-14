@@ -443,13 +443,15 @@ Around that call, each runner does several things an exit code cannot:
   it loads into later sessions. Claude mode starts the agent with
   `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`, so Claude Code itself writes no memory during the pass.
   Inside `.git/`, only the files that make git run code are fenced: `config`, `config.worktree`,
-  `commondir`, `hooks/`, `info/attributes`, `info/grafts` and `objects/info/alternates`, and the
-  same files in every linked worktree's git directory under `.git/worktrees/` and every
-  submodule's under `.git/modules/`. Git reads config and hooks from the directory `commondir`
-  names. The rest of `info/` is not, because `git gc --auto` after an ordinary commit rewrites
-  `info/refs`. For a vault that is a linked worktree, the same files in the shared git directory
-  are fenced too, and appear in logs under `.git-common/`. HEAD and refs are not fenced, because a
-  pass may commit (the promotion agent takes a snapshot) and you may commit while it runs.
+  `commondir`, `hooks/`, `info/attributes`, `info/grafts` and `objects/info/alternates`. The same
+  files, and every symlink, are fenced in every linked worktree's git directory under
+  `.git/worktrees/` and every submodule's under `.git/modules/`, except under `refs/heads/`,
+  `refs/tags/` and `refs/remotes/`, where a branch may be named `config`. Git reads config and
+  hooks from the directory `commondir` names. The rest of `info/` is not fenced, because
+  `git gc --auto` after an ordinary commit rewrites `info/refs`. For a vault that is a linked
+  worktree, the same files in the shared git directory are fenced too, and appear in logs under
+  `.git-common/`. HEAD and refs are not fenced, because a pass may commit (the promotion agent
+  takes a snapshot) and you may commit while it runs.
 - **Containment.** A fence that only reports leaves a planted file in place, where it runs the next
   time something opens the vault. So when the changed paths include a *steering or execution
   surface*, the runner contains it before anything else, including before it looks at the agent's
@@ -463,8 +465,9 @@ Around that call, each runner does several things an exit code cannot:
   `.claude/skills/`, so the promotion pass's permission to write `31-standards/` does not cover
   them. A `.git` file or folder below the vault root, such as a submodule's gitlink, is a steering
   surface too, and so are the files inside a nested git directory that run code or redirect git
-  (its config, `commondir`, hooks, `info/attributes` and the like), but not its index, objects,
-  refs or logs. Inside `.claude/worktrees/<name>/` the same rules apply to the rest of the path.
+  (its config, `commondir`, hooks, `info/attributes` and the like) and any symlink in it, such as
+  a `hooks` folder replaced by a link, but not its index, objects, branches, tags or logs. Inside
+  `.claude/worktrees/<name>/` the same rules apply to the rest of the path.
 
   For each changed steering path the runner moves the file or link as the pass left it into a
   quarantine outside the vault (it never deletes it), then restores the pre-pass copy from a backup
@@ -503,20 +506,21 @@ Around that call, each runner does several things an exit code cannot:
   Unicode folder name, count as another path. On a case-sensitive macOS volume, two vaults whose
   paths differ only in case share one state directory, and so block each other's runs.
   `VAULT_STATE_DIR` overrides it, and a Windows path such as `C:/Users/Some One/vault-state` is
-  accepted. A value inside the
-  vault, a relative one, or one containing `..` is never used. A value that does not exist yet is
-  judged by where it would be created, so a symlink into the vault does not get past the check. The
-  runner logs a warning and uses a directory under the system temp folder instead. Set
-  `VAULT_STATE_DIR` the same way for both runners and for the shells where you run `vault-check.sh`,
-  or they look for the tripwire in different places, and give each vault its own value. A runner
-  refuses to start with exit 1, and logs which check failed, when the state directory cannot be
-  created, resolves into the vault (a symlink planted at the temp-folder fallback, for example),
-  or on Linux and macOS is not owned and writable by the runner's account or is writable by every
+  accepted. A value inside the vault, a relative one, or one containing `..` is never used. A
+  value that does not exist yet is judged by where it would be created, so a symlink into the
+  vault does not get past the check. The runner logs a warning and uses a directory under the
+  system temp folder instead. Set `VAULT_STATE_DIR` the same way for both runners and for the
+  shells where you run `vault-check.sh`, or they look for the tripwire in different places, and
+  give each vault its own value. The runner resolves the state directory's path first, checks the
+  directory it resolves to, and uses that directory for the rest of the run, so a symlink pointed
+  elsewhere after the check changes nothing. It refuses to start with exit 1, and logs which check
+  failed, when the state directory cannot be created, resolves into the vault (a symlink planted
+  at the temp-folder fallback, for example), is a symlink in a folder every account can write, or
+  on Linux and macOS is not owned and writable by the runner's account or is writable by every
   account. Another account could otherwise plant a forged tripwire there. A group-writable
   directory is allowed, because many Linux systems give each user a private group. Git Bash
   reports every file as the current user's and its mode bits are not Windows permissions, so on
-  Windows only the check against the vault applies. A symlinked state directory is checked
-  through the link, and the runner then uses the directory it resolves to. `vault-check.sh` prints a warning when it
+  Windows only the check against the vault applies. `vault-check.sh` prints a warning when it
   cannot work out the state directory, since it then checks only the tripwire in the vault. A
   runner that cannot take the backup, for example because `tar` is missing, refuses to start with
   exit 1. A backup that cannot be restored is listed in the tripwire as a containment error.
@@ -537,8 +541,16 @@ Around that call, each runner does several things an exit code cannot:
     `.git/worktrees/` and sets the tripwire. A new worktree's `commondir` is moved to the
     quarantine, so git fails in that worktree until you copy the file back from the quarantine
     path the tripwire names. A removed one leaves a `.git/worktrees/<name>/` folder holding only
-    the restored files, which `git worktree prune` clears. Avoid worktree commands during a
-    scheduled pass.
+    the restored files, which `git worktree prune` clears. When the vault is itself a linked
+    worktree, those files sit in the shared git directory and appear under `.git-common/`, which
+    the runner reports but never moves or restores. Avoid worktree commands during a scheduled
+    pass.
+  - Git activity inside a nested repository while a pass runs, such as a `git clone` into
+    `40-llm-wiki/raw/`, `git submodule update --init`, or `git remote add` in an embedded
+    repository, changes its gitlink, config or hooks and sets the tripwire. The new files are moved
+    to the quarantine, so the clone loses its config or the submodule checkout loses its `.git`
+    file until you copy them back from the quarantine path the tripwire names. Avoid these
+    commands during a scheduled pass.
   - Some plugins run code that lives in ordinary notes or vault folders. DataviewJS runs
     JavaScript blocks from any note, and Templater, QuickAdd and CustomJS load user scripts from a
     folder you choose. A pass that writes such a note or script outside its allowed areas is

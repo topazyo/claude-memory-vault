@@ -729,6 +729,11 @@ case "${FAKE_MODE:-nothing}" in
                   printf -- '---\ntier: long\ntype: standard\n---\n\nnew\n' > "31-standards/new4.md" ;;
   gitlink)        printf 'gitdir: ../evil-gitdir\n' > "31-standards/ext/.git"
                   printf 'PROMOTION-SUMMARY: promoted=0 pending=0\n' ;;
+  hookslink)      rm -rf 31-standards/ext/.git/hooks
+                  mkdir -p 31-standards/h
+                  printf '#!/bin/sh\ntouch hook-ran\n' > 31-standards/h/post-checkout
+                  ln -s ../../h 31-standards/ext/.git/hooks
+                  printf 'PROMOTION-SUMMARY: promoted=0 pending=0\n' ;;
   delsteer)       journal
                   rm -f .claude/githooks/pre-commit ;;
   obsidianapp)    journal
@@ -1252,6 +1257,30 @@ fi
 tripwire_clear
 rm -rf "$RV/31-standards/ext"
 
+# A nested repository's hooks folder replaced by a symlink into an allowed area.
+# The link is the steering change, and the pre-pass hooks must come back as a real
+# folder, not be restored through the link into the folder it points at.
+ln -s "$RV/31-standards" "$TMP/hookslink-probe" 2>/dev/null
+if [ -L "$TMP/hookslink-probe" ]; then
+  mkdir -p "$RV/31-standards/ext/.git/hooks"
+  printf '[core]\n\tbare = false\n' > "$RV/31-standards/ext/.git/config"
+  printf '#!/bin/sh\n' > "$RV/31-standards/ext/.git/hooks/pre-commit.sample"
+  new_case_state hookslink
+  expect_rc "promotion-pass: agent replaces a nested repository's hooks folder with a symlink -> VIOLATION" 2 \
+    "$(runner promotion-pass.sh hookslink)"
+  if [ -d "$RV/31-standards/ext/.git/hooks" ] && [ ! -L "$RV/31-standards/ext/.git/hooks" ] \
+     && [ -f "$RV/31-standards/ext/.git/hooks/pre-commit.sample" ] && quarantined 31-standards/ext/.git/hooks; then
+    ok "the linked hooks folder is quarantined and the pre-pass hooks are restored as a real folder"
+  else
+    bad "a nested hooks folder replaced by a symlink was not contained"
+  fi
+  tripwire_clear
+  rm -rf "$RV/31-standards/ext" "$RV/31-standards/h"
+else
+  printf '  SKIP  nested hooks folder replaced by a symlink: ln -s does not create symlinks here (not counted)\n'
+fi
+rm -f "$TMP/hookslink-probe"
+
 new_case_state delsteer
 expect_rc "agent deletes .claude/githooks/pre-commit -> VIOLATION" 2 "$(runner dream-pass.sh delsteer)"
 if cmp -s "$RV/.claude/githooks/pre-commit" "$TMP/vaulthook-before"; then
@@ -1322,12 +1351,48 @@ sf_got="$( . "$ROOT/.claude/scripts/lib/runner-common.sh" && printf '%s\n' \
   '.GitHub' '10-daily/2026-01-01.md' '.claude/logs/runner-tripwire' '31-standards/claude-notes.md' \
   '.obsidian/app.json' '40-llm-wiki/wiki/ext/.git' '31-standards/ext/.git/config' \
   '31-standards/ext/.git/hooks/post-checkout' '31-standards/ext/.git/index' \
-  '31-standards/ext/.git/refs/heads/config' '31-standards/ext/.git/objects/ab/cdef' | steering_filter | tr '\n' '|')"
-if [ "$sf_got" = '31-standards/.claude|40-llm-wiki/wiki/sub/.agents|notes/AGENTS.override.md|.GitHub|40-llm-wiki/wiki/ext/.git|31-standards/ext/.git/config|31-standards/ext/.git/hooks/post-checkout|' ]; then
-  ok "steering_filter matches harness folders as the last component, AGENTS.override.md, nested .git entries and their code files, and ignores notes, logs, refs and objects"
+  '31-standards/ext/.git/refs/heads/config' '31-standards/ext/.git/objects/ab/cdef' \
+  '31-standards/ext/.git/modules/refs/config' '31-standards/ext/.git/modules/refs/hooks/post-checkout' \
+  '31-standards/ext/.git/worktrees/logs/commondir' '31-standards/ext/.git/logs/refs/heads/config' \
+  '31-standards/ext/.git/info/attributes' '31-standards/ext/.git/objects/info/alternates' \
+  '31-standards/ext/.git/refs/tags/hooks/x' '31-standards/ext/.git/refs/remotes/origin/config' | steering_filter | tr '\n' '|')"
+if [ "$sf_got" = '31-standards/.claude|40-llm-wiki/wiki/sub/.agents|notes/AGENTS.override.md|.GitHub|40-llm-wiki/wiki/ext/.git|31-standards/ext/.git/config|31-standards/ext/.git/hooks/post-checkout|31-standards/ext/.git/modules/refs/config|31-standards/ext/.git/modules/refs/hooks/post-checkout|31-standards/ext/.git/worktrees/logs/commondir|31-standards/ext/.git/info/attributes|31-standards/ext/.git/objects/info/alternates|' ]; then
+  ok "steering_filter matches harness folders as the last component, AGENTS.override.md, nested .git entries and their code files (in a submodule or worktree named refs or logs too), and ignores notes, logs, branches, tags and objects"
 else
   bad "steering_filter classification -- got: $sf_got"
 fi
+# A symlink inside a nested git directory is steering whatever its name, and the
+# snapshots passed to steering_filter are what say a path is a link.
+printf 'L123 0 ./31-standards/ext/.git/hooks\n' > "$TMP/sf-links"
+sf_link="$( . "$ROOT/.claude/scripts/lib/runner-common.sh" && printf '%s\n' \
+  '31-standards/ext/.git/hooks' '31-standards/ext/.git/description' | steering_filter "$TMP/sf-links" | tr '\n' '|')"
+sf_plain="$( . "$ROOT/.claude/scripts/lib/runner-common.sh" && printf '%s\n' \
+  '31-standards/ext/.git/hooks' | steering_filter | tr '\n' '|')"
+if [ "$sf_link" = '31-standards/ext/.git/hooks|' ] && [ -z "$sf_plain" ]; then
+  ok "steering_filter treats a symlink named in a snapshot inside a nested git directory as steering"
+else
+  bad "steering_filter symlink classification -- with the snapshot: $sf_link, without: $sf_plain"
+fi
+# The git-directory fence leaves out branches and their reflogs, which may be named
+# config, but not a submodule that is itself named refs.
+SNR="$TMP/snap-refs"
+rm -rf "$SNR"
+mkdir -p "$SNR/.git/modules/ext/refs/heads" "$SNR/.git/modules/ext/logs/refs/heads" "$SNR/.git/modules/refs/hooks"
+printf 'x\n' > "$SNR/.git/modules/ext/config"
+printf 'x\n' > "$SNR/.git/modules/ext/refs/heads/config"
+printf 'x\n' > "$SNR/.git/modules/ext/logs/refs/heads/config"
+printf 'x\n' > "$SNR/.git/modules/refs/config"
+printf 'x\n' > "$SNR/.git/modules/refs/hooks/post-checkout"
+( . "$ROOT/.claude/scripts/lib/runner-common.sh" && snapshot_tree "$SNR" "$TMP/snap-refs.txt" )
+if grep -q ' \./\.git/modules/ext/config$' "$TMP/snap-refs.txt" \
+   && grep -q ' \./\.git/modules/refs/config$' "$TMP/snap-refs.txt" \
+   && grep -q ' \./\.git/modules/refs/hooks/post-checkout$' "$TMP/snap-refs.txt" \
+   && ! grep -q 'refs/heads/config' "$TMP/snap-refs.txt"; then
+  ok "the git-directory fence keeps a submodule named refs and leaves out branches named config"
+else
+  bad "the git-directory fence got refs wrong -- snapshot: $(tr '\n' '|' < "$TMP/snap-refs.txt")"
+fi
+rm -rf "$SNR"
 
 # PATH shims that break one tool in one way, so a failure the runner must handle
 # can be produced on every platform without root or a full disk.
@@ -1924,16 +1989,21 @@ fi
 rm -f "$REC.argv"
 expect_rc "VAULT_STATE_DIR names a file -> refused" 1 \
   "$(runner dream-pass.sh journal VAULT_STATE_DIR="$TMP/state-is-a-file" FAKE_RECORD="$REC")"
-if [ ! -f "$REC.argv" ] && grep -q 'ERROR: the state directory' "$RV/.claude/logs/dream-agent.log" 2>/dev/null; then
+if [ ! -f "$REC.argv" ] && grep -q "state directory $TMP/state-is-a-file could not be created, or cannot be entered" "$RV/.claude/logs/dream-agent.log" 2>/dev/null; then
   ok "an unusable state directory never starts the agent, and the log says why"
 else
-  bad "an unusable state directory started the agent, or logged nothing"
+  bad "an unusable state directory started the agent, or logged no reason"
 fi
 # Any account could plant a forged marker or tripwire in a world-writable one.
 mkdir -p "$TMP/state-open"
 chmod 777 "$TMP/state-open" 2>/dev/null
 if [ -n "$(find "$TMP/state-open" -maxdepth 0 -perm -0002 2>/dev/null)" ]; then
   expect_rc "VAULT_STATE_DIR is world-writable -> refused" 1 "$(runner dream-pass.sh journal VAULT_STATE_DIR="$TMP/state-open")"
+  if grep -q "state directory $TMP/state-open is writable by every account" "$RV/.claude/logs/dream-agent.log" 2>/dev/null; then
+    ok "the refusal says the state directory is writable by every account"
+  else
+    bad "a world-writable state directory was refused for another reason, or silently"
+  fi
 else
   printf '  SKIP  world-writable state directory: chmod 777 sets no such mode here (not counted)\n'
 fi
@@ -1986,6 +2056,24 @@ if [ -L "$TMP/vault-link" ]; then
   expect_rc "VAULT_STATE_DIR is a symlink to a private directory outside the vault -> OK" 0 \
     "$(runner dream-pass.sh journal VAULT_STATE_DIR="$TMP/state-link")"
   rm -f "$TMP/state-link"
+  # The same link in a folder every account can write, such as a shared temp
+  # folder, may have been planted by another account, so it is refused.
+  mkdir -p "$TMP/shared-folder"
+  chmod 1777 "$TMP/shared-folder" 2>/dev/null
+  rm -f "$TMP/shared-folder/state"
+  ln -s "$TMP/state-real" "$TMP/shared-folder/state"
+  if [ -n "$(find "$TMP/shared-folder" -maxdepth 0 -perm -0002 2>/dev/null)" ]; then
+    expect_rc "VAULT_STATE_DIR is a symlink in a world-writable folder -> refused" 1 \
+      "$(runner dream-pass.sh journal VAULT_STATE_DIR="$TMP/shared-folder/state")"
+    if grep -q "state directory $TMP/shared-folder/state is a symlink in a folder every account can write" "$RV/.claude/logs/dream-agent.log" 2>/dev/null; then
+      ok "the refusal says the state directory is a symlink in a folder every account can write"
+    else
+      bad "a symlinked state directory in a world-writable folder was refused for another reason, or silently"
+    fi
+  else
+    printf '  SKIP  symlinked state directory in a world-writable folder: chmod 1777 sets no such mode here (not counted)\n'
+  fi
+  rm -rf "$TMP/shared-folder"
 else
   printf '  SKIP  symlinked vault spellings: ln -s does not create symlinks here (not counted)\n'
 fi
