@@ -157,14 +157,14 @@ relabel() {
 # In .git/ only the files that make git run code are fenced. They are config,
 # config.worktree, commondir (git reads config and hooks from the directory it
 # names), hooks/, info/attributes, info/grafts and objects/info/alternates. The
-# same files are fenced in every linked worktree's git directory under
-# .git/worktrees/ and every submodule's under .git/modules/. The rest of info/ is not, because
-# `git gc --auto` after an ordinary commit rewrites info/refs. HEAD and refs are
-# NOT fenced, because a pass may commit (the promotion agent takes a snapshot)
-# and a human may commit while it runs. A rewound HEAD is caught separately
-# (head_moved_backwards). For a worktree vault, whose .git is a file, the
-# pointer is fenced and the same files in the common git directory appear under
-# the label .git-common/.
+# same files, and every symlink, are fenced in every linked worktree's git
+# directory under .git/worktrees/ and every submodule's under .git/modules/. The
+# rest of info/ is not, because `git gc --auto` after an ordinary commit rewrites
+# info/refs. HEAD and refs are NOT fenced, because a pass may commit (the
+# promotion agent takes a snapshot) and a human may commit while it runs. A
+# rewound HEAD is caught separately (head_moved_backwards). For a worktree vault,
+# whose .git is a file, the pointer is fenced and the same files in the common
+# git directory appear under the label .git-common/.
 #
 # Known limit: a directory symlink that existed before the pass is fenced as a
 # link, not by its target's contents, so a write through it is not seen.
@@ -232,12 +232,16 @@ EOF
         ! -path './.obsidian/plugins/*/*/*' ${keep[@]+"${keep[@]}"} \) -prune -o
     fi
     # The files in a git directory that make git run code, or read config and
-    # hooks from somewhere else.
-    # A ref or reflog that happens to be named config, or to sit under a folder
-    # named hooks, is left out, because refs change whenever someone commits.
-    gitdir_code=( \( -name config -o -name config.worktree -o -name commondir -o -path '*/info/attributes' \
-      -o -path '*/info/grafts' -o -path '*/objects/info/alternates' -o -path '*/hooks/*' \) \
-      ! -path '*/refs/*/*' )
+    # hooks from somewhere else, and every symlink, because a linked hooks or
+    # info folder moves those files where the fence does not look. A branch, tag
+    # or remote-tracking ref may be named config or hooks/x, and refs change
+    # whenever someone commits, so refs/heads, refs/tags and refs/remotes (and
+    # their reflogs under logs/refs) are left out. Only those three, because a
+    # submodule or worktree may itself be named refs. Callers pass relative
+    # paths, so a folder named refs above the git directory changes nothing.
+    gitdir_code=( \( -type l -o -name config -o -name config.worktree -o -name commondir \
+      -o -path '*/info/attributes' -o -path '*/info/grafts' -o -path '*/objects/info/alternates' \
+      -o -path '*/hooks/*' \) ! -path '*/refs/heads/*' ! -path '*/refs/tags/*' ! -path '*/refs/remotes/*' )
     for d in .obsidian/themes .obsidian/snippets; do
       { [ -e "$d" ] || [ -L "$d" ]; } && fence_find "./$d"
     done
@@ -261,7 +265,7 @@ EOF
         done
         [ -e "$cdir/hooks" ] && fence_find "$cdir/hooks" | relabel "$cdir" ./.git-common
         for d in worktrees modules; do
-          [ -d "$cdir/$d" ] && fence_find "$cdir/$d" "${gitdir_code[@]}" | relabel "$cdir" ./.git-common
+          [ -d "$cdir/$d" ] && ( cd "$cdir" && fence_find "./$d" "${gitdir_code[@]}" ) | relabel ./ ./.git-common/
         done
       fi
     fi
@@ -316,18 +320,20 @@ snapshot_paths() {
 TRIPWIRE_REL=".claude/logs/runner-tripwire"
 INFLIGHT_REL=".claude/logs/runner-inflight"
 
-# steering_filter
+# steering_filter [snapshot...]
 # Reads relative paths on stdin and prints the ones that are steering or
 # execution surfaces. One awk program, so the fence, the backup and containment
 # can never disagree about the set, and matching is case-insensitive (a
 # case-insensitive filesystem loads Gemini.md as GEMINI.md). Inside
 # .claude/worktrees/<name>/ the same rules apply to the rest of the path, so a
-# worktree's own CLAUDE.md or .claude/ counts and its notes do not.
+# worktree's own CLAUDE.md or .claude/ counts and its notes do not. The symlink
+# entries of the snapshots named as arguments mark which paths are links, because
+# a link inside a nested git directory can move its hooks or config elsewhere.
 steering_filter() {
   # Every test is a plain anchored pattern: the BWK awk that macOS ships does not
   # reliably treat $ or ^ as anchors inside an alternation group.
   awk '
-    function steer(lp) {
+    function steer(lp, islink) {
       if (lp == ".claude/logs" || lp ~ /^\.claude\/logs\//) return 0
       if (lp == ".obsidian/community-plugins.json") return 1
       if (lp ~ /^\.obsidian\/plugins\// || lp ~ /^\.obsidian\/themes\// || lp ~ /^\.obsidian\/snippets\//) return 1
@@ -342,11 +348,15 @@ steering_filter() {
       # A .git entry below the vault root is a submodule gitlink or an embedded
       # repository, and rewriting it points git at another config and hooks.
       # Inside a nested git directory only the files that run code or redirect
-      # git count. Its index, objects, refs and logs change in normal use.
+      # git count, and any symlink. Its index, objects, refs and logs change in
+      # normal use. A branch, tag or remote-tracking ref may have any name, config
+      # included, so refs/heads, refs/tags and refs/remotes are left out, as the
+      # fence leaves them out of .git/modules and .git/worktrees.
       if (base == ".git") return 1
       for (i = 1; i < n; i++) {
         if (part[i] != ".git") continue
-        for (j = i + 1; j <= n; j++) if (part[j] == "refs" || part[j] == "logs") return 0
+        for (j = i + 1; j < n - 1; j++) if (part[j] == "refs" && (part[j + 1] == "heads" || part[j + 1] == "tags" || part[j + 1] == "remotes")) return 0
+        if (islink) return 1
         if (base == "config" || base == "config.worktree" || base == "commondir") return 1
         for (j = i + 1; j < n; j++) if (part[j] == "hooks") return 1
         if (part[n - 1] == "info" && (base == "attributes" || base == "grafts")) return 1
@@ -360,15 +370,26 @@ steering_filter() {
       }
       return 0
     }
+    # A snapshot line is "checksum size ./path", and a symlink checksum starts with L.
+    phase == 1 {
+      if ($0 ~ /^L/) {
+        p = $0
+        sub(/^[^ ]* [^ ]* /, "", p)
+        sub(/^\.\//, "", p)
+        link[tolower(p)] = 1
+      }
+      next
+    }
     {
       lp = tolower($0)
+      islink = (lp in link)
       if (lp ~ /^\.claude\/worktrees\/[^\/]+\//) {
         sub(/^\.claude\/worktrees\/[^\/]+\//, "", lp)
       } else if (lp == ".claude/worktrees" || lp ~ /^\.claude\/worktrees\/[^\/]*$/) {
         next
       }
-      if (steer(lp)) print $0
-    }'
+      if (steer(lp, islink)) print $0
+    }' phase=1 "$@" phase=2 -
 }
 
 # is_restorable_path <relative-path>
@@ -390,7 +411,7 @@ is_restorable_path() {
 backup_steering() {
   local root="$1" snap="$2" tarball="$3" want have
   command -v tar >/dev/null 2>&1 || return 1
-  snapshot_paths "$snap" | steering_filter | grep -v '^\.git-common' > "$tarball.list"
+  snapshot_paths "$snap" | steering_filter "$snap" | grep -v '^\.git-common' > "$tarball.list"
   if [ ! -s "$tarball.list" ]; then
     : > "$tarball"
     return 0
@@ -479,39 +500,56 @@ vault_state_dir() {
 
 # state_dir_ready <dir> <root>
 # Creates the state directory, private to this account where the platform
-# allows. Fails unless it is a directory this account owns and can write, that
-# is not world-writable, and that does not resolve into the vault. Another
-# account could otherwise plant a forged tripwire or marker there, and a symlink
-# planted at the temp-folder fallback could put the state back inside the
-# agent's reach. A group-writable directory is allowed, because many Linux
-# systems give each user a private group. Git Bash reports every file as owned by
-# the current user and its mode bits are not ACLs, so on Windows only the check
-# against the vault means anything.
+# allows, and prints the path it resolves to. Fails unless it is a directory
+# this account owns and can write, that is not world-writable, and that does not
+# resolve into the vault. Another account could otherwise plant a forged tripwire
+# or marker there, and a symlink planted at the temp-folder fallback could put
+# the state back inside the agent's reach. A group-writable directory is
+# allowed, because many Linux systems give each user a private group. Git Bash
+# reports every file as owned by the current user and its mode bits are not
+# ACLs, so on Windows only the check against the vault means anything.
 #
-# Returns 0 when ready, 1 when it could not be created, 2 when this account does
-# not own it or cannot write it, 3 when it is world-writable, and 4 when it
-# resolves into the vault. state_dir_problem turns the code into words. The
-# mode is read through a symlink (find -H), and the runners switch to the
-# resolved path once the check passes, so a link cannot be retargeted after it.
+# The path is resolved first, every check runs on the resolved path, and the
+# runners use the printed path from then on, so pointing a symlink elsewhere
+# after the check changes nothing. A symlink in a folder every account can write,
+# such as the shared temp folder, is refused outright, because another account
+# may have planted it.
+#
+# Returns 0 when ready, 1 when it could not be created or entered, 2 when this
+# account does not own it or cannot write it, 3 when it is world-writable, 4 when
+# it resolves into the vault, 5 when it is a symlink in a world-writable folder,
+# and 6 when find could not check the mode. state_dir_problem turns the code
+# into words.
 state_dir_ready() {
-  local canon kroot
+  local name parent real kroot open
+  name="$(printf '%s' "$1" | sed 's|//*$||')"
+  parent="${name%/*}"
+  [ -n "$parent" ] || parent=/
+  if [ -L "$name" ]; then
+    # -H, because the folder itself may be a link, as /tmp is on macOS.
+    open="$(find -H "$parent" -maxdepth 0 -perm -0002 -print 2>/dev/null)" || return 6
+    [ -z "$open" ] || return 5
+  fi
   if [ ! -d "$1" ]; then
     ( umask 077 && mkdir -p "$1" ) 2>/dev/null || return 1
   fi
-  [ -d "$1" ] || return 1
-  [ -O "$1" ] && [ -w "$1" ] || return 2
-  [ -z "$(find -H "$1" -maxdepth 0 -perm -0002 2>/dev/null)" ] || return 3
-  canon="$(path_key "$(cd "$1" 2>/dev/null && pwd -P)")"
+  real="$(cd "$1" 2>/dev/null && pwd -P)" || return 1
+  [ -n "$real" ] && [ -d "$real" ] || return 1
+  [ -O "$real" ] && [ -w "$real" ] || return 2
+  open="$(find "$real" -maxdepth 0 -perm -0002 -print 2>/dev/null)" || return 6
+  [ -z "$open" ] || return 3
   kroot="$(path_key "$(cd "$2" 2>/dev/null && pwd -P)")"
-  [ -n "$canon" ] && [ -n "$kroot" ] || return 1
-  case "$canon" in "$kroot"|"$kroot"/*) return 4 ;; esac
-  return 0
+  [ -n "$kroot" ] || return 1
+  case "$(path_key "$real")" in "$kroot"|"$kroot"/*) return 4 ;; esac
+  printf '%s\n' "$real"
 }
 state_dir_problem() {
   case "$1" in
     2) printf 'is not owned by this account, or this account cannot write it' ;;
     3) printf 'is writable by every account' ;;
     4) printf 'resolves into the vault' ;;
+    5) printf 'is a symlink in a folder every account can write' ;;
+    6) printf 'could not be checked for write access by other accounts' ;;
     *) printf 'could not be created, or cannot be entered' ;;
   esac
 }
@@ -609,7 +647,7 @@ tripwire_check() {
     pid="$(sed -n 's/^pid=//p' "$marker" 2>/dev/null | head -n 1)"
     case "$pid" in ''|*[!0-9]*) pid="" ;; esac
     if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-      printf '[%s] LOCKED: another pass (pid %s) is still running; not starting.\n' "$(ts)" "$pid" >> "$log"
+      printf '[%s] LOCKED: another pass (pid %s) is still running, so this one is not starting.\n' "$(ts)" "$pid" >> "$log"
       return 75
     fi
     empty="$(mktemp 2>/dev/null || mktemp -t empty)"
@@ -630,16 +668,18 @@ tripwire_check() {
   return 0
 }
 
-# contain_steering_changes <root> <changed-list> <tarball> <quarantine-dir> <handled-out> <errors-out>
+# contain_steering_changes <root> <changed-list> <tarball> <quarantine-dir> <handled-out> <errors-out> [snapshot...]
 # For each changed steering path: quarantine the current file or symlink, then
 # restore the pre-pass copy when one existed and the path is restorable. Writes
 # the handled paths and the paths that could not be contained. Returns 0 when at
-# least one steering path changed.
+# least one steering path changed. The snapshots, before and after the pass,
+# tell steering_filter which paths are symlinks.
 contain_steering_changes() {
   local root="$1" changed="$2" tarball="$3" qdir="$4" handled="$5" errors="$6" rel restore rdirs d skip
+  shift 6
   : > "$handled"
   : > "$errors"
-  steering_filter < "$changed" > "$handled"
+  steering_filter "$@" < "$changed" > "$handled"
   [ -s "$handled" ] || return 1
 
   restore="$(dirname "$tarball")/restore"
@@ -748,7 +788,8 @@ contain_pass() {
   CONTAINED=0
   qdir="$state/quarantine/$(date +%Y%m%dT%H%M%S)-$runner-$$"
   reason="an unattended pass changed a steering or execution surface"
-  if ! contain_steering_changes "$root" "$snap/changed" "$snap/steering.tar" "$qdir" "$snap/contained" "$snap/contain-errors"; then
+  if ! contain_steering_changes "$root" "$snap/changed" "$snap/steering.tar" "$qdir" "$snap/contained" "$snap/contain-errors" \
+       "$snap/before" "$snap/after"; then
     : > "$snap/contained"
   fi
   # Git runs only when its own config and hooks are known to be the pre-pass

@@ -100,14 +100,15 @@ main() {
   RUN_OUT="$LOG_DIR/dream-agent.run.log"
   TIMEOUT="${DREAM_PASS_TIMEOUT:-3600}"
   STATE="$(vault_state_dir "$ROOT" 2>>"$LOG")"
-  state_dir_ready "$STATE" "$ROOT"
+  # From here on the resolved path that was checked, so pointing a symlink
+  # elsewhere after the check changes nothing.
+  STATE_REAL="$(state_dir_ready "$STATE" "$ROOT")"
   state_rc=$?
   if [ "$state_rc" -ne 0 ]; then
     printf '[%s] ERROR: the state directory %s %s. Refusing to run.\n' "$(ts)" "$STATE" "$(state_dir_problem "$state_rc")" >> "$LOG"
     exit 1
   fi
-  # From here on the resolved path, so a symlink cannot be pointed elsewhere.
-  STATE="$(cd "$STATE" && pwd -P)" || exit 1
+  STATE="$STATE_REAL"
 
   tripwire_check "$ROOT" "$STATE" "$RUNNER" "$LOG"
   guard_rc=$?
