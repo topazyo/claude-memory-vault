@@ -460,7 +460,7 @@ Around that call, each runner does several things an exit code cannot:
 
   The state directory is `%LOCALAPPDATA%\claude-memory-vault\<id>\` on Windows and
   `${XDG_STATE_HOME:-~/.local/state}/claude-memory-vault/<id>/` elsewhere, where `<id>` is a checksum
-  of the vault's path. `VAULT_STATE_DIR` overrides it, and a Windows path such as `C:/Users/...` is
+  of the vault's path. `VAULT_STATE_DIR` overrides it, and a Windows path such as `C:/Users/Some One/vault-state` is
   accepted. A value inside the vault, a relative one, or one containing `..` is never used. The
   runner logs a warning and uses a directory under the system temp folder instead. Set
   `VAULT_STATE_DIR` the same way for both runners and for the shells where you run `vault-check.sh`,

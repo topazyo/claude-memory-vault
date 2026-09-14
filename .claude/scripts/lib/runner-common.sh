@@ -323,7 +323,7 @@ backup_steering() {
 # Obsidian, synced with the vault folder, or reachable by an agent's file tools
 # in the vault. VAULT_STATE_DIR overrides it (the test suite uses that). Only an
 # absolute path that is not inside the vault is accepted. A Windows path such as
-# C:/Users/... is converted first. A rejected value is replaced with a directory
+# "C:/Users/Some One/vault-state" is converted first. A rejected value is replaced with a directory
 # under the system temp folder, and a warning saying so goes to stderr, which the
 # runners append to their log. Set VAULT_STATE_DIR the same way for both runners
 # and for any shell that runs vault-check.sh, or they look in different places.
