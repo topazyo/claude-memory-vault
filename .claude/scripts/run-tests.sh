@@ -742,7 +742,16 @@ case "${FAKE_MODE:-nothing}" in
                   mkdir -p .obsidian/plugins/dataview
                   printf '{"enableDataviewJs":true}\n' > .obsidian/plugins/dataview/data.json ;;
   renameddata)    journal
-                  printf '{"enableDataviewJs":true}\n' > .obsidian/plugins/Obsidian-DV/data.json ;;
+                  printf '{"enableDataviewJs":true}\n' > ".obsidian/plugins/Obsidian-[DV]/data.json" ;;
+  nesteddata)     journal
+                  mkdir -p .obsidian/plugins/extended-graph/lib
+                  printf 'module.exports = {}\n' > .obsidian/plugins/extended-graph/lib/data.json ;;
+  mainwtcommondir) journal
+                  f="$(ls -d .git/worktrees/*/commondir 2>/dev/null | head -n 1)"
+                  printf '%s/\n' "$(cat "$f")" > "$f" ;;
+  moduleattr)     journal
+                  mkdir -p .git/modules/planted/info
+                  printf '* filter=planted\n' > .git/modules/planted/info/attributes ;;
   datafolder)     journal
                   mkdir -p .obsidian/plugins/data.json
                   printf 'module.exports = class {}\n' > .obsidian/plugins/data.json/main.js ;;
@@ -1109,6 +1118,17 @@ if [ "$RV_GIT" -eq 1 ]; then
   fi
   rm -f "$RV/.git/commondir"
   tripwire_clear
+  # A submodule's git directory can select a filter the same way.
+  new_case_state moduleattr
+  expect_rc "command mode: agent writes .git/modules/*/info/attributes -> VIOLATION" 2 \
+    "$(runner dream-pass.sh moduleattr VAULT_AGENT=command VAULT_AGENT_CMD="$FAKE" VAULT_ALLOW_UNENFORCED_TOOLS=1)"
+  if quarantined .git/modules/planted/info/attributes; then
+    ok "a submodule's info/attributes is fenced and quarantined"
+  else
+    bad "a submodule's info/attributes was not contained"
+  fi
+  rm -rf "$RV/.git/modules"
+  tripwire_clear
 
   # A vault that is a linked worktree: its .git is a file, and the hooks git runs
   # live in the common git directory outside the vault. A hook planted there is
@@ -1151,6 +1171,19 @@ if [ "$RV_GIT" -eq 1 ]; then
     fi
     cp "$TMP/wt-commondir-before" "$wt_gd/commondir" 2>/dev/null
     rm -f "$WT/.claude/logs/runner-tripwire" "$WT/.claude/logs/runner-inflight"
+    tripwire_clear
+    # The main vault holds that worktree's git directory under .git/worktrees/, and
+    # a pass in the main vault can rewrite its commondir too.
+    new_case_state main-wt-commondir
+    expect_rc "command mode: agent rewrites .git/worktrees/*/commondir -> VIOLATION" 2 \
+      "$(runner dream-pass.sh mainwtcommondir VAULT_AGENT=command VAULT_AGENT_CMD="$FAKE" VAULT_ALLOW_UNENFORCED_TOOLS=1)"
+    if grep -q '\.git/worktrees/.*/commondir' "$RV/.claude/logs/runner-tripwire" 2>/dev/null \
+       && cmp -s "$TMP/wt-commondir-before" "$wt_gd/commondir"; then
+      ok "a linked worktree's commondir is fenced in the main vault, and restored"
+    else
+      bad "a rewritten .git/worktrees/*/commondir was not reported, or not restored"
+      cp "$TMP/wt-commondir-before" "$wt_gd/commondir" 2>/dev/null
+    fi
     tripwire_clear
   else
     printf '  SKIP  worktree vault containment: git worktree add failed here (not counted)\n'
@@ -1230,15 +1263,27 @@ else
 fi
 tripwire_clear
 rm -rf "$RV/.obsidian/plugins"
-# Obsidian takes a plugin's id from its manifest, not its folder name.
-mkdir -p "$RV/.obsidian/plugins/Obsidian-DV"
-printf '{\n  "id": "dataview",\n  "name": "Dataview"\n}\n' > "$RV/.obsidian/plugins/Obsidian-DV/manifest.json"
+# Obsidian takes a plugin's id from its manifest, not its folder name. This one
+# is minified, has CRLF line endings and a capitalised id, and its folder name
+# holds glob characters that find's -path must not read as a pattern.
+mkdir -p "$RV/.obsidian/plugins/Obsidian-[DV]"
+printf '{"name":"Dataview","id":"DataView","version":"1"}\r\n' > "$RV/.obsidian/plugins/Obsidian-[DV]/manifest.json"
 new_case_state renameddata
-expect_rc "agent writes the data.json of Dataview installed as Obsidian-DV/ -> VIOLATION" 2 "$(runner dream-pass.sh renameddata)"
-if quarantined .obsidian/plugins/Obsidian-DV/data.json; then
+expect_rc "agent writes the data.json of Dataview installed as Obsidian-[DV]/ -> VIOLATION" 2 "$(runner dream-pass.sh renameddata)"
+if quarantined '.obsidian/plugins/Obsidian-\[DV\]/data.json'; then
   ok "a code-running plugin is recognised by its manifest id, whatever its folder is called"
 else
   bad "the data.json of a renamed Dataview folder was not contained"
+fi
+tripwire_clear
+rm -rf "$RV/.obsidian/plugins"
+# Only the settings file directly in a plugin's folder is left out of the fence.
+new_case_state nesteddata
+expect_rc "agent writes lib/data.json inside an ordinary plugin -> VIOLATION" 2 "$(runner dream-pass.sh nesteddata)"
+if quarantined .obsidian/plugins/extended-graph/lib/data.json; then
+  ok "a data.json deeper in a plugin folder is fenced like any other plugin file"
+else
+  bad "a nested data.json was left out of the fence"
 fi
 tripwire_clear
 rm -rf "$RV/.obsidian/plugins"
@@ -1788,6 +1833,14 @@ if [ ! -f "$REC.argv" ] && grep -q 'ERROR: the state directory' "$RV/.claude/log
 else
   bad "an unusable state directory started the agent, or logged nothing"
 fi
+# Any account could plant a forged marker or tripwire in a world-writable one.
+mkdir -p "$TMP/state-open"
+chmod 777 "$TMP/state-open" 2>/dev/null
+if [ -n "$(find "$TMP/state-open" -maxdepth 0 -perm -0002 2>/dev/null)" ]; then
+  expect_rc "VAULT_STATE_DIR is world-writable -> refused" 1 "$(runner dream-pass.sh journal VAULT_STATE_DIR="$TMP/state-open")"
+else
+  printf '  SKIP  world-writable state directory: chmod 777 sets no such mode here (not counted)\n'
+fi
 
 # The state directory's id comes from the vault's resolved path, so every
 # spelling of one vault finds the same state, and so the same tripwire copy.
@@ -1813,6 +1866,16 @@ if [ -L "$TMP/vault-link" ]; then
     "$TMP"/claude-memory-vault-state-*) ok "a new VAULT_STATE_DIR under a symlink into the vault is refused" ;;
     *) bad "a new VAULT_STATE_DIR under a symlink into the vault was accepted" ;;
   esac
+  # The temp-folder fallback has a predictable name, so a link planted there must
+  # not carry the state into the vault.
+  fb="$(state_of "$RV" relative-value)"
+  mkdir -p "$RV/state-planted"
+  rm -rf "$fb"
+  ln -s "$RV/state-planted" "$fb"
+  expect_rc "the temp-folder fallback is a symlink into the vault -> refused" 1 \
+    "$(runner dream-pass.sh journal VAULT_STATE_DIR=relative-value TMPDIR="$TMP")"
+  rm -f "$fb"
+  rm -rf "$RV/state-planted"
 else
   printf '  SKIP  symlinked vault spellings: ln -s does not create symlinks here (not counted)\n'
 fi
@@ -1844,6 +1907,12 @@ mkdir -p "$TWV/.claude/scripts" "$TWV/.claude/logs" "$TWV/31-standards"
 cp "$CHECK" "$TWV/.claude/scripts/"
 printf -- '---\ntier: long\ntype: standard\n---\n\nfine\n' > "$TWV/31-standards/fine.md"
 expect_rc "vault-check on a conformant vault, no tripwire" 0 "$(bash "$TWV/.claude/scripts/vault-check.sh" >/dev/null 2>&1; echo $?)"
+# This copy has no runner library, so the state-directory copy cannot be checked.
+if bash "$TWV/.claude/scripts/vault-check.sh" 2>&1 >/dev/null | grep -q 'WARNING - could not work out the runners'; then
+  ok "vault-check warns when there is no runner library to find the state directory"
+else
+  bad "vault-check without the runner library skipped the state-directory tripwire silently"
+fi
 printf 'TRIPWIRE set by test\n' > "$TWV/.claude/logs/runner-tripwire"
 tw_out="$(bash "$TWV/.claude/scripts/vault-check.sh" 2>&1)"
 tw_rc=$?

@@ -109,8 +109,8 @@ main() {
   WATCHDOG_GRACE="$(uint_setting WATCHDOG_GRACE 15 0 "$LOG")"
   WATCHDOG_POLL="$(uint_setting WATCHDOG_POLL 5 1 "$LOG")"
   STATE="$(vault_state_dir "$ROOT" 2>>"$LOG")"
-  if ! state_dir_ready "$STATE"; then
-    printf '[%s] ERROR: the state directory %s could not be created, or is not a directory this account owns and can write. Refusing to run.\n' "$(ts)" "$STATE" >> "$LOG"
+  if ! state_dir_ready "$STATE" "$ROOT"; then
+    printf '[%s] ERROR: the state directory %s could not be created, is not a directory this account owns and can write, is world-writable, or resolves into the vault. Refusing to run.\n' "$(ts)" "$STATE" >> "$LOG"
     exit 1
   fi
 

@@ -431,15 +431,17 @@ Around that call, each runner does several things an exit code cannot:
   `lib/runner-common.sh`). A plugin is matched by its folder name or by the `id` in its
   `manifest.json`, ignoring case, so it is recognised whatever folder it was installed in. Every
   other file or folder in a plugin folder is fenced for every plugin, including a folder named
-  `data.json`. The list names known plugins, so a plugin that can run code but is not on it keeps
-  its `data.json` outside the fence until you add it. Memory
-  (`.claude/agent-memory*` and `90-auto-memory/`) is fenced in both modes, because it loads into
-  later sessions. Claude mode starts the agent with `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`, so Claude
-  Code itself writes no memory during the pass. Inside `.git/`, only the files that make git run
-  code are fenced: `config`, `config.worktree`, `commondir`, `hooks/`, `info/attributes`,
-  `info/grafts`, `objects/info/alternates`, and each submodule's `config` and `hooks/`. Git reads
-  config and hooks from the directory `commondir` names. The rest of `info/` is not,
-  because `git gc --auto` after an ordinary commit rewrites `info/refs`. For a vault that is a linked
+  `data.json` and a `data.json` deeper inside the plugin's folder. The list names known plugins,
+  so a plugin that can run code but is not on it keeps its `data.json` outside the fence until you
+  add it. Memory (`.claude/agent-memory*` and `90-auto-memory/`) is fenced in both modes, because
+  it loads into later sessions. Claude mode starts the agent with
+  `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`, so Claude Code itself writes no memory during the pass.
+  Inside `.git/`, only the files that make git run code are fenced: `config`, `config.worktree`,
+  `commondir`, `hooks/`, `info/attributes`, `info/grafts` and `objects/info/alternates`, and the
+  same files in every linked worktree's git directory under `.git/worktrees/` and every
+  submodule's under `.git/modules/`. Git reads config and hooks from the directory `commondir`
+  names. The rest of `info/` is not, because `git gc --auto` after an ordinary commit rewrites
+  `info/refs`. For a vault that is a linked
   worktree, the same files in the shared git directory are fenced too, and appear in logs under
   `.git-common/`. HEAD and refs are not fenced, because a pass may commit (the promotion agent takes
   a snapshot) and you may commit while it runs.
@@ -472,7 +474,8 @@ Around that call, each runner does several things an exit code cannot:
   checking anything, and `/resume` shows the tripwire instead of a briefing. Clear it by reviewing
   the paths and then deleting both copies. If no copy can be written, the runner exits **70**
   (TRIPWIRE-ERROR) and leaves its in-flight marker, so the next run still refuses. A runner stopped
-  by a signal logs the same TRIPWIRE-ERROR line but exits with the signal's code, 130 or 143.
+  by a signal also logs a TRIPWIRE-ERROR line and keeps its marker, but exits with the signal's
+  code, 130 or 143.
 
   The **in-flight marker** (`.claude/logs/runner-inflight`, also copied to the state directory) is
   written just before the agent starts and removed only once containment has checked the pass. A pass
@@ -487,21 +490,26 @@ Around that call, each runner does several things an exit code cannot:
 
   The state directory is `%LOCALAPPDATA%\claude-memory-vault\<id>\` on Windows and
   `${XDG_STATE_HOME:-~/.local/state}/claude-memory-vault/<id>/` elsewhere, where `<id>` is a checksum
-  of the vault's resolved path. Symlinks are resolved, and on Windows and macOS case is ignored, so
-  every spelling of one vault's path finds the same state directory. `VAULT_STATE_DIR` overrides
+  of the vault's resolved path. Symlinks and `..` are resolved, Windows short names are expanded,
+  and on Windows and macOS ASCII case is ignored, so those spellings of one vault's path find the
+  same state directory. A `subst` or mapped drive letter, and on macOS a differently normalized
+  Unicode folder name, count as another path. `VAULT_STATE_DIR` overrides
   it, and a Windows path such as `C:/Users/Some One/vault-state` is accepted. A value inside the
   vault, a relative one, or one containing `..` is never used. A value that does not exist yet is
   judged by where it would be created, so a symlink into the vault does not get past the check. The
   runner logs a warning and uses a directory under the system temp folder instead. Set
   `VAULT_STATE_DIR` the same way for both runners and for the shells where you run `vault-check.sh`,
   or they look for the tripwire in different places, and give each vault its own value. A runner
-  refuses to start with exit 1 when the state directory cannot be created, or is not a directory
-  its own account owns and can write, because another account's directory could hold a forged
-  tripwire or read the quarantine. `vault-check.sh` prints a warning when it cannot work out the
-  state directory, since it then checks only the tripwire in the vault. A runner that cannot take
-  the backup, for example because `tar` is missing, refuses to start with exit 1. A backup that cannot be restored
-  is listed in the tripwire as a containment error. Ordinary notes are not contained. They run no
-  code, a human may be editing one at the same moment, and git already shows their diff.
+  refuses to start with exit 1 when the state directory cannot be created, is world-writable, or
+  resolves into the vault (a symlink planted at the temp-folder fallback, for example). On Linux
+  and macOS it also refuses one that its own account does not own or cannot write, because another
+  account could plant a forged tripwire there. Git Bash reports every file as the current user's,
+  so that part of the check does nothing on Windows. `vault-check.sh` prints a warning when it
+  cannot work out the state directory, since it then checks only the tripwire in the vault. A
+  runner that cannot take the backup, for example because `tar` is missing, refuses to start with
+  exit 1. A backup that cannot be restored is listed in the tripwire as a containment error.
+  Ordinary notes are not contained. A human may be editing one at the same moment, and git already
+  shows their diff.
 
   Known limits:
   - The watchdog stops the agent's own process. A command-mode wrapper's children, or a native
@@ -512,6 +520,12 @@ Around that call, each runner does several things an exit code cannot:
   - Rebasing, pulling with rebase, or switching branches while a pass runs moves HEAD in a way the
     runner cannot tell apart from a rewrite, so it sets the tripwire. That fails closed. Avoid it
     during a scheduled pass, or clear the tripwire after checking `git reflog`.
+  - Some plugins run code that lives in ordinary notes or vault folders. DataviewJS runs
+    JavaScript blocks from any note, and Templater, QuickAdd and CustomJS load user scripts from a
+    folder you choose. A pass that writes such a note or script outside its allowed areas is
+    reported as a VIOLATION but not contained, and one inside them (a script folder under
+    `31-standards/`, for example) is not reported at all. Keep script folders outside the areas a
+    pass may write, and leave DataviewJS and inline JavaScript queries off unless you need them.
 - **Script integrity.** Each runner's body is a function called on the script's last lines, so an
   edit made to the script while it runs is never executed by that run. Every git command a runner
   issues runs with no hooks, no fsmonitor, no signature checks and no prompts (`core.hooksPath` set

@@ -155,9 +155,10 @@ relabel() {
 # pass, which is what makes fencing it in claude mode possible.
 #
 # In .git/ only the files that make git run code are fenced. They are config,
-# config.worktree, hooks/, info/attributes and info/grafts, objects/info/alternates,
-# commondir (git reads config and hooks from the directory it names), and each
-# submodule's config and hooks/. The rest of info/ is not, because
+# config.worktree, hooks/, info/attributes and info/grafts, objects/info/alternates
+# and commondir (git reads config and hooks from the directory it names), and
+# the same files in every linked worktree's git directory (.git/worktrees/*/) and
+# every submodule's (.git/modules/). The rest of info/ is not, because
 # `git gc --auto` after an ordinary commit rewrites info/refs. HEAD and refs are
 # NOT fenced, because a pass may commit (the promotion agent takes a snapshot)
 # and a human may commit while it runs. A rewound HEAD is caught separately
@@ -171,22 +172,39 @@ CODE_PLUGINS="dataview templater-obsidian obsidian-shellcommands quickadd custom
 
 # code_plugin_dirs
 # Run from the vault root. Prints each folder under .obsidian/plugins/ whose
-# name, or the id in whose manifest.json, is in CODE_PLUGINS, ignoring case.
+# name, or the id in whose manifest.json, is in CODE_PLUGINS, ignoring ASCII
+# case. Two awk processes do the work for every plugin at once, because a
+# process per plugin is slow on Git Bash.
 code_plugin_dirs() {
-  local list d name id key
-  list=" $(printf '%s' "$CODE_PLUGINS" | tr '[:upper:]' '[:lower:]') "
+  local d
+  local -a dirs manifests
+  dirs=()
+  manifests=()
   for d in .obsidian/plugins/*/ .obsidian/plugins/.[!.]*/; do
     [ -d "$d" ] || continue
-    d="${d%/}"
-    name="${d##*/}"
-    id="$(sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$d/manifest.json" 2>/dev/null | sed -n 1p)"
-    for key in "$name" "$id"; do
-      [ -n "$key" ] || continue
-      case "$list" in
-        *" $(printf '%s' "$key" | tr '[:upper:]' '[:lower:]') "*) printf '%s\n' "$d"; break ;;
-      esac
-    done
+    dirs+=("${d%/}")
+    [ -f "${d}manifest.json" ] && manifests+=("${d}manifest.json")
   done
+  [ "${#dirs[@]}" -gt 0 ] || return 0
+  {
+    printf 'D\t%s\n' "${dirs[@]}"
+    # The first "id" key in each manifest.
+    [ "${#manifests[@]}" -gt 0 ] && LC_ALL=C awk '
+      FNR == 1 { got = 0 }
+      !got && match($0, /"id"[ \t\r]*:[ \t\r]*"[^"]*"/) {
+        s = substr($0, RSTART, RLENGTH)
+        sub(/^"id"[ \t\r]*:[ \t\r]*"/, "", s)
+        sub(/"$/, "", s)
+        f = FILENAME
+        sub(/\/manifest\.json$/, "", f)
+        print "I\t" f "\t" s
+        got = 1
+      }' "${manifests[@]}" 2>/dev/null
+  } | LC_ALL=C awk -F '\t' -v list="$CODE_PLUGINS" '
+    BEGIN { n = split(tolower(list), w, " "); for (i = 1; i <= n; i++) code[w[i]] = 1 }
+    $1 == "D" { key = $2; sub(/.*\//, "", key); key = tolower(key) }
+    $1 == "I" { key = tolower($3) }
+    ($1 == "D" || $1 == "I") && (key in code) && !seen[$2]++ { print $2 }'
 }
 
 snapshot_tree() {
@@ -196,8 +214,10 @@ snapshot_tree() {
     fence_find . \( -path ./.git -o -path ./.claude/logs -o -path ./.obsidian \) -prune -o
     [ -e .obsidian/community-plugins.json ] && fence_find ./.obsidian/community-plugins.json
     if [ -e .obsidian/plugins ] || [ -L .obsidian/plugins ]; then
-      # A FILE named data.json is pruned from the fence unless its folder is a
-      # code plugin's. Glob characters in a folder name are escaped for -path.
+      # A plugin's settings file, a FILE named data.json directly in its folder,
+      # is pruned from the fence unless the folder is a code plugin's. In find's
+      # -path a * also matches /, so the two depth tests pin the file to exactly
+      # plugins/<folder>/data.json. Glob characters in a folder name are escaped.
       keep=()
       while IFS= read -r p; do
         [ -n "$p" ] || continue
@@ -207,8 +227,13 @@ $(code_plugin_dirs)
 EOF
       # The ${keep[@]+...} form, because bash 3.2 treats an empty array as unset
       # under set -u.
-      fence_find ./.obsidian/plugins \( -type f -name data.json ${keep[@]+"${keep[@]}"} \) -prune -o
+      fence_find ./.obsidian/plugins \( -type f -name data.json -path './.obsidian/plugins/*/*' \
+        ! -path './.obsidian/plugins/*/*/*' ${keep[@]+"${keep[@]}"} \) -prune -o
     fi
+    # The files in a git directory that make git run code, or read config and
+    # hooks from somewhere else.
+    gitdir_code=( \( -name config -o -name config.worktree -o -name commondir -o -path '*/info/attributes' \
+      -o -path '*/info/grafts' -o -path '*/objects/info/alternates' -o -path '*/hooks/*' \) )
     for d in .obsidian/themes .obsidian/snippets; do
       { [ -e "$d" ] || [ -L "$d" ]; } && fence_find "./$d"
     done
@@ -217,7 +242,9 @@ EOF
         { [ -e "$f" ] || [ -L "$f" ]; } && fence_find "./$f"
       done
       { [ -e .git/hooks ] || [ -L .git/hooks ]; } && fence_find ./.git/hooks
-      [ -d .git/modules ] && fence_find ./.git/modules \( -name config -o -path '*/hooks/*' \)
+      for d in .git/worktrees .git/modules; do
+        [ -d "$d" ] && fence_find "./$d" "${gitdir_code[@]}"
+      done
     elif [ -e .git ] || [ -L .git ]; then
       fence_find ./.git
       if dirs="$(git_dirs_of "$root")"; then
@@ -229,6 +256,9 @@ EOF
           [ -e "$cdir/$f" ] && fence_find "$cdir/$f" | relabel "$cdir" ./.git-common
         done
         [ -e "$cdir/hooks" ] && fence_find "$cdir/hooks" | relabel "$cdir" ./.git-common
+        for d in worktrees modules; do
+          [ -d "$cdir/$d" ] && fence_find "$cdir/$d" "${gitdir_code[@]}" | relabel "$cdir" ./.git-common
+        done
       fi
     fi
   ) | LC_ALL=C sort >"$out"
@@ -274,9 +304,10 @@ snapshot_paths() {
 # machine powers off) leaves an in-flight marker, and the next runner turns that
 # marker into a tripwire instead of adopting the unknown state as its baseline.
 #
-# Changes to ordinary notes are not contained. They run no code, a human may be
-# editing one at the same moment, and git already shows the diff; the fence
-# reports them as before.
+# Changes to ordinary notes are not contained. A human may be editing one at the
+# same moment, and git already shows the diff, so the fence reports them as
+# before. A plugin that runs code from notes or script folders (DataviewJS,
+# Templater, QuickAdd, CustomJS) is a documented limit of this choice.
 
 TRIPWIRE_REL=".claude/logs/runner-tripwire"
 INFLIGHT_REL=".claude/logs/runner-inflight"
@@ -354,14 +385,17 @@ backup_steering() {
 
 # path_key <path>
 # The form in which two paths are compared. Repeated slashes are squeezed. On
-# Windows the path is first converted to its Windows form, because Git Bash can
-# spell one folder as /tmp/x or /c/Users/.../Temp/x. On Windows and macOS, whose
-# file systems ignore case by default, letters are lowercased.
+# Windows the path is first converted to its long Windows form, because Git Bash
+# can spell one folder as /tmp/x, /c/Users/.../Temp/x or with 8.3 short names.
+# On Windows and macOS, whose file systems ignore case by default, ASCII letters
+# are lowercased, in the C locale so that a scheduler's locale and a terminal's
+# give the same result.
+RUNNER_UNAME="$(uname -s 2>/dev/null)"
 path_key() {
-  case "$(uname -s 2>/dev/null)" in
+  case "$RUNNER_UNAME" in
     MINGW*|MSYS*|CYGWIN*)
-      { cygpath -m "$1" 2>/dev/null || printf '%s' "$1"; } | tr -s '/' | tr '[:upper:]' '[:lower:]' ;;
-    Darwin*) printf '%s' "$1" | tr -s '/' | tr '[:upper:]' '[:lower:]' ;;
+      { cygpath -m -l "$1" 2>/dev/null || printf '%s' "$1"; } | tr -s '/' | LC_ALL=C tr 'A-Z' 'a-z' ;;
+    Darwin*) printf '%s' "$1" | tr -s '/' | LC_ALL=C tr 'A-Z' 'a-z' ;;
     *) printf '%s' "$1" | tr -s '/' ;;
   esac
 }
@@ -392,8 +426,10 @@ resolved_path() {
 # different places.
 #
 # The default <id> is a checksum of the vault's resolved path, compared as
-# path_key does, so a symlinked or differently cased spelling of the same vault
-# gets the same state directory in every runner and in vault-check.sh.
+# path_key does, so a symlinked, relative, short-name or differently cased
+# spelling of the same vault gets the same state directory in every runner and
+# in vault-check.sh. A subst or mapped drive letter, and on macOS a differently
+# normalized Unicode name, still count as another path.
 vault_state_dir() {
   local root="$1" base id dir croot kroot
   croot="$(cd "$root" 2>/dev/null && pwd -P)"
@@ -423,16 +459,28 @@ vault_state_dir() {
   printf '%s\n' "$dir"
 }
 
-# state_dir_ready <dir>
+# state_dir_ready <dir> <root>
 # Creates the state directory, private to this account where the platform
-# allows, and fails unless it is a directory this account owns and can write. A
-# directory another account made, for example at the predictable temp-folder
-# fallback, could hold a forged tripwire or marker, or read the quarantine.
+# allows. Fails unless it is a directory this account owns and can write, that
+# is not world-writable, and that does not resolve into the vault. Another
+# account could otherwise plant a forged tripwire or marker there, and a symlink
+# planted at the temp-folder fallback could put the state back inside the
+# agent's reach. A group-writable directory is allowed, because many Linux
+# systems give each user a private group. Git Bash reports every file as owned by
+# the current user and its mode bits are not ACLs, so on Windows only the check
+# against the vault means anything.
 state_dir_ready() {
+  local canon kroot
   if [ ! -d "$1" ]; then
     ( umask 077 && mkdir -p "$1" ) 2>/dev/null || return 1
   fi
-  [ -d "$1" ] && [ -O "$1" ] && [ -w "$1" ]
+  [ -d "$1" ] && [ -O "$1" ] && [ -w "$1" ] || return 1
+  [ -z "$(find "$1" -maxdepth 0 -perm -0002 2>/dev/null)" ] || return 1
+  canon="$(path_key "$(cd "$1" 2>/dev/null && pwd -P)")"
+  kroot="$(path_key "$(cd "$2" 2>/dev/null && pwd -P)")"
+  [ -n "$canon" ] && [ -n "$kroot" ] || return 1
+  case "$canon" in "$kroot"|"$kroot"/*) return 1 ;; esac
+  return 0
 }
 
 # write_file_atomic <path> <content-file>
@@ -465,7 +513,7 @@ write_tripwire() {
     printf 'TRIPWIRE set by %s at %s\n\n' "$runner" "$(ts)"
     printf 'Reason: %s\n\n' "$reason"
     printf 'Changed files were moved to the quarantine and restored from the pre-pass\n'
-    printf 'backup where one existed. Git HEAD and refs are never rewritten: check them\n'
+    printf 'backup where one existed. Git HEAD and refs are never rewritten, so check them\n'
     printf "with 'git reflog'. Anything under .git-common/ is outside the vault and was not\n"
     printf 'restored.\n\n'
     printf 'Quarantine: %s\n\n' "$qdir"
@@ -474,12 +522,12 @@ write_tripwire() {
       sed 's/^/  /' "$handled"
     fi
     if [ -n "$errors" ] && [ -s "$errors" ]; then
-      printf '\nCONTAINMENT-ERROR (not quarantined, or not restored; check these first):\n'
+      printf '\nCONTAINMENT-ERROR (not quarantined, or not restored. Check these first.)\n'
       sed 's/^/  /' "$errors"
     fi
     printf '\nNo runner, and not vault-check.sh, will run while this file exists.\n'
     printf 'Review the paths above, then delete this file. The runners also keep a copy\n'
-    printf 'at %s; delete that too.\n' "$state/$(basename "$TRIPWIRE_REL")"
+    printf 'at %s. Delete that too.\n' "$state/$(basename "$TRIPWIRE_REL")"
   } > "$body"
   write_file_atomic "$root/$TRIPWIRE_REL" "$body" && ok=0
   write_file_atomic "$state/$(basename "$TRIPWIRE_REL")" "$body" && ok=0
@@ -581,9 +629,9 @@ contain_steering_changes() {
     if [ -e "$root/$rel" ] || [ -L "$root/$rel" ]; then
       if ! { mkdir -p "$qdir/$(dirname "$rel")" && mv -f "$root/$rel" "$qdir/$rel"; } 2>/dev/null; then
         if mv -f "$root/$rel" "$root/$rel.runner-quarantined" 2>/dev/null; then
-          printf '%s (quarantine unavailable; renamed in place to %s.runner-quarantined)\n' "$rel" "$rel" >> "$errors"
+          printf '%s (quarantine unavailable, so renamed in place to %s.runner-quarantined)\n' "$rel" "$rel" >> "$errors"
         else
-          printf '%s (could not be moved or renamed: still live)\n' "$rel" >> "$errors"
+          printf '%s (could not be moved or renamed, so it is still live)\n' "$rel" >> "$errors"
           continue
         fi
       fi
@@ -994,7 +1042,7 @@ contain_pass() {
   [ -s "$snap/contained" ] || return 0
 
   if ! write_tripwire "$root" "$state" "$runner" "$reason" "$qdir" "$snap/contained" "$snap/contain-errors"; then
-    printf '[%s] TRIPWIRE-ERROR: containment ran but no tripwire could be written; treat the vault as unverified:\n' "$(ts)" >> "$log"
+    printf '[%s] TRIPWIRE-ERROR: containment ran but no tripwire could be written. Treat the vault as unverified. The contained paths follow.\n' "$(ts)" >> "$log"
     sed 's/^/    /' "$snap/contained" >> "$log"
     return 70
   fi
