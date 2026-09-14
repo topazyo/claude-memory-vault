@@ -31,7 +31,9 @@ TODAY="$(date +%F)"
 # surface (see "Containment" in lib/runner-common.sh). Until a human has read it
 # and deleted it, a clean report here would read as "the vault is fine", and the
 # commit gate would let the aftermath be committed. So refuse, loudly.
-if [ -e "$ROOT/.claude/logs/runner-tripwire" ]; then
+# -L as well as -e: a dangling symlink planted at the path is not -e, and must
+# not read as "no tripwire".
+if [ -e "$ROOT/.claude/logs/runner-tripwire" ] || [ -L "$ROOT/.claude/logs/runner-tripwire" ]; then
   printf 'vault-check: TRIPWIRE - a scheduled pass changed a steering or execution surface.\n' >&2
   printf 'vault-check: read .claude/logs/runner-tripwire, then delete it. Nothing was checked.\n' >&2
   exit 1

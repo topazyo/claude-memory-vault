@@ -389,41 +389,70 @@ Around that call, each runner does three things an exit code cannot:
   the run, such as a sync client, or a harness that keeps state files in its working directory,
   trips the fence too; the logged paths tell you which.
 
-  Only `.claude/logs` and Obsidian's three workspace files (`workspace.json`,
-  `workspace-mobile.json`, `workspace.json.bak`) are left out of the checksums. The rest of
-  `.obsidian/` is inside the fence, because a plugin's `main.js` plus an entry in
-  `community-plugins.json` is code Obsidian runs, and `.obsidian/` is not a path Claude Code
-  protects. Memory (`.claude/agent-memory*` and `90-auto-memory/`) is fenced in both modes, because
-  it loads into later sessions. Claude mode starts the agent with `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`,
-  so Claude Code itself writes no memory during the pass. Inside `.git/`, the files that run code or
-  move history are checksummed as well: `config`, `hooks/`, `info/`, `HEAD`, `refs/` (except
-  `refs/remotes/`), `packed-refs`, `objects/info/alternates`, and each submodule's `config` and
-  `hooks/`.
+  The fence checksums symlinks by their target, so swapping a file for a link, or retargeting one,
+  counts as a change. Only `.claude/logs` is left out of the vault-wide scan, and in `.obsidian/`
+  only what carries or enables code is fenced: `community-plugins.json` and the `plugins/`,
+  `themes/` and `snippets/` folders. Obsidian rewrites its workspace, graph and app settings while it
+  is open, and none of them runs anything. The code-bearing part must be fenced, because `.obsidian/`
+  is not a path Claude Code protects. Memory (`.claude/agent-memory*` and `90-auto-memory/`) is
+  fenced in both modes, because it loads into later sessions. Claude mode starts the agent with
+  `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`, so Claude Code itself writes no memory during the pass. Inside
+  `.git/`, only the files that make git run code are fenced: `config`, `config.worktree`, `hooks/`,
+  `info/`, `objects/info/alternates`, and each submodule's `config` and `hooks/`. For a vault that is
+  a linked worktree, the real `config` and `hooks/` in the shared git directory are fenced too, and
+  appear in logs under `.git-common/`. HEAD and refs are not fenced, because a pass may commit (the
+  promotion agent takes a snapshot) and you may commit while it runs.
 - **Containment.** A fence that only reports leaves a planted file in place, where it runs the next
   time something opens the vault. So when the changed paths include a *steering or execution
   surface*, the runner contains it before anything else, including before it looks at the agent's
-  exit code. Steering surfaces are everything in `.obsidian/` except the workspace files, `.claude/`
-  except `logs/` and `worktrees/`, `.agents/`, each shipped harness's configuration, `.github/`,
-  `.vscode/`, `.mcp.json`, `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, the ignore and attributes files,
-  memory, and the git files listed above. For each one the runner moves the file as the pass left
-  it into a quarantine outside the vault (it never deletes it), restores the pre-pass copy from a
-  backup taken before the agent started, and writes the tripwire `.claude/logs/runner-tripwire`,
-  which lists the paths and the quarantine. Git `HEAD`, `refs/` and `packed-refs` are listed in the
-  tripwire but neither moved nor rewritten, because rewriting them could undo a real commit made
-  during the run. Check them with `git reflog`.
+  exit code. Steering surfaces are the fenced Obsidian and git files above, memory, `.claude/`
+  except `logs/`, `.agents/`, each shipped harness's configuration folder or file, `.github/`,
+  `.vscode/`, and, **at any depth**, `CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md`, `GEMINI.md`,
+  `.mcp.json`, `.gitattributes`, `.gitignore` and any `.claude/` or other harness folder. Matching
+  ignores case. A nested file counts because Claude Code loads `31-standards/CLAUDE.md` for work in
+  that folder and registers skills from a nested `.claude/skills/`, so the promotion pass's
+  permission to write `31-standards/` does not cover them. Inside `.claude/worktrees/<name>/` the
+  same rules apply to the rest of the path.
 
-  While the tripwire exists, both runners exit **78** without starting an agent, `vault-check.sh`
-  exits 1 without checking anything, and `/resume` shows the tripwire instead of a briefing. Clear it
-  by reading the quarantined files and then deleting the tripwire. The quarantine is
-  `%LOCALAPPDATA%\claude-memory-vault\<id>\quarantine\` on Windows and
-  `${XDG_STATE_HOME:-~/.local/state}/claude-memory-vault/<id>/quarantine/` elsewhere, where `<id>` is
-  a checksum of the vault's path. A runner that cannot take the backup, for example because `tar` is
-  missing, refuses to start with exit 1. Ordinary notes are not contained. They run no code, a human
-  may be editing one at the same moment, and git already shows their diff.
+  For each changed steering path the runner moves the file or link as the pass left it into a
+  quarantine outside the vault (it never deletes it), then restores the pre-pass copy from a backup
+  taken before the agent started. If the quarantine cannot be written, the file is renamed in place
+  with the suffix `.runner-quarantined`, so Obsidian and git stop loading it. After that, and only
+  while git's own config and hooks are known to be the pre-pass ones, the runner asks git whether
+  HEAD was rewound: a different branch, a branch that no longer resolves, or a commit that does not
+  descend from the pre-pass one. A normal commit is a fast-forward and passes. HEAD and refs are
+  never rewritten back, because that could undo a real commit. Check them with `git reflog`.
+
+  Any of this writes the tripwire `.claude/logs/runner-tripwire`, listing each path, anything that
+  could not be contained, and the quarantine, and a second copy in the state directory. While either
+  copy exists, both runners exit **78** without starting an agent, `vault-check.sh` exits 1 without
+  checking anything, and `/resume` shows the tripwire instead of a briefing. Clear it by reviewing
+  the paths and then deleting both copies. If no copy can be written, the runner exits **70**
+  (TRIPWIRE-ERROR) and leaves its in-flight marker, so the next run still refuses.
+
+  The **in-flight marker** (`.claude/logs/runner-inflight`, also copied to the state directory) is
+  written just before the agent starts and removed only once containment has checked the pass. A pass
+  that never gets there, because the scheduler ended the task, the machine stopped, or a signal
+  arrived, leaves the marker behind. The next runner sets the tripwire instead of adopting the unknown
+  state as its baseline, or exits **75** (LOCKED) when the marker's runner is still alive. A copy of
+  the pre-pass backup is kept in the state directory while a pass runs.
+
+  The state directory is `%LOCALAPPDATA%\claude-memory-vault\<id>\` on Windows and
+  `${XDG_STATE_HOME:-~/.local/state}/claude-memory-vault/<id>/` elsewhere, where `<id>` is a checksum
+  of the vault's path. A value inside the vault is never used. A runner that cannot take the backup,
+  for example because `tar` is missing, refuses to start with exit 1. Ordinary notes are not
+  contained. They run no code, a human may be editing one at the same moment, and git already shows
+  their diff.
+
+  Known limit: the watchdog stops the agent's own process. A command-mode wrapper's children, or a
+  native Windows process started from Git Bash, can outlive it and write after the second snapshot.
+  Killing the whole process tree is planned as separate work.
 - **Script integrity.** Each runner's body is a function called on the script's last lines, so an
   edit made to the script while it runs is never executed by that run. Every git command a runner
-  issues uses no hooks and no fsmonitor (`core.hooksPath` set to an empty temporary directory,
-  `core.fsmonitor=false`), so a changed config cannot run code in the runner's shell.
+  issues runs with no hooks, no fsmonitor, no signature checks and no prompts (`core.hooksPath` set
+  to an empty temporary directory). That is not a sandbox: a filter declared in `.gitattributes` can
+  still run on a command that reads the work tree, which is why the runners call git on the vault
+  only while its config is known to be the pre-pass one.
 - **Artifact assertion.** A pass that exits 0 but left no evidence it ran exits **1**
   (NO-ARTIFACT). For `dream-pass` a `dream-*.md` journal must have been added or changed during
   this run; matching any date rather than today's keeps a run that crosses midnight valid. For
@@ -446,7 +475,9 @@ harness session cannot point an unattended pass, and its fence, at a different v
 | `2` | VIOLATION: a file outside the allowed write areas changed during the run. When steering surfaces are among them they are contained and the tripwire is set |
 | `3` | REFUSED: `VAULT_AGENT=command` without `VAULT_ALLOW_UNENFORCED_TOOLS=1`; the agent was not started |
 | `64` | `VAULT_AGENT` is neither `claude` nor `command` |
-| `78` | TRIPWIRE: `.claude/logs/runner-tripwire` exists from an earlier contained violation; the agent was not started |
+| `70` | TRIPWIRE-ERROR: containment was needed but neither copy of the tripwire could be written. The in-flight marker is left, so the next run refuses |
+| `75` | LOCKED: an in-flight marker names a runner that is still alive; the agent was not started |
+| `78` | TRIPWIRE: a tripwire exists, or an earlier pass died before containment and this run turned its marker into one; the agent was not started |
 | `124` | TIMEOUT: the watchdog killed the run |
 | `127` | the `claude` binary, the `VAULT_AGENT_CMD` wrapper, or (from a `.cmd`) Git Bash was not found |
 | other | the agent's own non-zero status, when nothing above applies |
@@ -461,7 +492,7 @@ harness session cannot point an unattended pass, and its fence, at a different v
 | `PROMOTION_PASS_TIMEOUT` | `5400` seconds | `promotion-pass.sh` |
 | `WATCHDOG_POLL` | `5` seconds | `lib/runner-common.sh`: how often the watchdog checks the clock |
 | `WATCHDOG_GRACE` | `15` seconds | `lib/runner-common.sh`: wait between `TERM` and `KILL` |
-| `VAULT_STATE_DIR` | per-vault directory under `%LOCALAPPDATA%` or `~/.local/state` | both runners: where quarantined files are kept, outside the vault |
+| `VAULT_STATE_DIR` | per-vault directory under `%LOCALAPPDATA%` or `~/.local/state` | both runners: the quarantine, the tripwire and in-flight copies, and the pre-pass backup of a running pass, all outside the vault. An absolute path is required; a relative one, or one inside the vault, is replaced with a directory under the system temp folder |
 | `BASH_EXE` | standard Git for Windows paths | the `.cmd` wrappers |
 | `VAULT_FORCE_NO_JQ` | unset | `vault-lint.sh` and `postcompact-wrap-up.sh`: take the no-jq branch even when `jq` is installed |
 
@@ -692,8 +723,8 @@ while a note under `40-llm-wiki/wiki/` is covered by the six-tier rules only.
 | `.claude/hooks/read-guard.sh` | `2` blocked (`.env`, `.env.*`, `secrets/`) · `0` allowed, or no path to check | `.claude/logs/read-guard.log` (`BLOCKED:`, `DEGRADED:`); the reason also to stderr |
 | `.claude/scripts/vault-check.sh` | `0` notes scanned, no violations · `1` one or more violations (including a malformed date), no content-tier folder found, or zero notes scanned (`VACUOUS`) | stdout, plus the `VACUOUS` line on stderr — never writes to a note |
 | `.claude/scripts/run-tests.sh` | `0` all controls passed · `1` at least one failed · `130` SIGINT · `143` SIGTERM | stdout only; fixtures in a temp dir, removed on exit |
-| `.claude/scripts/dream-pass.sh` / `.cmd` | `0` OK · `1` NO-ARTIFACT · `2` VIOLATION · `3` REFUSED · `64` unknown `VAULT_AGENT` · `78` TRIPWIRE · `124` TIMEOUT · `127` `claude`, wrapper or Git Bash not found · otherwise the agent's code | `.claude/logs/dream-agent.log`; agent output in `dream-agent.run.log`; `dream-pass.git-state.txt`; `dream-pass.prompt.md` in command mode; `runner-tripwire` after a contained violation |
-| `.claude/scripts/promotion-pass.sh` / `.cmd` | `0` OK · `1` NO-ARTIFACT · `2` VIOLATION · `3` REFUSED · `64` unknown `VAULT_AGENT` · `78` TRIPWIRE · `124` TIMEOUT · `127` `claude`, wrapper or Git Bash not found · otherwise the agent's code | `.claude/logs/promotion-agent.log`; agent output appended to `promotion-agent.run.log`; `promotion-pass.prompt.md` in command mode; `runner-tripwire` after a contained violation |
+| `.claude/scripts/dream-pass.sh` / `.cmd` | `0` OK · `1` NO-ARTIFACT · `2` VIOLATION · `3` REFUSED · `64` unknown `VAULT_AGENT` · `70` TRIPWIRE-ERROR · `75` LOCKED · `78` TRIPWIRE · `124` TIMEOUT · `127` `claude`, wrapper or Git Bash not found · otherwise the agent's code | `.claude/logs/dream-agent.log`; agent output in `dream-agent.run.log`; `dream-pass.git-state.txt`; `dream-pass.prompt.md` in command mode; `runner-tripwire` after a contained violation |
+| `.claude/scripts/promotion-pass.sh` / `.cmd` | `0` OK · `1` NO-ARTIFACT · `2` VIOLATION · `3` REFUSED · `64` unknown `VAULT_AGENT` · `70` TRIPWIRE-ERROR · `75` LOCKED · `78` TRIPWIRE · `124` TIMEOUT · `127` `claude`, wrapper or Git Bash not found · otherwise the agent's code | `.claude/logs/promotion-agent.log`; agent output appended to `promotion-agent.run.log`; `promotion-pass.prompt.md` in command mode; `runner-tripwire` after a contained violation |
 | `.claude/githooks/pre-commit` | `vault-check.sh`'s status: `0` commit proceeds · `1` commit refused | stdout/stderr only |
 | `dream-agent` | n/a (agent) | one file: `20-projects/_logs/dream-<YYYY-MM-DD>.md` |
 | `promotion-agent` | n/a (agent) | `31-standards/`, `40-llm-wiki/wiki/`, optionally `20-projects/_logs/promotion-*.md`; git snapshot before writing |

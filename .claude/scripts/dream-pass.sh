@@ -11,10 +11,11 @@
 # this runner does not trust it. It snapshots the vault before the run and
 # reports any change outside the dream journals afterwards, and it fails a run
 # that produced no journal change at all. A change to a steering or execution
-# surface (Obsidian plugins and config, .claude/, harness configs, instruction
-# files, memory, git config and hooks) is also CONTAINED: quarantined outside the
-# vault, restored from a pre-pass backup, and a tripwire stops every later run
-# until a human clears it. See "Containment" in lib/runner-common.sh.
+# surface (Obsidian plugins, .claude/, harness configs, instruction files at any
+# depth, memory, git config and hooks, a rewritten HEAD) is also CONTAINED:
+# quarantined outside the vault, restored from a pre-pass backup, and a tripwire
+# stops every later run until a human clears it. See "Containment" in
+# lib/runner-common.sh.
 #
 # EXAMPLE cron entry (23:00 nightly):
 #   0 23 * * * /path/to/your-vault/.claude/scripts/dream-pass.sh
@@ -26,8 +27,9 @@
 #   VAULT_ALLOW_UNENFORCED_TOOLS  command mode: set to 1 once the wrapper is
 #                       sandboxed (no shell, no network), or the run is refused
 #   DREAM_PASS_TIMEOUT  seconds before a hung run is killed (default 3600)
-#   VAULT_STATE_DIR     where quarantined files go (default: a per-vault
-#                       directory under %LOCALAPPDATA% or ~/.local/state)
+#   VAULT_STATE_DIR     per-vault state outside the vault: quarantine, tripwire
+#                       copy, in-flight marker (default under %LOCALAPPDATA% or
+#                       ~/.local/state)
 #
 # Exit codes:
 #   0    the pass changed a dream journal and nothing else
@@ -37,17 +39,50 @@
 #        (steering surfaces among them are contained and the tripwire is set)
 #   3    REFUSED: command mode without VAULT_ALLOW_UNENFORCED_TOOLS=1
 #   64   VAULT_AGENT is not claude or command
-#   78   TRIPWIRE: an earlier pass set the tripwire; nothing was started
+#   70   TRIPWIRE-ERROR: containment was needed but no tripwire could be written
+#   75   LOCKED: another pass is still running
+#   78   TRIPWIRE: a tripwire is set, or an earlier pass died before containment
 #   124  TIMEOUT: the watchdog killed a run that exceeded DREAM_PASS_TIMEOUT
 #   127  the claude binary or the VAULT_AGENT_CMD wrapper was not found
 #   *    any other non-zero status is the agent's own
 
 set -u
 
-# Everything runs inside main, and the script's last lines call it and exit.
-# Bash reads a script as it executes it, so a change made to this file while a
-# pass runs could otherwise be executed by this very run. A function body is
-# parsed in full before any of it runs.
+RUNNER=dream-pass
+CONTAINMENT_CHECKED=0
+INFLIGHT=0
+SNAP_DIR=""
+
+# On any exit: clear the in-flight marker only once containment has checked the
+# pass, then remove the temporary directory.
+on_exit() {
+  if [ "$CONTAINMENT_CHECKED" -eq 1 ]; then
+    clear_inflight "$ROOT" "$STATE"
+    rm -f "$STATE/inflight-backup.tar" 2>/dev/null
+  fi
+  [ -n "$SNAP_DIR" ] && rm -rf "$SNAP_DIR"
+}
+
+# On INT or TERM: stop the agent, and if it had started, containment cannot be
+# trusted to have run, so set the tripwire now rather than leave the vault to the
+# next pass's baseline.
+on_signal() {
+  [ -n "${RUN_PID:-}" ] && kill -TERM "$RUN_PID" 2>/dev/null
+  if [ "$INFLIGHT" -eq 1 ] && [ "$CONTAINMENT_CHECKED" -eq 0 ]; then
+    : > "$SNAP_DIR/empty"
+    write_tripwire "$ROOT" "$STATE" "$RUNNER" \
+      "the pass was interrupted by a signal before containment ran; the vault's steering surfaces are unverified (pre-pass backup: $STATE/inflight-backup.tar)" \
+      "(none: containment did not run)" "$SNAP_DIR/empty"
+    clear_inflight "$ROOT" "$STATE"
+    printf '[%s] INTERRUPTED before containment; tripwire set\n' "$(ts)" >> "$LOG"
+  fi
+  exit "$1"
+}
+
+# Everything else runs inside main, and the script's last lines call it and
+# exit. Bash reads a script as it executes it, so a change made to this file
+# while a pass runs could otherwise be executed by this very run. A function
+# body is parsed in full before any of it runs.
 main() {
   ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
   cd "$ROOT" || exit 1
@@ -59,8 +94,12 @@ main() {
   LOG="$LOG_DIR/dream-agent.log"
   RUN_OUT="$LOG_DIR/dream-agent.run.log"
   TIMEOUT="${DREAM_PASS_TIMEOUT:-3600}"
+  STATE="$(vault_state_dir "$ROOT")"
+  mkdir -p "$STATE" 2>/dev/null
 
-  tripwire_check "$ROOT" "$LOG" || exit 78
+  tripwire_check "$ROOT" "$STATE" "$RUNNER" "$LOG"
+  guard_rc=$?
+  [ "$guard_rc" -eq 0 ] || exit "$guard_rc"
 
   agent_preflight "$LOG"
   preflight_rc=$?
@@ -84,17 +123,17 @@ main() {
   fi
 
   SNAP_DIR="$(mktemp -d 2>/dev/null || mktemp -d -t dreampass)" || {
+    SNAP_DIR=""
     printf '[%s] ERROR: could not create a temporary directory\n' "$(ts)" >> "$LOG"
     exit 1
   }
-  trap 'rm -rf "$SNAP_DIR"' EXIT
-  trap 'rm -rf "$SNAP_DIR"; exit 130' INT
-  trap 'rm -rf "$SNAP_DIR"; exit 143' TERM
+  trap on_exit EXIT
+  trap 'on_signal 130' INT
+  trap 'on_signal 143' TERM
   mkdir -p "$SNAP_DIR/nohooks"
 
   # The agent is given no shell, so it cannot run git itself. Record the
   # repository state here for it to read, instead of widening its tool list.
-  # safe_git: no hooks and no fsmonitor, so a changed config cannot run code here.
   {
     printf 'Recorded by dream-pass.sh at %s, before the agent started.\n\n' "$(ts)"
     if safe_git "$SNAP_DIR/nohooks" -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
@@ -105,13 +144,17 @@ main() {
     fi
   } > "$LOG_DIR/dream-pass.git-state.txt" 2>/dev/null
 
+  snapshot_tree "$ROOT" "$SNAP_DIR/before"
   # Containment needs the pre-pass copy. Without it, refuse rather than run a pass
   # whose planted files could not be undone.
-  if ! backup_steering "$ROOT" "$SNAP_DIR/steering.tar"; then
-    printf '[%s] ERROR: could not back up the steering surfaces (is tar installed?); refusing to run without containment\n' "$(ts)" >> "$LOG"
+  if ! backup_steering "$ROOT" "$SNAP_DIR/before" "$SNAP_DIR/steering.tar"; then
+    printf '[%s] ERROR: could not back up the steering surfaces (tar missing, or the archive is incomplete); refusing to run without containment\n' "$(ts)" >> "$LOG"
     exit 1
   fi
-  snapshot_tree "$ROOT" "$SNAP_DIR/before"
+  HEAD_BEFORE="$(head_state "$ROOT" "$SNAP_DIR/nohooks")"
+  cp "$SNAP_DIR/steering.tar" "$STATE/inflight-backup.tar" 2>/dev/null
+  mark_inflight "$ROOT" "$STATE" "$RUNNER"
+  INFLIGHT=1
 
   printf '[%s] starting dream-agent via %s (timeout %ss)\n' "$(ts)" "$AGENT_KIND" "$TIMEOUT" >> "$LOG"
 
@@ -123,11 +166,13 @@ main() {
   # CONTAINMENT comes first, before the exit code is even looked at: a pass that
   # timed out may still have planted something, and nothing from the vault may
   # run until it has been put back.
-  QDIR="$(vault_state_dir "$ROOT")/quarantine/$(date +%Y%m%dT%H%M%S)-dream-pass"
-  if contain_steering_changes "$ROOT" "$SNAP_DIR/changed" "$SNAP_DIR/steering.tar" "$QDIR" "$LOG" > "$SNAP_DIR/contained"; then
-    write_tripwire "$ROOT" dream-pass "$QDIR" "$SNAP_DIR/contained"
-    printf '[%s] VIOLATION: steering or execution surfaces changed during the run; contained, quarantine %s, tripwire set:\n' "$(ts)" "$QDIR" >> "$LOG"
-    sed 's/^/    /' "$SNAP_DIR/contained" >> "$LOG"
+  contain_pass "$ROOT" "$STATE" "$RUNNER" "$SNAP_DIR" "$LOG" "$HEAD_BEFORE"
+  contain_rc=$?
+  if [ "$contain_rc" -ne 0 ]; then
+    exit "$contain_rc"
+  fi
+  CONTAINMENT_CHECKED=1
+  if [ "$CONTAINED" -eq 1 ]; then
     [ "$RUN_TIMED_OUT" -eq 1 ] && printf '[%s] (the run had also exceeded %ss and was killed)\n' "$(ts)" "$TIMEOUT" >> "$LOG"
     exit 2
   fi

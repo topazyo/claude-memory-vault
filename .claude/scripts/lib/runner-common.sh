@@ -12,6 +12,7 @@
 #   run_with_watchdog  a hung run never exits, so the next run never starts
 #   snapshot_tree      an agent told "write only X" is trusting a prompt; the
 #   changed_paths      snapshot diff turns that instruction into a detected fence
+#   containment        a fence that only reports leaves a planted file in place
 #   agent_preflight    a harness that cannot enforce a tool allowlist must not
 #                      run an unattended pass unless someone said so on purpose
 #   write_agent_prompt / run_agent   one invocation path per harness kind
@@ -26,9 +27,14 @@ ts() {
 #
 # Runs the command with stdin at /dev/null (it must never wait for input), its
 # output appended to <output-file>, and a watchdog that sends TERM when the
-# timeout elapses and KILL after a grace period. Sets two globals:
+# timeout elapses and KILL after a grace period. Sets three globals:
+#   RUN_PID        the command's pid, so a signal handler can stop it
 #   RUN_RC         the command's exit status (143/137 when the watchdog fired)
 #   RUN_TIMED_OUT  1 if the watchdog fired, else 0
+#
+# The watchdog signals this pid only. A wrapper's children, or a native Windows
+# process started from Git Bash, can outlive it; the scheduled-pass plan tracks a
+# process-tree kill as separate work.
 #
 # The watchdog polls rather than sleeping for the full timeout, so it exits on
 # its own within one poll interval of the command finishing and never outlives
@@ -44,6 +50,7 @@ run_with_watchdog() {
 
   "$@" </dev/null >>"$out" 2>&1 &
   local pid=$!
+  RUN_PID=$pid
 
   (
     waited=0
@@ -78,48 +85,99 @@ run_with_watchdog() {
   return 0
 }
 
+# ---------------------------------------------------------------------------
+# What the fence sees.
+
+# git_dirs_of <root>
+# For a vault whose .git is a FILE (a linked worktree), prints the per-worktree
+# git directory and the common git directory, one per line, read from the
+# pointer file without running git. Returns 1 when .git is not a file.
+git_dirs_of() {
+  local root="$1" gd cd
+  [ -f "$root/.git" ] || return 1
+  gd="$(sed -n 's/^gitdir: //p' "$root/.git" | tr -d '\r' | head -n 1)"
+  [ -n "$gd" ] || return 1
+  command -v cygpath >/dev/null 2>&1 && gd="$(cygpath -u "$gd")"
+  case "$gd" in /*) ;; *) gd="$root/$gd" ;; esac
+  if [ -f "$gd/commondir" ]; then
+    cd="$(tr -d '\r' < "$gd/commondir" | head -n 1)"
+    command -v cygpath >/dev/null 2>&1 && cd="$(cygpath -u "$cd")"
+    case "$cd" in /*) ;; *) cd="$gd/$cd" ;; esac
+  else
+    cd="$gd"
+  fi
+  printf '%s\n%s\n' "$gd" "$cd"
+}
+
+# fence_find <find start and prune arguments...>
+# One line per file ("checksum size path", from cksum) and per symlink
+# ("L<checksum of the link target> 0 path"), so a file swapped for a symlink, or
+# a link retargeted, changes its line. `find -exec ... +` rather than xargs:
+# xargs with empty input runs cksum with no arguments on some platforms, and
+# cksum would then wait on stdin forever.
+fence_find() {
+  find "$@" -type f -exec cksum {} + 2>/dev/null
+  find "$@" -type l -print 2>/dev/null | while IFS= read -r link; do
+    printf 'L%s 0 %s\n' "$(readlink "$link" 2>/dev/null | cksum | cut -d' ' -f1)" "$link"
+  done
+}
+
+# relabel <prefix> <label>
+# Rewrites the leading <prefix> of each fence line's path to <label>, for files
+# that live outside the vault but belong to it (a worktree vault's git dirs).
+relabel() {
+  awk -v pre="$1" -v lab="$2" '{ i = index($0, pre); if (i) $0 = substr($0, 1, i - 1) lab substr($0, i + length(pre)); print }'
+}
+
 # snapshot_tree <root> <output-file>
 #
-# Writes one "checksum size path" line per file under <root>, sorted.
+# Writes one fence line per file and symlink under <root>, sorted.
 #
-# Pruned: .claude/logs/ (the runner writes there) and the three Obsidian
-# workspace files, which Obsidian rewrites whenever a pane moves and which carry
-# no code. Everything else in .obsidian/ stays inside the fence: a plugin's
-# main.js plus an entry in community-plugins.json is code Obsidian runs on its
-# next start, and .obsidian/ is not one of the paths Claude Code protects.
+# Not fenced: .claude/logs/ (the runner writes there), and in .obsidian/
+# everything except what carries or enables code: community-plugins.json and
+# the plugins/, themes/ and snippets/ folders. Obsidian rewrites its workspace,
+# graph and app settings while open, and none of them runs anything.
+# .obsidian/ is not a path Claude Code protects, so the code-bearing part must
+# be inside the fence.
 #
 # Agent memory (.claude/agent-memory*) and 90-auto-memory/ are fenced in every
 # mode. Memory loads into later sessions, so an unseen write there would be a
 # planted instruction. run_agent turns Claude Code's own auto memory off for the
 # pass, which is what makes fencing it in claude mode possible.
 #
-# .git/ is pruned as a tree, but the files in it that run code or move history
-# are checksummed: config, hooks, info, HEAD, refs (not remote-tracking refs,
-# which a background fetch updates), packed-refs, alternates, and each
-# submodule's config and hooks. A vault whose .git is a file (a worktree
-# pointer) has that file checksummed instead.
-#
-# `find -exec ... +` rather than xargs: xargs with empty input runs cksum with
-# no arguments on some platforms, and cksum would then wait on stdin forever.
+# In .git/ only the files that make git run code are fenced: config,
+# config.worktree, hooks/, info/, objects/info/alternates, and each submodule's
+# config and hooks/. HEAD and refs are NOT fenced, because a pass may commit
+# (the promotion agent takes a snapshot) and a human may commit while it runs.
+# A rewound HEAD is caught separately (head_moved_backwards). For a worktree
+# vault, whose .git is a file, the pointer is fenced and the real config and
+# hooks in the common git directory appear under the label .git-common/.
 snapshot_tree() {
-  local root="$1" out="$2"
+  local root="$1" out="$2" dirs gd cdir
   (
     cd "$root" || exit 1
-    find . \( -path ./.git -o -path ./.claude/logs \
-              -o -path ./.obsidian/workspace.json -o -path ./.obsidian/workspace-mobile.json \
-              -o -path ./.obsidian/workspace.json.bak \) -prune \
-         -o -type f -exec cksum {} + 2>/dev/null
+    fence_find . \( -path ./.git -o -path ./.claude/logs -o -path ./.obsidian \) -prune -o
+    [ -e .obsidian/community-plugins.json ] && fence_find ./.obsidian/community-plugins.json
+    for d in .obsidian/plugins .obsidian/themes .obsidian/snippets; do
+      { [ -e "$d" ] || [ -L "$d" ]; } && fence_find "./$d"
+    done
     if [ -d .git ]; then
-      for f in .git/config .git/HEAD .git/packed-refs .git/objects/info/alternates; do
-        [ -f "$f" ] && cksum "./$f" 2>/dev/null
+      for f in .git/config .git/config.worktree .git/objects/info/alternates; do
+        { [ -e "$f" ] || [ -L "$f" ]; } && fence_find "./$f"
       done
-      for d in .git/hooks .git/info .git/refs; do
-        [ -d "$d" ] && find "./$d" -path ./.git/refs/remotes -prune -o -type f -exec cksum {} + 2>/dev/null
+      for d in .git/hooks .git/info; do
+        { [ -e "$d" ] || [ -L "$d" ]; } && fence_find "./$d"
       done
-      [ -d .git/modules ] && find ./.git/modules \( -name config -o -path '*/hooks/*' \) -type f \
-        -exec cksum {} + 2>/dev/null
-    elif [ -f .git ]; then
-      cksum ./.git 2>/dev/null
+      [ -d .git/modules ] && fence_find ./.git/modules \( -name config -o -path '*/hooks/*' \)
+    elif [ -e .git ] || [ -L .git ]; then
+      fence_find ./.git
+      if dirs="$(git_dirs_of "$root")"; then
+        gd="$(printf '%s\n' "$dirs" | sed -n 1p)"
+        cdir="$(printf '%s\n' "$dirs" | sed -n 2p)"
+        [ -e "$gd/config.worktree" ] && fence_find "$gd/config.worktree" | relabel "$gd" ./.git-common/worktree
+        [ -e "$cdir/config" ] && fence_find "$cdir/config" | relabel "$cdir" ./.git-common
+        [ -e "$cdir/hooks" ] && fence_find "$cdir/hooks" | relabel "$cdir" ./.git-common
+      fi
     fi
   ) | LC_ALL=C sort >"$out"
 }
@@ -137,6 +195,12 @@ changed_paths() {
     | LC_ALL=C sort -u
 }
 
+# snapshot_paths <snapshot>
+# The relative paths a snapshot covers, one per line.
+snapshot_paths() {
+  cut -d' ' -f3- "$1" | sed 's|^\./||'
+}
+
 # ---------------------------------------------------------------------------
 # Containment.
 #
@@ -147,164 +211,360 @@ changed_paths() {
 #
 #   1. the file as the pass left it is moved to a quarantine directory OUTSIDE
 #      the vault (never deleted, so nothing a human wrote at the same moment is
-#      lost);
+#      lost). If that move fails, the file is renamed in place with the suffix
+#      .runner-quarantined, which stops Obsidian or git from loading it;
 #   2. the pre-pass copy is restored from a backup taken before the agent ran;
-#   3. a tripwire file is written, and every runner and vault-check.sh refuse to
-#      run until a human has read it and deleted it.
+#   3. a tripwire is written, inside the vault and in the per-vault state
+#      directory, and every runner and vault-check.sh refuse to run until a human
+#      has read it and deleted it.
+#
+# A pass that dies before containment runs (the scheduler ends the task, the
+# machine powers off) leaves an in-flight marker, and the next runner turns that
+# marker into a tripwire instead of adopting the unknown state as its baseline.
 #
 # Changes to ordinary notes are not contained. They run no code, a human may be
 # editing one at the same moment, and git already shows the diff; the fence
 # reports them as before.
 
 TRIPWIRE_REL=".claude/logs/runner-tripwire"
+INFLIGHT_REL=".claude/logs/runner-inflight"
 
-# is_steering_path <relative-path>
-# True for files that run code or steer later sessions: Obsidian configuration and
-# plugins (not the workspace files), everything under .claude/ except logs and
-# worktrees, every shipped harness's configuration, the instruction files, memory,
-# and git's config, hooks, info, refs and alternates.
-is_steering_path() {
-  case "$1" in
-    .obsidian/workspace.json|.obsidian/workspace-mobile.json|.obsidian/workspace.json.bak) return 1 ;;
-    .claude/logs/*|.claude/worktrees/*) return 1 ;;
-    .obsidian/*|.claude/*|.agents/*|.codex/*|.gemini/*|.cursor/*|.windsurf/*|.opencode/*|.github/*|.vscode/*) return 0 ;;
-    90-auto-memory/*) return 0 ;;
-    .mcp.json|opencode.json|.aider.conf.yml|AGENTS.md|CLAUDE.md|GEMINI.md) return 0 ;;
-    .gitattributes|.gitignore|.geminiignore|.cursorignore) return 0 ;;
-    .git|.git/*) return 0 ;;
-    *) return 1 ;;
-  esac
+# steering_filter
+# Reads relative paths on stdin and prints the ones that are steering or
+# execution surfaces. One awk program, so the fence, the backup and containment
+# can never disagree about the set, and matching is case-insensitive (a
+# case-insensitive filesystem loads Gemini.md as GEMINI.md). Inside
+# .claude/worktrees/<name>/ the same rules apply to the rest of the path, so a
+# worktree's own CLAUDE.md or .claude/ counts and its notes do not.
+steering_filter() {
+  # Every test is a plain anchored pattern: the BWK awk that macOS ships does not
+  # reliably treat $ or ^ as anchors inside an alternation group.
+  awk '
+    function steer(lp) {
+      if (lp == ".claude/logs" || lp ~ /^\.claude\/logs\//) return 0
+      if (lp == ".obsidian/community-plugins.json") return 1
+      if (lp ~ /^\.obsidian\/plugins\// || lp ~ /^\.obsidian\/themes\// || lp ~ /^\.obsidian\/snippets\//) return 1
+      if (lp == ".obsidian/plugins" || lp == ".obsidian/themes" || lp == ".obsidian/snippets") return 1
+      if (lp ~ /^\.obsidian\//) return 0
+      if (lp == ".git" || lp ~ /^\.git\// || lp == ".git-common" || lp ~ /^\.git-common\//) return 1
+      if (lp == "90-auto-memory" || lp ~ /^90-auto-memory\//) return 1
+      if (lp == "opencode.json" || lp == ".aider.conf.yml" || lp == ".geminiignore" || lp == ".cursorignore" || lp == ".cursorrules" || lp == ".windsurfrules") return 1
+      n = split(lp, part, "/")
+      base = part[n]
+      if (base == "claude.md" || base == "claude.local.md" || base == "agents.md" || base == "gemini.md" || base == ".mcp.json" || base == ".gitattributes" || base == ".gitignore") return 1
+      for (i = 1; i < n; i++) {
+        if (part[i] == ".claude" || part[i] == ".agents" || part[i] == ".codex" || part[i] == ".gemini" || part[i] == ".cursor" || part[i] == ".windsurf" || part[i] == ".opencode" || part[i] == ".github" || part[i] == ".vscode") return 1
+      }
+      return 0
+    }
+    {
+      lp = tolower($0)
+      if (lp ~ /^\.claude\/worktrees\/[^\/]+\//) {
+        sub(/^\.claude\/worktrees\/[^\/]+\//, "", lp)
+      } else if (lp == ".claude/worktrees" || lp ~ /^\.claude\/worktrees\/[^\/]*$/) {
+        next
+      }
+      if (steer(lp)) print $0
+    }'
 }
 
 # is_restorable_path <relative-path>
-# Git's HEAD, refs and packed-refs are contained by the tripwire alone. Rewriting
-# them back could undo a real commit made while the pass ran, and git's reflog is
-# the better recovery tool; with the tripwire set, no runner builds on them.
+# .git-common/ lives outside the vault, so it is detected and put in the
+# tripwire but never restored by this runner.
 is_restorable_path() {
   case "$1" in
-    .git/HEAD|.git/packed-refs|.git/refs/*) return 1 ;;
+    .git-common|.git-common/*) return 1 ;;
     *) return 0 ;;
   esac
 }
 
-# steering_files <root>
-# Prints every existing steering file as a relative path, one per line, sorted.
-# This is the list the pre-pass backup holds.
-steering_files() {
-  (
-    cd "$1" || exit 1
-    for d in .obsidian .claude .agents .codex .gemini .cursor .windsurf .opencode .github .vscode 90-auto-memory; do
-      [ -d "$d" ] && find "$d" \( -path .claude/logs -o -path .claude/worktrees \) -prune -o -type f -print 2>/dev/null
-    done
-    for f in .mcp.json opencode.json .aider.conf.yml AGENTS.md CLAUDE.md GEMINI.md \
-             .gitattributes .gitignore .geminiignore .cursorignore; do
-      [ -f "$f" ] && printf '%s\n' "$f"
-    done
-    if [ -d .git ]; then
-      for f in .git/config .git/objects/info/alternates; do [ -f "$f" ] && printf '%s\n' "$f"; done
-      for d in .git/hooks .git/info; do [ -d "$d" ] && find "$d" -type f -print 2>/dev/null; done
-      [ -d .git/modules ] && find .git/modules \( -name config -o -path '*/hooks/*' \) -type f -print 2>/dev/null
-    elif [ -f .git ]; then
-      printf '.git\n'
-    fi
-  ) | grep -vE '^\.obsidian/workspace(-mobile)?\.json(\.bak)?$' | LC_ALL=C sort
-}
-
-# backup_steering <root> <tarball>
-# Writes <tarball> and <tarball>.list. Returns non-zero, after which the runner
-# must refuse to start, when tar is missing or the archive cannot be written: a
-# pass whose containment cannot work must not run unattended.
+# backup_steering <root> <before-snapshot> <tarball>
+# Archives every steering file and symlink the before-snapshot lists, and writes
+# <tarball>.list. Returns non-zero, after which the runner must refuse to start,
+# when tar is missing or the archive does not hold every listed member. GNU tar
+# exits 1 when a file changed while it was read, which is not a failure if the
+# member is there, so the archive's own listing is the evidence, not the status.
 backup_steering() {
-  local root="$1" tarball="$2"
+  local root="$1" snap="$2" tarball="$3" want have
   command -v tar >/dev/null 2>&1 || return 1
-  steering_files "$root" > "$tarball.list" || return 1
-  if [ -s "$tarball.list" ]; then
-    ( cd "$root" && tar -cf "$tarball" -T "$tarball.list" ) 2>/dev/null || return 1
-  else
+  snapshot_paths "$snap" | steering_filter | grep -v '^\.git-common' > "$tarball.list"
+  if [ ! -s "$tarball.list" ]; then
     : > "$tarball"
+    return 0
   fi
-  return 0
+  ( cd "$root" && tar -cf "$tarball" -T "$tarball.list" ) 2>/dev/null
+  want="$(awk 'END{print NR+0}' "$tarball.list")"
+  have="$(tar -tf "$tarball" 2>/dev/null | awk 'END{print NR+0}')"
+  [ "$have" -ge "$want" ] && [ "$want" -gt 0 ]
 }
 
 # vault_state_dir <root>
 # Per-vault state directory OUTSIDE the vault, so nothing kept there is indexed by
 # Obsidian, synced with the vault folder, or reachable by an agent's file tools
-# in the vault. VAULT_STATE_DIR overrides it (the test suite uses that).
+# in the vault. VAULT_STATE_DIR overrides it (the test suite uses that). Only an
+# absolute path that is not inside the vault is accepted.
 vault_state_dir() {
-  local root="$1" base id
+  local root="$1" base id dir
   if [ -n "${VAULT_STATE_DIR:-}" ]; then
-    printf '%s\n' "$VAULT_STATE_DIR"
-    return 0
-  fi
-  if [ -n "${LOCALAPPDATA:-}" ]; then
-    base="$LOCALAPPDATA"
-    command -v cygpath >/dev/null 2>&1 && base="$(cygpath -u "$base")"
+    dir="$VAULT_STATE_DIR"
   else
-    base="${XDG_STATE_HOME:-${HOME:-/tmp}/.local/state}"
+    base=""
+    if [ -n "${LOCALAPPDATA:-}" ] && command -v cygpath >/dev/null 2>&1; then
+      base="$(cygpath -u "$LOCALAPPDATA")"
+    fi
+    case "$base" in /*) ;; *) base="${XDG_STATE_HOME:-${HOME:-}/.local/state}" ;; esac
+    id="$(printf '%s' "$root" | cksum | cut -d' ' -f1)"
+    dir="$base/claude-memory-vault/$id"
   fi
-  id="$(printf '%s' "$root" | cksum | cut -d' ' -f1)"
-  printf '%s/claude-memory-vault/%s\n' "$base" "$id"
+  case "$dir" in
+    "$root"|"$root"/*|/.local/state/*|"") dir="${TMPDIR:-/tmp}/claude-memory-vault-state-$(printf '%s' "$root" | cksum | cut -d' ' -f1)" ;;
+    /*) ;;
+    *) dir="${TMPDIR:-/tmp}/claude-memory-vault-state-$(printf '%s' "$root" | cksum | cut -d' ' -f1)" ;;
+  esac
+  printf '%s\n' "$dir"
 }
 
-# contain_steering_changes <root> <changed-list> <tarball> <quarantine-dir> <log>
-# For each changed steering path: quarantine the current file (if any), then
-# restore the pre-pass copy (if one existed and the path is restorable). Prints
-# each steering path it handled. Returns 0 when at least one was found.
-contain_steering_changes() {
-  local root="$1" changed="$2" tarball="$3" qdir="$4" log="$5" rel found=1
-  while IFS= read -r rel; do
-    [ -n "$rel" ] || continue
-    is_steering_path "$rel" || continue
-    found=0
-    printf '%s\n' "$rel"
-    is_restorable_path "$rel" || continue
-    if [ -e "$root/$rel" ]; then
-      if ! { mkdir -p "$qdir/$(dirname "$rel")" && mv -f "$root/$rel" "$qdir/$rel"; } 2>/dev/null; then
-        printf '[%s] CONTAINMENT-ERROR: could not quarantine %s\n' "$(ts)" "$rel" >> "$log"
-        continue
-      fi
-    fi
-    if grep -qxF -e "$rel" "$tarball.list" 2>/dev/null; then
-      if ! ( cd "$root" && tar -xf "$tarball" "$rel" ) 2>/dev/null; then
-        printf '[%s] CONTAINMENT-ERROR: could not restore %s from the pre-pass backup\n' "$(ts)" "$rel" >> "$log"
-      fi
-    fi
-  done < "$changed"
-  return "$found"
+# write_file_atomic <path> <content-file>
+# Copies <content-file> to a temporary name beside <path> and renames it into
+# place, then verifies a regular file (not a symlink) is there.
+write_file_atomic() {
+  local path="$1" src="$2" tmp
+  tmp="$path.tmp.$$"
+  mkdir -p "$(dirname "$path")" 2>/dev/null
+  cp "$src" "$tmp" 2>/dev/null && mv -f "$tmp" "$path" 2>/dev/null
+  rm -f "$tmp" 2>/dev/null
+  [ -f "$path" ] && [ ! -L "$path" ]
 }
 
-# write_tripwire <root> <runner> <quarantine-dir> <handled-list>
+# guard_exists <root> <state-dir> <relative-name>
+# True when the named guard file exists, or is a symlink (even a dangling one),
+# in the vault or in the state directory.
+guard_exists() {
+  local p1="$1/$3" p2="$2/$(basename "$3")"
+  [ -e "$p1" ] || [ -L "$p1" ] || [ -e "$p2" ] || [ -L "$p2" ]
+}
+
+# write_tripwire <root> <state-dir> <runner> <reason> <quarantine-dir> <handled-list> [<errors-list>]
+# Writes the tripwire in the vault and in the state directory. Returns 0 when at
+# least one copy is verified in place, 1 when neither could be written.
 write_tripwire() {
+  local root="$1" state="$2" runner="$3" reason="$4" qdir="$5" handled="$6" errors="${7:-}" body ok=1
+  body="$(mktemp 2>/dev/null || mktemp -t tripwire)" || return 1
   {
-    printf 'TRIPWIRE set by %s at %s\n\n' "$2" "$(ts)"
-    printf 'An unattended pass changed a steering or execution surface. The files below were\n'
-    printf 'moved to the quarantine and restored from the pre-pass backup where one existed.\n'
-    printf "Git HEAD and refs are never rewritten: check them with 'git reflog'.\n\n"
-    printf 'Quarantine: %s\n\nPaths:\n' "$3"
-    sed 's/^/  /' "$4"
+    printf 'TRIPWIRE set by %s at %s\n\n' "$runner" "$(ts)"
+    printf 'Reason: %s\n\n' "$reason"
+    printf 'Changed files were moved to the quarantine and restored from the pre-pass\n'
+    printf 'backup where one existed. Git HEAD and refs are never rewritten: check them\n'
+    printf "with 'git reflog'. Anything under .git-common/ is outside the vault and was not\n"
+    printf 'restored.\n\n'
+    printf 'Quarantine: %s\n\n' "$qdir"
+    if [ -s "$handled" ]; then
+      printf 'Paths:\n'
+      sed 's/^/  /' "$handled"
+    fi
+    if [ -n "$errors" ] && [ -s "$errors" ]; then
+      printf '\nCONTAINMENT-ERROR (not quarantined, or not restored; check these first):\n'
+      sed 's/^/  /' "$errors"
+    fi
     printf '\nNo runner, and not vault-check.sh, will run while this file exists.\n'
-    printf 'Read the quarantined files, then delete this file to clear the tripwire.\n'
-  } > "$1/$TRIPWIRE_REL"
+    printf 'Review the paths above, then delete this file. The runners also keep a copy\n'
+    printf 'at %s; delete that too.\n' "$state/$(basename "$TRIPWIRE_REL")"
+  } > "$body"
+  write_file_atomic "$root/$TRIPWIRE_REL" "$body" && ok=0
+  write_file_atomic "$state/$(basename "$TRIPWIRE_REL")" "$body" && ok=0
+  rm -f "$body"
+  return "$ok"
 }
 
-# tripwire_check <root> <log>
-# Returns 0 when clear, otherwise logs the refusal and returns 78.
+# mark_inflight <root> <state-dir> <runner> / clear_inflight <root> <state-dir>
+# The marker names the runner and its pid. It is removed only once containment
+# has checked the pass, so any death before that leaves it behind.
+mark_inflight() {
+  local body
+  body="$(mktemp 2>/dev/null || mktemp -t inflight)" || return 1
+  printf 'runner=%s\npid=%s\nstarted=%s\n' "$3" "$$" "$(ts)" > "$body"
+  write_file_atomic "$1/$INFLIGHT_REL" "$body"
+  write_file_atomic "$2/$(basename "$INFLIGHT_REL")" "$body"
+  rm -f "$body"
+}
+clear_inflight() {
+  rm -f "$1/$INFLIGHT_REL" "$2/$(basename "$INFLIGHT_REL")" 2>/dev/null
+}
+
+# tripwire_check <root> <state-dir> <runner> <log>
+# Returns 0 when the vault is clear. Otherwise logs why and returns:
+#   78  a tripwire exists, or an in-flight marker from a run that died before
+#       containment (turned into a tripwire here)
+#   75  an in-flight marker whose runner is still alive: another pass is running
 tripwire_check() {
-  if [ -e "$1/$TRIPWIRE_REL" ]; then
+  local root="$1" state="$2" runner="$3" log="$4" marker pid empty
+  if guard_exists "$root" "$state" "$TRIPWIRE_REL"; then
     printf '[%s] TRIPWIRE: refusing to run. A previous pass changed a steering or execution surface; read %s, then delete it.\n' \
-      "$(ts)" "$TRIPWIRE_REL" >> "$2"
+      "$(ts)" "$TRIPWIRE_REL" >> "$log"
+    return 78
+  fi
+  if guard_exists "$root" "$state" "$INFLIGHT_REL"; then
+    marker="$root/$INFLIGHT_REL"
+    [ -f "$marker" ] || marker="$state/$(basename "$INFLIGHT_REL")"
+    pid="$(sed -n 's/^pid=//p' "$marker" 2>/dev/null | head -n 1)"
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+      printf '[%s] LOCKED: another pass (pid %s) is still running; not starting.\n' "$(ts)" "$pid" >> "$log"
+      return 75
+    fi
+    empty="$(mktemp 2>/dev/null || mktemp -t empty)"
+    : > "$empty"
+    write_tripwire "$root" "$state" "$runner" \
+      "a previous pass ended before containment ran (interrupted, killed, or the machine stopped); the vault's steering surfaces are unverified. $(tr '\n' ' ' < "$marker" 2>/dev/null)" \
+      "(none: containment did not run; a pre-pass backup may be in the state directory)" "$empty"
+    rm -f "$empty"
+    clear_inflight "$root" "$state"
+    printf '[%s] TRIPWIRE: a previous pass never reached containment; tripwire set, refusing to run.\n' "$(ts)" >> "$log"
     return 78
   fi
   return 0
 }
 
+# contain_steering_changes <root> <changed-list> <tarball> <quarantine-dir> <handled-out> <errors-out>
+# For each changed steering path: quarantine the current file or symlink, then
+# restore the pre-pass copy when one existed and the path is restorable. Writes
+# the handled paths and the paths that could not be contained. Returns 0 when at
+# least one steering path changed.
+contain_steering_changes() {
+  local root="$1" changed="$2" tarball="$3" qdir="$4" handled="$5" errors="$6" rel restore rdirs d skip
+  : > "$handled"
+  : > "$errors"
+  steering_filter < "$changed" > "$handled"
+  [ -s "$handled" ] || return 1
+
+  restore="$(dirname "$tarball")/restore"
+  rdirs="$(dirname "$tarball")/restored-dirs"
+  rm -rf "$restore"
+  mkdir -p "$restore"
+  : > "$rdirs"
+  # Extract once, never by member name: bsdtar reads member names as patterns.
+  [ -s "$tarball" ] && ( cd "$restore" && tar -xf "$tarball" ) 2>/dev/null
+
+  # Paths are sorted, so a symlink that replaced a whole directory (.git/hooks
+  # pointing elsewhere) comes before the files that were under it. Restoring the
+  # directory restores those files too; they must not then be quarantined again.
+  while IFS= read -r rel; do
+    [ -n "$rel" ] || continue
+    is_restorable_path "$rel" || continue
+    skip=0
+    while IFS= read -r d; do
+      case "$rel" in "$d"/*) skip=1 ;; esac
+    done < "$rdirs"
+    [ "$skip" -eq 1 ] && continue
+    if [ -e "$root/$rel" ] || [ -L "$root/$rel" ]; then
+      if ! { mkdir -p "$qdir/$(dirname "$rel")" && mv -f "$root/$rel" "$qdir/$rel"; } 2>/dev/null; then
+        if mv -f "$root/$rel" "$root/$rel.runner-quarantined" 2>/dev/null; then
+          printf '%s (quarantine unavailable; renamed in place to %s.runner-quarantined)\n' "$rel" "$rel" >> "$errors"
+        else
+          printf '%s (could not be moved or renamed: still live)\n' "$rel" >> "$errors"
+          continue
+        fi
+      fi
+    fi
+    if [ -e "$restore/$rel" ] || [ -L "$restore/$rel" ]; then
+      [ -d "$restore/$rel" ] && [ ! -L "$restore/$rel" ] && printf '%s\n' "$rel" >> "$rdirs"
+      if ! { mkdir -p "$root/$(dirname "$rel")" && mv -f "$restore/$rel" "$root/$rel"; } 2>/dev/null; then
+        printf '%s (pre-pass copy could not be restored)\n' "$rel" >> "$errors"
+      fi
+    fi
+  done < "$handled"
+  return 0
+}
+
 # safe_git <empty-hooks-dir> <git args...>
-# Git as the runner calls it: no hooks, no fsmonitor, no prompts. Both are ways a
-# changed config or hook directory would otherwise run code in the runner's shell.
+# Git as the runner calls it: no hooks, no fsmonitor, no signature checks, no
+# prompts. That removes the ways a changed config or hook directory most
+# directly runs code in the runner's shell. It is not a sandbox: a .gitattributes
+# filter can still run on commands that read the work tree, which is why the
+# runners call git on a vault only while its config is known to be the pre-pass
+# one.
 safe_git() {
   local hooks="$1"
   shift
-  GIT_TERMINAL_PROMPT=0 git -c core.hooksPath="$hooks" -c core.fsmonitor=false "$@"
+  GIT_TERMINAL_PROMPT=0 git -c core.hooksPath="$hooks" -c core.fsmonitor=false \
+    -c log.showSignature=false "$@"
+}
+
+# head_state <root> <empty-hooks-dir>
+# Prints "<symbolic ref or DETACHED> <commit or NONE>" for the vault's HEAD.
+head_state() {
+  local ref commit
+  ref="$(safe_git "$2" -C "$1" symbolic-ref -q HEAD 2>/dev/null)" || ref=DETACHED
+  # ^{commit}: --verify alone accepts any well-formed id, even one naming no
+  # object, so a branch pointed at nothing would look like a rewrite.
+  commit="$(safe_git "$2" -C "$1" rev-parse -q --verify 'HEAD^{commit}' 2>/dev/null)" || commit=NONE
+  printf '%s %s\n' "${ref:-DETACHED}" "${commit:-NONE}"
+}
+
+# head_moved_backwards <root> <empty-hooks-dir> <before-state>
+# Prints a reason and returns 0 when HEAD changed in a way a pass or a normal
+# commit cannot explain: a different branch, or a commit that does not descend
+# from the one before the pass. A fast-forward, or no change, returns 1.
+head_moved_backwards() {
+  local root="$1" hooks="$2" before="$3" after b_ref b_commit a_ref a_commit
+  command -v git >/dev/null 2>&1 || return 1
+  after="$(head_state "$root" "$hooks")"
+  [ "$after" = "$before" ] && return 1
+  b_ref="${before%% *}"; b_commit="${before##* }"
+  a_ref="${after%% *}";  a_commit="${after##* }"
+  if [ "$a_ref" != "$b_ref" ]; then
+    printf 'HEAD moved from %s to %s during the pass\n' "$b_ref" "$a_ref"
+    return 0
+  fi
+  [ "$b_commit" = NONE ] && return 1
+  if [ "$a_commit" = NONE ]; then
+    printf '%s no longer resolves to a commit (was %s)\n' "$b_ref" "$b_commit"
+    return 0
+  fi
+  if ! safe_git "$hooks" -C "$root" merge-base --is-ancestor "$b_commit" "$a_commit" 2>/dev/null; then
+    printf '%s was rewritten: %s does not descend from %s\n' "$b_ref" "$a_commit" "$b_commit"
+    return 0
+  fi
+  return 1
+}
+
+# contain_pass <root> <state-dir> <runner> <snap-dir> <log> <head-before>
+# The whole post-agent sequence, in the only safe order: contain the fenced
+# steering surfaces with no git involved, then, if git's own config was not
+# changed outside the vault, ask git whether HEAD was rewound. Sets
+# CONTAINED=1 when a tripwire was written. Returns 70 when containment was
+# needed but no tripwire could be written, else 0.
+contain_pass() {
+  local root="$1" state="$2" runner="$3" snap="$4" log="$5" head_before="$6" qdir reason moved
+  CONTAINED=0
+  qdir="$state/quarantine/$(date +%Y%m%dT%H%M%S)-$runner-$$"
+  reason="an unattended pass changed a steering or execution surface"
+  if ! contain_steering_changes "$root" "$snap/changed" "$snap/steering.tar" "$qdir" "$snap/contained" "$snap/contain-errors"; then
+    : > "$snap/contained"
+  fi
+  # Git runs only when its own config and hooks are known to be the pre-pass
+  # ones: nothing changed under .git-common/ (never restored), and every .git/
+  # path that changed was restored without error.
+  if ! grep -q '^\.git-common' "$snap/contained" 2>/dev/null \
+     && ! grep -q '^\.git' "$snap/contain-errors" 2>/dev/null \
+     && moved="$(head_moved_backwards "$root" "$snap/nohooks" "$head_before")"; then
+    printf '%s\n' "$moved" >> "$snap/contained"
+    reason="$reason, or git history was rewritten"
+  fi
+  [ -s "$snap/contained" ] || return 0
+
+  if ! write_tripwire "$root" "$state" "$runner" "$reason" "$qdir" "$snap/contained" "$snap/contain-errors"; then
+    printf '[%s] TRIPWIRE-ERROR: containment ran but no tripwire could be written; treat the vault as unverified:\n' "$(ts)" >> "$log"
+    sed 's/^/    /' "$snap/contained" >> "$log"
+    return 70
+  fi
+  CONTAINED=1
+  printf '[%s] VIOLATION: steering or execution surfaces changed during the run; contained, quarantine %s, tripwire set:\n' "$(ts)" "$qdir" >> "$log"
+  sed 's/^/    /' "$snap/contained" >> "$log"
+  if [ -s "$snap/contain-errors" ]; then
+    printf '[%s] CONTAINMENT-ERROR:\n' "$(ts)" >> "$log"
+    sed 's/^/    /' "$snap/contain-errors" >> "$log"
+  fi
+  return 0
 }
 
 # ---------------------------------------------------------------------------
