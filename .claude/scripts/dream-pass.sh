@@ -109,10 +109,14 @@ main() {
   WATCHDOG_GRACE="$(uint_setting WATCHDOG_GRACE 15 0 "$LOG")"
   WATCHDOG_POLL="$(uint_setting WATCHDOG_POLL 5 1 "$LOG")"
   STATE="$(vault_state_dir "$ROOT" 2>>"$LOG")"
-  if ! state_dir_ready "$STATE" "$ROOT"; then
-    printf '[%s] ERROR: the state directory %s could not be created, is not a directory this account owns and can write, is world-writable, or resolves into the vault. Refusing to run.\n' "$(ts)" "$STATE" >> "$LOG"
+  state_dir_ready "$STATE" "$ROOT"
+  state_rc=$?
+  if [ "$state_rc" -ne 0 ]; then
+    printf '[%s] ERROR: the state directory %s %s. Refusing to run.\n' "$(ts)" "$STATE" "$(state_dir_problem "$state_rc")" >> "$LOG"
     exit 1
   fi
+  # From here on the resolved path, so a symlink cannot be pointed elsewhere.
+  STATE="$(cd "$STATE" && pwd -P)" || exit 1
 
   # One pass at a time per vault. The traps come first, so a signal that lands
   # while the lock is being taken still releases it. The lock is taken before any
