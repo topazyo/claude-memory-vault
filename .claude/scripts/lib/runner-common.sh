@@ -672,7 +672,8 @@ contain_steering_changes() {
 #
 # Known limits. A runner in another pid namespace, such as a container, or on a
 # Linux system that hides other users' /proc entries, reads as gone. Runners
-# share a lock only when they resolve the same state directory.
+# share a lock only when they resolve the same state directory, so a Git Bash
+# runner and a WSL runner, or runners under two accounts, do not share one.
 
 RUN_LOCK_NAME="run.lock"
 
@@ -690,17 +691,17 @@ is_nonce() {
 }
 
 # uint_setting <variable-name> <default> <minimum> <log>
-# Prints the variable's value when it is a whole number no smaller than
-# <minimum>. Otherwise prints <default>, after logging a warning when the
-# variable was set.
+# Prints the variable's value when it is a plain whole number no smaller than
+# <minimum> and at most nine digits, so no sum of settings can overflow.
+# Otherwise prints <default>, after logging a warning when the variable was set.
 uint_setting() {
   local value="${!1:-}"
   if [ -z "$value" ]; then
     printf '%s\n' "$2"
-  elif is_uint "$value" && [ "$value" -ge "$3" ]; then
+  elif is_uint "$value" && [ "${#value}" -le 9 ] && [ "$value" -ge "$3" ]; then
     printf '%s\n' "$value"
   else
-    printf '[%s] WARNING: %s "%s" is not a whole number of seconds of at least %s. Using %s.\n' \
+    printf '[%s] WARNING: %s "%s" is not a plain whole number of seconds (digits only, no leading zero, at most nine digits, at least %s). Using %s.\n' \
       "$(ts)" "$1" "$value" "$3" "$2" >> "$4"
     printf '%s\n' "$2"
   fi
@@ -727,18 +728,22 @@ pid_exists() {
 # started no later than the lock did. Git Bash may not see a runner started in
 # another logon session, such as one Task Scheduler runs, but Windows does. A
 # bash that started after the lock was taken reuses the id, and is not the
-# runner. A start time Windows will not give counts as alive.
+# runner. Only an explicit "none" from PowerShell, or a later start time, reads
+# as gone. A missing, blocked, failing or hung PowerShell, or a start time it
+# will not give, counts as alive, because waiting is the safe mistake.
 windows_runner_alive() {
-  local start
+  local out start
   is_uint "$1" || return 1
-  command -v powershell.exe >/dev/null 2>&1 || return 1
-  start="$(MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' powershell.exe -NoProfile -NonInteractive -Command \
-    "\$p = Get-Process -Id $1 -ErrorAction SilentlyContinue; if (\$p -and \$p.ProcessName -match '^(bash|sh)\$') { try { [math]::Floor((\$p.StartTime.ToUniversalTime() - [datetime]'1970-01-01').TotalSeconds) } catch { 'unknown' } }" \
-    2>/dev/null | tr -d '\r')"
-  case "$start" in
-    unknown) return 0 ;;
-    *) is_uint "$start" || return 1 ;;
-  esac
+  command -v powershell.exe >/dev/null 2>&1 || return 0
+  out="$(mktemp 2>/dev/null || mktemp -t winpid)" || return 0
+  WATCHDOG_POLL=1 WATCHDOG_GRACE=2 run_with_watchdog 30 "$out" \
+    env MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' powershell.exe -NoProfile -NonInteractive -Command \
+    "\$p = Get-Process -Id $1 -ErrorAction SilentlyContinue; if (-not \$p -or \$p.ProcessName -notmatch '^(bash|sh)\$') { 'none' } else { try { [math]::Floor((\$p.StartTime.ToUniversalTime() - [datetime]'1970-01-01').TotalSeconds) } catch { 'unknown' } }"
+  start="$(tr -d '\r' < "$out" | sed -n '$p')"
+  rm -f "$out"
+  RUN_PID=""
+  [ "$start" = none ] && return 1
+  is_uint "$start" || return 0
   [ -z "$2" ] || [ "$start" -le "$2" ]
 }
 
@@ -753,17 +758,18 @@ runner_alive() {
     return 1
   fi
   if [ -r "/proc/$pid/cmdline" ]; then
+    # A readable command line decides. An empty one is a kernel thread or a
+    # zombie, neither of which is the runner.
     cmd="$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null)"
-  else
-    # -ww, because ps otherwise cuts the command at the terminal width, and the
-    # script name comes after a long vault path.
-    cmd="$(ps -ww -o command= -p "$pid" 2>/dev/null)"
+    case "$cmd" in *"$name.sh"*) return 0 ;; *) return 1 ;; esac
   fi
+  # -ww, because ps otherwise cuts the command at the terminal width, and the
+  # script name comes after a long vault path. A command line that cannot be
+  # read at all counts as the runner, because waiting is the safe mistake and
+  # reclaiming a live lock is not.
+  cmd="$(ps -ww -o command= -p "$pid" 2>/dev/null)" || return 0
   case "$cmd" in
-    *"$name.sh"*) return 0 ;;
-    # A process whose command line cannot be read counts as the runner. Waiting
-    # is the safe mistake, and reclaiming a live lock is not.
-    "") return 0 ;;
+    *"$name.sh"*|"") return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -782,12 +788,17 @@ git_index_lock_path() {
 
 # lock_dir_aged <lock-dir> <minutes> <state-dir>
 # True when the lock directory was last changed more than <minutes> ago, or when
-# its time is in the future, which means the clock was set back after it was
-# made. Its age cannot be known then, so whether its runner is gone decides.
+# its time is more than two minutes in the future, which means the clock was set
+# back after it was made. Its age cannot be known then, so whether its runner is
+# gone decides. The margin matters, because writing the owner file inside the
+# directory moves its time to now, and now must never read as the future.
 lock_dir_aged() {
-  local ref="$3/.run.lock.now.$$" newer
+  local ref="$3/.run.lock.future.$$" later stamp newer
   [ -n "$(find "$1" -maxdepth 0 -mmin +"$2" 2>/dev/null)" ] && return 0
-  : > "$ref" 2>/dev/null || return 1
+  later=$(( $(date +%s) + 120 ))
+  stamp="$(date -d "@$later" +%Y%m%d%H%M.%S 2>/dev/null || date -r "$later" +%Y%m%d%H%M.%S 2>/dev/null)"
+  [ -n "$stamp" ] || return 1
+  touch -t "$stamp" "$ref" 2>/dev/null || return 1
   newer="$(find "$1" -maxdepth 0 -newer "$ref" 2>/dev/null)"
   rm -f "$ref"
   [ -n "$newer" ]
@@ -854,7 +865,7 @@ run_lock_reclaim() {
 run_lock_acquire() {
   local state="$1" root="$2" runner="$3" log="$4" longest="$5" lock="$1/$RUN_LOCK_NAME"
   local wait_max poll deadline now remaining owner o_runner o_pid o_winpid o_started o_longest o_nonce
-  local aged holder idx winpid cur
+  local aged holder idx winpid cur mkdir_misses=0
   wait_max="$(uint_setting RUN_LOCK_WAIT 1800 0 "$log")"
   poll="$(uint_setting RUN_LOCK_POLL 30 1 "$log")"
   is_uint "$longest" || longest=0
@@ -900,9 +911,21 @@ run_lock_acquire() {
         fi
         holder="git (its index.lock is present)"
       fi
+    elif [ ! -d "$lock" ]; then
+      # mkdir failed, yet there is no lock directory. Either its holder released
+      # it a moment ago, or the state directory cannot take the entry (a full
+      # disk, or a file named run.lock). Retry at once, and give up on a file in
+      # the way or after three misses in a row.
+      mkdir_misses=$((mkdir_misses + 1))
+      if [ -e "$lock" ] || [ -L "$lock" ] || [ "$mkdir_misses" -ge 3 ]; then
+        printf '[%s] ERROR: could not create the run lock %s. Refusing to run.\n' "$(ts)" "$lock" >> "$log"
+        return 1
+      fi
+      continue
     elif [ -e "$lock/owner" ] && [ ! -r "$lock/owner" ]; then
       holder="a runner whose owner file this account cannot read"
     else
+      mkdir_misses=0
       owner="$(cat "$lock/owner" 2>/dev/null)"
       o_runner="$(owner_field "$owner" runner)"
       o_pid="$(owner_field "$owner" pid)"

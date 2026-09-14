@@ -1660,8 +1660,85 @@ if [ -n "$holder_winpid" ] && command -v powershell.exe >/dev/null 2>&1; then
   plant_lock dream-pass 999999 "$((now_s - 5000))" 1
   sed -i "s/^winpid=.*/winpid=$holder_winpid/" "$LOCK/owner"
   expect_rc "a lock whose Windows process id now belongs to a later bash -> reclaimed, OK" 0 "$(runner dream-pass.sh journal)"
+  # PowerShell that cannot answer (missing, blocked or failing) must not read a
+  # runner in another session as gone.
+  mkdir -p "$SHIM/ps-fail"
+  printf '#!/bin/sh\nexit 1\n' > "$SHIM/ps-fail/powershell.exe"
+  chmod +x "$SHIM/ps-fail/powershell.exe"
+  new_case_state lock-winpid-psfail
+  plant_lock dream-pass 999999 "$((now_s - 5000))" 1
+  sed -i "s/^winpid=.*/winpid=$holder_winpid/" "$LOCK/owner"
+  expect_rc "a lock whose Windows process cannot be looked up because PowerShell fails -> LOCKED" 75 \
+    "$(runner dream-pass.sh journal PATH="$SHIM/ps-fail:$PATH")"
 else
   printf '  SKIP  Windows process id checks: not Git Bash on Windows (not counted)\n'
+fi
+
+# Another runner's owner file lands in a directory this runner has just made. It
+# is that runner's lock now, so this one waits and never removes it. A mv function
+# stands in for the race.
+new_case_state lock-same-moment
+mkdir -p "$CASE_STATE"
+: > "$TMP/same-moment.log"
+( . "$RV/.claude/scripts/lib/runner-common.sh"
+  mv() {
+    case "${3:-}" in
+      */run.lock/owner) printf 'runner=promotion-pass\npid=999999\nnonce=other-runner\n' > "$3"; rm -f "$2"; return 0 ;;
+    esac
+    command mv "$@"
+  }
+  RUN_LOCK_WAIT=0
+  RUN_LOCK_POLL=1
+  run_lock_acquire "$CASE_STATE" "$TMP/no-such-vault" dream-pass "$TMP/same-moment.log" 100 )
+same_rc=$?
+if [ "$same_rc" -eq 75 ] && grep -q 'nonce=other-runner' "$CASE_STATE/run.lock/owner" 2>/dev/null \
+   && grep -q 'held by a runner that took the lock at the same moment' "$TMP/same-moment.log"; then
+  ok "a runner whose directory another runner's owner file claimed waits, and leaves that lock alone"
+else
+  bad "a runner removed a lock another runner's owner file claimed, or did not wait (rc $same_rc)"
+fi
+
+# A lock whose directory changed a moment ago, with its time slightly ahead, is a
+# runner still writing its owner file, not a clock that was set back.
+new_case_state lock-near-future
+mkdir -p "$CASE_STATE/run.lock"
+soon=$(( $(date +%s) + 60 ))
+soon_stamp="$(date -d "@$soon" +%Y%m%d%H%M.%S 2>/dev/null || date -r "$soon" +%Y%m%d%H%M.%S 2>/dev/null)"
+if [ -n "$soon_stamp" ] && touch -t "$soon_stamp" "$CASE_STATE/run.lock" 2>/dev/null; then
+  expect_rc "an owner-less lock dated a minute ahead -> LOCKED, not taken for a clock set back" 75 "$(runner dream-pass.sh journal)"
+else
+  printf '  SKIP  near-future lock: this date or touch cannot set a time a minute ahead (not counted)\n'
+fi
+
+# A file where the lock directory belongs is an error, not a lock held by nobody.
+new_case_state lock-file
+mkdir -p "$CASE_STATE"
+: > "$CASE_STATE/run.lock"
+expect_rc "a file named run.lock in the state directory -> refused" 1 "$(runner dream-pass.sh journal)"
+if grep -q 'ERROR: could not create the run lock' "$RV/.claude/logs/dream-agent.log" 2>/dev/null; then
+  ok "a run lock that cannot be created is reported as an error, not as LOCKED"
+else
+  bad "a run lock that cannot be created was not reported"
+fi
+
+# A settings value too long to add safely falls back like any other bad value.
+new_case_state timeout-overflow
+expect_rc "DREAM_PASS_TIMEOUT with ten digits -> OK with the default" 0 \
+  "$(runner dream-pass.sh journal DREAM_PASS_TIMEOUT=9223372036854775807)"
+if grep -q 'WARNING: DREAM_PASS_TIMEOUT "9223372036854775807"' "$RV/.claude/logs/dream-agent.log" 2>/dev/null; then
+  ok "a timeout that would overflow is logged and replaced"
+else
+  bad "a timeout that would overflow was accepted"
+fi
+
+# On Linux a kernel thread can reuse a dead runner's pid. Its command line is
+# empty, and that is not the runner.
+if [ -d /proc/2 ] && [ -r /proc/2/cmdline ] && [ -z "$(tr -d '\0' < /proc/2/cmdline 2>/dev/null)" ]; then
+  new_case_state lock-kthread
+  plant_lock dream-pass 2 "$((now_s - 5000))" 10
+  expect_rc "an old lock whose pid now belongs to a kernel thread -> reclaimed, OK" 0 "$(runner dream-pass.sh journal)"
+else
+  printf '  SKIP  kernel-thread pid: no readable, empty /proc/2/cmdline here (not counted)\n'
 fi
 
 # A signal while waiting for the lock. The runner exits, and the lock it never

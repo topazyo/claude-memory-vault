@@ -382,11 +382,13 @@ Around that call, each runner does several things an exit code cannot:
 - **Run lock.** Before it checks any vault state, a runner takes one lock per vault, the directory
   `run.lock` in the state directory, so two passes never race each other's fences or git's index.
   The lock lives outside the vault because a pass that could rewrite it could stall or unlock
-  every later run. The state directory follows the vault's resolved path, so every spelling of
-  that path takes the same lock, but runners given different `VAULT_STATE_DIR` values take
-  different locks. Give both scheduled tasks the same value, or leave it unset for both. A runner
-  that finds the lock held waits up to `RUN_LOCK_WAIT` seconds and then exits **75** (LOCKED)
-  without starting its agent.
+  every later run. Runners share a lock only when they resolve the same state directory. The
+  spellings of the vault's path described under Containment below resolve to one, but runners
+  given different `VAULT_STATE_DIR` values, runners under two accounts, and a Git Bash runner and
+  a WSL runner on the same vault each take their own lock. Schedule both passes from the same
+  environment and account, and give them the same `VAULT_STATE_DIR` or leave it unset for both.
+  A runner that finds the lock held waits up to `RUN_LOCK_WAIT` seconds and then exits **75**
+  (LOCKED) without starting its agent.
 
   A lock is reclaimed only when its runner is gone and the lock is older than the longest run that
   runner declared (its timeout, plus the watchdog grace period, plus 15 minutes). "Gone" means no
@@ -394,11 +396,15 @@ Around that call, each runner does several things an exit code cannot:
   runner's script, which covers a runner killed by Task Scheduler whose pid was reused. On Windows
   a pid that Git Bash cannot see, as with a runner in another logon session, is also looked up by
   its Windows process id, and a bash process that started no later than the lock counts as the
-  runner. A runner that is still alive is never reclaimed, however old its lock, because the age
-  includes time the machine spent asleep. A lock dated in the future, because the clock was set
-  back, is reclaimed as soon as its runner is gone. A lock directory whose owner file is missing or
-  has no nonce is reclaimed after two minutes, and one whose owner file this account cannot read
-  is treated as held. One reclaim runs at a time. It checks the lock again before moving it aside
+  runner. So does any answer other than a clear "no such bash process", including a PowerShell
+  that is missing, blocked, failing or slower than 30 seconds. A process whose command line is
+  readable but empty, such as a Linux kernel thread that reused the pid, is not the runner. A
+  runner that is still alive is never reclaimed, however old its lock, because the age includes
+  time the machine spent asleep. A lock dated more than two minutes in the future, because the
+  clock was set back, is reclaimed as soon as its runner is gone. A lock directory whose owner
+  file is missing or has no well-formed nonce is reclaimed after two minutes, or at once when it
+  is dated that far in the future, and one whose owner file this account cannot read is treated
+  as held. A file named `run.lock` in the state directory stops the run with exit 1. One reclaim runs at a time. It checks the lock again before moving it aside
   and once more after, and a lock that changed in between is put back, or kept beside the lock
   with a `RUN-LOCK-RACE` line in the log, never deleted. Every owner field is checked before use,
   and so are the timeout, watchdog and lock settings, which fall back to their defaults with a
