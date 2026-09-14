@@ -377,8 +377,19 @@ Two details of claude mode are load-bearing:
   scheduler there is no TTY and stdin is empty, so it reads EOF and exits **0** within seconds
   having done nothing. The scheduler records a success.
 
-Around that call, each runner does three things an exit code cannot:
+Around that call, each runner does several things an exit code cannot:
 
+- **Run lock.** Before anything else, a runner takes one vault-wide lock, the directory
+  `.claude/logs/run.lock`, so two passes never race each other's fences or git's index. A runner
+  that finds the lock held waits up to `RUN_LOCK_WAIT` seconds and then exits **75** (LOCKED)
+  without starting its agent. A lock is judged stale by age: older than the longest a run can take
+  (its timeout, plus the watchdog grace period, plus 15 minutes) and either its runner is gone or it
+  is twice that old. The second rule is there because a runner killed by Task Scheduler runs no
+  cleanup and its pid can be reused. A stale lock is moved aside atomically and the move is checked,
+  so two runners reclaiming the same lock cannot remove each other's fresh one. A lock whose owner
+  file says `KILL_FAILED` is never treated as stale. A `.git/index.lock` older than 10 minutes also
+  exits 75, because a crashed git command blocks every commit until it is removed. A younger one is
+  waited on like the run lock.
 - **Watchdog.** The agent runs with stdin from `/dev/null` under a timer. A run that exceeds its
   timeout gets `TERM`, then `KILL` after a grace period, and the runner exits **124**.
 - **Write fence.** The runner checksums every file in the vault before and after the run and exits
@@ -476,7 +487,7 @@ harness session cannot point an unattended pass, and its fence, at a different v
 | `3` | REFUSED: `VAULT_AGENT=command` without `VAULT_ALLOW_UNENFORCED_TOOLS=1`; the agent was not started |
 | `64` | `VAULT_AGENT` is neither `claude` nor `command` |
 | `70` | TRIPWIRE-ERROR: containment was needed but neither copy of the tripwire could be written. The in-flight marker is left, so the next run refuses |
-| `75` | LOCKED: an in-flight marker names a runner that is still alive; the agent was not started |
+| `75` | LOCKED: the run lock stayed held for `RUN_LOCK_WAIT` seconds, a `.git/index.lock` is older than 10 minutes, or an in-flight marker names a runner that is still alive; the agent was not started |
 | `78` | TRIPWIRE: a tripwire exists, or an earlier pass died before containment and this run turned its marker into one; the agent was not started |
 | `124` | TIMEOUT: the watchdog killed the run |
 | `127` | the `claude` binary, the `VAULT_AGENT_CMD` wrapper, or (from a `.cmd`) Git Bash was not found |
@@ -492,6 +503,8 @@ harness session cannot point an unattended pass, and its fence, at a different v
 | `PROMOTION_PASS_TIMEOUT` | `5400` seconds | `promotion-pass.sh` |
 | `WATCHDOG_POLL` | `5` seconds | `lib/runner-common.sh`: how often the watchdog checks the clock |
 | `WATCHDOG_GRACE` | `15` seconds | `lib/runner-common.sh`: wait between `TERM` and `KILL` |
+| `RUN_LOCK_WAIT` | `1800` seconds | both runners: how long to wait for the run lock before exiting 75 |
+| `RUN_LOCK_POLL` | `30` seconds | both runners: how often to check the run lock while waiting |
 | `VAULT_STATE_DIR` | per-vault directory under `%LOCALAPPDATA%` or `~/.local/state` | both runners: the quarantine, the tripwire and in-flight copies, and the pre-pass backup of a running pass, all outside the vault. An absolute path is required; a relative one, or one inside the vault, is replaced with a directory under the system temp folder |
 | `BASH_EXE` | standard Git for Windows paths | the `.cmd` wrappers |
 | `VAULT_FORCE_NO_JQ` | unset | `vault-lint.sh` and `postcompact-wrap-up.sh`: take the no-jq branch even when `jq` is installed |

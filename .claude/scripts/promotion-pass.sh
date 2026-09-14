@@ -62,6 +62,7 @@ on_exit() {
     rm -f "$STATE/inflight-backup.tar" 2>/dev/null
   fi
   [ -n "$SNAP_DIR" ] && rm -rf "$SNAP_DIR"
+  run_lock_release "$ROOT"
 }
 
 # On INT or TERM: stop the agent, and if it had started, containment cannot be
@@ -102,6 +103,15 @@ main() {
   # that a pass reached its end: an error dump, however long, does not contain it.
   SUMMARY_MARKER='PROMOTION-SUMMARY:'
 
+  # One pass at a time across the whole vault. Taken before anything else reads
+  # or writes vault state, and released by on_exit on every exit path.
+  run_lock_acquire "$ROOT" "$RUNNER" "$LOG" "$((TIMEOUT + ${WATCHDOG_GRACE:-15} + 900))"
+  lock_rc=$?
+  [ "$lock_rc" -eq 0 ] || exit "$lock_rc"
+  trap on_exit EXIT
+  trap 'on_signal 130' INT
+  trap 'on_signal 143' TERM
+
   tripwire_check "$ROOT" "$STATE" "$RUNNER" "$LOG"
   guard_rc=$?
   [ "$guard_rc" -eq 0 ] || exit "$guard_rc"
@@ -132,9 +142,6 @@ main() {
     printf '[%s] ERROR: could not create a temporary directory\n' "$(ts)" >> "$LOG"
     exit 1
   }
-  trap on_exit EXIT
-  trap 'on_signal 130' INT
-  trap 'on_signal 143' TERM
   mkdir -p "$SNAP_DIR/nohooks"
 
   snapshot_tree "$ROOT" "$SNAP_DIR/before"

@@ -630,21 +630,26 @@ pass `-p`. Set `ExecutionTimeLimit` as well: with
 `MultipleInstances=IgnoreNew`, a single hung run suppresses every later run for the whole limit,
 so a missing timeout turns one hang into permanent silence.
 
-Make the task's limit longer than the runner's own watchdog, so the runner kills a hung pass first
-and logs `TIMEOUT` with exit 124. Change the existing task object rather than building new settings
-(`New-ScheduledTaskSettingsSet` resets every setting you do not name), then read the definition
-back, because a success from `Set-ScheduledTask` is not evidence the change landed:
+Make the task's limit longer than everything the runner can spend before it exits on its own:
+the wait for the run lock (`RUN_LOCK_WAIT`, default 30 minutes), the pass's own timeout, and the
+watchdog's grace period, plus a margin. Then the runner always kills a hung pass first, logs
+`TIMEOUT` with exit 124, and releases its lock. A limit shorter than that lets Task Scheduler end
+the runner mid-pass with no cleanup, which leaves its lock and in-flight marker behind. The next run
+then reclaims the lock after it goes stale and sets the tripwire. Change the existing task object
+rather than building new settings (`New-ScheduledTaskSettingsSet` resets every setting you do not
+name), then read the definition back, because a success from `Set-ScheduledTask` is not evidence
+the change landed:
 
 ```powershell
 $task = Get-ScheduledTask -TaskName 'Vault-DreamAgent'
-$task.Settings.ExecutionTimeLimit = 'PT90M'   # longer than DREAM_PASS_TIMEOUT (default 60 min)
+$task.Settings.ExecutionTimeLimit = 'PT2H'   # lock wait 30 min + DREAM_PASS_TIMEOUT 60 min + margin
 Set-ScheduledTask -InputObject $task | Out-Null
 (Get-ScheduledTask -TaskName 'Vault-DreamAgent').Settings |
   Select-Object ExecutionTimeLimit, MultipleInstances
 ```
 
-Repeat for `Vault-PromotionAgent` with a limit above `PROMOTION_PASS_TIMEOUT` (default 90 minutes),
-for example `PT2H`.
+Repeat for `Vault-PromotionAgent` with a limit above the lock wait plus `PROMOTION_PASS_TIMEOUT`
+(default 90 minutes), for example `PT2H30M`.
 
 **Trap 3 — judging health by `State`.** Task health is `LastTaskResult` **plus a log file on
 disk**, never `State`. A task can sit at `Ready` for weeks while every run dies on startup.
@@ -696,7 +701,7 @@ removes `.claude/logs/`. Your notes are plain Markdown and are untouched.
 | Runner exits 2 and the log says `VIOLATION` | A file outside the pass's allowed folders changed during the run — the agent, or another writer such as a sync client | Read the paths listed under the `VIOLATION` line in `.claude/logs/`, and revert with git anything you did not expect |
 | Runner exits 2, the log says `contained`, and `.claude/logs/runner-tripwire` exists | The pass changed a steering or execution surface (an Obsidian plugin, something under `.claude/`, a harness config, an instruction file at any depth, memory, or git's config or hooks), or HEAD was rewound. The runner restored those files and moved what the pass wrote into the quarantine outside the vault | Read the tripwire, which names each path, anything it could not contain, and the quarantine directory. Inspect the quarantined files, and check `git reflog` if HEAD is listed. Then delete the tripwire and its copy in the state directory. If only a plugin's `data.json` is listed and you changed that plugin's settings on another device through Obsidian Sync, that is the likely cause |
 | Runner exits 78 and the log says `TRIPWIRE`, or `vault-check.sh` says `TRIPWIRE` | A tripwire is still in place, or a previous pass ended before containment ran (the scheduler ended the task, or the machine stopped) and this run turned its marker into a tripwire | As above: review, then delete both copies of the tripwire |
-| Runner exits 75 and the log says `LOCKED` | Another pass is still running | Nothing, if the schedules overlap by design; otherwise move one schedule |
+| Runner exits 75 and the log says `LOCKED` | Another pass held the run lock for the whole `RUN_LOCK_WAIT`, a `.git/index.lock` is more than 10 minutes old, or an in-flight marker names a pass that is still running | For a held lock: nothing if the schedules overlap by design, otherwise move one schedule. A lock left by a killed runner is reclaimed on its own once it is stale. For `index.lock`: make sure no git command is running, then delete the file |
 | Runner exits 70 and the log says `TRIPWIRE-ERROR` | Containment was needed but no tripwire could be written, for example a full disk | Free the space, then run the pass by hand: it refuses with 78 and writes the tripwire, which you then review |
 | Runner exits 124 and the log says `TIMEOUT` | The pass exceeded `DREAM_PASS_TIMEOUT` / `PROMOTION_PASS_TIMEOUT` and was killed | Check the `.run.log` for where it stalled; raise the limit only if the pass was making progress |
 
