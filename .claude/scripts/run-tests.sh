@@ -1484,11 +1484,11 @@ tripwire_clear
 
 printf '\n=== scheduled runners: run lock ===\n'
 
-plant_lock() {  # plant_lock <runner> <pid> <started> <longest> [nonce]
+plant_lock() {  # plant_lock <runner> <pid> <started> <longest> [nonce] [winpid]
   LOCK="$CASE_STATE/run.lock"
   rm -rf "$LOCK"
   mkdir -p "$LOCK"
-  printf 'runner=%s\npid=%s\nwinpid=\nstarted=%s\nlongest=%s\nnonce=%s\n' "$1" "$2" "$3" "$4" "${5:-planted}" > "$LOCK/owner"
+  printf 'runner=%s\npid=%s\nwinpid=%s\nstarted=%s\nlongest=%s\nnonce=%s\n' "$1" "$2" "${6:-}" "$3" "$4" "${5:-planted}" > "$LOCK/owner"
 }
 now_s="$(date +%s)"
 # The live holder is a process whose command line names the runner's script (the
@@ -1709,8 +1709,8 @@ fi
 # The traps are set before the lock is taken, so a signal during the acquire still
 # releases a lock the runner has just made.
 for s in dream-pass.sh promotion-pass.sh; do
-  trap_line="$(grep -n "^  trap on_exit EXIT" "$ROOT/.claude/scripts/$s" | head -n 1 | cut -d: -f1)"
-  lock_line="$(grep -n "^  run_lock_acquire " "$ROOT/.claude/scripts/$s" | head -n 1 | cut -d: -f1)"
+  trap_line="$(grep -n "^  trap on_exit EXIT" "$RV/.claude/scripts/$s" | head -n 1 | cut -d: -f1)"
+  lock_line="$(grep -n "^  run_lock_acquire " "$RV/.claude/scripts/$s" | head -n 1 | cut -d: -f1)"
   if [ -n "$trap_line" ] && [ -n "$lock_line" ] && [ "$trap_line" -lt "$lock_line" ]; then
     ok "$s sets its exit trap before it takes the run lock"
   else
@@ -1736,27 +1736,36 @@ fi
 holder_winpid="$(cat "/proc/$holder_pid/winpid" 2>/dev/null)"
 if [ -n "$holder_winpid" ] && command -v powershell.exe >/dev/null 2>&1; then
   new_case_state lock-winpid-alive
-  plant_lock dream-pass 999999 "$(date +%s)" 1
-  sed -i "s/^winpid=.*/winpid=$holder_winpid/" "$LOCK/owner"
+  plant_lock dream-pass 999999 "$(date +%s)" 1 planted "$holder_winpid"
   sleep 2
   expect_rc "a lock whose pid Git Bash cannot see, but whose Windows process is the runner -> LOCKED" 75 "$(runner dream-pass.sh journal)"
   new_case_state lock-winpid-reused
-  plant_lock dream-pass 999999 "$((now_s - 5000))" 1
-  sed -i "s/^winpid=.*/winpid=$holder_winpid/" "$LOCK/owner"
+  plant_lock dream-pass 999999 "$((now_s - 5000))" 1 planted "$holder_winpid"
   expect_rc "a lock whose Windows process id now belongs to a later bash -> reclaimed, OK" 0 "$(runner dream-pass.sh journal)"
-  # PowerShell that cannot answer (missing, blocked or failing) must not read a
-  # runner in another session as gone.
-  mkdir -p "$SHIM/ps-fail"
-  printf '#!/bin/sh\nexit 1\n' > "$SHIM/ps-fail/powershell.exe"
-  chmod +x "$SHIM/ps-fail/powershell.exe"
-  new_case_state lock-winpid-psfail
-  plant_lock dream-pass 999999 "$((now_s - 5000))" 1
-  sed -i "s/^winpid=.*/winpid=$holder_winpid/" "$LOCK/owner"
-  expect_rc "a lock whose Windows process cannot be looked up because PowerShell fails -> LOCKED" 75 \
-    "$(runner dream-pass.sh journal PATH="$SHIM/ps-fail:$PATH")"
+  # The most common real case, a runner Task Scheduler killed. No process has
+  # its Windows id, and PowerShell says so.
+  new_case_state lock-winpid-gone
+  plant_lock dream-pass 999999 "$((now_s - 5000))" 1 planted 999999996
+  expect_rc "an old lock whose Windows process id no process has -> reclaimed, OK" 0 "$(runner dream-pass.sh journal)"
 else
-  printf '  SKIP  Windows process id checks: not Git Bash on Windows (not counted)\n'
+  printf '  SKIP  Windows process id checks against PowerShell: not Git Bash on Windows (not counted)\n'
 fi
+# The Windows lookup through a stand-in powershell.exe, which runs on every
+# platform. A PowerShell that cannot answer (missing, blocked or failing) must not
+# read a runner in another session as gone. An answer wrapped in a byte-order mark,
+# with a progress record written after it, is still the answer.
+mkdir -p "$SHIM/ps-fail" "$SHIM/ps-noisy"
+printf '#!/bin/sh\nexit 1\n' > "$SHIM/ps-fail/powershell.exe"
+printf '#!/bin/sh\nprintf '"'"'\\357\\273\\277none\\r\\n'"'"'\nprintf '"'"'#< CLIXML\\r\\n'"'"' >&2\n' > "$SHIM/ps-noisy/powershell.exe"
+chmod +x "$SHIM/ps-fail/powershell.exe" "$SHIM/ps-noisy/powershell.exe"
+new_case_state lock-winpid-psfail
+plant_lock dream-pass 999999 "$((now_s - 5000))" 1 planted 12345
+expect_rc "a lock whose Windows process cannot be looked up because PowerShell fails -> LOCKED" 75 \
+  "$(runner dream-pass.sh journal PATH="$SHIM/ps-fail:$PATH")"
+new_case_state lock-winpid-noisy
+plant_lock dream-pass 999999 "$((now_s - 5000))" 1 planted 12345
+expect_rc "PowerShell answers none inside a byte-order mark, followed by a progress record -> reclaimed, OK" 0 \
+  "$(runner dream-pass.sh journal PATH="$SHIM/ps-noisy:$PATH")"
 
 # Another runner's owner file lands in a directory this runner has just made. It
 # is that runner's lock now, so this one waits and never removes it. A mv function
@@ -1807,13 +1816,71 @@ fi
 
 # A settings value too long to add safely falls back like any other bad value.
 new_case_state timeout-overflow
-expect_rc "DREAM_PASS_TIMEOUT with ten digits -> OK with the default" 0 \
+expect_rc "DREAM_PASS_TIMEOUT with nineteen digits -> OK with the default" 0 \
   "$(runner dream-pass.sh journal DREAM_PASS_TIMEOUT=9223372036854775807)"
 if grep -q 'WARNING: DREAM_PASS_TIMEOUT "9223372036854775807"' "$RV/.claude/logs/dream-agent.log" 2>/dev/null; then
   ok "a timeout that would overflow is logged and replaced"
 else
   bad "a timeout that would overflow was accepted"
 fi
+# The limit is nine digits exactly.
+: > "$TMP/uint-boundary.log"
+b_nine="$( . "$RV/.claude/scripts/lib/runner-common.sh"; BOUNDARY_SETTING=999999999; uint_setting BOUNDARY_SETTING 7 1 "$TMP/uint-boundary.log")"
+b_ten="$( . "$RV/.claude/scripts/lib/runner-common.sh"; BOUNDARY_SETTING=1000000000; uint_setting BOUNDARY_SETTING 7 1 "$TMP/uint-boundary.log")"
+if [ "$b_nine" = 999999999 ] && [ "$b_ten" = 7 ] && [ "$(awk 'END{print NR+0}' "$TMP/uint-boundary.log")" = 1 ] \
+   && grep -q '"1000000000"' "$TMP/uint-boundary.log"; then
+  ok "a setting of nine digits is used, and one of ten falls back with a warning"
+else
+  bad "the nine-digit limit is wrong -- nine gave $b_nine, ten gave $b_ten"
+fi
+
+# A lock directory whose creation fails for a moment, as when antivirus still holds
+# the folder a runner just removed, is retried rather than skipping the pass. One
+# that never succeeds, as on a full disk, stops the run.
+mkdir -p "$SHIM/mkdir-flaky" "$SHIM/mkdir-broken"
+printf '#!/bin/sh\nfor a in "$@"; do case "$a" in */run.lock)\n  n="$(cat "%s" 2>/dev/null || echo 0)"\n  if [ "$n" -lt 2 ]; then echo $((n + 1)) > "%s"; exit 1; fi ;;\nesac; done\nexec "%s" "$@"\n' \
+  "$TMP/mkdir-flaky.count" "$TMP/mkdir-flaky.count" "$(command -v mkdir)" > "$SHIM/mkdir-flaky/mkdir"
+printf '#!/bin/sh\nfor a in "$@"; do case "$a" in */run.lock) exit 1 ;; esac; done\nexec "%s" "$@"\n' "$(command -v mkdir)" > "$SHIM/mkdir-broken/mkdir"
+chmod +x "$SHIM/mkdir-flaky/mkdir" "$SHIM/mkdir-broken/mkdir"
+new_case_state lock-mkdir-flaky
+rm -f "$TMP/mkdir-flaky.count"
+expect_rc "the run lock directory cannot be created twice, then can -> OK" 0 \
+  "$(runner dream-pass.sh journal PATH="$SHIM/mkdir-flaky:$PATH")"
+if [ "$(cat "$TMP/mkdir-flaky.count" 2>/dev/null)" = 2 ]; then
+  ok "a lock directory that failed twice was retried until it could be made"
+else
+  bad "the lock directory retries did not happen as expected -- misses: $(cat "$TMP/mkdir-flaky.count" 2>/dev/null)"
+fi
+new_case_state lock-mkdir-broken
+expect_rc "the run lock directory can never be created -> refused" 1 \
+  "$(runner dream-pass.sh journal PATH="$SHIM/mkdir-broken:$PATH")"
+
+# A runner whose owner file was replaced by another runner's no longer holds the
+# lock, and the runners check that before they start a pass.
+new_case_state lock-held-check
+mkdir -p "$CASE_STATE"
+held_got="$( . "$RV/.claude/scripts/lib/runner-common.sh"
+  RUN_LOCK_WAIT=0
+  run_lock_acquire "$CASE_STATE" "$TMP/no-such-vault" dream-pass "$TMP/held-check.log" 100 || exit 9
+  run_lock_held && printf 'held '
+  printf 'runner=promotion-pass\npid=999999\nnonce=other-runner\n' > "$CASE_STATE/run.lock/owner"
+  run_lock_held || printf 'lost'
+  RUN_LOCK_DIR="" )"
+if [ "$held_got" = "held lost" ]; then
+  ok "run_lock_held is true for the runner's own owner file and false once another runner's replaces it"
+else
+  bad "run_lock_held misjudged the lock -- got: $held_got"
+fi
+rm -rf "$CASE_STATE/run.lock"
+for s in dream-pass.sh promotion-pass.sh; do
+  held_line="$(grep -n "^  if ! run_lock_held; then" "$RV/.claude/scripts/$s" | head -n 1 | cut -d: -f1)"
+  mark_line="$(grep -n "^  if ! mark_inflight " "$RV/.claude/scripts/$s" | head -n 1 | cut -d: -f1)"
+  if [ -n "$held_line" ] && [ -n "$mark_line" ] && [ "$held_line" -lt "$mark_line" ]; then
+    ok "$s checks that it still holds the run lock before it marks the pass in flight"
+  else
+    bad "$s does not check the run lock before it marks the pass in flight"
+  fi
+done
 
 # On Linux a kernel thread can reuse a dead runner's pid. Its command line is
 # empty, and that is not the runner.

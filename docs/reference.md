@@ -404,11 +404,16 @@ Around that call, each runner does several things an exit code cannot:
   clock was set back, is reclaimed as soon as its runner is gone. A lock directory whose owner
   file is missing or has no well-formed nonce is reclaimed after two minutes, or at once when it
   is dated that far in the future, and one whose owner file this account cannot read is treated
-  as held. A file named `run.lock` in the state directory stops the run with exit 1. One reclaim runs at a time. It checks the lock again before moving it aside
-  and once more after, and a lock that changed in between is put back, or kept beside the lock
-  with a `RUN-LOCK-RACE` line in the log, never deleted. Every owner field is checked before use,
-  and so are the timeout, watchdog and lock settings, which fall back to their defaults with a
-  warning.
+  as held. A lock directory that cannot be created is retried once a second, and after five
+  misses in a row, as with a full disk, the run stops with exit 1. A file named `run.lock` in the
+  state directory stops it at once. One reclaim runs at a time. It checks the lock again before
+  moving it aside and once more after, and a lock that changed in between is put back, or kept
+  beside the lock with a `RUN-LOCK-RACE` line in the log, never deleted. Just before a runner
+  marks its pass in flight, it checks that the lock still carries its own owner file, and exits
+  75 if another runner's has replaced it. That narrows, but does not close, the case of a runner
+  that stalls for over two minutes between taking the lock and writing its owner file. Every
+  owner field is checked before use, and so are the timeout, watchdog and lock settings, which
+  fall back to their defaults with a warning.
 
   A `.git/index.lock` older than 10 minutes also exits 75, because a crashed git command blocks
   every commit until it is removed. A younger one is waited on like the run lock, and one that
@@ -586,7 +591,7 @@ harness session cannot point an unattended pass, and its fence, at a different v
 | `3` | REFUSED: `VAULT_AGENT=command` without `VAULT_ALLOW_UNENFORCED_TOOLS=1`; the agent was not started |
 | `64` | `VAULT_AGENT` is neither `claude` nor `command` |
 | `70` | TRIPWIRE-ERROR: containment was needed but neither copy of the tripwire could be written. The in-flight marker is left, so the next run refuses |
-| `75` | LOCKED: the run lock stayed held, or git's `index.lock` stayed, for `RUN_LOCK_WAIT` seconds, or the `index.lock` is older than 10 minutes. The agent was not started |
+| `75` | LOCKED: the run lock stayed held, or git's `index.lock` stayed, for `RUN_LOCK_WAIT` seconds, the `index.lock` is older than 10 minutes, or another runner took the lock over before the pass started. The agent was not started |
 | `78` | TRIPWIRE: a tripwire exists, or an earlier pass died before containment and this run turned its marker into one; the agent was not started |
 | `124` | TIMEOUT: the watchdog killed the run |
 | `127` | the `claude` binary, the `VAULT_AGENT_CMD` wrapper, or (from a `.cmd`) Git Bash was not found |

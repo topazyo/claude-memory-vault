@@ -44,7 +44,8 @@
 #   64   VAULT_AGENT is not claude or command
 #   70   TRIPWIRE-ERROR: containment was needed but no tripwire could be written
 #   75   LOCKED: another pass held the run lock, or git's index.lock stayed, for
-#        RUN_LOCK_WAIT seconds, or the index.lock is more than 10 minutes old
+#        RUN_LOCK_WAIT seconds, the index.lock is more than 10 minutes old, or
+#        another runner took the lock over before the pass started
 #   78   TRIPWIRE: a tripwire is set, or an earlier pass died before containment
 #   124  TIMEOUT: the watchdog killed a run that exceeded DREAM_PASS_TIMEOUT
 #   127  the claude binary or the VAULT_AGENT_CMD wrapper was not found
@@ -181,6 +182,11 @@ main() {
     exit 1
   fi
   HEAD_BEFORE="$(head_state "$ROOT" "$SNAP_DIR/nohooks")"
+  # The last check before anything is written to the shared state directory.
+  if ! run_lock_held; then
+    printf '[%s] LOCKED: another runner'"'"'s owner file replaced this one'"'"'s in the run lock before the pass started. Not starting.\n' "$(ts)" >> "$LOG"
+    exit 75
+  fi
   cp "$SNAP_DIR/steering.tar" "$STATE/inflight-backup.tar" 2>/dev/null
   # Without the marker outside the vault, a pass killed mid-run would leave no
   # trace the next run can trust. Refuse rather than start the agent.

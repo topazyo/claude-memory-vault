@@ -804,6 +804,11 @@ pid_exists() {
 # runner. Only an explicit "none" from PowerShell, or a later start time, reads
 # as gone. A missing, blocked, failing or hung PowerShell, or a start time it
 # will not give, counts as alive, because waiting is the safe mistake.
+#
+# The watchdog writes stderr into the same file, so the answer is the first line
+# that is exactly none, unknown or a number, read past a byte-order mark and a
+# carriage return. A progress record or an error printed around it changes
+# nothing.
 windows_runner_alive() {
   local out start
   is_uint "$1" || return 1
@@ -811,8 +816,8 @@ windows_runner_alive() {
   out="$(mktemp 2>/dev/null || mktemp -t winpid)" || return 0
   WATCHDOG_POLL=1 WATCHDOG_GRACE=2 run_with_watchdog 30 "$out" \
     env MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' powershell.exe -NoProfile -NonInteractive -Command \
-    "\$p = Get-Process -Id $1 -ErrorAction SilentlyContinue; if (-not \$p -or \$p.ProcessName -notmatch '^(bash|sh)\$') { 'none' } else { try { [math]::Floor((\$p.StartTime.ToUniversalTime() - [datetime]'1970-01-01').TotalSeconds) } catch { 'unknown' } }"
-  start="$(tr -d '\r' < "$out" | sed -n '$p')"
+    "\$ProgressPreference = 'SilentlyContinue'; \$p = Get-Process -Id $1 -ErrorAction SilentlyContinue; if (-not \$p -or \$p.ProcessName -notmatch '^(bash|sh)\$') { 'none' } else { try { [math]::Floor((\$p.StartTime.ToUniversalTime() - [datetime]'1970-01-01').TotalSeconds) } catch { 'unknown' } }"
+  start="$(LC_ALL=C awk '{ sub(/\r$/, ""); sub(/^\357\273\277/, ""); if ($0 == "none" || $0 == "unknown" || $0 ~ /^[0-9]+$/) { print; exit } }' "$out" 2>/dev/null)"
   rm -f "$out"
   RUN_PID=""
   [ "$start" = none ] && return 1
@@ -864,14 +869,16 @@ git_index_lock_path() {
 # its time is more than two minutes in the future, which means the clock was set
 # back after it was made. Its age cannot be known then, so whether its runner is
 # gone decides. The margin matters, because writing the owner file inside the
-# directory moves its time to now, and now must never read as the future.
+# directory moves its time to now, and now must never read as the future. The
+# reference time is written and read in UTC, because a local time in the hour
+# repeated when clocks go back could be read an hour off.
 lock_dir_aged() {
   local ref="$3/.run.lock.future.$$" later stamp newer
   [ -n "$(find "$1" -maxdepth 0 -mmin +"$2" 2>/dev/null)" ] && return 0
   later=$(( $(date +%s) + 120 ))
-  stamp="$(date -d "@$later" +%Y%m%d%H%M.%S 2>/dev/null || date -r "$later" +%Y%m%d%H%M.%S 2>/dev/null)"
+  stamp="$(TZ=UTC0 date -d "@$later" +%Y%m%d%H%M.%S 2>/dev/null || TZ=UTC0 date -r "$later" +%Y%m%d%H%M.%S 2>/dev/null)"
   [ -n "$stamp" ] || return 1
-  touch -t "$stamp" "$ref" 2>/dev/null || return 1
+  TZ=UTC0 touch -t "$stamp" "$ref" 2>/dev/null || return 1
   newer="$(find "$1" -maxdepth 0 -newer "$ref" 2>/dev/null)"
   rm -f "$ref"
   [ -n "$newer" ]
@@ -951,6 +958,7 @@ run_lock_acquire() {
     # A new nonce for every attempt, so one nonce only ever names one directory.
     RUN_LOCK_NONCE="$runner-$$-$(date +%s)-${RANDOM:-0}${RANDOM:-0}"
     if mkdir "$lock" 2>/dev/null; then
+      mkdir_misses=0
       RUN_LOCK_MADE=1
       winpid=""
       [ -r "/proc/$$/winpid" ] && winpid="$(cat "/proc/$$/winpid" 2>/dev/null)"
@@ -985,17 +993,20 @@ run_lock_acquire() {
         holder="git (its index.lock is present)"
       fi
     elif [ ! -d "$lock" ]; then
-      # mkdir failed, yet there is no lock directory. Either its holder released
-      # it a moment ago, or the state directory cannot take the entry (a full
-      # disk, or a file named run.lock). Retry at once, and give up on a file in
-      # the way or after three misses in a row.
+      # mkdir failed, yet there is no lock directory. Its holder may have released
+      # it a moment ago, antivirus or an indexer may still hold the old folder
+      # open, or the state directory cannot take the entry (a full disk, or a file
+      # named run.lock). Give up at once on a file in the way, and otherwise after
+      # five misses in a row, a second apart.
       mkdir_misses=$((mkdir_misses + 1))
-      if [ -e "$lock" ] || [ -L "$lock" ] || [ "$mkdir_misses" -ge 3 ]; then
+      if [ -e "$lock" ] || [ -L "$lock" ] || [ "$mkdir_misses" -ge 5 ]; then
         printf '[%s] ERROR: could not create the run lock %s. Refusing to run.\n' "$(ts)" "$lock" >> "$log"
         return 1
       fi
+      sleep 1
       continue
     elif [ -e "$lock/owner" ] && [ ! -r "$lock/owner" ]; then
+      mkdir_misses=0
       holder="a runner whose owner file this account cannot read"
     else
       mkdir_misses=0
@@ -1007,10 +1018,11 @@ run_lock_acquire() {
       o_longest="$(owner_field "$owner" longest)"
       o_nonce="$(owner_field "$owner" nonce)"
       case "$o_runner" in dream-pass|promotion-pass) ;; *) o_runner="" ;; esac
-      is_uint "$o_pid" || o_pid=""
-      is_uint "$o_winpid" || o_winpid=""
-      is_uint "$o_started" || o_started=""
-      is_uint "$o_longest" || o_longest="$longest"
+      # A number longer than any real value is malformed, so no sum can wrap.
+      is_uint "$o_pid" && [ "${#o_pid}" -le 10 ] || o_pid=""
+      is_uint "$o_winpid" && [ "${#o_winpid}" -le 10 ] || o_winpid=""
+      is_uint "$o_started" && [ "${#o_started}" -le 11 ] || o_started=""
+      is_uint "$o_longest" && [ "${#o_longest}" -le 10 ] || o_longest="$longest"
       is_nonce "$o_nonce" || o_nonce=""
       now="$(date +%s)"
       aged=no
@@ -1042,6 +1054,18 @@ run_lock_acquire() {
     remaining=$((deadline - now))
     if [ "$poll" -lt "$remaining" ]; then sleep "$poll"; else sleep "$remaining"; fi
   done
+}
+
+# run_lock_held
+# True while the lock's owner file still carries this runner's nonce. A runner
+# stalled between taking the directory and writing its owner file for longer
+# than the two minutes an owner-less lock is given can find another runner's
+# owner file in its place, or its own written over another runner's. The runners
+# check just before they mark a pass in flight, so at most one of two such
+# runners starts an agent unless both pass that check at nearly the same moment.
+run_lock_held() {
+  [ -n "${RUN_LOCK_DIR:-}" ] && [ -n "${RUN_LOCK_NONCE:-}" ] \
+    && [ "$(owner_field "$(cat "$RUN_LOCK_DIR/owner" 2>/dev/null)" nonce)" = "$RUN_LOCK_NONCE" ]
 }
 
 # run_lock_release
