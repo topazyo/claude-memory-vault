@@ -65,7 +65,13 @@ EOF
 # schema and is deliberately out of scope (see the freshness standard § 2).
 TIERS="01-inbox 10-daily 20-projects 30-knowledge 31-standards 40-llm-wiki"
 
-[ "${1:-}" = "--" ] && shift
+case "${1:-}" in
+  --) shift ;;
+  -*)
+    printf 'vault-check: unknown option %s. Name notes after --, for example vault-check.sh -- 10-daily/2026-01-15.md\n' "$1" >&2
+    exit 1
+    ;;
+esac
 NAMED=("$@")
 
 # A bash ARRAY, not a space-joined string. The string form depends on word

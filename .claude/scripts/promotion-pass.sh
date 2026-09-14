@@ -38,7 +38,8 @@
 #   0    the pass reported a summary or changed the long tier, and wrote nowhere else
 #   1    NO-ARTIFACT: exited 0 with no summary line and no long-tier change,
 #        or the runner could not set itself up (temp dir, state directory, backup,
-#        prompt file, run lock, in-flight marker, git status)
+#        prompt file, run lock, in-flight marker, git status), or git cannot
+#        read the vault's repository
 #   2    VIOLATION: files outside the allowed write areas changed during the run
 #        (steering surfaces among them are contained and the tripwire is set),
 #        or the pass changed a long-tier note or promotion report that already

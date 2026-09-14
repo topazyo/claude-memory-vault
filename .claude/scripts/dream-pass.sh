@@ -40,7 +40,8 @@
 #        committed (or the vault is not a git repository, or git ignores it)
 #   1    NO-ARTIFACT: exited 0 but no dream journal was added or changed,
 #        or the runner could not set itself up (temp dir, state directory, backup,
-#        prompt file, run lock, in-flight marker, git status)
+#        prompt file, run lock, in-flight marker, git status), or git cannot
+#        read the vault's repository
 #   2    VIOLATION: files outside the dream journals changed during the run
 #        (steering surfaces among them are contained and the tripwire is set),
 #        or the pass changed a journal that already had uncommitted changes
@@ -96,6 +97,20 @@ on_signal() {
     fi
   fi
   exit "$1"
+}
+
+# record_leftover_journals
+# After a pass that wrote only journals but could not commit them (it timed out,
+# failed, or its commit or check failed), records the journals' bytes, so the
+# next run commits them instead of taking them for someone's edit. A journal that
+# was already dirty before this pass is not recorded, because it holds someone
+# else's edit too.
+record_leftover_journals() {
+  [ "${VAULT_GIT:-0}" -eq 1 ] || return 0
+  grep -vE '^20-projects/_logs/(dream-|compaction-)[^/]*\.md$' "$SNAP_DIR/changed" | grep -q . && return 0
+  grep -E '^20-projects/_logs/dream-[^/]*\.md$' "$SNAP_DIR/changed" > "$SNAP_DIR/leftover-all"
+  awk 'FILENAME == ARGV[1] { dirty[$0] = 1; next } !($0 in dirty)' "$SNAP_DIR/predirty" "$SNAP_DIR/leftover-all" > "$SNAP_DIR/leftover"
+  record_uncommitted "$ROOT" "$SNAP_DIR/nohooks" "$STATE" "$RUNNER" "$SNAP_DIR/leftover"
 }
 
 # Everything else runs inside main, and the script's last lines call it and
@@ -195,6 +210,9 @@ main() {
     printf '[%s] ERROR: git status failed, so the files already being edited are unknown. Refusing to run.\n' "$(ts)" >> "$LOG"
     exit 1
   fi
+  # A journal an earlier run of this runner left uncommitted, and nobody has
+  # touched since, is this runner's own, not someone's edit.
+  [ "$VAULT_GIT" -eq 1 ] && adopt_uncommitted "$ROOT" "$SNAP_DIR/nohooks" "$STATE" "$RUNNER" "$SNAP_DIR/predirty"
 
   snapshot_tree "$ROOT" "$SNAP_DIR/before"
   # Containment needs the pre-pass copy. Without it, refuse rather than run a pass
@@ -243,6 +261,7 @@ main() {
   if [ "$RUN_TIMED_OUT" -eq 1 ]; then
     printf '[%s] TIMEOUT: dream-agent exceeded %ss and was killed (status %s)\n' \
       "$(ts)" "$TIMEOUT" "$RUN_RC" >> "$LOG"
+    record_leftover_journals
     exit 124
   fi
 
@@ -259,7 +278,10 @@ main() {
     exit 2
   fi
 
-  [ "$RUN_RC" -ne 0 ] && exit "$RUN_RC"
+  if [ "$RUN_RC" -ne 0 ]; then
+    record_leftover_journals
+    exit "$RUN_RC"
+  fi
 
   # ARTIFACT ASSERTION. An exit code says the process ended; it does not say the
   # pass did anything. A dream journal must have been ADDED or CHANGED during this
@@ -276,7 +298,11 @@ main() {
   grep -E '^20-projects/_logs/dream-[^/]*\.md$' "$SNAP_DIR/changed" > "$SNAP_DIR/owned"
   commit_owned "$ROOT" dream "$SNAP_DIR/owned" "$SNAP_DIR/predirty" "$SNAP_DIR" "$LOG"
   commit_rc=$?
-  [ "$commit_rc" -eq 0 ] || exit "$commit_rc"
+  case "$commit_rc" in
+    0) ;;
+    4|5) record_leftover_journals; exit "$commit_rc" ;;
+    *) exit "$commit_rc" ;;
+  esac
 
   printf '[%s] OK: %s\n' "$(ts)" "$(tr '\n' ' ' < "$SNAP_DIR/owned")" >> "$LOG"
   exit 0
