@@ -412,11 +412,15 @@ Around that call, each runner does several things an exit code cannot:
   never deleted. The owner file is placed with a hard link, which fails when one is already there,
   so the first owner file placed holds the lock. A runner that stalls for over two minutes between
   taking the lock and writing its owner file, and whose lock another runner reclaims meanwhile,
-  finds that runner's owner file and waits. It removes only its own temporary file, and the lock
-  directory only if it is empty. On a file system where no hard link can be made, the owner file
-  is renamed into place while none is there, and could still land over one placed a moment
-  earlier. So just before a runner marks its pass in flight, it checks that the lock still carries
-  its own owner file, and exits 75 if another runner's has replaced it. Every
+  either places its owner file first and holds the lock, or finds that runner's owner file and
+  waits. If it resumes in the moment after the other runner's mkdir, it can remove that still
+  empty directory, and both runners then stop with exit 1. It never removes a directory holding
+  a file. On a file system where no hard link can be made, the owner file is renamed into place
+  while none is there, and could still land over one placed a moment earlier. So just before a
+  runner marks its pass in flight, it checks that the lock still carries its own owner file, and
+  exits 75 if another runner's has replaced or removed it. A rename that lands after that check,
+  which takes a second stall, is not caught. The stalled runner then sets a false tripwire (exit
+  78), clears the other pass's in-flight marker and removes the lock while that pass runs. Every
   owner field is checked before use, and so are the timeout, watchdog and lock settings, which
   fall back to their defaults with a warning.
 

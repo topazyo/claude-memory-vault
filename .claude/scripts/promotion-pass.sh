@@ -177,7 +177,7 @@ main() {
   HEAD_BEFORE="$(head_state "$ROOT" "$SNAP_DIR/nohooks")"
   # The last check before anything is written to the shared state directory.
   if ! run_lock_held; then
-    printf '[%s] LOCKED: another runner'"'"'s owner file replaced this one'"'"'s in the run lock before the pass started. Not starting.\n' "$(ts)" >> "$LOG"
+    printf '[%s] LOCKED: another runner replaced or removed this one'"'"'s owner file in the run lock before the pass started. Not starting.\n' "$(ts)" >> "$LOG"
     exit 75
   fi
   cp "$SNAP_DIR/steering.tar" "$STATE/inflight-backup.tar" 2>/dev/null

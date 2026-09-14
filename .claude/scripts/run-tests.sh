@@ -1791,6 +1791,11 @@ fi
 # Where no hard link can be made, the owner file is renamed into place instead.
 new_case_state lock-no-hardlink
 expect_rc "no hard link can be made for the owner file -> OK through the rename" 0 "$(runner dream-pass.sh journal PATH="$SHIM/ln-none:$PATH")"
+if [ ! -e "$CASE_STATE/run.lock" ]; then
+  ok "a lock taken through the rename is released when the pass ends"
+else
+  bad "a lock taken through the rename was left behind -- contents: $(ls -A "$CASE_STATE/run.lock" 2>/dev/null | tr '\n' ' ')"
+fi
 # A runner whose owner write failed removes the directory only when it is empty.
 # One stalled after its mkdir cannot tell its directory from another runner's.
 new_case_state lock-release-empty
@@ -2009,11 +2014,15 @@ for s in dream-pass.sh:journal promotion-pass.sh:summary; do
     "$(runner "${s%%:*}" "${s#*:}" FAKE_RECORD="$REC" PATH="$SHIM/tar-takeover-${s%%.*}:$PATH")"
   takeover_log="$RV/.claude/logs/dream-agent.log"
   case "$s" in promotion-pass*) takeover_log="$RV/.claude/logs/promotion-agent.log" ;; esac
+  # The backup copy and the in-flight marker come after the check, and exit 75
+  # leaves neither behind, because containment never checked this pass.
   if [ ! -f "$REC.argv" ] && grep -q 'nonce=other-runner' "$CASE_STATE/run.lock/owner" 2>/dev/null \
-     && grep -q "LOCKED: another runner's owner file replaced this one's" "$takeover_log" 2>/dev/null; then
-    ok "${s%%:*} whose lock was taken over never starts the agent, leaves the other lock, and says why"
+     && [ ! -e "$CASE_STATE/inflight-backup.tar" ] && [ ! -e "$CASE_STATE/runner-inflight" ] \
+     && [ ! -e "$RV/.claude/logs/runner-inflight" ] \
+     && grep -q "LOCKED: another runner replaced or removed this one's owner file" "$takeover_log" 2>/dev/null; then
+    ok "${s%%:*} whose lock was taken over never starts the agent or marks the pass, leaves the other lock, and says why"
   else
-    bad "${s%%:*} whose lock was taken over started the agent, removed the other lock, or logged nothing"
+    bad "${s%%:*} whose lock was taken over started the agent, marked the pass, removed the other lock, or logged nothing"
   fi
 done
 

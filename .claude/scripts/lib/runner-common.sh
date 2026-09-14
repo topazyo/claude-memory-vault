@@ -1005,7 +1005,7 @@ run_lock_reclaim() {
 run_lock_acquire() {
   local state="$1" root="$2" runner="$3" log="$4" longest="$5" lock="$1/$RUN_LOCK_NAME"
   local wait_max poll deadline now remaining owner o_runner o_pid o_winpid o_started o_longest o_nonce
-  local aged holder idx winpid cur mkdir_misses=0
+  local aged holder idx winpid started cur mkdir_misses=0
   wait_max="$(uint_setting RUN_LOCK_WAIT 1800 0 "$log")"
   poll="$(uint_setting RUN_LOCK_POLL 30 1 "$log")"
   is_uint "$longest" || longest=0
@@ -1017,18 +1017,21 @@ run_lock_acquire() {
     holder=""
     # A new nonce for every attempt, so one nonce only ever names one directory.
     RUN_LOCK_NONCE="$runner-$$-$(date +%s)-${RANDOM:-0}${RANDOM:-0}"
+    # The owner fields are read before mkdir, so the temporary owner file is
+    # written the moment the directory exists and no fork sits in between.
+    winpid=""
+    [ -r "/proc/$$/winpid" ] && winpid="$(cat "/proc/$$/winpid" 2>/dev/null)"
+    started="$(date +%s)"
     if mkdir "$lock" 2>/dev/null; then
       mkdir_misses=0
       RUN_LOCK_MADE=1
-      winpid=""
-      [ -r "/proc/$$/winpid" ] && winpid="$(cat "/proc/$$/winpid" 2>/dev/null)"
       # The owner file is placed with a hard link, which fails when an owner file
       # is already there. A runner that stalled after its mkdir, and whose
       # directory another runner reclaimed and made again, then finds that
       # runner's owner file instead of writing over it. Where no hard link can be
       # made, the rename is used, and only while no owner file is there.
       if printf 'runner=%s\npid=%s\nwinpid=%s\nstarted=%s\nlongest=%s\nnonce=%s\n' \
-        "$runner" "$$" "$winpid" "$(date +%s)" "$longest" "$RUN_LOCK_NONCE" > "$lock/owner.$RUN_LOCK_NONCE" 2>/dev/null; then
+        "$runner" "$$" "$winpid" "$started" "$longest" "$RUN_LOCK_NONCE" > "$lock/owner.$RUN_LOCK_NONCE" 2>/dev/null; then
         ln "$lock/owner.$RUN_LOCK_NONCE" "$lock/owner" 2>/dev/null \
           || { [ ! -e "$lock/owner" ] && mv -f "$lock/owner.$RUN_LOCK_NONCE" "$lock/owner" 2>/dev/null; }
       fi
@@ -1129,7 +1132,11 @@ run_lock_acquire() {
 # link in run_lock_acquire already keeps a stalled runner from writing its owner
 # file over another runner's. Where the rename is used instead, one can still
 # land over another between its check and the rename, so the runners check again
-# just before they mark a pass in flight.
+# just before they mark a pass in flight. That check only catches a rename that
+# lands before it. One that lands later, after a second stall, is not caught, and
+# the stalled runner then sees the other pass's in-flight marker and sets a false
+# tripwire. That needs a file system without hard links and two stalls, the first
+# longer than two minutes.
 run_lock_held() {
   [ -n "${RUN_LOCK_DIR:-}" ] && [ -n "${RUN_LOCK_NONCE:-}" ] \
     && [ "$(owner_field "$(cat "$RUN_LOCK_DIR/owner" 2>/dev/null)" nonce)" = "$RUN_LOCK_NONCE" ]
