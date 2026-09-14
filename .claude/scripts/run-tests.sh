@@ -741,6 +741,19 @@ case "${FAKE_MODE:-nothing}" in
   codeplugindata) journal
                   mkdir -p .obsidian/plugins/dataview
                   printf '{"enableDataviewJs":true}\n' > .obsidian/plugins/dataview/data.json ;;
+  renameddata)    journal
+                  printf '{"enableDataviewJs":true}\n' > .obsidian/plugins/Obsidian-DV/data.json ;;
+  datafolder)     journal
+                  mkdir -p .obsidian/plugins/data.json
+                  printf 'module.exports = class {}\n' > .obsidian/plugins/data.json/main.js ;;
+  commondir)      journal
+                  printf '.\n' > .git/commondir ;;
+  wtcommondir)    journal
+                  gd="$(git rev-parse --git-dir 2>/dev/null)"
+                  printf '%s/\n' "$(cat "$gd/commondir")" > "$gd/commondir" ;;
+  commonattr)     journal
+                  common="$(git rev-parse --git-common-dir 2>/dev/null)"
+                  printf '* filter=planted\n' > "$common/info/attributes" ;;
   lastlink)       ln -s ../40-llm-wiki/wiki 31-standards/.claude
                   printf 'PROMOTION-SUMMARY: promoted=0 pending=0\n' ;;
   commonhook)     journal
@@ -1084,6 +1097,18 @@ if [ "$RV_GIT" -eq 1 ]; then
     bad ".git/info/attributes was not contained"
   fi
   tripwire_clear
+  # .git/commondir redirects where git reads config and hooks. "." keeps git
+  # working in the fixture, and is still a new file under .git/.
+  new_case_state commondir
+  expect_rc "command mode: agent writes .git/commondir -> VIOLATION" 2 \
+    "$(runner dream-pass.sh commondir VAULT_AGENT=command VAULT_AGENT_CMD="$FAKE" VAULT_ALLOW_UNENFORCED_TOOLS=1)"
+  if [ ! -e "$RV/.git/commondir" ] && quarantined .git/commondir; then
+    ok ".git/commondir is fenced by name and quarantined"
+  else
+    bad ".git/commondir was not contained"
+  fi
+  rm -f "$RV/.git/commondir"
+  tripwire_clear
 
   # A vault that is a linked worktree: its .git is a file, and the hooks git runs
   # live in the common git directory outside the vault. A hook planted there is
@@ -1101,6 +1126,31 @@ if [ "$RV_GIT" -eq 1 ]; then
       bad "a hook planted in the common git directory was not reported"
     fi
     rm -f "$RV/.git/hooks/post-commit" "$WT/.claude/logs/runner-tripwire" "$WT/.claude/logs/runner-inflight"
+    tripwire_clear
+    new_case_state worktree-attr
+    expect_rc "worktree vault: agent writes info/attributes in the common git directory -> VIOLATION" 2 \
+      "$(RUNNER_VAULT="$WT" runner dream-pass.sh commonattr VAULT_AGENT=command VAULT_AGENT_CMD="$FAKE" VAULT_ALLOW_UNENFORCED_TOOLS=1)"
+    if grep -q '\.git-common/info/attributes' "$WT/.claude/logs/runner-tripwire" 2>/dev/null; then
+      ok "the tripwire names info/attributes under .git-common/"
+    else
+      bad "info/attributes written in the common git directory was not reported"
+    fi
+    rm -f "$RV/.git/info/attributes" "$WT/.claude/logs/runner-tripwire" "$WT/.claude/logs/runner-inflight"
+    tripwire_clear
+    # The worktree's own git directory names the common one in commondir. A
+    # trailing slash changes the file and leaves git working.
+    wt_gd="$(git -C "$WT" rev-parse --absolute-git-dir 2>/dev/null)"
+    cp "$wt_gd/commondir" "$TMP/wt-commondir-before" 2>/dev/null
+    new_case_state worktree-commondir
+    expect_rc "worktree vault: agent rewrites its git directory's commondir -> VIOLATION" 2 \
+      "$(RUNNER_VAULT="$WT" runner dream-pass.sh wtcommondir VAULT_AGENT=command VAULT_AGENT_CMD="$FAKE" VAULT_ALLOW_UNENFORCED_TOOLS=1)"
+    if grep -q '\.git-common/worktree/commondir' "$WT/.claude/logs/runner-tripwire" 2>/dev/null; then
+      ok "the tripwire names the worktree's commondir"
+    else
+      bad "a rewritten worktree commondir was not reported"
+    fi
+    cp "$TMP/wt-commondir-before" "$wt_gd/commondir" 2>/dev/null
+    rm -f "$WT/.claude/logs/runner-tripwire" "$WT/.claude/logs/runner-inflight"
     tripwire_clear
   else
     printf '  SKIP  worktree vault containment: git worktree add failed here (not counted)\n'
@@ -1165,7 +1215,7 @@ tripwire_clear
 new_case_state obsidianapp
 expect_rc "Obsidian app.json rewritten during the pass -> OK" 0 "$(runner dream-pass.sh obsidianapp)"
 
-# Plugin settings: most plugins rewrite their data.json in normal use, and that
+# Most plugins rewrite their settings file, data.json, in normal use, and that
 # runs nothing. The plugins that run code named in their settings stay fenced.
 new_case_state plugindata
 expect_rc "a graph plugin rewrites its data.json during the pass -> OK" 0 "$(runner dream-pass.sh plugindata)"
@@ -1177,6 +1227,28 @@ if [ ! -e "$RV/.obsidian/plugins/dataview/data.json" ] && quarantined .obsidian/
   ok "a code-running plugin's data.json is contained"
 else
   bad "Dataview's data.json was not contained"
+fi
+tripwire_clear
+rm -rf "$RV/.obsidian/plugins"
+# Obsidian takes a plugin's id from its manifest, not its folder name.
+mkdir -p "$RV/.obsidian/plugins/Obsidian-DV"
+printf '{\n  "id": "dataview",\n  "name": "Dataview"\n}\n' > "$RV/.obsidian/plugins/Obsidian-DV/manifest.json"
+new_case_state renameddata
+expect_rc "agent writes the data.json of Dataview installed as Obsidian-DV/ -> VIOLATION" 2 "$(runner dream-pass.sh renameddata)"
+if quarantined .obsidian/plugins/Obsidian-DV/data.json; then
+  ok "a code-running plugin is recognised by its manifest id, whatever its folder is called"
+else
+  bad "the data.json of a renamed Dataview folder was not contained"
+fi
+tripwire_clear
+rm -rf "$RV/.obsidian/plugins"
+# Only a FILE named data.json is plugin settings. A folder of that name is fenced.
+new_case_state datafolder
+expect_rc "agent plants a plugin in a folder named data.json -> VIOLATION" 2 "$(runner dream-pass.sh datafolder)"
+if [ ! -e "$RV/.obsidian/plugins/data.json/main.js" ] && quarantined .obsidian/plugins/data.json/main.js; then
+  ok "a folder named data.json does not hide a plugin from the fence"
+else
+  bad "a plugin in a folder named data.json was not contained"
 fi
 tripwire_clear
 rm -rf "$RV/.obsidian/plugins"
@@ -1200,7 +1272,9 @@ mkdir -p "$SHIM/cp-tripwire" "$SHIM/tar-create" "$SHIM/tar-extract"
 REAL_CP="$(command -v cp)"
 REAL_TAR="$(command -v tar)"
 printf '#!/bin/sh\nfor a in "$@"; do case "$a" in *runner-tripwire*) exit 1 ;; esac; done\nexec "%s" "$@"\n' "$REAL_CP" > "$SHIM/cp-tripwire/cp"
-printf '#!/bin/sh\ncase "$1" in -cf) : > "$2"; exit 0 ;; esac\nexec "%s" "$@"\n' "$REAL_TAR" > "$SHIM/tar-create/tar"
+# tar-create archives every listed member but the last, so the backup is a valid
+# archive that is still incomplete.
+printf '#!/bin/sh\nif [ "$1" = -cf ] && [ "$3" = -T ]; then\n  sed %s "$4" > "$4.short"\n  exec "%s" -cf "$2" -T "$4.short"\nfi\nexec "%s" "$@"\n' "'\$d'" "$REAL_TAR" "$REAL_TAR" > "$SHIM/tar-create/tar"
 printf '#!/bin/sh\ncase "$1" in -xf) exit 2 ;; esac\nexec "%s" "$@"\n' "$REAL_TAR" > "$SHIM/tar-extract/tar"
 chmod +x "$SHIM/cp-tripwire/cp" "$SHIM/tar-create/tar" "$SHIM/tar-extract/tar"
 
@@ -1470,13 +1544,19 @@ wait "$holder_pid" "$reuse_pid" 2>/dev/null
 
 printf '\n=== scheduled runners: markers, signals and the state directory ===\n'
 
-# The state-directory copy is the one the agent cannot reach, so it wins: a live
-# pid planted in the vault copy must not turn a needed tripwire into LOCKED.
+# The state-directory copy is read first, because the agent cannot reach it. The
+# tripwire quotes the copy it read.
 new_case_state marker-state
 mkdir -p "$CASE_STATE"
-printf 'runner=dream-pass\npid=999999\nstarted=earlier\n' > "$CASE_STATE/runner-inflight"
-printf 'runner=dream-pass\npid=%s\nstarted=now\n' "$$" > "$RV/.claude/logs/runner-inflight"
+printf 'runner=dream-pass\npid=999999\nstarted=state-copy\n' > "$CASE_STATE/runner-inflight"
+printf 'runner=dream-pass\npid=%s\nstarted=vault-copy\n' "$$" > "$RV/.claude/logs/runner-inflight"
 expect_rc "a dead marker outside the vault and a live one planted inside -> TRIPWIRE" 78 "$(runner dream-pass.sh journal)"
+if grep -q 'started=state-copy' "$RV/.claude/logs/runner-tripwire" 2>/dev/null \
+   && ! grep -q 'started=vault-copy' "$RV/.claude/logs/runner-tripwire"; then
+  ok "the marker is read from the state directory, not from the copy in the vault"
+else
+  bad "the tripwire does not quote the state-directory marker"
+fi
 tripwire_clear
 
 # A stale marker whose tripwire cannot be written keeps the marker.
@@ -1493,22 +1573,28 @@ fi
 expect_rc "the next run, once a tripwire can be written -> TRIPWIRE" 78 "$(runner dream-pass.sh journal)"
 tripwire_clear
 
-# A signal during the pass: containment never runs, so the handler sets the
-# tripwire itself before the runner exits.
+# A signal during the pass stops containment from running, so the handler sets
+# the tripwire itself before the runner exits. term_hung_pass [extra env...] starts
+# a pass whose agent hangs, waits until the agent has started, sends TERM, and
+# sets sig_rc.
+term_hung_pass() {
+  local sig_wait=0
+  rm -f "$TMP/sig-rec.argv"
+  env CLAUDE_BIN="$FAKE" FAKE_MODE=hang WATCHDOG_POLL=1 WATCHDOG_GRACE=2 \
+    VAULT_AGENT=claude VAULT_AGENT_CMD= VAULT_ALLOW_UNENFORCED_TOOLS= FAKE_RECORD="$TMP/sig-rec" \
+    VAULT_STATE_DIR="$CASE_STATE" CLAUDE_CODE_DISABLE_AUTO_MEMORY= DREAM_PASS_TIMEOUT=60 "$@" \
+    bash "$RV/.claude/scripts/dream-pass.sh" >/dev/null 2>&1 &
+  sig_pid=$!
+  while [ ! -f "$TMP/sig-rec.argv" ] && [ "$sig_wait" -lt 30 ]; do
+    sleep 1
+    sig_wait=$((sig_wait + 1))
+  done
+  kill -TERM "$sig_pid" 2>/dev/null
+  wait "$sig_pid"
+  sig_rc=$?
+}
 new_case_state signal
-env CLAUDE_BIN="$FAKE" FAKE_MODE=hang WATCHDOG_POLL=1 WATCHDOG_GRACE=2 \
-  VAULT_AGENT=claude VAULT_AGENT_CMD= VAULT_ALLOW_UNENFORCED_TOOLS= FAKE_RECORD= \
-  VAULT_STATE_DIR="$CASE_STATE" CLAUDE_CODE_DISABLE_AUTO_MEMORY= DREAM_PASS_TIMEOUT=60 \
-  bash "$RV/.claude/scripts/dream-pass.sh" >/dev/null 2>&1 &
-sig_pid=$!
-sig_wait=0
-while [ ! -f "$CASE_STATE/runner-inflight" ] && [ "$sig_wait" -lt 30 ]; do
-  sleep 1
-  sig_wait=$((sig_wait + 1))
-done
-kill -TERM "$sig_pid" 2>/dev/null
-wait "$sig_pid"
-sig_rc=$?
+term_hung_pass
 expect_rc "TERM while the agent runs -> exit 143" 143 "$sig_rc"
 if [ -f "$CASE_STATE/runner-tripwire" ] && grep -q 'interrupted by a signal' "$CASE_STATE/runner-tripwire" \
    && [ ! -f "$CASE_STATE/runner-inflight" ]; then
@@ -1516,6 +1602,18 @@ if [ -f "$CASE_STATE/runner-tripwire" ] && grep -q 'interrupted by a signal' "$C
 else
   bad "TERM during the pass left no tripwire, or left the marker"
 fi
+tripwire_clear
+# The same signal when no tripwire can be written keeps the marker.
+new_case_state signal-noway
+term_hung_pass PATH="$SHIM/cp-tripwire:$PATH"
+expect_rc "TERM while the agent runs and no tripwire can be written -> exit 143" 143 "$sig_rc"
+if [ -f "$CASE_STATE/runner-inflight" ] && [ ! -e "$CASE_STATE/runner-tripwire" ] \
+   && grep -q 'TRIPWIRE-ERROR: interrupted before containment' "$RV/.claude/logs/dream-agent.log" 2>/dev/null; then
+  ok "an interrupted pass with no tripwire keeps its marker and logs TRIPWIRE-ERROR"
+else
+  bad "TERM with no writable tripwire cleared the marker, or logged no TRIPWIRE-ERROR"
+fi
+expect_rc "the next run after that signal -> TRIPWIRE" 78 "$(runner dream-pass.sh journal)"
 tripwire_clear
 
 # VAULT_STATE_DIR: a Windows-style path (what a .cmd wrapper sets) is converted,
@@ -1533,6 +1631,65 @@ if [ ! -e "$RV/state-in-vault" ] && grep -q 'WARNING: VAULT_STATE_DIR' "$RV/.cla
   ok "a state directory inside the vault is refused, and the log says so"
 else
   bad "a state directory inside the vault was used, or silently replaced"
+fi
+# A state directory that is not a directory this account can write refuses the
+# run, instead of failing later in a way that reads as something else.
+: > "$TMP/state-is-a-file"
+rm -f "$REC.argv"
+expect_rc "VAULT_STATE_DIR names a file -> refused" 1 \
+  "$(runner dream-pass.sh journal VAULT_STATE_DIR="$TMP/state-is-a-file" FAKE_RECORD="$REC")"
+if [ ! -f "$REC.argv" ] && grep -q 'ERROR: the state directory' "$RV/.claude/logs/dream-agent.log" 2>/dev/null; then
+  ok "an unusable state directory never starts the agent, and the log says why"
+else
+  bad "an unusable state directory started the agent, or logged nothing"
+fi
+
+# The state directory's id comes from the vault's resolved path, so every
+# spelling of one vault finds the same state, and so the same tripwire copy.
+state_of() {  # state_of <vault-spelling> [VAULT_STATE_DIR]
+  ( . "$ROOT/.claude/scripts/lib/runner-common.sh"
+    unset LOCALAPPDATA
+    XDG_STATE_HOME="$TMP/xdg" TMPDIR="$TMP" VAULT_STATE_DIR="${2:-}" vault_state_dir "$1" 2>/dev/null )
+}
+sd_plain="$(state_of "$RV")"
+if [ "$(state_of "$RV/31-standards/..")" = "$sd_plain" ]; then
+  ok "the state directory is the same for a vault path spelled with .."
+else
+  bad "a vault path spelled with .. gets another state directory"
+fi
+ln -s "$RV" "$TMP/vault-link" 2>/dev/null
+if [ -L "$TMP/vault-link" ]; then
+  if [ "$(state_of "$TMP/vault-link")" = "$sd_plain" ]; then
+    ok "the state directory is the same for a symlinked vault path"
+  else
+    bad "a symlinked vault path gets another state directory"
+  fi
+  case "$(state_of "$RV" "$TMP/vault-link/state-through-link")" in
+    "$TMP"/claude-memory-vault-state-*) ok "a new VAULT_STATE_DIR under a symlink into the vault is refused" ;;
+    *) bad "a new VAULT_STATE_DIR under a symlink into the vault was accepted" ;;
+  esac
+else
+  printf '  SKIP  symlinked vault spellings: ln -s does not create symlinks here (not counted)\n'
+fi
+# On Windows and macOS the file system ignores case, so a differently cased
+# spelling is the same vault.
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*) rv_upper="$(cygpath -m "$RV" | tr '[:lower:]' '[:upper:]')" ;;
+  Darwin*) rv_upper="$(printf '%s' "$RV" | tr '[:lower:]' '[:upper:]')" ;;
+  *) rv_upper="" ;;
+esac
+if [ -n "$rv_upper" ] && [ -d "$rv_upper" ]; then
+  if [ "$(state_of "$rv_upper")" = "$sd_plain" ]; then
+    ok "the state directory is the same for a differently cased vault path"
+  else
+    bad "a differently cased vault path gets another state directory"
+  fi
+  case "$(state_of "$RV" "$rv_upper/state-cased")" in
+    "$TMP"/claude-memory-vault-state-*) ok "a new VAULT_STATE_DIR inside the vault, spelled in other case, is refused" ;;
+    *) bad "a new VAULT_STATE_DIR inside the vault, spelled in other case, was accepted" ;;
+  esac
+else
+  printf '  SKIP  differently cased vault spellings: the file system here is case-sensitive (not counted)\n'
 fi
 
 # vault-check refuses while the tripwire is set, so neither a report nor the
@@ -1559,6 +1716,17 @@ expect_rc "vault-check refuses while only the state-directory copy of the tripwi
 rm -f "$TMP/tw-state/runner-tripwire"
 expect_rc "vault-check with the runner library present and no tripwire anywhere" 0 \
   "$(VAULT_STATE_DIR="$TMP/tw-state" bash "$TWV/.claude/scripts/vault-check.sh" >/dev/null 2>&1; echo $?)"
+# A library that cannot be loaded leaves the state-directory copy unchecked, and
+# vault-check must say so.
+cp "$TWV/.claude/scripts/lib/runner-common.sh" "$TMP/runner-common.good"
+printf 'vault_state_dir() {\n' > "$TWV/.claude/scripts/lib/runner-common.sh"
+tw_err="$(VAULT_STATE_DIR="$TMP/tw-state" bash "$TWV/.claude/scripts/vault-check.sh" 2>&1 >/dev/null)"
+if printf '%s' "$tw_err" | grep -q 'WARNING - could not work out the runners'; then
+  ok "vault-check warns when the runner library cannot be loaded"
+else
+  bad "vault-check skipped the state-directory tripwire without a warning"
+fi
+cp "$TMP/runner-common.good" "$TWV/.claude/scripts/lib/runner-common.sh"
 
 # Structure the containment depends on. A runner whose body is not wrapped in
 # main could execute an edit made to it mid-run; an unattended agent with memory

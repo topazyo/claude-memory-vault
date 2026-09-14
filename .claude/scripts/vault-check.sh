@@ -36,10 +36,15 @@ TODAY="$(date +%F)"
 # directory outside the vault, so a deleted in-vault copy does not clear it.
 TRIPWIRES="$ROOT/.claude/logs/runner-tripwire"
 RUNNER_LIB="$(dirname "$0")/lib/runner-common.sh"
+state_dir=""
 if [ -f "$RUNNER_LIB" ]; then
-  state_dir="$( . "$RUNNER_LIB" && vault_state_dir "$(cd "$ROOT" 2>/dev/null && pwd)" 2>/dev/null)"
-  [ -n "$state_dir" ] && TRIPWIRES="$TRIPWIRES
+  state_dir="$( . "$RUNNER_LIB" && vault_state_dir "$ROOT")"
+fi
+if [ -n "$state_dir" ]; then
+  TRIPWIRES="$TRIPWIRES
 $state_dir/runner-tripwire"
+else
+  printf 'vault-check: WARNING - could not work out the runners'"'"' state directory from %s, so the tripwire copy kept there was not checked.\n' "$RUNNER_LIB" >&2
 fi
 while IFS= read -r tw; do
   if [ -e "$tw" ] || [ -L "$tw" ]; then
