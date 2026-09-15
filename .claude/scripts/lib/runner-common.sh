@@ -23,51 +23,379 @@ ts() {
   date -Iseconds 2>/dev/null || date +%Y-%m-%dT%H:%M:%S%z
 }
 
+RUNNER_UNAME="$(uname -s 2>/dev/null)"
+
+# is_windows_bash
+# True under Git Bash, MSYS or Cygwin, where a native Windows process is stopped
+# with taskkill rather than a signal.
+is_windows_bash() {
+  case "$RUNNER_UNAME" in MINGW*|MSYS*|CYGWIN*) return 0 ;; *) return 1 ;; esac
+}
+
+# file_size <file>
+# The size in bytes, or 0 when the file is missing.
+file_size() {
+  local n
+  n="$(wc -c < "$1" 2>/dev/null | tr -d ' ')"
+  printf '%s\n' "${n:-0}"
+}
+
+# new_uuid
+# A random version 4 UUID. It is the session id Claude Code is started with, and
+# the nonce that finds the pass's processes after a kill. Falls back to
+# checksums of the time, the pid and $RANDOM when /dev/urandom cannot be read.
+new_uuid() {
+  local hex i
+  hex="$(od -An -tx1 -N16 /dev/urandom 2>/dev/null | tr -d ' \n')"
+  case "$hex" in *[!0-9a-f]*) hex="" ;; esac
+  if [ "${#hex}" -ne 32 ]; then
+    hex=""
+    for i in 1 2 3 4; do
+      hex="$hex$(printf '%08x' "$(printf '%s %s %s %s' "$i" "$(date +%s)" "$$" "${RANDOM:-0}${RANDOM:-0}" | cksum | cut -d' ' -f1)")"
+    done
+  fi
+  printf '%s-%s-4%s-%x%s-%s\n' "${hex:0:8}" "${hex:8:4}" "${hex:13:3}" $(( (0x${hex:16:1} & 3) | 8 )) "${hex:17:3}" "${hex:20:12}"
+}
+
+# tree_pids <pid>
+# Outside Windows, prints the pid, every descendant of it by parent pid, and
+# every process in the process group the pid leads, one per line. The list is
+# taken before a kill, because a child whose parent has died is re-parented and
+# can no longer be found by its parent pid. Returns 1, having printed only the
+# pid, when ps gives no process list.
+tree_pids() {
+  local list
+  list="$(ps -A -o pid= -o ppid= -o pgid= 2>/dev/null)"
+  if [ -z "$list" ]; then
+    printf '%s\n' "$1"
+    return 1
+  fi
+  printf '%s\n' "$list" | awk -v root="$1" '
+    { pid[NR] = $1; ppid[NR] = $2; pgid[NR] = $3 }
+    END {
+      keep[root] = 1
+      print root
+      for (i = 1; i <= NR; i++) if (pgid[i] == root && !(pid[i] in keep)) { keep[pid[i]] = 1; print pid[i] }
+      grew = 1
+      while (grew) {
+        grew = 0
+        for (i = 1; i <= NR; i++) if ((ppid[i] in keep) && !(pid[i] in keep)) { keep[pid[i]] = 1; print pid[i]; grew = 1 }
+      }
+    }'
+}
+
+# pid_alive <pid>
+# True when the pid is running and is not a zombie waiting to be reaped.
+pid_alive() {
+  kill -0 "$1" 2>/dev/null || return 1
+  case "$(ps -o stat= -p "$1" 2>/dev/null)" in Z*) return 1 ;; esac
+  return 0
+}
+
+# group_of <pid>
+# The process group id of the pid, digits only, or nothing.
+group_of() {
+  ps -o pgid= -p "$1" 2>/dev/null | tr -d ' '
+}
+
+# group_members <pgid>
+# Outside Windows, prints each pid whose process group is <pgid>, one per line.
+# Returns 1 when ps gives no process list.
+group_members() {
+  local list
+  list="$(ps -A -o pid= -o pgid= 2>/dev/null)"
+  [ -n "$list" ] || return 1
+  printf '%s\n' "$list" | awk -v g="$1" '$2 == g { print $1 }'
+}
+
+# win_msys_tree <pid>
+# On Git Bash for Windows, prints "<pid> <winpid>" for the pid and each of its
+# descendants in the Git Bash process table. That table keeps a child's parent
+# even after the Windows process between them has exited, which happens every
+# time Git Bash runs a program, so it finds children the Windows parent ids no
+# longer link. Returns 1 when ps gives no process list.
+win_msys_tree() {
+  local list
+  list="$(ps -l 2>/dev/null)"
+  [ -n "$list" ] || return 1
+  printf '%s\n' "$list" | awk -v root="$1" '
+    NR > 1 { sub(/^[^0-9]*/, ""); n++; pid[n] = $1; ppid[n] = $2; win[n] = $4 }
+    END {
+      keep[root] = 1
+      for (i = 1; i <= n; i++) if (pid[i] == root) print pid[i], win[i]
+      grew = 1
+      while (grew) {
+        grew = 0
+        for (i = 1; i <= n; i++) if ((ppid[i] in keep) && !(pid[i] in keep)) { keep[pid[i]] = 1; print pid[i], win[i]; grew = 1 }
+      }
+    }'
+}
+
+# win_tree_stop <winpid> <nonce> <record-file> [<more winpids> [<listed-epoch>]]
+# On Windows, stops the native process tree under <winpid>, every process in the
+# space-separated <more winpids>, and every process whose command line carries
+# <nonce>, which finds one whose parent in the tree had already exited. Appends
+# to <record-file> each process still running afterwards, as
+# "alive <id> <name>", "none" when there is none, and "unknown (...)" when
+# PowerShell does not finish within WINDOWS_STOP_LIMIT seconds (default 60).
+#
+# PowerShell takes one process list and works from it. With no list at all it
+# still runs taskkill on <winpid> and answers unknown. <winpid> and <more
+# winpids> count only for a process that started no later than <listed-epoch>,
+# the time the caller listed them, and a child only when it started no earlier
+# than its parent, because Windows reuses process ids. Times are compared in
+# UTC, so a daylight saving change cannot reorder them. taskkill runs on the root
+# only after that check, and each process is stopped, or reported alive, only
+# while its id still belongs to the process in that list. The stop then goes in
+# rounds of a second, up to 10. Each round lists the processes again and adds
+# every new one that carries the nonce, and every child that started before its
+# parent's stop returned, because a process of the tree can start one between
+# the list and the end of its stop. A child whose parent id now belongs to a
+# newer process, which started no later than the child, is that process's, and
+# is left alone. An id already picked counts as picked only while it still
+# belongs to the same process. Rounds end once nothing picked is left.
+#
+# The ids, the nonce and the time reach PowerShell in the environment, never on
+# its command line, and PowerShell leaves its own process out. Otherwise the
+# sweep would find PowerShell itself by the nonce and stop it before it could
+# report.
+win_tree_stop() {
+  local winpid="$1" nonce="$2" record="$3" more="${4:-}" listed="${5:-}" script limit out ps_pid ps_win waited=0
+  is_uint "$winpid" || winpid=0
+  is_uint "$listed" || listed=0
+  case "$nonce" in *[!A-Za-z0-9-]*) nonce="" ;; esac
+  case "$more" in *[!0-9\ ]*) more="" ;; esac
+  limit="${WINDOWS_STOP_LIMIT:-60}"
+  is_uint "$limit" && [ "$limit" -gt 0 ] || limit=60
+  script="\$ProgressPreference = 'SilentlyContinue'
+\$root = 0; [void][int]::TryParse([string]\$env:VAULT_STOP_ROOT, [ref]\$root)
+\$nonce = [string]\$env:VAULT_STOP_NONCE
+\$listed = [DateTime]::MaxValue
+\$t = [long]0
+if ([long]::TryParse([string]\$env:VAULT_STOP_LISTED, [ref]\$t) -and \$t -gt 0) { \$listed = [DateTimeOffset]::FromUnixTimeSeconds(\$t + 1).UtcDateTime }
+\$all = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)
+if (\$all.Count -eq 0) {
+  if (\$root -gt 0) { & taskkill.exe /T /F /PID \$root 2>&1 | Out-Null; 'unknown (PowerShell got no process list, so only taskkill on the agent ran)' }
+  else { 'unknown (PowerShell got no process list, so nothing could be stopped)' }
+  exit
+}
+\$byId = @{}
+foreach (\$p in \$all) { \$byId[[int]\$p.ProcessId] = \$p }
+function Born(\$p) { \$p.CreationDate.ToUniversalTime() }
+\$pick = @{}
+if (\$root -gt 0 -and \$byId.ContainsKey(\$root) -and (Born \$byId[\$root]) -le \$listed) { \$pick[\$root] = \$true }
+foreach (\$x in ([string]\$env:VAULT_STOP_IDS).Split(' ')) { \$i = 0; if ([int]::TryParse(\$x, [ref]\$i) -and \$byId.ContainsKey(\$i) -and (Born \$byId[\$i]) -le \$listed) { \$pick[\$i] = \$true } }
+if (\$nonce) { foreach (\$p in \$all) { if (\$p.CommandLine -and \$p.CommandLine.Contains(\$nonce)) { \$pick[[int]\$p.ProcessId] = \$true } } }
+\$pick.Remove([int]\$PID)
+\$grew = \$true
+while (\$grew) {
+  \$grew = \$false
+  foreach (\$p in \$all) {
+    \$id = [int]\$p.ProcessId; \$pp = [int]\$p.ParentProcessId
+    if (\$id -ne \$PID -and \$pick.ContainsKey(\$pp) -and -not \$pick.ContainsKey(\$id) -and (Born \$byId[\$pp]) -le (Born \$p)) { \$pick[\$id] = \$true; \$grew = \$true }
+  }
+}
+function Same(\$id) { \$c = Get-CimInstance Win32_Process -Filter ('ProcessId=' + \$id) -ErrorAction SilentlyContinue; if (\$c -and \$c.CreationDate -eq \$byId[\$id].CreationDate) { \$c } }
+\$stopAt = @{}
+if (\$pick.ContainsKey(\$root) -and (Same \$root)) { & taskkill.exe /T /F /PID \$root 2>&1 | Out-Null; \$stopAt[\$root] = [DateTime]::UtcNow }
+\$left = @()
+for (\$round = 1; \$round -le 10; \$round++) {
+  foreach (\$id in @(\$pick.Keys)) { if (Same \$id) { Stop-Process -Id \$id -Force -ErrorAction SilentlyContinue; if (-not \$stopAt.ContainsKey(\$id)) { \$stopAt[\$id] = [DateTime]::UtcNow } } }
+  Start-Sleep -Seconds 1
+  \$now = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)
+  \$nowById = @{}
+  foreach (\$p in \$now) { \$nowById[[int]\$p.ProcessId] = \$p }
+  foreach (\$p in \$now) {
+    \$id = [int]\$p.ProcessId; \$pp = [int]\$p.ParentProcessId
+    if (\$id -eq \$PID -or (\$pick.ContainsKey(\$id) -and \$byId[\$id].CreationDate -eq \$p.CreationDate)) { continue }
+    \$child = \$stopAt.ContainsKey(\$pp) -and (Born \$p) -ge (Born \$byId[\$pp]) -and (Born \$p) -le \$stopAt[\$pp]
+    if (\$child -and \$nowById.ContainsKey(\$pp) -and \$nowById[\$pp].CreationDate -ne \$byId[\$pp].CreationDate -and (Born \$p) -ge (Born \$nowById[\$pp])) { \$child = \$false }
+    if ((\$nonce -and \$p.CommandLine -and \$p.CommandLine.Contains(\$nonce)) -or \$child) { \$byId[\$id] = \$p; \$pick[\$id] = \$true; \$stopAt.Remove(\$id) }
+  }
+  \$left = @()
+  foreach (\$id in @(\$pick.Keys)) { \$c = Same \$id; if (\$c) { \$left += ('alive ' + \$id + ' ' + \$c.Name) } }
+  if (\$left.Count -eq 0) { break }
+}
+if (\$left.Count -eq 0) { 'none' } else { \$left }"
+  out="$(mktemp 2>/dev/null || mktemp -t winstop)" || out="$record.powershell"
+  VAULT_STOP_ROOT="$winpid" VAULT_STOP_NONCE="$nonce" VAULT_STOP_IDS="$more" VAULT_STOP_LISTED="$listed" \
+    MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' \
+    powershell.exe -NoProfile -NonInteractive -Command "$script" > "$out" 2>/dev/null &
+  ps_pid=$!
+  while kill -0 "$ps_pid" 2>/dev/null && [ "$waited" -lt "$limit" ]; do
+    sleep 1
+    waited=$((waited + 1))
+  done
+  if kill -0 "$ps_pid" 2>/dev/null; then
+    # A PowerShell that hangs, as one whose process query waits on a wedged
+    # WMI service does, is stopped with its children.
+    ps_win="$(cat "/proc/$ps_pid/winpid" 2>/dev/null)"
+    is_uint "$ps_win" && [ "$ps_win" -gt 0 ] && MSYS_NO_PATHCONV=1 taskkill /T /F /PID "$ps_win" >/dev/null 2>&1
+    kill -KILL "$ps_pid" 2>/dev/null
+    wait "$ps_pid" 2>/dev/null
+    printf 'unknown (PowerShell did not finish within %ss)\n' "$limit" >> "$record"
+  else
+    wait "$ps_pid" 2>/dev/null
+    tr -d '\r' < "$out" | awk '/^(none|alive [0-9]+ .*|unknown \(PowerShell .*\))$/' >> "$record"
+  fi
+  rm -f "$out"
+}
+
+# stop_tree <pid> <grace-seconds> <record-file> <nonce> <own-group: 0|1>
+# Stops the command started by run_with_watchdog and everything it started, and
+# records what is still running afterwards in <record-file>, "alive <pid>" per
+# process, "unknown (...)" when the processes could not be listed or checked, or
+# "none". <own-group> is 1 when the command was started in a process group of
+# its own.
+#
+# Outside Windows the process group is signalled only when the command really
+# leads its own group and that group is not the runner's, so a kill never reaches
+# the runner itself. Each process of the tree recorded before the kill is
+# signalled as well, in every case. TERM comes first, then KILL after the grace
+# period. On Windows a native process ignores those signals, so the tree is
+# stopped with taskkill and the sweep in win_tree_stop.
+#
+# With RUN_REAPED=1 the command has already ended and been reaped, and its pid
+# may belong to another process. Outside Windows only the members left in its
+# process group are signalled, because the group id stays reserved while it has
+# members. On Windows only the nonce finds what it left.
+stop_tree() {
+  local pid="$1" grace="$2" record="$3" nonce="$4" own="$5" members winpid g p w group=0 left listed
+  : > "$record"
+  if is_windows_bash; then
+    listed="$(date +%s)"
+    if [ "${RUN_REAPED:-0}" = 1 ]; then
+      win_tree_stop 0 "$nonce" "$record" "" "$listed"
+      grep -qE '^(none|alive|unknown \(PowerShell)' "$record" || printf 'unknown (PowerShell gave no answer)\n' >> "$record"
+      return 0
+    fi
+    # The tree is listed and stopped before any signal, while the command's own
+    # process still links it to its children. A TERM first would let a Git Bash
+    # wrapper exit and leave a child with no parent to be found by, and no
+    # nonce on its command line.
+    if ! members="$(win_msys_tree "$pid")"; then
+      printf 'unknown (ps gave no process list, so the Git Bash processes of the tree are not known)\n' >> "$record"
+    fi
+    winpid="$(cat "/proc/$pid/winpid" 2>/dev/null)"
+    win_tree_stop "$winpid" "$nonce" "$record" "$(printf '%s\n' "$members" | awk '$2 ~ /^[0-9]+$/ { printf "%s ", $2 }')" "$listed"
+    grep -qE '^(none|alive|unknown \(PowerShell)' "$record" || printf 'unknown (PowerShell gave no answer)\n' >> "$record"
+    # Git Bash pids are handed out again once free, so each is signalled and
+    # checked only while it still names the Windows process that was listed.
+    printf '%s\n' "$members" | while read -r p w; do
+      [ -n "$p" ] && [ "$(cat "/proc/$p/winpid" 2>/dev/null)" = "$w" ] && kill -KILL "$p" 2>/dev/null
+    done
+    [ -n "$winpid" ] && [ "$(cat "/proc/$pid/winpid" 2>/dev/null)" = "$winpid" ] && kill -KILL "$pid" 2>/dev/null
+    sleep 1
+    printf '%s\n' "$members" | while read -r p w; do
+      [ -n "$p" ] && [ "$p" != "$pid" ] || continue
+      [ "$(cat "/proc/$p/winpid" 2>/dev/null)" = "$w" ] && kill -0 "$p" 2>/dev/null && printf 'alive %s\n' "$p" >> "$record"
+    done
+    return 0
+  fi
+  if [ "${RUN_REAPED:-0}" = 1 ]; then
+    if ! members="$(group_members "$pid")"; then
+      printf 'unknown (ps gave no process list, so what the ended command left in its group is not known)\n' >> "$record"
+    fi
+  elif ! members="$(tree_pids "$pid")"; then
+    printf 'unknown (ps gave no process list, so only the command itself could be stopped)\n' >> "$record"
+  fi
+  if [ "${RUN_REAPED:-0}" != 1 ] && [ "$own" = 1 ] && [ "$(group_of "$pid")" = "$pid" ] && [ "$(group_of "$pid")" != "$(group_of "$$")" ]; then
+    group=1
+  fi
+  if [ "$group" -eq 1 ]; then kill -TERM -- "-$pid" 2>/dev/null; fi
+  for p in $members; do kill -TERM "$p" 2>/dev/null; done
+  g=0
+  while [ "$g" -lt "$grace" ]; do
+    left=""
+    for p in $members; do pid_alive "$p" && left=1; done
+    [ -z "$left" ] && break
+    sleep 1
+    g=$((g + 1))
+  done
+  if [ "$group" -eq 1 ]; then kill -KILL -- "-$pid" 2>/dev/null; fi
+  for p in $members; do kill -KILL "$p" 2>/dev/null; done
+  sleep 1
+  for p in $members; do
+    [ "$p" = "$pid" ] && continue
+    pid_alive "$p" && printf 'alive %s\n' "$p" >> "$record"
+  done
+  [ -s "$record" ] || printf 'none\n' >> "$record"
+  return 0
+}
+
 # run_with_watchdog <timeout-seconds> <output-file> <command> [args...]
 #
 # Runs the command with stdin at /dev/null (it must never wait for input), its
-# output appended to <output-file>, and a watchdog that sends TERM when the
-# timeout elapses and KILL after a grace period. Sets three globals:
-#   RUN_PID        the command's pid, so a signal handler can stop it
-#   RUN_RC         the command's exit status (143/137 when the watchdog fired)
-#   RUN_TIMED_OUT  1 if the watchdog fired, else 0
+# output appended to <output-file>, and a watchdog that stops it when the
+# timeout elapses, or when RUN_STALL_SECONDS is above 0 and the output has not
+# grown for that many seconds. Outside Windows the command starts in a process
+# group of its own, and a stop reaches everything it started (stop_tree). Sets
+# these globals:
+#   RUN_PID          the command's pid, so a signal handler can stop it, set
+#                    while the command runs and while a stop of it runs, and
+#                    empty once the call returns
+#   RUN_REAPED       1 once the command has ended and been reaped, else 0
+#   RUN_RC           the command's exit status (143/137 when the watchdog fired)
+#   RUN_TIMED_OUT    1 if the timeout fired, else 0
+#   RUN_STALLED      1 if the output stopped growing for RUN_STALL_SECONDS, else 0
+#   RUN_KILL_FAILED  1 if a process of the stopped command was still running
+#                    afterwards, the stop could not be checked, or its output
+#                    kept growing, else 0
+#   RUN_KILL_REPORT  what stop_tree recorded, one process per line
 #
-# The watchdog signals this pid only. A wrapper's children, or a native Windows
-# process started from Git Bash, can outlive it; the scheduled-pass plan tracks a
-# process-tree kill as separate work.
+# Optional inputs, set for one call as VAR=value run_with_watchdog ...:
+#   RUN_STALL_SECONDS  seconds without output growth before a stop (0 = never)
+#   RUN_GAPS_FILE      where each silent stretch the watchdog saw is appended,
+#                      in seconds, for record_stream_gaps to keep
+#   RUN_NONCE          a string in the command's arguments, which the Windows
+#                      stop uses to find processes that left the tree
 #
 # The watchdog polls rather than sleeping for the full timeout, so it exits on
 # its own within one poll interval of the command finishing and never outlives
-# the run by more than that. WATCHDOG_POLL and WATCHDOG_GRACE are overridable so
-# the test suite can exercise the timeout path in seconds instead of hours.
+# the run by more than that. It measures time and silence in poll intervals.
+# WATCHDOG_POLL and WATCHDOG_GRACE are overridable so the test suite can exercise
+# the stop paths in seconds instead of hours.
 run_with_watchdog() {
   local timeout="$1" out="$2"
   shift 2
-  local poll="${WATCHDOG_POLL:-5}" grace="${WATCHDOG_GRACE:-15}"
-  local flag
-  flag="$(mktemp 2>/dev/null || mktemp -t runner)" || flag="${out}.timed-out"
-  rm -f "$flag"
+  local poll="${WATCHDOG_POLL:-5}" grace="${WATCHDOG_GRACE:-15}" stall="${RUN_STALL_SECONDS:-0}"
+  local gaps="${RUN_GAPS_FILE:-}" nonce="${RUN_NONCE:-}" flag own=0 before_size after_size
+  is_uint "$stall" || stall=0
+  flag="$(mktemp 2>/dev/null || mktemp -t runner)" || flag="${out}.watchdog"
+  rm -f "$flag" "$flag.stalled" "$flag.stopped"
 
+  # A process group of its own, so a stop reaches a child that has left the
+  # tree. Job control is switched on only around the launch.
+  if ! is_windows_bash; then
+    set -m
+    own=1
+  fi
   "$@" </dev/null >>"$out" 2>&1 &
   local pid=$!
+  [ "$own" -eq 1 ] && set +m
   RUN_PID=$pid
+  RUN_REAPED=0
 
   (
     waited=0
+    silent=0
+    size="$(file_size "$out")"
     while kill -0 "$pid" 2>/dev/null; do
-      if [ "$waited" -ge "$timeout" ]; then
-        : >"$flag"
-        kill -TERM "$pid" 2>/dev/null
-        g=0
-        while [ "$g" -lt "$grace" ] && kill -0 "$pid" 2>/dev/null; do
-          sleep 1
-          g=$((g + 1))
-        done
-        kill -KILL "$pid" 2>/dev/null
+      if [ "$waited" -ge "$timeout" ] || { [ "$stall" -gt 0 ] && [ "$silent" -ge "$stall" ]; }; then
+        if [ "$waited" -ge "$timeout" ]; then : >"$flag"; else : >"$flag.stalled"; fi
+        stop_tree "$pid" "$grace" "$flag.stopped" "$nonce" "$own"
         exit 0
       fi
       sleep "$poll"
       waited=$((waited + poll))
+      now="$(file_size "$out")"
+      if [ "$now" != "$size" ]; then
+        [ -n "$gaps" ] && printf '%s\n' "$((silent + poll))" >> "$gaps"
+        size="$now"
+        silent=0
+      else
+        silent=$((silent + poll))
+      fi
     done
   ) &
   local watchdog=$!
@@ -76,14 +404,44 @@ run_with_watchdog() {
   # .claude/logs. RUN_RC carries the status.
   wait "$pid" 2>/dev/null
   RUN_RC=$?
-  kill "$watchdog" 2>/dev/null
+  # The pid is reaped and may be handed to another process. While no stop has
+  # begun, a signal handler has nothing left to stop. While the watchdog's stop
+  # runs, what the command left may still be running, so the handler is still
+  # offered the pid, marked as reaped, and stop_tree then leaves the pid itself
+  # alone.
+  RUN_REAPED=1
+  # A watchdog that has not begun a stop is only sleeping, so it is ended at
+  # once. One that has is left to finish, and a stop cut short when the two met
+  # is finished here.
+  if [ ! -f "$flag" ] && [ ! -f "$flag.stalled" ]; then
+    RUN_PID=""
+    kill "$watchdog" 2>/dev/null
+  fi
   wait "$watchdog" 2>/dev/null
+  if { [ -f "$flag" ] || [ -f "$flag.stalled" ]; } && [ ! -s "$flag.stopped" ]; then
+    stop_tree "$pid" "$grace" "$flag.stopped" "$nonce" "$own"
+  fi
 
   RUN_TIMED_OUT=0
-  if [ -f "$flag" ]; then
-    RUN_TIMED_OUT=1
-    rm -f "$flag"
+  RUN_STALLED=0
+  RUN_KILL_FAILED=0
+  RUN_KILL_REPORT=""
+  [ -f "$flag" ] && RUN_TIMED_OUT=1
+  [ -f "$flag.stalled" ] && RUN_STALLED=1
+  if [ -f "$flag.stopped" ]; then
+    RUN_KILL_REPORT="$(cat "$flag.stopped" 2>/dev/null)"
+    # A stopped command whose output still grows has a writer left somewhere.
+    before_size="$(file_size "$out")"
+    sleep 2
+    after_size="$(file_size "$out")"
+    if [ "$before_size" != "$after_size" ]; then
+      RUN_KILL_REPORT="$(printf '%s\noutput still growing after the stop\n' "$RUN_KILL_REPORT")"
+    fi
+    case "$RUN_KILL_REPORT" in *alive*|*unknown*|*growing*) RUN_KILL_FAILED=1 ;; esac
   fi
+  rm -f "$flag" "$flag.stalled" "$flag.stopped"
+  RUN_PID=""
+  RUN_REAPED=0
   return 0
 }
 
@@ -240,6 +598,7 @@ snapshot_tree() {
       fence_find ./.claude/logs \( -type f \( -name '*.log' -o -name dream-pass.git-state.txt -o -name promotion-pass.git-state.txt \
         -o -name dream-pass.prompt.md -o -name promotion-pass.prompt.md -o -name runner-tripwire -o -name runner-inflight \
         -o -name 'runner-tripwire.tmp.*' -o -name 'runner-inflight.tmp.*' \
+        -o -name 'dream-agent.run.log.??????' -o -name 'promotion-agent.run.log.??????' \
         -o -name dream-pass.launchd.out -o -name dream-pass.launchd.err \
         -o -name promotion-pass.launchd.out -o -name promotion-pass.launchd.err \) \) -prune -o
     fi
@@ -450,6 +809,8 @@ steering_filter() {
             || base == "dream-pass.prompt.md" || base == "promotion-pass.prompt.md" \
             || base == "runner-tripwire" || base == "runner-inflight" \
             || base ~ /^runner-tripwire\.tmp\./ || base ~ /^runner-inflight\.tmp\./ \
+            || base ~ /^dream-agent\.run\.log\.[a-z0-9][a-z0-9][a-z0-9][a-z0-9][a-z0-9][a-z0-9]$/ \
+            || base ~ /^promotion-agent\.run\.log\.[a-z0-9][a-z0-9][a-z0-9][a-z0-9][a-z0-9][a-z0-9]$/ \
             || base == "dream-pass.launchd.out" || base == "dream-pass.launchd.err" \
             || base == "promotion-pass.launchd.out" || base == "promotion-pass.launchd.err") next
         print $0
@@ -521,7 +882,6 @@ backup_steering() {
 # On Windows and macOS, whose file systems ignore case by default, ASCII letters
 # are lowercased, in the C locale so that a scheduler's locale and a terminal's
 # give the same result.
-RUNNER_UNAME="$(uname -s 2>/dev/null)"
 path_key() {
   case "$RUNNER_UNAME" in
     MINGW*|MSYS*|CYGWIN*)
@@ -678,36 +1038,76 @@ guard_exists() {
   [ -e "$p1" ] || [ -L "$p1" ] || [ -e "$p2" ] || [ -L "$p2" ]
 }
 
-# write_tripwire <root> <state-dir> <runner> <reason> <quarantine-dir> <handled-list> [<errors-list>]
+# write_tripwire <root> <state-dir> <runner> <reason> <quarantine-dir> <handled-list> [<errors-list> [stop]]
 # Writes the tripwire in the vault and in the state directory. Returns 0 when at
-# least one copy is verified in place, 1 when neither could be written.
+# least one copy is verified in place, 1 when neither could be written. With
+# "stop" the handled list is what a stop found, and nothing was quarantined.
 write_tripwire() {
-  local root="$1" state="$2" runner="$3" reason="$4" qdir="$5" handled="$6" errors="${7:-}" body ok=1
-  body="$(mktemp 2>/dev/null || mktemp -t tripwire)" || return 1
+  local state="$2" body ok=1
+  # The body is built in the state directory when no temporary file can be made
+  # or written, because the tripwire must not depend on TMPDIR.
+  for body in "$(mktemp 2>/dev/null || mktemp -t tripwire 2>/dev/null)" "$state/tripwire-body.$$"; do
+    [ -n "$body" ] || continue
+    tripwire_text "$@" 2>/dev/null > "$body" && break
+    rm -f "$body" 2>/dev/null
+    body=""
+  done
+  [ -n "$body" ] || return 1
+  write_file_atomic "$1/$TRIPWIRE_REL" "$body" && ok=0
+  write_file_atomic "$state/$(basename "$TRIPWIRE_REL")" "$body" && ok=0
+  rm -f "$body"
+  return "$ok"
+}
+
+# tripwire_text <root> <state-dir> <runner> <reason> <quarantine-dir> <handled-list> [<errors-list> [stop]]
+# Prints the text of the tripwire that write_tripwire writes.
+tripwire_text() {
+  local state="$2" runner="$3" reason="$4" qdir="$5" handled="$6" errors="${7:-}" shape="${8:-}"
   {
     printf 'TRIPWIRE set by %s at %s\n\n' "$runner" "$(ts)"
     printf 'Reason: %s\n\n' "$reason"
-    printf 'Changed files were moved to the quarantine and restored from the pre-pass\n'
-    printf 'backup where one existed. Git HEAD and refs are never rewritten, so check them\n'
-    printf "with 'git reflog'. Anything under .git-common/ is outside the vault and was not\n"
-    printf 'restored.\n\n'
-    printf 'Quarantine: %s\n\n' "$qdir"
-    if [ -s "$handled" ]; then
-      printf 'Paths:\n'
+    if [ "$shape" = stop ]; then
+      printf 'What the stop found:\n'
       sed 's/^/  /' "$handled"
+      if [ "${KILL_FAILED_LOCKED:-0}" -eq 1 ]; then
+        printf '\nThe run lock %s is marked KILL_FAILED as well, so no runner starts until it\n' "$RUN_LOCK_DIR"
+        printf 'is deleted.\n'
+      else
+        printf '\nThe run lock could not be marked KILL_FAILED, so only this file holds later\n'
+        printf 'passes back. Do not delete a run lock folder, which may belong to a running pass.\n'
+      fi
+      if [ -s "$state/inflight-backup.tar" ]; then
+        printf 'The pre-pass backup of the steering surfaces is kept at\n%s.\n' "$state/inflight-backup.tar"
+        printf "End the process, review the vault against that backup and 'git status', then\n"
+      else
+        printf 'No pre-pass backup of the steering surfaces was made to review against.\n'
+        printf "End the process, review the vault with 'git status', then\n"
+      fi
+      if [ "${KILL_FAILED_LOCKED:-0}" -eq 1 ]; then
+        printf 'delete this file and the lock folder.\n'
+      else
+        printf 'delete this file.\n'
+      fi
+    else
+      printf 'Changed files were moved to the quarantine and restored from the pre-pass\n'
+      printf 'backup where one existed. Git HEAD and refs are never rewritten, so check them\n'
+      printf "with 'git reflog'. Anything under .git-common/ is outside the vault and was not\n"
+      printf 'restored.\n\n'
+      printf 'Quarantine: %s\n\n' "$qdir"
+      if [ -s "$handled" ]; then
+        printf 'Paths:\n'
+        sed 's/^/  /' "$handled"
+      fi
     fi
     if [ -n "$errors" ] && [ -s "$errors" ]; then
       printf '\nCONTAINMENT-ERROR (not quarantined, or not restored. Check these first.)\n'
       sed 's/^/  /' "$errors"
     fi
     printf '\nNo runner, and not vault-check.sh, will run while this file exists.\n'
-    printf 'Review the paths above, then delete this file. The runners also keep a copy\n'
+    [ "$shape" = stop ] || printf 'Review the paths above, then delete this file. '
+    printf 'The runners also keep a copy\n'
     printf 'at %s. Delete that too.\n' "$state/$(basename "$TRIPWIRE_REL")"
-  } > "$body"
-  write_file_atomic "$root/$TRIPWIRE_REL" "$body" && ok=0
-  write_file_atomic "$state/$(basename "$TRIPWIRE_REL")" "$body" && ok=0
-  rm -f "$body"
-  return "$ok"
+  }
 }
 
 # mark_inflight <root> <state-dir> <runner> / clear_inflight <root> <state-dir>
@@ -739,10 +1139,14 @@ clear_inflight() {
 # Call it while holding the run lock. No other pass can then be running, so any
 # in-flight marker belongs to a pass that died, whatever process now has its pid.
 tripwire_check() {
-  local root="$1" state="$2" runner="$3" log="$4" marker empty wrote
+  local root="$1" state="$2" runner="$3" log="$4" marker empty wrote tw
   if guard_exists "$root" "$state" "$TRIPWIRE_REL"; then
-    printf '[%s] TRIPWIRE: refusing to run. A previous pass changed a steering or execution surface. Read %s, then delete it.\n' \
-      "$(ts)" "$TRIPWIRE_REL" >> "$log"
+    # Named by the copy that is there, which is only the state directory's when
+    # the vault's copy was deleted.
+    tw="$root/$TRIPWIRE_REL"
+    [ -e "$tw" ] || [ -L "$tw" ] || tw="$state/$(basename "$TRIPWIRE_REL")"
+    printf '[%s] TRIPWIRE: refusing to run. A previous pass changed a steering or execution surface, was interrupted before containment, or may have left a process running. Read %s and do what it says, then delete it and its copy.\n' \
+      "$(ts)" "$tw" >> "$log"
     return 78
   fi
   if guard_exists "$root" "$state" "$INFLIGHT_REL"; then
@@ -899,10 +1303,11 @@ is_nonce() {
   case "$1" in ''|*[!A-Za-z0-9._-]*) return 1 ;; *) return 0 ;; esac
 }
 
-# uint_setting <variable-name> <default> <minimum> <log>
+# uint_setting <variable-name> <default> <minimum> <log> [<unit>]
 # Prints the variable's value when it is a plain whole number no smaller than
 # <minimum> and at most nine digits, so no sum of settings can overflow.
 # Otherwise prints <default>, after logging a warning when the variable was set.
+# <unit> names what the number counts in that warning (default seconds).
 uint_setting() {
   local value="${!1:-}"
   if [ -z "$value" ]; then
@@ -910,8 +1315,8 @@ uint_setting() {
   elif is_uint "$value" && [ "${#value}" -le 9 ] && [ "$value" -ge "$3" ]; then
     printf '%s\n' "$value"
   else
-    printf '[%s] WARNING: %s "%s" is not a plain whole number of seconds (digits only, no leading zero, at most nine digits, at least %s). Using %s.\n' \
-      "$(ts)" "$1" "$value" "$3" "$2" >> "$4"
+    printf '[%s] WARNING: %s "%s" is not a usable number of %s (digits only, no leading zero, at most nine digits, at least %s). Using %s.\n' \
+      "$(ts)" "$1" "$value" "${5:-seconds}" "$3" "$2" >> "$4"
     printf '%s\n' "$2"
   fi
 }
@@ -1174,7 +1579,12 @@ run_lock_acquire() {
       is_nonce "$o_nonce" || o_nonce=""
       now="$(date +%s)"
       aged=no
-      if [ -z "$o_nonce" ]; then
+      if [ -n "$(owner_field "$owner" kill_failed)" ]; then
+        # Never stale. A process of that pass may still be running.
+        printf '[%s] LOCKED: the run lock is marked KILL_FAILED by %s (pid %s). A process of that pass may still be running. Check for it, stop it, then delete %s.\n' \
+          "$(ts)" "${o_runner:-an unknown runner}" "${o_pid:-unknown}" "$lock" >> "$log"
+        return 75
+      elif [ -z "$o_nonce" ]; then
         # No usable owner file. Either a runner is between mkdir and its first
         # write, or one died there, and only the second lasts two minutes.
         lock_dir_aged "$lock" 2 "$state" && aged=yes
@@ -1204,6 +1614,25 @@ run_lock_acquire() {
   done
 }
 
+# mark_kill_failed <log> <report>
+# Records in the run lock's owner file that a stopped pass left a process
+# running, then logs it. Such a lock is never released by this runner and never
+# reclaimed as stale by another, so every later pass exits 75 until a human has
+# checked that nothing of the old pass is still running and removed the lock.
+mark_kill_failed() {
+  local log="$1" report="$2"
+  # The runners keep the pre-pass backup on exit once this is set.
+  KILL_FAILED_MARKED=1
+  if run_lock_held && printf 'kill_failed=%s\n' "$(date +%s)" >> "$RUN_LOCK_DIR/owner" 2>/dev/null; then
+    # The tripwire says whether the lock holds later passes back.
+    KILL_FAILED_LOCKED=1
+    printf '[%s] KILL_FAILED: a process of the stopped pass may still be running, so the run lock %s is kept and no pass will start. Check for it, stop it, then delete the lock folder. What the stop found:\n' "$(ts)" "$RUN_LOCK_DIR" >> "$log"
+  else
+    printf '[%s] KILL_FAILED: a process of the stopped pass may still be running, and the run lock could not be marked, so later passes are not held back. Check for it and stop it. What the stop found:\n' "$(ts)" >> "$log"
+  fi
+  printf '%s\n' "$report" | sed 's/^/    /' >> "$log"
+}
+
 # run_lock_held
 # True while the lock's owner file still carries this runner's nonce. The hard
 # link in run_lock_acquire already keeps a stalled runner from writing its owner
@@ -1228,6 +1657,13 @@ run_lock_held() {
 # its mkdir cannot tell its directory from one another runner has just made.
 run_lock_release() {
   [ -n "${RUN_LOCK_DIR:-}" ] || return 0
+  # A lock marked KILL_FAILED stays, so no pass starts while a process of the
+  # stopped one may still be writing.
+  if [ -n "${RUN_LOCK_NONCE:-}" ] && run_lock_held \
+     && [ -n "$(owner_field "$(cat "$RUN_LOCK_DIR/owner" 2>/dev/null)" kill_failed)" ]; then
+    RUN_LOCK_MADE=0
+    return 0
+  fi
   if [ -n "${RUN_LOCK_NONCE:-}" ] \
      && [ "$(owner_field "$(cat "$RUN_LOCK_DIR/owner" 2>/dev/null)" nonce)" = "$RUN_LOCK_NONCE" ]; then
     rm -rf "$RUN_LOCK_DIR"
@@ -1256,8 +1692,9 @@ safe_git() {
   local hooks="$1"
   shift
   # $LITERAL_PATHS is unquoted on purpose, so env gets one assignment per word.
+  # Stdin is /dev/null, so nothing git starts can wait on input.
   env GIT_TERMINAL_PROMPT=0 $LITERAL_PATHS git -c core.hooksPath="$hooks" -c core.fsmonitor=false \
-    -c log.showSignature=false "$@"
+    -c log.showSignature=false "$@" </dev/null
 }
 
 # git_ignores <root> <empty-hooks-dir> <relative-path>
@@ -1758,11 +2195,13 @@ index_blob() {
 # was dirty before the pass or is not a regular file, 5 when vault-check rejects
 # a note, and 4 when staging or the commit failed, which is logged with whether
 # the paths could be taken back out of the index, or when a commit was made but
-# HEAD does not hold the checked content. The agent's RUN_RC and RUN_TIMED_OUT
-# are kept, because the git steps run under the same watchdog.
+# HEAD does not hold the checked content. The agent's RUN_RC, RUN_TIMED_OUT,
+# RUN_STALLED and RUN_KILL_FAILED are kept, because the git steps run under the
+# same watchdog.
 commit_owned() {
   local root="$1" pass="$2" owned="$3" predirty="$4" snap="$5" log="$6"
   local hooks="$5/nohooks" agent_rc="${RUN_RC:-0}" agent_timed_out="${RUN_TIMED_OUT:-0}" p blob got timeout step idx rc=0
+  local agent_stalled="${RUN_STALLED:-0}" agent_kill_failed="${RUN_KILL_FAILED:-0}"
   local -a paths
   paths=()
   [ -s "$owned" ] || return 0
@@ -1818,6 +2257,9 @@ commit_owned() {
       fi
       printf '    %s\n' "${paths[@]}" >> "$log"
       sed 's/^/    git: /' "$snap/git.out" >> "$log"
+      # A stopped git step that may still be running holds the lock like a
+      # stopped pass, so the next pass cannot race it.
+      [ "${RUN_KILL_FAILED:-0}" -eq 1 ] && mark_kill_failed "$log" "$RUN_KILL_REPORT"
       rc=4
     elif [ "$step" = add ]; then
       # Whole lines, so a name that ends in a space keeps it.
@@ -1873,6 +2315,8 @@ commit_owned() {
   fi
   RUN_RC="$agent_rc"
   RUN_TIMED_OUT="$agent_timed_out"
+  RUN_STALLED="$agent_stalled"
+  RUN_KILL_FAILED="$agent_kill_failed"
   return "$rc"
 }
 
@@ -1969,10 +2413,10 @@ contain_pass() {
 #                        other harness. It is called from the vault root with
 #                        ONE argument: the relative path of a prompt file that
 #                        holds the agent's instructions and this run's task.
-#                        It must `exec` the harness: the watchdog signals the
-#                        wrapper's own process, so a harness left running as
-#                        its child would survive a timeout and keep writing
-#                        after the fence was checked.
+#                        A stop reaches the wrapper's children too (stop_tree),
+#                        but `exec` the harness anyway. On Windows a harness
+#                        that starts its own detached processes is found only
+#                        when they carry VAULT_RUN_NONCE on their command line.
 #
 # A wrapper cannot be made to honour a `tools:` allowlist, and the snapshot
 # fence below sees only files changed inside the vault - not a shell command,
@@ -2040,14 +2484,299 @@ write_agent_prompt() {
   } > "$out"
 }
 
+# ---------------------------------------------------------------------------
+# Progress watchdog.
+#
+# A pass that hangs without exiting holds the run lock until its wall-clock
+# timeout, which is hours. In claude mode the agent streams one JSON event per
+# line, so a pass that is working keeps its output growing, and one whose output
+# stops growing for the stall threshold is stopped early with exit 125.
+#
+# The threshold is the floor (RUNNER_STALL_FLOOR, 10 minutes) until the runner
+# has measured at least STALL_MIN_RUNS passes that ended OK. From then on it is
+# 1.5 times the 99th percentile of those passes' longest silent stretches, and
+# never below the floor. Each start logs the threshold and where it came from.
+# RUNNER_STALL_SECONDS sets it outright, and 0 turns stall detection off. In
+# command mode the harness's output is unknown, so stall detection is off unless
+# RUNNER_STALL_SECONDS is set.
+
+STALL_MIN_RUNS=3
+
+# stall_plan <state-dir> <runner> <log>
+# Sets AGENT_STALL_SECONDS and AGENT_STALL_NOTE, the threshold and a phrase
+# saying where it came from.
+stall_plan() {
+  local state="$1" runner="$2" log="$3" floor file runs n p99 t
+  floor="$(uint_setting RUNNER_STALL_FLOOR 600 1 "$log")"
+  if [ -n "${RUNNER_STALL_SECONDS:-}" ]; then
+    if AGENT_STALL_SECONDS="$(uint_setting RUNNER_STALL_SECONDS "" 0 /dev/null)" && [ -n "$AGENT_STALL_SECONDS" ]; then
+      AGENT_STALL_NOTE="set by RUNNER_STALL_SECONDS"
+      [ "$AGENT_STALL_SECONDS" -eq 0 ] && AGENT_STALL_NOTE="off, because RUNNER_STALL_SECONDS is 0"
+      return 0
+    fi
+    # A value that is not a whole number counts as unset, so command mode stays
+    # off and claude mode keeps its measured threshold.
+    printf '[%s] WARNING: RUNNER_STALL_SECONDS="%s" is not digits only, with no leading zero and at most nine digits, so it is ignored.\n' "$(ts)" "$RUNNER_STALL_SECONDS" >> "$log"
+  fi
+  if [ "${AGENT_KIND:-claude}" != claude ]; then
+    AGENT_STALL_SECONDS=0
+    AGENT_STALL_NOTE="off in command mode unless RUNNER_STALL_SECONDS is set"
+    return 0
+  fi
+  file="$state/$runner.stream-gaps"
+  runs="$(awk '$1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ { seen[$1] = 1 } END { n = 0; for (k in seen) n++; print n }' "$file" 2>/dev/null)"
+  is_uint "${runs:-}" || runs=0
+  if [ "$runs" -lt "$STALL_MIN_RUNS" ]; then
+    AGENT_STALL_SECONDS="$floor"
+    AGENT_STALL_NOTE="the floor, because $runs of the $STALL_MIN_RUNS passes needed to measure one are recorded"
+    return 0
+  fi
+  # Each pass counts once, by its longest silence, so the many short gaps of a
+  # streaming pass cannot hide the long ones. An older record with a line per
+  # gap reduces to the same thing.
+  awk '$1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ && length($2) <= 9 { if (!($1 in m) || $2 + 0 > m[$1] + 0) m[$1] = $2 }
+    END { for (r in m) print m[r] }' "$file" | LC_ALL=C sort -n > "$file.longest.$$" 2>/dev/null
+  n="$(awk 'END { print NR }' "$file.longest.$$" 2>/dev/null)"
+  p99="$(awk -v n="${n:-0}" 'BEGIN { k = int((n * 99 + 99) / 100); if (k < 1) k = 1 } NR == k { print; exit }' "$file.longest.$$" 2>/dev/null)"
+  rm -f "$file.longest.$$"
+  is_uint "${p99:-}" && [ "${#p99}" -le 9 ] || p99=0
+  t=$(( (p99 * 3 + 1) / 2 ))
+  if [ "$t" -lt "$floor" ]; then
+    AGENT_STALL_SECONDS="$floor"
+    AGENT_STALL_NOTE="the floor, above 1.5 times the p99 of each pass's longest silence, ${p99}s over $runs recorded passes"
+  else
+    AGENT_STALL_SECONDS="$t"
+    AGENT_STALL_NOTE="1.5 times the p99 of each pass's longest silence, ${p99}s over $runs recorded passes"
+  fi
+}
+
+# record_stream_gaps <state-dir> <runner> <gaps-file>
+# Adds the longest silent stretch of a pass that ended OK to the runner's record,
+# one line per pass, which keeps the latest 5000 passes.
+record_stream_gaps() {
+  local file="$1/$2.stream-gaps" run longest
+  [ -s "$3" ] || return 0
+  longest="$(awk '/^[0-9]+$/ && length($0) <= 9 { if ($0 + 0 > m + 0) m = $0 } END { if (m != "") print m }' "$3")"
+  is_uint "${longest:-}" || return 0
+  run="$(date +%s)"
+  printf '%s %s\n' "$run" "$longest" >> "$file" 2>/dev/null || return 0
+  tail -n 5000 "$file" > "$file.new" 2>/dev/null && mv -f "$file.new" "$file" 2>/dev/null
+}
+
+# record_runner_session <state-dir> <runner> <output-file> <offset> <session-id> <log>
+# Appends "<time> <runner> <session id> <confirmed|unconfirmed|differs:<id>>",
+# tab-separated, to runner-sessions.tsv in the state directory, so a later
+# capture of Claude Code sessions can leave out the runners' own. The id is the
+# one the runner chose, and the stream's init event after <offset> bytes of the
+# output confirms it. A missing or different id is logged.
+record_runner_session() {
+  local state="$1" runner="$2" out="$3" offset="$4" id="$5" log="$6" seen status
+  is_uint "$offset" || offset=0
+  seen="$(tail -c +"$((offset + 1))" "$out" 2>/dev/null | grep '"subtype":"init"' | grep '"type":"system"' \
+    | sed -n 's/.*"session_id":"\([0-9A-Fa-f-]*\)".*/\1/p' | head -n 1)"
+  if [ -z "$seen" ]; then
+    status=unconfirmed
+    printf '[%s] WARNING: the stream has no init event naming the session, so session %s is recorded unconfirmed.\n' "$(ts)" "$id" >> "$log"
+  elif [ "$seen" = "$id" ]; then
+    status=confirmed
+  else
+    status="differs:$seen"
+    printf '[%s] WARNING: the stream names session %s, not the %s the runner chose. Both are recorded.\n' "$(ts)" "$seen" "$id" >> "$log"
+  fi
+  printf '%s\t%s\t%s\t%s\n' "$(ts)" "$runner" "$id" "$status" >> "$state/runner-sessions.tsv" 2>/dev/null \
+    || printf '[%s] WARNING: could not record session %s in %s.\n' "$(ts)" "$id" "$state/runner-sessions.tsv" >> "$log"
+}
+
+# cap_copy <file> <dest> <max-bytes>
+# Writes the last <max-bytes> of <file> to <dest> from the start of a line. One
+# byte more is read and its first line dropped, so a line that starts exactly at
+# the cut is kept. A last line longer than the cap has no line start in it, so
+# its end is written instead of nothing.
+cap_copy() {
+  tail -c "$(($3 + 1))" "$1" 2>/dev/null | sed 1d > "$2" 2>/dev/null && [ -s "$2" ] && return 0
+  tail -c "$3" "$1" > "$2" 2>/dev/null
+}
+
+# file_mode <file>
+# Prints the permission bits of <file> in octal, as chmod takes them, or nothing.
+file_mode() {
+  ls -ln "$1" 2>/dev/null | awk 'NR == 1 { m = 0; for (i = 2; i <= 10; i++) m = m * 2 + (substr($1, i, 1) ~ /[rwxst]/); printf "%o\n", m }'
+}
+
+# append_run_log <run-file> <run-log> <log>
+# Adds a pass's output, which the runner kept outside the vault while the pass
+# ran, to the pass's run log in .claude/logs. Called after containment, because
+# the pass may have put a link or something other than a file where the run log
+# was. The new log is built in a temporary file beside it and renamed into
+# place, and a link at the run-log path is removed first, so the output is never
+# written through a symbolic or hard link, or moved into a folder a link names.
+# A regular file with another name linked to it is not read and starts again.
+# The log keeps its mode, and a new one gets the umask's. A log larger than
+# RUNNER_RUN_LOG_MAX_BYTES (default 10000000) keeps its newest part from the
+# start of a line, because the stream holds every event of every pass. Returns 1,
+# with a WARNING in <log>, when the output did not reach the run log, so the
+# runner keeps it elsewhere.
+append_run_log() {
+  local run="$1" out="$2" log="$3" max="" tmp="" part="" old="" mode=""
+  # A runner stopped in the middle of an append leaves its temporary files.
+  rm -f "$out".?????? 2>/dev/null
+  if [ -L "$out" ] && { ! rm -f "$out" 2>/dev/null || [ -L "$out" ]; }; then
+    printf '[%s] WARNING: %s is a link that could not be removed, so the run output was not added to it.\n' "$(ts)" "$out" >> "$log"
+    return 1
+  fi
+  if [ -e "$out" ] && [ ! -f "$out" ]; then
+    printf '[%s] WARNING: %s is not a file, so the run output was not added to it.\n' "$(ts)" "$out" >> "$log"
+    return 1
+  fi
+  if [ -f "$out" ]; then
+    if [ -n "$(find "$out" -links 1 2>/dev/null)" ]; then
+      old="$out"
+      mode="$(file_mode "$out")"
+    else
+      printf '[%s] WARNING: %s has another name linked to it, so it was started again instead of added to.\n' "$(ts)" "$out" >> "$log"
+    fi
+  fi
+  [ -n "$mode" ] || mode="$(printf '%o' $((0666 & ~0$(umask))))"
+  max="$(uint_setting RUNNER_RUN_LOG_MAX_BYTES 10000000 1000 "$log" bytes)"
+  if ! tmp="$(mktemp "$out.XXXXXX" 2>/dev/null)"; then
+    printf '[%s] WARNING: no temporary file could be made beside %s, so the run output was not added to it.\n' "$(ts)" "$out" >> "$log"
+    return 1
+  fi
+  if [ -n "$old" ] && ! cat "$old" > "$tmp" 2>/dev/null; then
+    printf '[%s] WARNING: %s could not be read, so it was left as it was and the run output was not added to it.\n' "$(ts)" "$out" >> "$log"
+    rm -f "$tmp"
+    return 1
+  fi
+  # An old log cut off mid-line would glue its last line to this pass's first.
+  [ -s "$tmp" ] && [ -n "$(tail -c 1 "$tmp")" ] && printf '\n' >> "$tmp"
+  if ! cat "$run" >> "$tmp" 2>/dev/null; then
+    printf '[%s] WARNING: the run output could not be written beside %s, so it was not added to it.\n' "$(ts)" "$out" >> "$log"
+    rm -f "$tmp"
+    return 1
+  fi
+  if [ "$(file_size "$tmp")" -gt "$max" ]; then
+    if part="$(mktemp "$out.XXXXXX" 2>/dev/null)" && cap_copy "$tmp" "$part" "$max" && mv -f "$part" "$tmp" 2>/dev/null; then
+      :
+    else
+      printf '[%s] WARNING: %s could not be cut to %s bytes, so it is kept whole this time.\n' "$(ts)" "$out" "$max" >> "$log"
+      [ -n "$part" ] && rm -f "$part" 2>/dev/null
+    fi
+  fi
+  chmod "$mode" "$tmp" 2>/dev/null
+  # Checked again, because a process left by the pass can put a link or a folder
+  # there while the log is built.
+  if [ -L "$out" ] || { [ -e "$out" ] && [ ! -f "$out" ]; } || ! mv -f "$tmp" "$out" 2>/dev/null; then
+    printf '[%s] WARNING: the run output could not be renamed into place as %s.\n' "$(ts)" "$out" >> "$log"
+    rm -f "$tmp"
+    return 1
+  fi
+  return 0
+}
+
+# keep_run_output <run-file> <state-dir> <runner> <log>
+# Keeps the output of a pass that did not reach its run log in the vault, because
+# the pass ended before containment or the run log could not be written, in the
+# state directory. It is cut like the run log.
+keep_run_output() {
+  local run="$1" dest="$2/$3.interrupted.run" max
+  [ -s "$run" ] || return 0
+  max="$(uint_setting RUNNER_RUN_LOG_MAX_BYTES 10000000 1000 "$4" bytes)"
+  rm -f "$dest" 2>/dev/null
+  if [ "$(file_size "$run")" -gt "$max" ]; then
+    cap_copy "$run" "$dest" "$max"
+  else
+    cat "$run" > "$dest" 2>/dev/null
+  fi && printf '[%s] The output of the pass is kept at %s.\n' "$(ts)" "$dest" >> "$4"
+}
+
+# report_stop <log> <what> <root> <state-dir> <runner>
+# After the watchdog stopped a pass, logs a leftover index.lock. When a process
+# of the pass may still be running, it marks the run lock and sets the tripwire,
+# because that process can write after containment has checked the vault. It
+# clears STOP_REPORT_PENDING, which a runner's signal handler reads to finish a
+# report a signal cut short or came before.
+report_stop() {
+  local log="$1" what="$2" root="$3" state="$4" runner="$5" idx list lock backup
+  idx="$(git_index_lock_path "$root")"
+  if [ -n "$idx" ] && [ -e "$idx" ]; then
+    printf '[%s] WARNING: %s was left behind by the stopped %s. Remove it once no git process is running.\n' "$(ts)" "$idx" "$what" >> "$log"
+  fi
+  if [ "${RUN_KILL_FAILED:-0}" -eq 1 ]; then
+    mark_kill_failed "$log" "$RUN_KILL_REPORT"
+    # The list lives in the state directory when no temporary file can be made
+    # or written, because the tripwire must not depend on TMPDIR.
+    for list in "$(mktemp 2>/dev/null || mktemp -t killfailed 2>/dev/null)" "$state/kill-report.$$"; do
+      [ -n "$list" ] || continue
+      printf '%s\n' "$RUN_KILL_REPORT" 2>/dev/null > "$list" && break
+      rm -f "$list" 2>/dev/null
+      list=""
+    done
+    if [ -z "$list" ]; then
+      printf '[%s] TRIPWIRE-ERROR: no tripwire could be written for the KILL_FAILED stop, because its report could not be saved.\n' "$(ts)" >> "$log"
+      STOP_REPORT_PENDING=0
+      return 0
+    fi
+    if [ "${KILL_FAILED_LOCKED:-0}" -eq 1 ]; then
+      lock='The run lock is marked KILL_FAILED too.'
+    else
+      lock='The run lock could not be marked KILL_FAILED, so only this file holds later passes back.'
+    fi
+    if [ -s "$state/inflight-backup.tar" ]; then
+      backup="The pre-pass backup is kept at $state/inflight-backup.tar."
+    else
+      backup='No pre-pass backup was made to review against.'
+    fi
+    # The tripwire counts as containment's only when containment set it in this
+    # run, or its copy is in the state directory, where the pass cannot write.
+    # A tripwire found only in the vault was written by the pass, and is
+    # replaced, and so is a tripwire of which no copy is a regular file.
+    if { [ "${CONTAINED:-0}" -eq 1 ] || [ -f "$state/$(basename "$TRIPWIRE_REL")" ]; } \
+       && note_tripwire "$root" "$state" "$log" "Also, a process of the stopped $what may still be running, so what it writes after containment is unchecked. $lock $backup End it, then review the vault. What the stop found:
+$(sed 's/^/  /' "$list")"; then
+      :
+    elif ! write_tripwire "$root" "$state" "$runner" \
+         "a process of the stopped $what may still be running, so what it writes after containment is unchecked" \
+         "(none moved)" "$list" "" stop; then
+      printf '[%s] TRIPWIRE-ERROR: no tripwire could be written for the KILL_FAILED stop.\n' "$(ts)" >> "$log"
+    fi
+    rm -f "$list"
+    STOP_REPORT_PENDING=0
+  fi
+}
+
+# note_tripwire <root> <state-dir> <log> <text>
+# Adds <text> as a paragraph to each copy of the tripwire that is a regular file,
+# and copies the vault's copy to the state directory when that one is missing.
+# Returns 1 when neither copy is a regular file, so the caller writes a whole
+# tripwire instead.
+note_tripwire() {
+  local root="$1" state="$2" log="$3" text="$4" f found=1
+  for f in "$root/$TRIPWIRE_REL" "$state/$(basename "$TRIPWIRE_REL")"; do
+    [ -f "$f" ] && [ ! -L "$f" ] || continue
+    found=0
+    printf '\n%s\n' "$text" >> "$f" 2>/dev/null \
+      || printf '[%s] TRIPWIRE-ERROR: a note could not be added to %s, which is still set.\n' "$(ts)" "$f" >> "$log"
+  done
+  if [ "$found" -eq 0 ] && [ ! -f "$state/$(basename "$TRIPWIRE_REL")" ]; then
+    write_file_atomic "$state/$(basename "$TRIPWIRE_REL")" "$root/$TRIPWIRE_REL" \
+      || printf '[%s] WARNING: the tripwire could not be copied to the state directory %s.\n' "$(ts)" "$state" >> "$log"
+  fi
+  return "$found"
+}
+
 # run_agent <timeout> <output-file> <agent-name> <task> <prompt-file-relative>
 #
-# Starts the agent chosen by agent_preflight under the watchdog. The prompt
-# file path is RELATIVE to the vault root, which is the working directory: an
-# absolute Git Bash path such as /c/Users/... would reach a Windows wrapper
-# only if MSYS path conversion happened to rewrite it.
+# Starts the agent chosen by agent_preflight under the watchdog, with
+# AGENT_STALL_SECONDS as its stall threshold, AGENT_GAPS_FILE collecting its
+# silent stretches, and AGENT_SESSION_ID as its session id and kill nonce. The
+# prompt file path is RELATIVE to the vault root, which is the working
+# directory: an absolute Git Bash path such as /c/Users/... would reach a
+# Windows wrapper only if MSYS path conversion happened to rewrite it.
 run_agent() {
   local timeout="$1" out="$2" agent="$3" task="$4" prompt_rel="$5"
+  local stall="${AGENT_STALL_SECONDS:-0}" gaps="${AGENT_GAPS_FILE:-}" nonce="${AGENT_SESSION_ID:-}"
+  [ -n "$nonce" ] || nonce="$(new_uuid)"
+  AGENT_SESSION_ID="$nonce"
   case "$AGENT_KIND" in
     claude)
       # -p is REQUIRED. Without it, `claude --agent X` starts an INTERACTIVE
@@ -2066,18 +2795,31 @@ run_agent() {
       # name it does not offer, so the same list works on every platform. It
       # comes last because it takes a list, which would otherwise swallow the
       # prompt.
+      #
+      # The stream flags make progress visible to the watchdog. Claude Code
+      # 2.1.272 refuses stream-json under -p without --verbose. The session id is
+      # chosen here, so it is known even when the stream never names it, and it
+      # is on the command line where the Windows stop can find the process.
       export CLAUDE_CODE_DISABLE_AUTO_MEMORY=1
-      run_with_watchdog "$timeout" "$out" \
-        "$AGENT_BIN" -p "$task" --agent "$agent" --permission-mode acceptEdits --disallowedTools Bash PowerShell Monitor
+      RUN_STALL_SECONDS="$stall" RUN_GAPS_FILE="$gaps" RUN_NONCE="$nonce" run_with_watchdog "$timeout" "$out" \
+        "$AGENT_BIN" -p "$task" --agent "$agent" --permission-mode acceptEdits \
+        --output-format stream-json --verbose --include-partial-messages --session-id "$nonce" \
+        --disallowedTools Bash PowerShell Monitor
       ;;
     command)
-      run_with_watchdog "$timeout" "$out" "$AGENT_BIN" "$prompt_rel"
+      # The wrapper gets the nonce in its environment. Only a process that puts
+      # it on its own command line can be found by the Windows sweep.
+      VAULT_RUN_NONCE="$nonce" RUN_STALL_SECONDS="$stall" RUN_GAPS_FILE="$gaps" RUN_NONCE="$nonce" \
+        run_with_watchdog "$timeout" "$out" "$AGENT_BIN" "$prompt_rel"
       ;;
     *)
-      # agent_preflight rejects any other kind first. Set both globals anyway,
+      # agent_preflight rejects any other kind first. Set the globals anyway,
       # so a future caller that skips it fails with a status, not set -u.
       RUN_RC=64
       RUN_TIMED_OUT=0
+      RUN_STALLED=0
+      RUN_KILL_FAILED=0
+      RUN_KILL_REPORT=""
       ;;
   esac
 }

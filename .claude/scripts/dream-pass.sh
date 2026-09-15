@@ -34,6 +34,12 @@
 #   RUN_LOCK_POLL       seconds between checks while waiting (default 30)
 #   RUNNER_GIT_TIMEOUT  seconds each git step of the journal commit may take
 #                       (default 120)
+#   RUNNER_STALL_SECONDS  seconds without new stream output before a pass is
+#                       stopped. Measured by default (lib/runner-common.sh), 0
+#                       turns it off, and in command mode only this turns it on
+#   RUNNER_STALL_FLOOR  the lowest measured stall threshold (default 600)
+#   RUNNER_RUN_LOG_MAX_BYTES  the most .claude/logs/dream-agent.run.log keeps,
+#                       newest part first (default 10000000, at least 1000)
 #
 # Exit codes:
 #   0    the pass changed a dream journal and nothing else, and the journal was
@@ -54,12 +60,19 @@
 #   64   VAULT_AGENT is not claude or command
 #   70   TRIPWIRE-ERROR: containment was needed but no tripwire could be written
 #   75   LOCKED: another pass held the run lock, or git's index.lock stayed, for
-#        RUN_LOCK_WAIT seconds, the index.lock is more than 10 minutes old,
+#        RUN_LOCK_WAIT seconds, the run lock is marked KILL_FAILED, the
+#        index.lock is more than 10 minutes old,
 #        another runner took the lock over before the pass started, a git
 #        merge, rebase, cherry-pick, revert or bisect is in progress, or HEAD is
 #        detached
 #   78   TRIPWIRE: a tripwire is set, or an earlier pass died before containment
-#   124  TIMEOUT: the watchdog killed a run that exceeded DREAM_PASS_TIMEOUT
+#   124  TIMEOUT: the watchdog killed a run that exceeded DREAM_PASS_TIMEOUT, and
+#        everything it started
+#   125  STALLED: the watchdog killed a run whose output stopped growing for the
+#        stall threshold (claude mode, or command mode with RUNNER_STALL_SECONDS
+#        set), and everything it started. After 124 or 125, KILL_FAILED in the
+#        log means a process may still be running. The run lock is kept, so later
+#        runs exit 75, and the tripwire is set
 #   127  the claude binary or the VAULT_AGENT_CMD wrapper was not found
 #   *    any other non-zero status is the agent's own
 
@@ -69,14 +82,42 @@ RUNNER=dream-pass
 CONTAINMENT_CHECKED=0
 INFLIGHT=0
 SNAP_DIR=""
+SESSION_RECORDED=0
+AGENT_SESSION_ID=""
+KILL_FAILED_MARKED=0
+KILL_FAILED_LOCKED=0
+RUN_LOG_APPENDED=0
+STOP_REPORT_PENDING=0
+AGENT_KILL_REPORT=""
+
+# record_session_once
+# Records a claude-mode pass's session, once, however the pass ended, so a later
+# capture of Claude Code sessions never takes a runner's pass for a person's
+# work. The stream is read from the runner's private copy.
+record_session_once() {
+  [ "$SESSION_RECORDED" -eq 0 ] && [ -n "$AGENT_SESSION_ID" ] && [ "${AGENT_KIND:-}" = claude ] \
+    && [ -n "$SNAP_DIR" ] && [ -f "$SNAP_DIR/run" ] || return 0
+  SESSION_RECORDED=1
+  record_runner_session "$STATE" "$RUNNER" "$SNAP_DIR/run" 0 "$AGENT_SESSION_ID" "$LOG"
+}
 
 # On any exit: clear the in-flight marker only once containment has checked the
-# pass, then remove the temporary directory.
+# pass, then remove the temporary directory. The pre-pass backup goes with the
+# marker, unless a stop left a process that may have written after containment,
+# because the owner needs the backup to review what it wrote.
 on_exit() {
   if [ "$CONTAINMENT_CHECKED" -eq 1 ]; then
     clear_inflight "$ROOT" "$STATE"
-    rm -f "$STATE/inflight-backup.tar" 2>/dev/null
+    if [ "$KILL_FAILED_MARKED" -eq 0 ]; then
+      rm -f "$STATE/inflight-backup.tar" 2>/dev/null
+    elif [ -s "$STATE/inflight-backup.tar" ]; then
+      printf '[%s] The pre-pass backup is kept at %s for the review after KILL_FAILED.\n' "$(ts)" "$STATE/inflight-backup.tar" >> "$LOG"
+    else
+      printf '[%s] WARNING: there is no pre-pass backup at %s to review against after KILL_FAILED.\n' "$(ts)" "$STATE/inflight-backup.tar" >> "$LOG"
+    fi
   fi
+  # What a tripwire or stop report left when a signal cut it short.
+  [ -n "${STATE:-}" ] && rm -f "$STATE/tripwire-body.$$" "$STATE/kill-report.$$" "$STATE/runner-tripwire.tmp.$$" 2>/dev/null
   [ -n "$SNAP_DIR" ] && rm -rf "$SNAP_DIR"
   run_lock_release
 }
@@ -85,10 +126,32 @@ on_exit() {
 # trusted to have run, so set the tripwire now rather than leave the vault to the
 # next pass's baseline.
 on_signal() {
-  [ -n "${RUN_PID:-}" ] && kill -TERM "$RUN_PID" 2>/dev/null
+  # The whole tree, so a child of the agent or of a git step cannot keep writing
+  # after the exit. RUN_PID is set while such a command runs, and while the
+  # watchdog finishes stopping one that has ended (RUN_REAPED=1). Then the private
+  # temporary directory exists. A stop that may have left a process marks the run
+  # lock.
+  if [ -n "${RUN_PID:-}" ] && [ -n "$SNAP_DIR" ] && [ -d "$SNAP_DIR" ]; then
+    stop_tree "$RUN_PID" 2 "$SNAP_DIR/signal-stop" "${AGENT_SESSION_ID:-}" 1
+    grep -qE '^(alive|unknown)' "$SNAP_DIR/signal-stop" 2>/dev/null \
+      && mark_kill_failed "$LOG" "$(cat "$SNAP_DIR/signal-stop")"
+  fi
+  record_session_once
+  # Before its output reached the run log, the pass's stream would go with the
+  # temporary directory, so it is kept in the state directory.
+  if [ "$RUN_LOG_APPENDED" -eq 0 ] && [ -n "$SNAP_DIR" ] && [ -f "$SNAP_DIR/run" ]; then
+    keep_run_output "$SNAP_DIR/run" "$STATE" "$RUNNER" "$LOG"
+  fi
   if [ "$INFLIGHT" -eq 1 ] && [ "$CONTAINMENT_CHECKED" -eq 0 ]; then
     : > "$SNAP_DIR/empty"
-    if write_tripwire "$ROOT" "$STATE" "$RUNNER" \
+    # A tripwire this run already set, by containment or by a stop's report,
+    # stays as it is, with a note. tripwire_check made sure neither copy existed
+    # when the run started, and the pass cannot write the state directory copy.
+    if { [ "${CONTAINED:-0}" -eq 1 ] || [ -f "$STATE/$(basename "$TRIPWIRE_REL")" ]; } \
+       && note_tripwire "$ROOT" "$STATE" "$LOG" "The runner was then interrupted by a signal, so its log may lack some of what is above."; then
+      clear_inflight "$ROOT" "$STATE"
+      printf '[%s] INTERRUPTED after the tripwire was set. The tripwire is kept.\n' "$(ts)" >> "$LOG"
+    elif write_tripwire "$ROOT" "$STATE" "$RUNNER" \
          "the pass was interrupted by a signal before containment ran, so the vault's steering surfaces are unverified (the pre-pass backup is $STATE/inflight-backup.tar)" \
          "(none, because containment did not run)" "$SNAP_DIR/empty"; then
       clear_inflight "$ROOT" "$STATE"
@@ -97,6 +160,14 @@ on_signal() {
       # With no tripwire the marker stays, so the next run still refuses.
       printf '[%s] TRIPWIRE-ERROR: interrupted before containment and no tripwire could be written. The in-flight marker is kept.\n' "$(ts)" >> "$LOG"
     fi
+  fi
+  # A stop by the watchdog that may have left a process, and that the runner had
+  # not reported yet, is reported now, so the lock is marked and the tripwire says
+  # so.
+  if [ "$STOP_REPORT_PENDING" -eq 1 ]; then
+    RUN_KILL_FAILED=1
+    RUN_KILL_REPORT="$AGENT_KILL_REPORT"
+    report_stop "$LOG" dream-agent "$ROOT" "$STATE" "$RUNNER"
   fi
   exit "$1"
 }
@@ -233,10 +304,24 @@ main() {
     exit 1
   fi
   INFLIGHT=1
+  # The stall threshold, the session id, and where the watchdog notes the
+  # silent stretches this pass has.
+  stall_plan "$STATE" "$RUNNER" "$LOG"
+  AGENT_SESSION_ID="$(new_uuid)"
+  AGENT_GAPS_FILE="$SNAP_DIR/gaps"
 
-  printf '[%s] starting dream-agent via %s (timeout %ss)\n' "$(ts)" "$AGENT_KIND" "$TIMEOUT" >> "$LOG"
+  printf '[%s] starting dream-agent via %s (timeout %ss, stall %ss, %s, session %s)\n' \
+    "$(ts)" "$AGENT_KIND" "$TIMEOUT" "$AGENT_STALL_SECONDS" "$AGENT_STALL_NOTE" "$AGENT_SESSION_ID" >> "$LOG"
 
-  run_agent "$TIMEOUT" "$RUN_OUT" dream-agent "$TASK" "$PROMPT_REL"
+  # The stream goes to a private file outside the vault, where the pass cannot
+  # rewrite what the watchdog measures or the session record reads. It is added
+  # to the run log after containment.
+  : > "$SNAP_DIR/run"
+  run_agent "$TIMEOUT" "$SNAP_DIR/run" dream-agent "$TASK" "$PROMPT_REL"
+  # A stop that may have left a process is reported after containment. Until
+  # report_stop has done it, a signal does it instead.
+  AGENT_KILL_REPORT="${RUN_KILL_REPORT:-}"
+  STOP_REPORT_PENDING="${RUN_KILL_FAILED:-0}"
 
   snapshot_tree "$ROOT" "$SNAP_DIR/after"
   changed_paths "$SNAP_DIR/before" "$SNAP_DIR/after" > "$SNAP_DIR/changed"
@@ -246,12 +331,24 @@ main() {
   # run until it has been put back.
   contain_pass "$ROOT" "$STATE" "$RUNNER" "$SNAP_DIR" "$LOG" "$HEAD_BEFORE"
   contain_rc=$?
+  [ "$contain_rc" -eq 0 ] && CONTAINMENT_CHECKED=1
+  # Containment has run, so from here a signal leaves its tripwire as it is.
+  # Nothing is written to the vault's logs between the agent's end and
+  # containment, because the pass may have put a link in place of a log. What
+  # the stop found, with a KILL_FAILED mark and tripwire, and the run's output
+  # come now.
+  if [ "$RUN_TIMED_OUT" -eq 1 ] || [ "$RUN_STALLED" -eq 1 ]; then
+    report_stop "$LOG" dream-agent "$ROOT" "$STATE" "$RUNNER"
+  fi
+  append_run_log "$SNAP_DIR/run" "$RUN_OUT" "$LOG" || keep_run_output "$SNAP_DIR/run" "$STATE" "$RUNNER" "$LOG"
+  RUN_LOG_APPENDED=1
+  record_session_once
   if [ "$contain_rc" -ne 0 ]; then
     exit "$contain_rc"
   fi
-  CONTAINMENT_CHECKED=1
   if [ "$CONTAINED" -eq 1 ]; then
     [ "$RUN_TIMED_OUT" -eq 1 ] && printf '[%s] (the run had also exceeded %ss and was killed)\n' "$(ts)" "$TIMEOUT" >> "$LOG"
+    [ "$RUN_STALLED" -eq 1 ] && printf '[%s] (the run had also stalled for %ss and was killed)\n' "$(ts)" "$AGENT_STALL_SECONDS" >> "$LOG"
     exit 2
   fi
 
@@ -267,16 +364,23 @@ main() {
   # no_record_exit
   # A pass that wrote into a journal someone was editing, or removed or replaced
   # a journal, has nothing recorded for the next run, whether it timed out,
-  # failed or finished, so the next run cannot commit its other journals while
-  # that change stays. Its journals are left in place for review.
+  # stalled, failed or finished, so the next run cannot commit its other
+  # journals while that change stays. Its journals are left in place for review.
   no_record_exit() {
     printf '[%s] Nothing the pass wrote is recorded for the next run. Its journals are left in place for review.\n' "$(ts)" >> "$LOG"
     exit 2
   }
 
-  if [ "$RUN_TIMED_OUT" -eq 1 ]; then
-    printf '[%s] TIMEOUT: dream-agent exceeded %ss and was killed (status %s)\n' \
-      "$(ts)" "$TIMEOUT" "$RUN_RC" >> "$LOG"
+  if [ "$RUN_TIMED_OUT" -eq 1 ] || [ "$RUN_STALLED" -eq 1 ]; then
+    if [ "$RUN_TIMED_OUT" -eq 1 ]; then
+      printf '[%s] TIMEOUT: dream-agent exceeded %ss and was killed (status %s)\n' \
+        "$(ts)" "$TIMEOUT" "$RUN_RC" >> "$LOG"
+      stop_rc=124
+    else
+      printf '[%s] STALLED: dream-agent wrote no output for %ss (%s) and was killed (status %s)\n' \
+        "$(ts)" "$AGENT_STALL_SECONDS" "$AGENT_STALL_NOTE" "$RUN_RC" >> "$LOG"
+      stop_rc=125
+    fi
     # What the pass wrote before it was killed is still listed.
     if [ -s "$SNAP_DIR/outside" ]; then
       printf '[%s] VIOLATION: files outside the dream journals changed before the pass was killed, so nothing it wrote is recorded for the next run:\n' "$(ts)" >> "$LOG"
@@ -286,7 +390,7 @@ main() {
       no_record_exit
     fi
     record_leftovers "$ROOT" "$SNAP_DIR/nohooks" "$STATE" "$RUNNER" "$SNAP_DIR" "$LOG"
-    exit 124
+    exit "$stop_rc"
   fi
 
   printf '[%s] dream-agent exited with code %s\n' "$(ts)" "$RUN_RC" >> "$LOG"
@@ -343,6 +447,8 @@ main() {
     *) exit "$commit_rc" ;;
   esac
 
+  # Only a pass that ended OK teaches the stall threshold.
+  [ "$AGENT_KIND" = claude ] && record_stream_gaps "$STATE" "$RUNNER" "$AGENT_GAPS_FILE"
   printf '[%s] OK: %s\n' "$(ts)" "$(tr '\n' ' ' < "$SNAP_DIR/owned")" >> "$LOG"
   exit 0
 }
