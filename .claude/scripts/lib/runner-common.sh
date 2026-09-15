@@ -162,9 +162,9 @@ relabel() {
 # under .git/worktrees/ and every submodule's under .git/modules/, except inside
 # the ref folders heads, tags, remotes, prefetch, notes and rewritten. The rest
 # of info/ is not, because `git gc --auto` after an ordinary commit rewrites
-# info/refs. HEAD and refs are NOT fenced, because a pass may commit (the
-# promotion agent takes a snapshot) and a human may commit while it runs. A
-# rewound HEAD is caught separately (head_moved_backwards). For a worktree vault,
+# info/refs. HEAD and refs are NOT fenced, because a human or a sync plugin may
+# commit while a pass runs. A rewound HEAD is caught separately
+# (head_moved_backwards). For a worktree vault,
 # whose .git is a file, the pointer is fenced and the same files in the common
 # git directory appear under the label .git-common/.
 #
@@ -1365,6 +1365,68 @@ adopt_uncommitted() {
   rm -f "$list" "$dirty.adopted"
 }
 
+# record_leftovers <root> <empty-hooks-dir> <state-dir> <runner> <snap-dir>
+# After a pass that wrote only where it may (<snap-dir>/outside is empty) but
+# whose files were not committed, because it timed out, failed, or its commit
+# failed, records the files in <snap-dir>/owned for adopt_uncommitted. A file that
+# was already dirty before this pass is not recorded, because it holds someone
+# else's edit too.
+record_leftovers() {
+  local snap="$5"
+  [ "${VAULT_GIT:-0}" -eq 1 ] || return 0
+  [ -s "$snap/outside" ] && return 0
+  awk 'FILENAME == ARGV[1] { dirty[$0] = 1; next } !($0 in dirty)' "$snap/predirty" "$snap/owned" > "$snap/leftover"
+  record_uncommitted "$1" "$2" "$3" "$4" "$snap/leftover"
+}
+
+# revert_owned <root> <empty-hooks-dir> <snap-dir> <commit-before-or-NONE> <quarantine-dir> <log>
+# Puts back the pre-pass state of every file in <snap-dir>/owned, after a check
+# rejected the pass's notes. A file that existed in the commit HEAD pointed at
+# before the pass is restored from it, and a file the pass created is moved to
+# the quarantine outside the vault. None of them was dirty before the pass
+# (owned_predirty stopped the run otherwise), so that commit holds their pre-pass
+# bytes. A file that existed before the pass but is in no commit, because git
+# ignores it, has no earlier bytes to go back to, so it is left in place and
+# listed rather than moved out of the vault. A file that changed after the second
+# snapshot is someone's edit, and is left alone and listed. Returns 1 when any
+# file could not be put back.
+revert_owned() {
+  local root="$1" hooks="$2" snap="$3" before="$4" qdir="$5" log="$6" p now was rc=0
+  local in_before='{ line = $0; sub(/^[^ ]* [^ ]* /, "", line) } line == path { found = 1; exit } END { exit found ? 0 : 1 }'
+  [ -s "$snap/owned" ] || return 0
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    if [ -f "$root/$p" ] && [ ! -L "$root/$p" ]; then
+      now="$(cd "$root" && cksum "./$p" 2>/dev/null | cut -d' ' -f1,2)"
+      was="$(awk -v path="./$p" '{ line = $0; sub(/^[^ ]* [^ ]* /, "", line) } line == path { print $1 " " $2; exit }' "$snap/after")"
+      if [ "$now" != "$was" ]; then
+        printf '    %s (changed after the pass ended, so it was left as it is)\n' "$p" >> "$log"
+        rc=1
+        continue
+      fi
+    fi
+    if [ "$before" != NONE ] && ( cd "$root" && MSYS_NO_PATHCONV=1 GIT_TERMINAL_PROMPT=0 git cat-file -e "$before:./$p" ) 2>/dev/null; then
+      if safe_git "$hooks" -C "$root" restore --source="$before" --worktree -- "$p" 2>/dev/null; then
+        printf '    %s (restored from %s)\n' "$p" "$before" >> "$log"
+      else
+        printf '    %s (could not be restored from %s)\n' "$p" "$before" >> "$log"
+        rc=1
+      fi
+    elif [ -e "$root/$p" ] || [ -L "$root/$p" ]; then
+      if awk -v path="./$p" "$in_before" "$snap/before"; then
+        printf '    %s (existed before the pass but is in no commit, so it could not be put back and was left as the pass wrote it)\n' "$p" >> "$log"
+        rc=1
+      elif mkdir -p "$qdir/$(dirname "$p")" 2>/dev/null && mv -f "$root/$p" "$qdir/$p" 2>/dev/null; then
+        printf '    %s (new, moved to %s)\n' "$p" "$qdir/$p" >> "$log"
+      else
+        printf '    %s (new, and could not be moved to the quarantine)\n' "$p" >> "$log"
+        rc=1
+      fi
+    fi
+  done < "$snap/owned"
+  return "$rc"
+}
+
 # paths_in_both <list-a> <list-b>
 # Prints the lines of <list-b> that are also in <list-a>. The first list is told
 # apart by FILENAME, not by NR == FNR, which an empty first list would make true
@@ -1617,7 +1679,7 @@ agent_preflight() {
       ;;
     command)
       if [ "${VAULT_ALLOW_UNENFORCED_TOOLS:-}" != "1" ]; then
-        printf '[%s] REFUSED: VAULT_AGENT=command cannot enforce the agent'"'"'s tool allowlist. Sandbox the wrapper (no shell for the dream pass, no network), then set VAULT_ALLOW_UNENFORCED_TOOLS=1.\n' \
+        printf '[%s] REFUSED: VAULT_AGENT=command cannot enforce the agent'"'"'s tool allowlist. Sandbox the wrapper (no shell, no network), then set VAULT_ALLOW_UNENFORCED_TOOLS=1.\n' \
           "$(ts)" >> "$log"
         return 3
       fi
@@ -1672,9 +1734,14 @@ run_agent() {
       #
       # Auto memory is switched off for the pass. Claude Code would otherwise
       # write memory files the fence has to treat as a planted instruction.
+      #
+      # Neither agent's allowlist names Bash. --disallowedTools says it again on
+      # the command line, so a definition edited to add it still gets no shell. It
+      # comes last because it takes a list, which would otherwise swallow the
+      # prompt.
       export CLAUDE_CODE_DISABLE_AUTO_MEMORY=1
       run_with_watchdog "$timeout" "$out" \
-        "$AGENT_BIN" -p "$task" --agent "$agent" --permission-mode acceptEdits
+        "$AGENT_BIN" -p "$task" --agent "$agent" --permission-mode acceptEdits --disallowedTools Bash
       ;;
     command)
       run_with_watchdog "$timeout" "$out" "$AGENT_BIN" "$prompt_rel"

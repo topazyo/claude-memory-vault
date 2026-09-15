@@ -99,20 +99,6 @@ on_signal() {
   exit "$1"
 }
 
-# record_leftover_journals
-# After a pass that wrote only journals but could not commit them (it timed out,
-# failed, or its commit or check failed), records the journals' bytes, so the
-# next run commits them instead of taking them for someone's edit. A journal that
-# was already dirty before this pass is not recorded, because it holds someone
-# else's edit too.
-record_leftover_journals() {
-  [ "${VAULT_GIT:-0}" -eq 1 ] || return 0
-  grep -vE '^20-projects/_logs/(dream-|compaction-)[^/]*\.md$' "$SNAP_DIR/changed" | grep -q . && return 0
-  grep -E '^20-projects/_logs/dream-[^/]*\.md$' "$SNAP_DIR/changed" > "$SNAP_DIR/leftover-all"
-  awk 'FILENAME == ARGV[1] { dirty[$0] = 1; next } !($0 in dirty)' "$SNAP_DIR/predirty" "$SNAP_DIR/leftover-all" > "$SNAP_DIR/leftover"
-  record_uncommitted "$ROOT" "$SNAP_DIR/nohooks" "$STATE" "$RUNNER" "$SNAP_DIR/leftover"
-}
-
 # Everything else runs inside main, and the script's last lines call it and
 # exit. Bash reads a script as it executes it, so a change made to this file
 # while a pass runs could otherwise be executed by this very run. A function
@@ -258,10 +244,15 @@ main() {
     exit 2
   fi
 
+  # What the pass may write, and owns: dream journals, plus an auto-written
+  # compaction stub it may leave but does not own.
+  grep -vE '^20-projects/_logs/(dream-|compaction-)[^/]*\.md$' "$SNAP_DIR/changed" > "$SNAP_DIR/outside"
+  grep -E '^20-projects/_logs/dream-[^/]*\.md$' "$SNAP_DIR/changed" > "$SNAP_DIR/owned"
+
   if [ "$RUN_TIMED_OUT" -eq 1 ]; then
     printf '[%s] TIMEOUT: dream-agent exceeded %ss and was killed (status %s)\n' \
       "$(ts)" "$TIMEOUT" "$RUN_RC" >> "$LOG"
-    record_leftover_journals
+    record_leftovers "$ROOT" "$SNAP_DIR/nohooks" "$STATE" "$RUNNER" "$SNAP_DIR"
     exit 124
   fi
 
@@ -271,7 +262,6 @@ main() {
   # auto-written compaction stub - was written by a pass that is only allowed to
   # write its journal. If something else writes to the vault while the pass runs
   # (a sync client, an editor), this fires too; the paths it names tell you which.
-  grep -vE '^20-projects/_logs/(dream-|compaction-)[^/]*\.md$' "$SNAP_DIR/changed" > "$SNAP_DIR/outside"
   if [ -s "$SNAP_DIR/outside" ]; then
     printf '[%s] VIOLATION: files outside the dream journal changed during the run:\n' "$(ts)" >> "$LOG"
     sed 's/^/    /' "$SNAP_DIR/outside" >> "$LOG"
@@ -279,7 +269,7 @@ main() {
   fi
 
   if [ "$RUN_RC" -ne 0 ]; then
-    record_leftover_journals
+    record_leftovers "$ROOT" "$SNAP_DIR/nohooks" "$STATE" "$RUNNER" "$SNAP_DIR"
     exit "$RUN_RC"
   fi
 
@@ -288,19 +278,18 @@ main() {
   # run. Matching any dream-*.md, rather than today's date computed up front,
   # means a 23:59 run that writes after midnight still counts, and a journal left
   # by an earlier run on the same day does not pre-satisfy the check.
-  if ! grep -qE '^20-projects/_logs/dream-[^/]*\.md$' "$SNAP_DIR/changed"; then
+  if [ ! -s "$SNAP_DIR/owned" ]; then
     printf '[%s] NO-ARTIFACT: exited 0 but no dream journal was added or changed\n' "$(ts)" >> "$LOG"
     exit 1
   fi
 
   # COMMIT. Exactly the journals the pass changed, checked first, with trailers
   # that let later tooling tell a pass's commit from a human's.
-  grep -E '^20-projects/_logs/dream-[^/]*\.md$' "$SNAP_DIR/changed" > "$SNAP_DIR/owned"
   commit_owned "$ROOT" dream "$SNAP_DIR/owned" "$SNAP_DIR/predirty" "$SNAP_DIR" "$LOG"
   commit_rc=$?
   case "$commit_rc" in
     0) ;;
-    4|5) record_leftover_journals; exit "$commit_rc" ;;
+    4|5) record_leftovers "$ROOT" "$SNAP_DIR/nohooks" "$STATE" "$RUNNER" "$SNAP_DIR"; exit "$commit_rc" ;;
     *) exit "$commit_rc" ;;
   esac
 

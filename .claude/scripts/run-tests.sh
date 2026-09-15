@@ -820,6 +820,12 @@ case "${FAKE_MODE:-nothing}" in
   ignoredjournal) printf -- '---\ntier: medium\ntype: project-log\n---\n\nignored\n' > "20-projects/_logs/dream-$(date +%F)-ignored.md" ;;
   promote-edit)   printf 'promoted\n' >> "31-standards/existing.md"
                   printf 'PROMOTION-SUMMARY: promoted=1 pending=0\n' ;;
+  promote-unique) printf -- '---\ntier: long\ntype: standard\n---\n\nunique\n' > "31-standards/promoted-unique.md"
+                  printf 'PROMOTION-SUMMARY: promoted=1 pending=0\n' ;;
+  promote-bad)    printf 'no frontmatter\n' > "31-standards/rejected-new.md"
+                  printf 'overwritten without frontmatter\n' > "31-standards/existing.md"
+                  [ -f 31-standards/ignored-keep.md ] && printf 'pass edit\n' >> 31-standards/ignored-keep.md
+                  printf 'PROMOTION-SUMMARY: promoted=2 pending=0\n' ;;
   hang)           exec sleep 60 ;;
   summary)        printf 'did the work\nPROMOTION-SUMMARY: promoted=0 pending=1\n' ;;
   errors)         printf 'Error: something failed\n%.0s' $(seq 1 60) ;;
@@ -893,6 +899,16 @@ printf -- '---\ntier: long\ntype: standard\n---\n\nexisting\n' > "$RV/31-standar
 expect_rc "dream-pass: hung agent is killed by the watchdog -> TIMEOUT" 124 "$(runner dream-pass.sh hang DREAM_PASS_TIMEOUT=2)"
 
 expect_rc "promotion-pass: summary line, no change -> OK"      0   "$(runner promotion-pass.sh summary)"
+# The agent has no shell, so the runner records the history it reads.
+GIT_STATE="$RV/.claude/logs/promotion-pass.git-state.txt"
+if [ "$RV_GIT" -eq 1 ]; then
+  if grep -qx '## git log --oneline -10' "$GIT_STATE" 2>/dev/null && grep -qx '## git status --short' "$GIT_STATE" \
+     && grep -q 'No earlier promotion pass commit was found' "$GIT_STATE"; then
+    ok "promotion-pass records the recent history for the agent, and says there is no earlier promotion commit"
+  else
+    bad "promotion-pass git state file is wrong or missing -- got: $(head -n 5 "$GIT_STATE" 2>/dev/null | tr '\n' '|')"
+  fi
+fi
 expect_rc "promotion-pass: new long-tier note -> OK"           0   "$(runner promotion-pass.sh promote)"
 expect_rc "promotion-pass: error output only -> NO-ARTIFACT"   1   "$(runner promotion-pass.sh errors)"
 expect_rc "promotion-pass: writes CLAUDE.md -> VIOLATION"      2   "$(runner promotion-pass.sh promote-stray)"
@@ -921,6 +937,12 @@ if grep -qx -- '--agent' "$REC.argv" 2>/dev/null && grep -qx 'dream-agent' "$REC
   ok "claude mode starts claude -p --agent dream-agent --permission-mode acceptEdits"
 else
   bad "claude mode argv -- got: $(tr '\n' ' ' < "$REC.argv" 2>/dev/null)"
+fi
+# The option takes a list, so it must come last or it would swallow what follows.
+if [ "$(tail -n 2 "$REC.argv" 2>/dev/null | tr '\n' ' ')" = '--disallowedTools Bash ' ]; then
+  ok "claude mode denies the Bash tool, in the last two arguments"
+else
+  bad "claude mode does not end with --disallowedTools Bash -- got: $(tr '\n' ' ' < "$REC.argv" 2>/dev/null)"
 fi
 
 rm -f "$REC.argv" "$REC.prompt"
@@ -1108,15 +1130,16 @@ if [ "$RV_GIT" -eq 1 ]; then
     printf '  SKIP  .git/hooks containment: this git did not run a post-commit hook (not counted)\n'
   fi
 
-  # HEAD and refs are not fenced, because a pass may commit. A normal commit must
-  # pass; a ref that no longer resolves, or a rewind to an older commit, must not.
+  # HEAD and refs are not fenced, because a human or a sync plugin may commit
+  # while a pass runs. A normal commit must pass; a ref that no longer resolves,
+  # or a rewind to an older commit, must not.
   new_case_state commit
-  expect_rc "command mode: promotion pass commits its own snapshot -> OK" 0 \
+  expect_rc "command mode: the pass's note is committed by something else during the pass -> OK" 0 \
     "$(runner promotion-pass.sh promote-commit VAULT_AGENT=command VAULT_AGENT_CMD="$FAKE" VAULT_ALLOW_UNENFORCED_TOOLS=1)"
   if [ ! -e "$RV/.claude/logs/runner-tripwire" ] && git -C "$RV" log --oneline -1 2>/dev/null | grep -q 'promotion snapshot'; then
-    ok "a pass that commits (a fast-forward) sets no tripwire, and its commit is in history"
+    ok "a commit made during the pass (a fast-forward) sets no tripwire, and it stays in history"
   else
-    bad "a committing pass set the tripwire, or its commit is missing"
+    bad "a commit made during the pass set the tripwire, or it is missing"
     tripwire_clear
   fi
 
@@ -1921,6 +1944,78 @@ if [ "$RV_GIT" -eq 1 ]; then
     bad "the promotion runner did not report a note that already had uncommitted changes"
   fi
   git -C "$RV" checkout -q -- 31-standards/existing.md
+
+  # The promotion runner commits the notes the pass wrote, and only those.
+  PROMO_LOG="$RV/.claude/logs/promotion-agent.log"
+  settle_owned "$RV"
+  new_case_state promotion-commit
+  : > "$PROMO_LOG"
+  expect_rc "promotion-pass: a new long-tier note in a git vault -> OK" 0 "$(runner promotion-pass.sh promote-unique)"
+  pc_note=31-standards/promoted-unique.md
+  pc_blob="$(git -C "$RV" rev-parse -q --verify "HEAD:$pc_note" 2>/dev/null)"
+  pc_msg="$(git -C "$RV" log -1 --format=%B 2>/dev/null)"
+  pc_commit="$(git -C "$RV" rev-parse HEAD)"
+  if [ -n "$pc_blob" ] && printf '%s\n' "$pc_msg" | grep -qx 'Vault-Pass: promotion' \
+     && printf '%s\n' "$pc_msg" | grep -qxF "Vault-Pass-Blob: $pc_blob $pc_note" \
+     && [ "$(git -C "$RV" diff-tree --no-commit-id --name-only -r HEAD)" = "$pc_note" ] \
+     && [ -z "$(git -C "$RV" status --porcelain -- "$pc_note")" ]; then
+    ok "the promoted note alone is committed, with Vault-Pass: promotion and a matching Vault-Pass-Blob"
+  else
+    bad "the promotion commit is wrong -- message: $(printf '%s' "$pc_msg" | tr '\n' '|')"
+  fi
+
+  # The next pass is told what changed in the long tier since that commit,
+  # including an edit nobody has committed.
+  printf 'an uncommitted human edit\n' >> "$RV/$pc_note"
+  new_case_state promotion-git-state
+  expect_rc "promotion-pass: a pass after a promotion commit -> OK" 0 "$(RUNNER_NO_SETTLE=1 runner promotion-pass.sh summary)"
+  if grep -qF "since the last promotion pass ($pc_commit)" "$GIT_STATE" 2>/dev/null \
+     && grep -q '^+an uncommitted human edit' "$GIT_STATE" && grep -qF "$pc_note" "$GIT_STATE"; then
+    ok "the git state file shows the long-tier changes since the last promotion commit"
+  else
+    bad "the git state file does not show the changes since the last promotion commit"
+  fi
+  git -C "$RV" checkout -q -- "$pc_note"
+
+  # A pass whose notes fail vault-check has every note it changed put back: a
+  # tracked one restored from the commit before the pass, a new one moved out of
+  # the vault. Nothing is committed.
+  settle_owned "$RV"
+  pb_head="$(git -C "$RV" rev-parse HEAD)"
+  new_case_state promotion-check-fails
+  : > "$PROMO_LOG"
+  expect_rc "promotion-pass: the pass writes notes that fail vault-check -> CHECK-FAILED" 5 "$(runner promotion-pass.sh promote-bad)"
+  if [ "$(git -C "$RV" rev-parse HEAD)" = "$pb_head" ] && [ -z "$(git -C "$RV" status --porcelain -- 31-standards)" ] \
+     && [ ! -e "$RV/31-standards/rejected-new.md" ] \
+     && [ -n "$(find "$CASE_STATE/quarantine" -path '*-rejected/31-standards/rejected-new.md' -type f 2>/dev/null)" ] \
+     && grep -q 'CHECK-FAILED' "$PROMO_LOG" && grep -q 'REVERTED' "$PROMO_LOG" \
+     && grep -q '31-standards/existing.md (restored from' "$PROMO_LOG"; then
+    ok "rejected notes are put back, the new one quarantined, nothing committed, and the log lists each"
+  else
+    bad "rejected notes were not all put back -- status: $(git -C "$RV" status --porcelain -- 31-standards | tr '\n' ' ') log: $(grep -A3 REVERTED "$PROMO_LOG" | tr '\n' '|')"
+  fi
+  git -C "$RV" checkout -q -- 31-standards/existing.md
+  rm -f "$RV/31-standards/rejected-new.md"
+
+  # A note git ignores that existed before the pass is in no commit, so there is
+  # nothing to put back. It stays in the vault and is listed, never moved out.
+  cp "$RV/.git/info/exclude" "$TMP/exclude-promotion" 2>/dev/null || : > "$TMP/exclude-promotion"
+  printf '31-standards/ignored-keep.md\n' >> "$RV/.git/info/exclude"
+  printf -- '---\ntier: long\ntype: standard\n---\n\nkeep\n' > "$RV/31-standards/ignored-keep.md"
+  settle_owned "$RV"
+  new_case_state promotion-check-fails-ignored
+  : > "$PROMO_LOG"
+  expect_rc "promotion-pass: rejected notes and an edited note git ignores -> CHECK-FAILED" 5 "$(runner promotion-pass.sh promote-bad)"
+  if grep -q '^keep$' "$RV/31-standards/ignored-keep.md" 2>/dev/null \
+     && grep -q '31-standards/ignored-keep.md (existed before the pass but is in no commit' "$PROMO_LOG" \
+     && [ ! -e "$RV/31-standards/rejected-new.md" ]; then
+    ok "an ignored note that existed before the pass stays in the vault and is listed"
+  else
+    bad "an ignored note that existed before the pass was moved or not listed -- log: $(grep -A4 REVERTED "$PROMO_LOG" | tr '\n' '|')"
+  fi
+  cp "$TMP/exclude-promotion" "$RV/.git/info/exclude"
+  git -C "$RV" checkout -q -- 31-standards/existing.md
+  rm -f "$RV/31-standards/rejected-new.md" "$RV/31-standards/ignored-keep.md"
 
   # A git operation in progress or a detached HEAD stops the run before the agent.
   settle_owned "$RV"
@@ -2950,6 +3045,18 @@ for a in dream-agent promotion-agent; do
     ok "$a declares no agent memory"
   fi
 done
+# The promotion agent writes the long tier unattended, so it gets no shell and no
+# skill that could bring one back, and its instructions ask for no git command.
+# The runner keeps the history instead.
+PA="$ROOT/.claude/agents/promotion-agent.md"
+pa_front="$(awk 'NR==1&&/^---/{f=1;next} f&&/^---/{exit} f' "$PA" 2>/dev/null)"
+if printf '%s\n' "$pa_front" | grep -qx 'tools: Read, Glob, Grep, Write, Edit' \
+   && ! printf '%s\n' "$pa_front" | grep -q '^skills:' \
+   && ! grep -Eq 'git (add|commit|diff|log|status)' "$PA"; then
+  ok "promotion-agent has no shell, no skills, and asks for no git command"
+else
+  bad "promotion-agent has a shell, a skill or a git command -- frontmatter: $(printf '%s' "$pa_front" | tr '\n' '|')"
+fi
 
 # The runners resolve the vault from their own location and nothing else. A
 # CLAUDE_PROJECT_DIR exported by a harness session, or a stale VAULT_ROOT in a

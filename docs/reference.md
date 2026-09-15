@@ -469,8 +469,8 @@ Around that call, each runner does several things an exit code cannot:
   config and hooks from the directory `commondir` names. The rest of `info/` is not fenced, because
   `git gc --auto` after an ordinary commit rewrites `info/refs`. For a vault that is a linked
   worktree, the same files in the shared git directory are fenced too, and appear in logs under
-  `.git-common/`. HEAD and refs are not fenced, because a pass may commit (the promotion agent
-  takes a snapshot) and you may commit while it runs.
+  `.git-common/`. HEAD and refs are not fenced, because you or a sync plugin may commit while a
+  pass runs.
 - **Containment.** A fence that only reports leaves a planted file in place, where it runs the next
   time something opens the vault. So when the changed paths include a *steering or execution
   surface*, the runner contains it before anything else, including before it looks at the agent's
@@ -617,35 +617,48 @@ Around that call, each runner does several things an exit code cannot:
   in progress, or HEAD is detached, and records every file `git status` reports as modified,
   staged, untracked or conflicted, both sides of a rename included. After the pass, a file the pass
   owns (a dream journal, or for the promotion pass a long-tier note or promotion report) that
-  changed and was on that list exits **2**, and the runner commits none of them. The promotion
-  agent still takes its own git snapshot, which can include such a file. Every other dirty or
-  staged file is left as the runner found it.
-- **Journal commit.** A successful dream pass commits the journals it changed and nothing else. It
-  records their blob ids, runs `vault-check.sh` on exactly those files and exits **5**
-  (CHECK-FAILED) when they fail, leaving them uncommitted. It then runs `git add -- <journals>` and
-  `git commit --only -- <journals>` with `core.hooksPath` pointed at an empty folder, each step
-  under the watchdog with `RUNNER_GIT_TIMEOUT`, so a signing prompt cannot stall the run. The commit runs
-  no hooks because hook managers such as pre-commit or husky read their configuration from ordinary
-  files a pass can write, and the check on the journals takes the commit gate's place. Signing
-  still applies. A staged blob that differs from the checked one (the journal changed while it was
-  checked), or a failed or stopped step, exits **4** (COMMIT-FAILED). The runner then takes the
-  journals back out of the index, and says in the log when it could not, and names a leftover
-  `index.lock`. Exit 4 also covers a commit that was made but whose trailers do not match what HEAD
-  holds, and the log says so. The commit message carries `Vault-Pass: dream` and one
-  `Vault-Pass-Blob: <blob id> <path>` per journal. A journal git ignores, or one HEAD already holds
-  because something else committed it during the pass, is noted and passes.
+  changed and was on that list exits **2**, and the runner commits none of them. Every other dirty
+  or staged file is left as the runner found it.
+- **Runner commit.** A successful pass has the files it changed in the areas it owns committed by
+  its runner, and nothing else. For the dream pass those are its journals. For the promotion pass
+  they are its long-tier notes and promotion report. The runner records their blob ids, runs
+  `vault-check.sh` on exactly those files and exits **5** (CHECK-FAILED) when any fails. It then
+  runs `git add -- <files>` and `git commit --only -- <files>` with `core.hooksPath` pointed at an
+  empty folder, each step under the watchdog with `RUNNER_GIT_TIMEOUT`, so a signing prompt cannot
+  stall the run. The commit runs no hooks because hook managers such as pre-commit or husky read
+  their configuration from ordinary files a pass can write, and the check on the files takes the
+  commit gate's place. Signing still applies. A staged blob that differs from the checked one (the
+  file changed while it was checked), or a failed or stopped step, exits **4** (COMMIT-FAILED). The
+  runner then takes the files back out of the index, says in the log when it could not, and names
+  a leftover `index.lock`. Exit 4 also covers a commit that was made but whose trailers do not
+  match what HEAD holds, and the log says so. The commit message carries `Vault-Pass: dream` or
+  `Vault-Pass: promotion` and one `Vault-Pass-Blob: <blob id> <path>` per file. A file git
+  ignores, or one HEAD already holds because something else committed it during the pass, is noted
+  and passes.
 
-  A journal the runner could not commit (exit 124, 4, 5, or the agent's own failure, after a pass
-  that wrote only journals) is recorded with its exact bytes in the state directory. The next run
-  commits it, together with that run's addition, as long as nobody has changed it since. Once it
-  has been edited it counts as someone's edit and gives exit 2, so fix a rejected journal and
-  commit it yourself, or delete it. A journal that was clean before the pass and edited by you or
-  a sync client while the pass ran cannot be told apart from the pass's own writing, and is
-  committed under `Vault-Pass: dream`. Avoid editing today's journal during a scheduled pass.
+  On exit 5 the passes differ. The dream pass leaves the rejected journal in place, uncommitted.
+  The promotion pass puts back every note it changed, because the long tier steers later
+  sessions, and logs each under `REVERTED`. A note that was in the commit HEAD pointed at before
+  the pass is restored from that commit. A new one is moved to a quarantine folder ending in
+  `-rejected` in the state directory. A note git ignores that existed before the pass is in no
+  commit, so there is nothing to restore, and it is left as the pass wrote it and listed. A note
+  that changed after the pass ended is someone's edit, so it is left as it is and listed.
 
-`dream-pass.sh` also writes `git log --oneline -5` and `git status --short` to
-`.claude/logs/dream-pass.git-state.txt` before the run, because the dream-agent is given no shell
-to read them itself.
+  Files the runner could not commit are recorded with their exact bytes in the state directory.
+  That covers exit 124, exit 4, the agent's own failure, and exit 5 for the dream pass, after a
+  pass that wrote only where it may. The next run of the same pass commits them, together with
+  that run's changes, as long as nobody has changed them since. Once edited they count as someone's
+  edit and give exit 2, so fix a rejected journal and commit it yourself, or delete it. A file
+  that was clean before the pass and edited by you or a sync client while the pass ran cannot be
+  told apart from the pass's own writing, and is committed under the pass's trailer. Avoid editing
+  today's journal, or a long-tier note, during a scheduled pass.
+
+Neither agent is given a shell, so each runner writes the history its agent reads before the run.
+`dream-pass.sh` writes `git log --oneline -5` and `git status --short` to
+`.claude/logs/dream-pass.git-state.txt`. `promotion-pass.sh` writes `git log --oneline -10`, the
+long-tier changes since the last commit with a `Vault-Pass: promotion` trailer (a `--stat` summary
+and the first 400 lines of the diff), and `git status --short` to
+`.claude/logs/promotion-pass.git-state.txt`.
 
 Both runners resolve the vault from their own location **only**. They ignore
 `CLAUDE_PROJECT_DIR` and any other inherited root variable, so a stale value in a scheduler or a
@@ -653,12 +666,12 @@ harness session cannot point an unattended pass, and its fence, at a different v
 
 | Exit | Meaning (both runners) |
 | --- | --- |
-| `0` | OK: the artifact assertion held, nothing outside the fence changed, and (dream pass) the journal was committed, HEAD already held it, git ignores it, or the vault is not a repository of its own |
+| `0` | OK: the artifact assertion held, nothing outside the fence changed, and the pass's files were committed, HEAD already held them, git ignores them, or the vault is not a repository of its own |
 | `1` | NO-ARTIFACT, the runner could not create its temporary directory, use its state directory, write its in-flight marker, run `git status` or back up the steering surfaces, git cannot read the vault's repository, or (command mode) the agent definition file is missing |
-| `2` | VIOLATION: a file outside the allowed write areas changed during the run. When steering surfaces are among them they are contained and the tripwire is set. Also when the pass changed a file it owns that already had uncommitted changes before it started, or (dream pass) a journal it changed is no longer a regular file. The runner commits nothing |
+| `2` | VIOLATION: a file outside the allowed write areas changed during the run. When steering surfaces are among them they are contained and the tripwire is set. Also when the pass changed a file it owns that already had uncommitted changes before it started, or a file it owns and changed is no longer a regular file. The runner commits nothing |
 | `3` | REFUSED: `VAULT_AGENT=command` without `VAULT_ALLOW_UNENFORCED_TOOLS=1`; the agent was not started |
-| `4` | COMMIT-FAILED (dream pass): staging or committing the journal failed, ran longer than `RUNNER_GIT_TIMEOUT`, or the journal changed while it was checked. The journal is left in place and uncommitted, and the log says whether it could be unstaged. Also a commit that was made but does not hold the checked content, which the log names |
-| `5` | CHECK-FAILED (dream pass): `vault-check.sh` rejected the journal. It is left in place, uncommitted |
+| `4` | COMMIT-FAILED: staging or committing the pass's files failed, ran longer than `RUNNER_GIT_TIMEOUT`, or a file changed while it was checked. The files are left in place and uncommitted, and the log says whether they could be unstaged. Also a commit that was made but does not hold the checked content, which the log names |
+| `5` | CHECK-FAILED: `vault-check.sh` rejected a file the pass changed, and nothing was committed. The dream pass leaves the journal in place. The promotion pass puts back every note it changed and logs them under `REVERTED` |
 | `64` | `VAULT_AGENT` is neither `claude` nor `command` |
 | `70` | TRIPWIRE-ERROR: containment was needed but neither copy of the tripwire could be written. The in-flight marker is left, so the next run refuses |
 | `75` | LOCKED: the run lock stayed held, or git's `index.lock` stayed, for `RUN_LOCK_WAIT` seconds, the `index.lock` is older than 10 minutes, another runner took the lock over before the pass started, a git merge, rebase, cherry-pick, revert or bisect is in progress, or HEAD is detached. The agent was not started |
@@ -679,7 +692,7 @@ harness session cannot point an unattended pass, and its fence, at a different v
 | `WATCHDOG_GRACE` | `15` seconds | `lib/runner-common.sh`: wait between `TERM` and `KILL` |
 | `RUN_LOCK_WAIT` | `1800` seconds | both runners: how long to wait for the run lock before exiting 75 |
 | `RUN_LOCK_POLL` | `30` seconds | both runners: how often to check the run lock while waiting |
-| `RUNNER_GIT_TIMEOUT` | `120` seconds | `dream-pass.sh`: how long each git step of the journal commit (staging, then the commit and its signing) may take before it is stopped and the run exits 4 |
+| `RUNNER_GIT_TIMEOUT` | `120` seconds | both runners: how long each git step of the runner commit (staging, then the commit and its signing) may take before it is stopped and the run exits 4 |
 | `VAULT_STATE_DIR` | per-vault directory under `%LOCALAPPDATA%` or `~/.local/state` | both runners: the run lock, the quarantine, the tripwire and in-flight copies, and the pre-pass backup of a running pass, all outside the vault, and `vault-check.sh`, which looks for the tripwire copy there. An absolute path is required, and a Windows path is converted. A relative one, one containing `..`, or one inside the vault is replaced with a directory under the system temp folder, and the runner logs a warning. A state directory the runner's account does not own or cannot write stops the run with exit 1. Give each vault its own value |
 | `BASH_EXE` | standard Git for Windows paths | the `.cmd` wrappers |
 | `VAULT_FORCE_NO_JQ` | unset | `vault-lint.sh` and `postcompact-wrap-up.sh`: take the no-jq branch even when `jq` is installed |
@@ -803,18 +816,20 @@ to re-run or synthesize to close it: closing a gap is the owner's call.
 | | |
 | --- | --- |
 | Cadence | Weekly (`promotion-pass.sh` / `.cmd`) |
-| Tools | Read, Glob, Grep, Write, Edit, Bash, Skill (declares the `preserve` skill) |
+| Tools | Read, Glob, Grep, Write, Edit. No shell and no skills, and in claude mode the runner also passes `--disallowedTools Bash` |
 | Model | `sonnet`, `maxTurns: 30`, no agent memory (memory loads into later passes, so an unattended agent gets none) |
 | Writes | Notes in `31-standards/` and `40-llm-wiki/wiki/` (never their `templates/`); freshness stamps on notes it re-probed; optionally `20-projects/_logs/promotion-*.md` |
 | Never | Deletes or overwrites a note to resolve a conflict |
 
 Safety constraints, all load-bearing:
 
-- **Git snapshot and diff before any automated write; abort on unexpected drift.** It is an
-  unattended writer in a knowledge store, and the snapshot is what makes a bad pass reversible.
-  It keeps the Bash tool for exactly this, which is why `git` is a hard dependency. The runner's
-  write fence (§4.3) catches writes outside the allowed areas, but only git can undo a bad write
-  inside them.
+- **The runner keeps the history, not the agent.** It is an unattended writer in a knowledge
+  store, so it gets no shell. The runner writes `promotion-pass.git-state.txt` for it to read,
+  then checks and commits exactly the notes it changed, or puts them all back (§4.3). That commit
+  is what makes a bad pass reversible, which is why `git` is a hard dependency. The runner's write
+  fence catches writes outside the allowed areas, but only git can undo a bad write inside them.
+- **Leave a note alone that shows changes no promotion pass made.** Someone may be editing it.
+  The agent reports it as pending, and the runner refuses to commit over such a note anyway.
 - **End with `PROMOTION-SUMMARY: promoted=<n> pending=<n>`** on its own line. Without that line or
   a long-tier change, `promotion-pass.sh` reports NO-ARTIFACT.
 - **A note created from a template keeps `last_verified: ""`** unless the pass re-probed its claim.
@@ -893,7 +908,7 @@ while a note under `40-llm-wiki/wiki/` is covered by the six-tier rules only.
 | Dependency | Needed for | Missing it means |
 | --- | --- | --- |
 | `bash` | every hook and script | Nothing here runs. On Windows, Git Bash. |
-| `git` | cloning; the promotion-agent's snapshot; the dream-pass git-state file | The promotion-agent cannot snapshot, so a bad write inside the fenced areas cannot be undone. The runners' write fence does not use git and still works. |
+| `git` | cloning, the runners' commits of each pass's files, and the runners' git-state files | Nothing a pass writes is committed, so a bad write inside the fenced areas cannot be undone, and a rejected promotion note cannot be restored. The runners' write fence does not use git and still works. |
 | `jq` | reliable hook-input parsing | The lint falls back to a `sed` path parse and warns loudly; the compaction stub degrades to placeholders. **Not bundled with Git for Windows.** |
 | `perl` | the invisible-character scan | Falls back to `grep -P`; if that is absent too, the hook says the scan did not run. Present on macOS, most Linux distributions, and Git for Windows. |
 | `grep -P` | fallback for the same scan | A GNU extension — **absent on macOS BSD grep**, which is why `perl` is preferred rather than the other way round. |
@@ -912,10 +927,10 @@ while a note under `40-llm-wiki/wiki/` is covered by the six-tier rules only.
 | `.claude/scripts/vault-check.sh` | `0` notes scanned, no violations · `1` one or more violations (including a malformed date), no content-tier folder found, zero notes scanned (`VACUOUS`), or a named note that is not a readable file | stdout, plus the `VACUOUS` and unreadable-note lines on stderr — never writes to a note |
 | `.claude/scripts/run-tests.sh` | `0` all controls passed · `1` at least one failed · `130` SIGINT · `143` SIGTERM | stdout only; fixtures in a temp dir, removed on exit |
 | `.claude/scripts/dream-pass.sh` / `.cmd` | `0` OK · `1` NO-ARTIFACT · `2` VIOLATION · `3` REFUSED · `4` COMMIT-FAILED · `5` CHECK-FAILED · `64` unknown `VAULT_AGENT` · `70` TRIPWIRE-ERROR · `75` LOCKED · `78` TRIPWIRE · `124` TIMEOUT · `127` `claude`, wrapper or Git Bash not found · otherwise the agent's code | `.claude/logs/dream-agent.log`; agent output in `dream-agent.run.log`; `dream-pass.git-state.txt`; `dream-pass.prompt.md` in command mode; `runner-tripwire` after a contained violation |
-| `.claude/scripts/promotion-pass.sh` / `.cmd` | `0` OK · `1` NO-ARTIFACT · `2` VIOLATION · `3` REFUSED · `64` unknown `VAULT_AGENT` · `70` TRIPWIRE-ERROR · `75` LOCKED · `78` TRIPWIRE · `124` TIMEOUT · `127` `claude`, wrapper or Git Bash not found · otherwise the agent's code | `.claude/logs/promotion-agent.log`; agent output appended to `promotion-agent.run.log`; `promotion-pass.prompt.md` in command mode; `runner-tripwire` after a contained violation |
+| `.claude/scripts/promotion-pass.sh` / `.cmd` | `0` OK · `1` NO-ARTIFACT · `2` VIOLATION · `3` REFUSED · `4` COMMIT-FAILED · `5` CHECK-FAILED · `64` unknown `VAULT_AGENT` · `70` TRIPWIRE-ERROR · `75` LOCKED · `78` TRIPWIRE · `124` TIMEOUT · `127` `claude`, wrapper or Git Bash not found · otherwise the agent's code | `.claude/logs/promotion-agent.log`; agent output appended to `promotion-agent.run.log`; `promotion-pass.git-state.txt`; `promotion-pass.prompt.md` in command mode; `runner-tripwire` after a contained violation |
 | `.claude/githooks/pre-commit` | `vault-check.sh`'s status: `0` commit proceeds · `1` commit refused | stdout/stderr only |
 | `dream-agent` | n/a (agent) | one file: `20-projects/_logs/dream-<YYYY-MM-DD>.md` |
-| `promotion-agent` | n/a (agent) | `31-standards/`, `40-llm-wiki/wiki/`, optionally `20-projects/_logs/promotion-*.md`; git snapshot before writing |
+| `promotion-agent` | n/a (agent) | `31-standards/`, `40-llm-wiki/wiki/`, optionally `20-projects/_logs/promotion-*.md`, committed by its runner |
 
 `.claude/logs/` is gitignored: it is per-machine run history, not vault content. Delete it freely;
 every hook recreates what it needs.

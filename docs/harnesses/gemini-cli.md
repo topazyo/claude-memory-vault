@@ -70,9 +70,8 @@ exec gemini --approval-mode auto_edit -p "$(cat "$1")"
 ```
 
 `auto_edit` approves file edits and asks for anything else. A scheduled run cannot answer, so
-shell commands are not approved. That suits the dream pass. The promotion pass needs `git` for
-its snapshot, and its instructions tell it not to write without one, so under this wrapper it
-reports its candidates as pending. Gemini CLI's sandbox (`tools.sandbox`) blocks network access by
+shell commands are not approved. That suits both passes, because neither needs a shell. The
+runner records the history the promotion agent reads and commits its notes. Gemini CLI's sandbox (`tools.sandbox`) blocks network access by
 default (`tools.sandboxNetworkAccess: false`). Enable it for scheduled runs before you set
 `VAULT_ALLOW_UNENFORCED_TOOLS=1`.
 
