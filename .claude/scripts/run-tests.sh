@@ -1033,15 +1033,20 @@ runner() {  # runner <script> <mode> [extra env...]
     RUNNER_STALL_SECONDS= RUNNER_STALL_FLOOR= RUNNER_RUN_LOG_MAX_BYTES= \
     RUN_LOCK_WAIT=4 RUN_LOCK_POLL=1 "$@" \
     bash "${RUNNER_VAULT:-$RV}/.claude/scripts/$script" >/dev/null 2>&1
-  local rc=$? sd="${CASE_STATE:-$TMP/state}" log
+  local rc=$? sd="${CASE_STATE:-$TMP/state}" log tw
   # A lock a failed stop marked KILL_FAILED would make every later case sharing
-  # the state directory exit 75. It is moved aside, and the summary fails with
-  # what the stop found.
+  # the state directory exit 75, and the tripwire the stop set would make them
+  # exit 78. Both are moved aside, and the summary fails with what the stop found.
   if grep -q '^kill_failed=' "$sd/run.lock/owner" 2>/dev/null; then
     log="${RUNNER_VAULT:-$RV}/.claude/logs/dream-agent.log"
     [ "$script" = promotion-pass.sh ] && log="${RUNNER_VAULT:-$RV}/.claude/logs/promotion-agent.log"
     printf '%s %s: %s\n' "$script" "$mode" "$(awk '/KILL_FAILED/ { f = 1 } f' "$log" 2>/dev/null | tail -n 8 | tr '\n' '|')" >> "${KILL_FAILED_SEEN:-$TMP/kill-failed-seen}"
     mv "$sd/run.lock" "$TMP/kill-failed-lock.$RANDOM$RANDOM" 2>/dev/null || rm -rf "$sd/run.lock"
+    for tw in "${RUNNER_VAULT:-$RV}/.claude/logs/runner-tripwire" "$sd/runner-tripwire"; do
+      if grep -q 'may still be running' "$tw" 2>/dev/null; then
+        mv "$tw" "$TMP/kill-failed-tripwire.$RANDOM$RANDOM" 2>/dev/null || rm -f "$tw"
+      fi
+    done
   fi
   echo "$rc"
 }
@@ -1274,11 +1279,29 @@ new_case_state runlog-cap
 head -c 6000 /dev/zero | tr '\0' 'x' > "$RV/.claude/logs/dream-agent.run.log"
 expect_rc "dream-pass: journal written with a full run log -> OK" 0 "$(runner dream-pass.sh journal RUNNER_RUN_LOG_MAX_BYTES=2000)"
 rl_size="$(wc -c < "$RV/.claude/logs/dream-agent.run.log" | tr -d ' ')"
-if [ "$rl_size" -le 2000 ] && grep -q 'subtype":"init' "$RV/.claude/logs/dream-agent.run.log"; then
-  ok "the run log is cut to RUNNER_RUN_LOG_MAX_BYTES and keeps the latest pass"
+if [ "$rl_size" -le 2000 ] && grep -q 'subtype":"init' "$RV/.claude/logs/dream-agent.run.log" \
+   && [ "$(head -c 1 "$RV/.claude/logs/dream-agent.run.log")" = '{' ]; then
+  ok "the run log is cut to RUNNER_RUN_LOG_MAX_BYTES at a line start and keeps the latest pass"
 else
-  bad "the run log was not capped -- $rl_size bytes"
+  bad "the run log was not capped at a line start -- $rl_size bytes, starts with [$(head -c 20 "$RV/.claude/logs/dream-agent.run.log")]"
 fi
+# A run log that is a hard link to another file is replaced, never written
+# through, so the other file keeps its bytes.
+printf 'other file\n' > "$TMP/runlog-hardlink-target"
+rm -f "$RV/.claude/logs/dream-agent.run.log"
+if ln "$TMP/runlog-hardlink-target" "$RV/.claude/logs/dream-agent.run.log" 2>/dev/null; then
+  new_case_state runlog-hardlink
+  expect_rc "dream-pass: journal written with a run log hard-linked to another file -> OK" 0 "$(runner dream-pass.sh journal)"
+  if [ "$(cat "$TMP/runlog-hardlink-target")" = 'other file' ] && grep -q 'subtype":"init' "$RV/.claude/logs/dream-agent.run.log" \
+     && ! grep -q 'other file' "$RV/.claude/logs/dream-agent.run.log"; then
+    ok "a run log hard-linked to another file is replaced, and the other file is untouched"
+  else
+    bad "the run output went through a hard link -- other file: [$(tr '\n' '|' < "$TMP/runlog-hardlink-target")]"
+  fi
+else
+  skip runlog-hardlink 'a run log hard-linked to another file: ln cannot make a hard link here'
+fi
+rm -f "$RV/.claude/logs/dream-agent.run.log"
 
 # A silent pass is stopped with 125, and so is the grandchild it left behind.
 HB="$TMP/heartbeat"
@@ -1302,7 +1325,10 @@ if [ -n "$hb_pid" ] && ! kill -0 "$hb_pid" 2>/dev/null && [ -n "$hb_one" ] && [ 
 else
   bad "the grandchild outlived the stop -- pid ${hb_pid:-none} alive: $(kill -0 "$hb_pid" 2>/dev/null && echo yes || echo no), heartbeat ${hb_one:-?} then ${hb_two:-?} bytes"
 fi
-if [ "$stall_took" -lt 60 ] && grep -q 'STALLED: dream-agent wrote no output for 3s' "$RV/.claude/logs/dream-agent.log" \
+# Exit 125 already shows the stall, not the 30-second timeout, stopped the pass.
+# The time limit only catches a stop that hangs, and a slow Git Bash host can
+# spend a minute on setup, the Windows stop and containment.
+if [ "$stall_took" -lt 150 ] && grep -q 'STALLED: dream-agent wrote no output for 3s' "$RV/.claude/logs/dream-agent.log" \
    && ! grep -q KILL_FAILED "$RV/.claude/logs/dream-agent.log" && [ ! -e "$CASE_STATE/run.lock" ]; then
   ok "a stall is logged, the stop is verified, and the run lock is released"
 else
@@ -1370,11 +1396,14 @@ esac
 # starts until a human removes it, however old the lock is.
 new_case_state kill-failed
 mkdir -p "$CASE_STATE" "$TMP/kill-failed-vault/.claude/logs"
-rm -f "$TMP/kill-failed-vault/.claude/logs/runner-tripwire"
+# A tripwire in the vault alone was written during the pass, so by the pass. It
+# is replaced, and the copy the pass cannot reach is written too.
+printf 'planted by the pass, delete this and the lock\n' > "$TMP/kill-failed-vault/.claude/logs/runner-tripwire"
 : > "$TMP/kill-failed.log"
 ( . "$RV/.claude/scripts/lib/runner-common.sh"
   # A pid no system hands out, because stop_tree really signals it.
   tree_pids() { printf '%s\n999999999\n' "$1"; }
+  group_members() { printf '999999999\n'; }
   pid_alive() { [ "$1" = 999999999 ]; }
   win_msys_tree() { printf '%s 0\n999999999 0\n' "$1"; }
   win_tree_stop() { printf 'alive 999999999 survivor\n' >> "$3"; }
@@ -1382,16 +1411,21 @@ rm -f "$TMP/kill-failed-vault/.claude/logs/runner-tripwire"
   run_lock_acquire "$CASE_STATE" "$TMP/kill-failed-vault" dream-pass "$TMP/kill-failed.log" 1 || exit 9
   WATCHDOG_POLL=1 WATCHDOG_GRACE=1 run_with_watchdog 1 "$TMP/kill-failed.out" sleep 30
   [ "$RUN_TIMED_OUT" -eq 1 ] && [ "$RUN_KILL_FAILED" -eq 1 ] || exit 8
+  CONTAINED=0
   report_stop "$TMP/kill-failed.log" test-agent "$TMP/kill-failed-vault" "$CASE_STATE" dream-pass
+  [ "${KILL_FAILED_MARKED:-0}" -eq 1 ] || exit 7
   run_lock_release )
 kf_rc=$?
 # A process that may still be running can write after containment, so the vault
 # is unverified and the tripwire is set as well.
-if grep -q 'may still be running' "$TMP/kill-failed-vault/.claude/logs/runner-tripwire" 2>/dev/null \
-   && grep -q 'alive 999999999' "$TMP/kill-failed-vault/.claude/logs/runner-tripwire"; then
-  ok "a stop that leaves a process also sets the tripwire, naming what the stop found"
+kf_vault="$TMP/kill-failed-vault/.claude/logs/runner-tripwire"
+if grep -q 'may still be running' "$kf_vault" 2>/dev/null && grep -q 'alive 999999999' "$kf_vault" \
+   && grep -q 'may still be running' "$CASE_STATE/runner-tripwire" 2>/dev/null && grep -q 'alive 999999999' "$CASE_STATE/runner-tripwire" \
+   && ! grep -q 'planted by the pass' "$kf_vault" && grep -q '^What the stop found:' "$kf_vault" \
+   && ! grep -q '^Paths:' "$kf_vault" && grep -q 'run.lock' "$kf_vault" && grep -q 'inflight-backup.tar' "$kf_vault"; then
+  ok "a stop that leaves a process sets both tripwire copies, replacing one the pass planted, naming what the stop found, the lock and the backup"
 else
-  bad "a stop that leaves a process set no tripwire (rc $kf_rc)"
+  bad "a stop that leaves a process set a wrong tripwire (rc $kf_rc) -- vault: [$(tr '\n' '|' < "$kf_vault" 2>/dev/null | cut -c1-300)] state copy: $([ -f "$CASE_STATE/runner-tripwire" ] && echo yes || echo no)"
 fi
 kf_later="$( . "$RV/.claude/scripts/lib/runner-common.sh"
   RUN_LOCK_WAIT=0
@@ -1407,25 +1441,71 @@ else
 fi
 rm -rf "$CASE_STATE/run.lock"
 
+# When containment set the tripwire in the same run, what it wrote stays, and
+# the stop's report is added to both copies.
+new_case_state kill-failed-append
+mkdir -p "$CASE_STATE" "$TMP/kill-failed-append/.claude/logs"
+printf 'containment wrote this\n' > "$TMP/kill-failed-append/.claude/logs/runner-tripwire"
+printf 'containment wrote this\n' > "$CASE_STATE/runner-tripwire"
+( . "$RV/.claude/scripts/lib/runner-common.sh"
+  RUN_KILL_FAILED=1 RUN_KILL_REPORT='alive 999999999 survivor' CONTAINED=1
+  report_stop "$TMP/kill-failed-append.log" test-agent "$TMP/kill-failed-append" "$CASE_STATE" dream-pass )
+kfa_ok=1
+for kfa in "$TMP/kill-failed-append/.claude/logs/runner-tripwire" "$CASE_STATE/runner-tripwire"; do
+  grep -q 'containment wrote this' "$kfa" 2>/dev/null && grep -q 'Also, a process of the stopped test-agent' "$kfa" \
+    && grep -q 'alive 999999999' "$kfa" || kfa_ok=0
+done
+if [ "$kfa_ok" -eq 1 ]; then
+  ok "a stop that leaves a process adds its report to the tripwire containment set, in both copies"
+else
+  bad "the stop's report was not added to containment's tripwire -- vault: [$(tr '\n' '|' < "$TMP/kill-failed-append/.claude/logs/runner-tripwire" 2>/dev/null)] state: [$(tr '\n' '|' < "$CASE_STATE/runner-tripwire" 2>/dev/null)]"
+fi
+
+# Without a temporary file the tripwire is still written, from the state
+# directory.
+new_case_state kill-failed-notmp
+mkdir -p "$CASE_STATE" "$TMP/kill-failed-notmp/.claude/logs" "$TMP/shim-no-mktemp"
+printf '#!/bin/sh\nexit 1\n' > "$TMP/shim-no-mktemp/mktemp"
+chmod +x "$TMP/shim-no-mktemp/mktemp"
+( . "$RV/.claude/scripts/lib/runner-common.sh"
+  RUN_KILL_FAILED=1 RUN_KILL_REPORT='alive 999999999 survivor' CONTAINED=0
+  PATH="$TMP/shim-no-mktemp:$PATH"
+  report_stop "$TMP/kill-failed-notmp.log" test-agent "$TMP/kill-failed-notmp" "$CASE_STATE" dream-pass )
+if grep -q 'alive 999999999' "$CASE_STATE/runner-tripwire" 2>/dev/null \
+   && grep -q 'alive 999999999' "$TMP/kill-failed-notmp/.claude/logs/runner-tripwire" 2>/dev/null; then
+  ok "a stop that leaves a process sets the tripwire even when mktemp fails"
+else
+  bad "no tripwire was set for a failed stop when mktemp failed -- log: $(tr '\n' '|' < "$TMP/kill-failed-notmp.log" 2>/dev/null)"
+fi
+
 # The Windows check has a time limit. A PowerShell that does not answer is
 # stopped, and the stop is recorded as unknown rather than waited on forever.
 # A stand-in powershell.exe runs everywhere, because win_tree_stop only calls it.
-mkdir -p "$TMP/shim-ps-hang" "$TMP/shim-ps-none"
+mkdir -p "$TMP/shim-ps-hang" "$TMP/shim-ps-none" "$TMP/shim-ps-unknown"
 printf '#!/bin/sh\nexec sleep 30\n' > "$TMP/shim-ps-hang/powershell.exe"
 printf '#!/bin/sh\nprintf "none\\r\\n"\n' > "$TMP/shim-ps-none/powershell.exe"
-chmod +x "$TMP/shim-ps-hang/powershell.exe" "$TMP/shim-ps-none/powershell.exe"
+printf '#!/bin/sh\nprintf "unknown (PowerShell got no process list, so only taskkill on the agent ran)\\r\\n"\n' > "$TMP/shim-ps-unknown/powershell.exe"
+chmod +x "$TMP/shim-ps-hang/powershell.exe" "$TMP/shim-ps-none/powershell.exe" "$TMP/shim-ps-unknown/powershell.exe"
 : > "$TMP/ps-hang.record"
 : > "$TMP/ps-none.record"
+: > "$TMP/ps-unknown.record"
 psh_start="$(date +%s)"
 ( . "$RV/.claude/scripts/lib/runner-common.sh"
   PATH="$TMP/shim-ps-hang:$PATH" WINDOWS_STOP_LIMIT=2 win_tree_stop 0 "" "$TMP/ps-hang.record"
-  PATH="$TMP/shim-ps-none:$PATH" WINDOWS_STOP_LIMIT=10 win_tree_stop 0 "" "$TMP/ps-none.record" )
+  PATH="$TMP/shim-ps-none:$PATH" WINDOWS_STOP_LIMIT=10 win_tree_stop 0 "" "$TMP/ps-none.record"
+  PATH="$TMP/shim-ps-unknown:$PATH" WINDOWS_STOP_LIMIT=10 win_tree_stop 0 "" "$TMP/ps-unknown.record" )
 psh_took=$(( $(date +%s) - psh_start ))
 if grep -q '^unknown (PowerShell did not finish within 2s)' "$TMP/ps-hang.record" && [ "$(cat "$TMP/ps-none.record")" = none ] \
-   && [ "$psh_took" -lt 20 ]; then
+   && [ "$psh_took" -lt 30 ]; then
   ok "the Windows check is stopped at its time limit and recorded as unknown, and an answer within it is kept"
 else
   bad "the Windows check has no working time limit (${psh_took}s) -- hang: [$(tr '\n' '|' < "$TMP/ps-hang.record")] answer: [$(tr '\n' '|' < "$TMP/ps-none.record")]"
+fi
+# PowerShell that got no process list says so, and that is kept as unknown.
+if [ "$(cat "$TMP/ps-unknown.record")" = 'unknown (PowerShell got no process list, so only taskkill on the agent ran)' ]; then
+  ok "a Windows check with no process list is recorded as unknown, not none"
+else
+  bad "a Windows check with no process list was recorded as [$(tr '\n' '|' < "$TMP/ps-unknown.record")]"
 fi
 
 # Without a process list the stop cannot know what it reached, which is unknown,
@@ -1445,6 +1525,68 @@ if ! is_windows_host; then
   else
     bad "a stop without a working ps was recorded as [$(tr '\n' '|' < "$TMP/no-ps.record")]"
   fi
+else
+  # On Windows the Git Bash tree comes from ps too. PowerShell answering none
+  # does not make up for it.
+  mkdir -p "$TMP/shim-no-ps"
+  printf '#!/bin/sh\nexit 1\n' > "$TMP/shim-no-ps/ps"
+  chmod +x "$TMP/shim-no-ps/ps"
+  : > "$TMP/no-ps.record"
+  ( . "$RV/.claude/scripts/lib/runner-common.sh"
+    win_tree_stop() { printf 'none\n' >> "$3"; }
+    sleep 30 &
+    np_pid=$!
+    PATH="$TMP/shim-no-ps:$PATH" stop_tree "$np_pid" 1 "$TMP/no-ps.record" "" 0
+    builtin kill -KILL "$np_pid" 2>/dev/null )
+  if grep -q '^unknown (ps' "$TMP/no-ps.record"; then
+    ok "a Windows stop without a working ps is recorded as unknown"
+  else
+    bad "a Windows stop without a working ps was recorded as [$(tr '\n' '|' < "$TMP/no-ps.record")]"
+  fi
+fi
+
+# While the watchdog's stop is still running, the command has been reaped but
+# the stop is not over, so a signal handler is still offered its pid. A stop of
+# a reaped command reaches only what is left of its process group, never the
+# pid itself, which may belong to another process by then.
+if ! is_windows_host; then
+  rm -f "$TMP/stopping.seen"
+  ( . "$RV/.claude/scripts/lib/runner-common.sh"
+    trap 'printf "%s %s\n" "${RUN_PID:-none}" "${RUN_REAPED:-0}" > "$TMP/stopping.seen"' USR1
+    WATCHDOG_POLL=1 WATCHDOG_GRACE=6 run_with_watchdog 1 "$TMP/stopping.out" \
+      bash -c '(trap "" TERM; exec sleep 20) & exec sleep 20' ) &
+  st_sub=$!
+  sleep 4
+  kill -USR1 "$st_sub" 2>/dev/null
+  wait "$st_sub" 2>/dev/null
+  st_seen="$(cat "$TMP/stopping.seen" 2>/dev/null)"
+  case "$st_seen" in
+    none*|'') bad "a signal during the watchdog's stop found no pid to stop -- seen: [$st_seen]" ;;
+    *' 1') ok "a signal during the watchdog's stop is still offered the reaped command, marked as reaped" ;;
+    *) bad "a signal during the watchdog's stop saw the command as not reaped -- seen: [$st_seen]" ;;
+  esac
+  : > "$TMP/reaped-calls"
+  ( . "$RV/.claude/scripts/lib/runner-common.sh"
+    kill() { printf '%s\n' "$*" >> "$TMP/reaped-calls"; builtin kill "$@"; }
+    set -m
+    bash -c 'sleep 30 & printf "%s\n" "$!" > "$1"; exit 0' leader "$TMP/reaped-member" &
+    rg_pid=$!
+    set +m
+    wait "$rg_pid"
+    printf '%s\n' "$rg_pid" > "$TMP/reaped-leader"
+    RUN_REAPED=1 stop_tree "$rg_pid" 1 "$TMP/reaped.record" "" 1 )
+  rg_pid="$(cat "$TMP/reaped-leader" 2>/dev/null)"
+  rg_member="$(cat "$TMP/reaped-member" 2>/dev/null)"
+  if [ -n "$rg_pid" ] && [ -n "$rg_member" ] && ! kill -0 "$rg_member" 2>/dev/null \
+     && grep -qx -- "-TERM $rg_member" "$TMP/reaped-calls" \
+     && ! grep -qE -- "(^| )-?$rg_pid\$" "$TMP/reaped-calls"; then
+    ok "a stop of a reaped command signals the members left in its group, not its pid"
+  else
+    bad "a stop of a reaped command signalled its pid, or missed its group -- leader $rg_pid member $rg_member calls: $(tr '\n' '|' < "$TMP/reaped-calls")"
+  fi
+  [ -n "$rg_member" ] && kill -KILL "$rg_member" 2>/dev/null
+else
+  skip reaped-group 'stop of a reaped command by its process group: not outside Windows'
 fi
 
 # Once the command is reaped, its pid is no longer offered to a signal handler.
@@ -1457,19 +1599,23 @@ else
   bad "run_with_watchdog left RUN_PID set to a reaped command -- got: $rp_after"
 fi
 
-# The suite's own guard. A lock marked KILL_FAILED is moved aside after the run
-# that finds it and reported, so one failed stop cannot turn every later case
-# that shares the state directory into exit 75.
+# The suite's own guard. A lock marked KILL_FAILED, and the tripwire its stop
+# set, are moved aside after the run that finds them and reported, so one failed
+# stop cannot turn every later case into exit 75 or 78.
 new_case_state kill-failed-guard
 mkdir -p "$CASE_STATE/run.lock"
 printf 'pid=999999999\nnonce=guard\nkill_failed=1\n' > "$CASE_STATE/run.lock/owner"
+printf 'a process of the stopped dream-agent may still be running\n' > "$CASE_STATE/runner-tripwire"
+printf 'a process of the stopped dream-agent may still be running\n' > "$RV/.claude/logs/runner-tripwire"
 : > "$TMP/kill-failed-guard.seen"
 kfg_rc="$(KILL_FAILED_SEEN="$TMP/kill-failed-guard.seen" runner dream-pass.sh journal)"
-if [ "$kfg_rc" = 75 ] && [ ! -e "$CASE_STATE/run.lock" ] && grep -q '^dream-pass.sh journal: ' "$TMP/kill-failed-guard.seen"; then
-  ok "the suite moves a KILL_FAILED lock aside and records the case that met it"
+if [ "$kfg_rc" = 75 ] && [ ! -e "$CASE_STATE/run.lock" ] && grep -q '^dream-pass.sh journal: ' "$TMP/kill-failed-guard.seen" \
+   && [ ! -e "$CASE_STATE/runner-tripwire" ] && [ ! -e "$RV/.claude/logs/runner-tripwire" ]; then
+  ok "the suite moves a KILL_FAILED lock and its tripwire aside and records the case that met it"
 else
-  bad "the suite's KILL_FAILED guard did not act (rc $kfg_rc) -- seen: $(cat "$TMP/kill-failed-guard.seen" 2>/dev/null)"
+  bad "the suite's KILL_FAILED guard did not act (rc $kfg_rc) -- seen: $(cat "$TMP/kill-failed-guard.seen" 2>/dev/null), state tripwire: $([ -e "$CASE_STATE/runner-tripwire" ] && echo left || echo moved), vault tripwire: $([ -e "$RV/.claude/logs/runner-tripwire" ] && echo left || echo moved)"
 fi
+tripwire_clear
 
 # On Windows the nonce sweep stops a process that carries the nonce and reports
 # what is left. PowerShell must not find itself by the nonce, or it stops before
@@ -1506,8 +1652,7 @@ if is_windows_host; then
   sleep 1
   ran win-orphan-stop
   if [ -n "$wo_child" ] && ! kill -0 "$wo_child" 2>/dev/null && ! grep -qE 'alive|unknown' "$TMP/win-orphan.record"; then
-    # Git Bash's own KILL did nothing here, so PowerShell's taskkill and stop did it.
-    ran taskkill
+    # Git Bash's own KILL did nothing here, so PowerShell stopped it by its listed id.
     ok "a Windows stop reaches the child of a Git Bash wrapper, which has no nonce"
   else
     bad "a Windows stop left the child of a Git Bash wrapper -- child ${wo_child:-not found}, record: [$(tr '\n' '|' < "$TMP/win-orphan.record")]"
@@ -1541,17 +1686,102 @@ if is_windows_host; then
   sleep 2
   wl_win="$(cat "/proc/$wl_pid/winpid" 2>/dev/null)"
   : > "$TMP/win-late.record"
-  ( . "$RV/.claude/scripts/lib/runner-common.sh" && win_tree_stop 0 "" "$TMP/win-late.record" "$wl_win" "$(( $(date +%s) - 120 ))" )
-  if kill -0 "$wl_pid" 2>/dev/null && [ "$(cat "$TMP/win-late.record")" = none ]; then
-    ok "a Windows stop leaves a process that started after the tree was listed"
+  : > "$TMP/win-late-root.record"
+  ( . "$RV/.claude/scripts/lib/runner-common.sh"
+    win_tree_stop 0 "" "$TMP/win-late.record" "$wl_win" "$(( $(date +%s) - 120 ))"
+    win_tree_stop "$wl_win" "" "$TMP/win-late-root.record" "" "$(( $(date +%s) - 120 ))" )
+  if [ -n "$wl_win" ] && [ "$wl_win" -gt 0 ] 2>/dev/null && kill -0 "$wl_pid" 2>/dev/null \
+     && [ "$(cat "$TMP/win-late.record")" = none ] && [ "$(cat "$TMP/win-late-root.record")" = none ]; then
+    ok "a Windows stop leaves a process that started after the tree was listed, handed over as a listed id or as the root"
   else
-    bad "a Windows stop reached a process that started after the listing -- record: [$(tr '\n' '|' < "$TMP/win-late.record")]"
+    bad "a Windows stop reached a process that started after the listing -- winpid [$wl_win] record: [$(tr '\n' '|' < "$TMP/win-late.record")] root record: [$(tr '\n' '|' < "$TMP/win-late-root.record")]"
   fi
   kill -KILL "$wl_pid" 2>/dev/null
   wait "$wl_pid" 2>/dev/null
+
+  # A native program and its native child are linked only by Windows parent id.
+  # Stopping the program's Windows process reaches the child as well.
+  wn_count=$((200 + RANDOM % 700))
+  MSYS_NO_PATHCONV=1 cmd.exe /c "ping -n $wn_count 127.0.0.1 >nul" &
+  wn_pid=$!
+  sleep 2
+  wn_win="$(cat "/proc/$wn_pid/winpid" 2>/dev/null)"
+  : > "$TMP/win-native.record"
+  ( . "$RV/.claude/scripts/lib/runner-common.sh" && win_tree_stop "$wn_win" "" "$TMP/win-native.record" "" "$(date +%s)" )
+  sleep 1
+  wn_query='$n = $env:VAULT_PROBE_N; @(Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -and $_.CommandLine.Contains("-n $n 127.0.0.1") }).Count'
+  wn_left="$(VAULT_PROBE_N="$wn_count" MSYS_NO_PATHCONV=1 powershell.exe -NoProfile -NonInteractive -Command "$wn_query" 2>/dev/null | tr -d '\r')"
+  if [ -n "$wn_win" ] && [ "$wn_win" -gt 0 ] 2>/dev/null && [ "$(cat "$TMP/win-native.record")" = none ] && [ "$wn_left" = 0 ]; then
+    ran win-native-tree
+    ok "a Windows stop of a native program also stops its native child"
+  else
+    bad "a Windows stop of a native program left its child -- winpid [$wn_win] record: [$(tr '\n' '|' < "$TMP/win-native.record")] left: ${wn_left:-no answer}"
+  fi
+  kill -KILL "$wn_pid" 2>/dev/null
+  wait "$wn_pid" 2>/dev/null
+
+  # A stop after the command was reaped cannot trust its pid, which Git Bash may
+  # have given to another process. Only the session id is used then.
+  bash -c 'while :; do sleep 1; done' reused-pid &
+  wr_pid=$!
+  sleep 2
+  : > "$TMP/win-reaped.record"
+  ( . "$RV/.claude/scripts/lib/runner-common.sh"
+    RUN_REAPED=1 stop_tree "$wr_pid" 1 "$TMP/win-reaped.record" "$( . "$RV/.claude/scripts/lib/runner-common.sh" && new_uuid)" 0 )
+  if kill -0 "$wr_pid" 2>/dev/null && [ "$(cat "$TMP/win-reaped.record")" = none ]; then
+    ok "a Windows stop of a reaped command leaves the process that now has its pid"
+  else
+    bad "a Windows stop of a reaped command reached the process that now has its pid -- record: [$(tr '\n' '|' < "$TMP/win-reaped.record")]"
+  fi
+  kill -KILL "$wr_pid" 2>/dev/null
+  wait "$wr_pid" 2>/dev/null
+
+  # Git Bash's KILL after PowerShell reaches a listed process only while its pid
+  # still names the Windows process that was listed.
+  bash -c 'while :; do sleep 1; done' relisted &
+  wk_other=$!
+  sleep 30 &
+  wk_root=$!
+  sleep 2
+  : > "$TMP/win-kill-check.record"
+  ( . "$RV/.claude/scripts/lib/runner-common.sh"
+    win_msys_tree() { printf '%s %s\n%s 1\n' "$wk_root" "$(cat "/proc/$wk_root/winpid")" "$wk_other"; }
+    win_tree_stop() { printf 'none\n' >> "$3"; }
+    stop_tree "$wk_root" 1 "$TMP/win-kill-check.record" "" 0 )
+  if kill -0 "$wk_other" 2>/dev/null && ! kill -0 "$wk_root" 2>/dev/null && [ "$(cat "$TMP/win-kill-check.record")" = none ]; then
+    ok "Git Bash's KILL leaves a listed pid that now names another Windows process"
+  else
+    bad "Git Bash's KILL reached a pid that names another Windows process -- other alive: $(kill -0 "$wk_other" 2>/dev/null && echo yes || echo no) record: [$(tr '\n' '|' < "$TMP/win-kill-check.record")]"
+  fi
+  kill -KILL "$wk_other" "$wk_root" 2>/dev/null
+  wait "$wk_other" "$wk_root" 2>/dev/null
+
+  # A process of the tree can start another between PowerShell's process list
+  # and the stop. Each round of the stop lists again, so a child that carries the
+  # nonce and started in that gap is stopped too, not left running and reported.
+  wf_nonce="$( . "$RV/.claude/scripts/lib/runner-common.sh" && new_uuid)"
+  bash -c 'while :; do bash -c "sleep 60; :" fork-child "$1" & sleep 0.3; done' fork-spawner "$wf_nonce" 2>/dev/null &
+  wf_spawner=$!
+  sleep 1
+  : > "$TMP/win-fork.record"
+  ( . "$RV/.claude/scripts/lib/runner-common.sh" && win_tree_stop 0 "$wf_nonce" "$TMP/win-fork.record" ) 2>/dev/null
+  sleep 1
+  wf_count='$n = $env:VAULT_PROBE_NONCE; @(Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -and $_.CommandLine.Contains($n) }).Count'
+  wf_left="$(VAULT_PROBE_NONCE="$wf_nonce" MSYS_NO_PATHCONV=1 powershell.exe -NoProfile -NonInteractive -Command "$wf_count" 2>/dev/null | tr -d '\r')"
+  if [ "$(cat "$TMP/win-fork.record")" = none ] && [ "$wf_left" = 0 ]; then
+    ran win-fork-stop
+    ok "a Windows stop also stops a child that carries the nonce and started during the stop"
+  else
+    bad "a Windows stop left a child that started during the stop -- record: [$(tr '\n' '|' < "$TMP/win-fork.record")] nonce processes left: ${wf_left:-no answer}"
+  fi
+  kill -KILL "$wf_spawner" 2>/dev/null
+  wait "$wf_spawner" 2>/dev/null
+  VAULT_PROBE_NONCE="$wf_nonce" MSYS_NO_PATHCONV=1 powershell.exe -NoProfile -NonInteractive -Command '$n = $env:VAULT_PROBE_NONCE; Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -and $_.CommandLine.Contains($n) } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }' >/dev/null 2>&1
 else
   skip win-sweep-report 'Windows nonce sweep report: not Git Bash on Windows'
   skip win-orphan-stop 'Windows stop of a wrapper child: not Git Bash on Windows'
+  skip win-fork-stop 'Windows stop of a child started during the stop: not Git Bash on Windows'
+  skip win-native-tree 'Windows stop of a native program and its child: not Git Bash on Windows'
 fi
 
 # A process group is signalled only when the command leads its own group and
@@ -1587,6 +1817,8 @@ if ! is_windows_host; then
   else
     bad "a command in its own process group did not have the group signalled -- calls: $(tr '\n' '|' < "$TMP/kill-calls-group")"
   fi
+else
+  skip groupkill 'process group signals: Git Bash on Windows starts no process groups'
 fi
 
 # In claude mode the summary line counts only in the stream's result event.
@@ -3236,8 +3468,10 @@ if [ "$RV_GIT" -eq 1 ]; then
   else
     bad "the journal a failed commit left behind was not committed by the next run"
   fi
-  # A signing program that never returns is stopped at RUNNER_GIT_TIMEOUT.
-  printf '#!/bin/sh\nsleep 20\n' > "$TMP/gpg-hang"
+  # A signing program that never returns is stopped at RUNNER_GIT_TIMEOUT. It
+  # sleeps far longer than the whole pass takes on a slow Git Bash host, so a
+  # commit that was not stopped cannot finish inside the limit below.
+  printf '#!/bin/sh\nsleep 180\n' > "$TMP/gpg-hang"
   chmod +x "$TMP/gpg-hang"
   git -C "$RV" config commit.gpgsign true
   git -C "$RV" config gpg.program "$TMP/gpg-hang"
@@ -3245,7 +3479,7 @@ if [ "$RV_GIT" -eq 1 ]; then
   hang_start="$(date +%s)"
   expect_rc "dream-pass: signing the journal commit hangs -> COMMIT-FAILED" 4 "$(runner dream-pass.sh journal RUNNER_GIT_TIMEOUT=3)"
   hang_took=$(( $(date +%s) - hang_start ))
-  if [ "$hang_took" -lt 60 ] && grep -q 'did not finish within 3s' "$RV_LOG"; then
+  if [ "$hang_took" -lt 150 ] && grep -q 'did not finish within 3s' "$RV_LOG"; then
     ok "a hung commit is stopped at RUNNER_GIT_TIMEOUT"
   else
     bad "a hung commit was not stopped in time (${hang_took}s)"
@@ -3310,6 +3544,8 @@ if [ "$RV_GIT" -eq 1 ]; then
     rm -rf "$TMP/state-git-step-kill"
     rm -f "$RV/.git/index.lock" "$RV/20-projects/_logs/dream-git-step.md"
     git -C "$RV" reset -q -- 20-projects/_logs/dream-git-step.md 2>/dev/null
+  else
+    skip git-step-kill-failed 'a git step whose stop leaves a process: the stand-in stop cannot end git on Git Bash'
   fi
 
   # The commit runs no hooks, because hook managers read ordinary files a pass
@@ -3857,6 +4093,25 @@ else
   bad "run_lock_held misjudged the lock -- got: $held_got"
 fi
 rm -rf "$CASE_STATE/run.lock"
+# Once containment has returned, a signal must not replace the tripwire it wrote
+# with one saying containment never ran, so the runner records that it ran before
+# anything else. And a run whose stop left a process keeps the pre-pass backup,
+# which the owner needs to review what that process wrote.
+for s in dream-pass.sh promotion-pass.sh; do
+  cc_line="$(grep -n '^  \[ "\$contain_rc" -eq 0 \] && CONTAINMENT_CHECKED=1' "$RV/.claude/scripts/$s" | head -n 1 | cut -d: -f1)"
+  rs_line="$(grep -n '^    report_stop ' "$RV/.claude/scripts/$s" | head -n 1 | cut -d: -f1)"
+  cr_line="$(grep -n '^  contain_rc=\$?' "$RV/.claude/scripts/$s" | head -n 1 | cut -d: -f1)"
+  if [ -n "$cc_line" ] && [ -n "$rs_line" ] && [ -n "$cr_line" ] && [ "$cc_line" -eq $((cr_line + 1)) ] && [ "$cc_line" -lt "$rs_line" ]; then
+    ok "$s records that containment ran as soon as it returns"
+  else
+    bad "$s leaves a window between containment and recording that it ran (contain_rc $cr_line, checked $cc_line, report_stop $rs_line)"
+  fi
+  if awk '/^on_exit\(\)/ { f = 1 } f && /KILL_FAILED_MARKED/ { k = 1 } f && /inflight-backup.tar/ { if (k) found = 1; exit } END { exit found ? 0 : 1 }' "$RV/.claude/scripts/$s"; then
+    ok "$s keeps the pre-pass backup after a stop that left a process"
+  else
+    bad "$s removes the pre-pass backup whatever the stop found"
+  fi
+done
 for s in dream-pass.sh promotion-pass.sh; do
   held_line="$(grep -n "^  if ! run_lock_held; then" "$RV/.claude/scripts/$s" | head -n 1 | cut -d: -f1)"
   mark_line="$(grep -n "^  if ! mark_inflight " "$RV/.claude/scripts/$s" | head -n 1 | cut -d: -f1)"
@@ -4014,10 +4269,15 @@ term_hung_pass() {
     RUNNER_STALL_SECONDS= RUNNER_STALL_FLOOR= RUNNER_RUN_LOG_MAX_BYTES= "$@" \
     bash "$RV/.claude/scripts/dream-pass.sh" >/dev/null 2>&1 &
   sig_pid=$!
-  while [ ! -f "${SIG_WAIT_FILE:-$TMP/sig-rec.argv}" ] && [ "$sig_wait" -lt 30 ]; do
+  # Setting a pass up can take half a minute on a slow Git Bash host. A signal
+  # sent before the agent starts tests a different case, so that is a failure
+  # of its own, not a wrong result for this one.
+  while [ ! -f "${SIG_WAIT_FILE:-$TMP/sig-rec.argv}" ] && [ "$sig_wait" -lt 180 ]; do
     sleep 1
     sig_wait=$((sig_wait + 1))
   done
+  [ -f "${SIG_WAIT_FILE:-$TMP/sig-rec.argv}" ] \
+    || bad "the hung pass did not start its agent within 180s, so the signal came before it"
   kill -TERM "$sig_pid" 2>/dev/null
   wait "$sig_pid"
   sig_rc=$?
@@ -4030,6 +4290,14 @@ if [ -f "$CASE_STATE/runner-tripwire" ] && grep -q 'interrupted by a signal' "$C
   ok "an interrupted pass sets the tripwire and replaces its marker with it"
 else
   bad "TERM during the pass left no tripwire, or left the marker"
+fi
+# The vault's run log is not safe to write before containment, so the output of
+# the interrupted pass is kept in the state directory instead of being lost.
+if grep -q 'subtype":"init' "$CASE_STATE/dream-pass.interrupted.run" 2>/dev/null \
+   && grep -q "dream-pass.interrupted.run" "$RV/.claude/logs/dream-agent.log" 2>/dev/null; then
+  ok "an interrupted pass keeps its output in the state directory and names it in the log"
+else
+  bad "an interrupted pass lost its output -- kept: $([ -f "$CASE_STATE/dream-pass.interrupted.run" ] && echo yes || echo no)"
 fi
 tripwire_clear
 # The same signal when no tripwire can be written keeps the marker.
@@ -4049,16 +4317,18 @@ tripwire_clear
 HB="$TMP/heartbeat"
 rm -f "$HB" "$HB.pid"
 new_case_state signal-tree
-SIG_WAIT_FILE="$HB.pid"
+# The heartbeat file is written by the grandchild itself, so the signal lands
+# once it runs, not while it is still being started.
+SIG_WAIT_FILE="$HB"
 term_hung_pass FAKE_MODE=silent-grandchild FAKE_HEARTBEAT="$HB"
 SIG_WAIT_FILE=""
 expect_rc "TERM while a pass with a grandchild runs -> exit 143" 143 "$sig_rc"
 hb_pid="$(cat "$HB.pid" 2>/dev/null)"
 sleep 1
-if [ -n "$hb_pid" ] && ! kill -0 "$hb_pid" 2>/dev/null; then
-  ok "a signal stops the grandchild of the pass as well"
+if [ -n "$hb_pid" ] && ! kill -0 "$hb_pid" 2>/dev/null && [ ! -d "$CASE_STATE/run.lock" ]; then
+  ok "a signal stops the grandchild of the pass as well, and the stop found nothing left, so the lock is released"
 else
-  bad "a signal left the pass's grandchild running (pid ${hb_pid:-none})"
+  bad "a signal left the pass's grandchild running (pid ${hb_pid:-none}), or marked the lock -- lock: $(cat "$CASE_STATE/run.lock/owner" 2>/dev/null | tr '\n' '|')"
 fi
 if awk -F '\t' '$2 == "dream-pass" { found = 1 } END { exit found ? 0 : 1 }' "$CASE_STATE/runner-sessions.tsv" 2>/dev/null; then
   ok "a pass stopped by a signal still has its session recorded"

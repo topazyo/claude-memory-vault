@@ -53,8 +53,8 @@ else
 fi
 while IFS= read -r tw; do
   if [ -e "$tw" ] || [ -L "$tw" ]; then
-    printf 'vault-check: TRIPWIRE - a scheduled pass changed a steering or execution surface.\n' >&2
-    printf 'vault-check: read %s, then delete it and its copy. Nothing was checked.\n' "$tw" >&2
+    printf 'vault-check: TRIPWIRE - a scheduled pass changed a steering or execution surface, or a process of a stopped pass may still be running.\n' >&2
+    printf 'vault-check: read %s and do what it says, then delete it and its copy. Nothing was checked.\n' "$tw" >&2
     exit 1
   fi
 done <<EOF

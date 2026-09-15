@@ -38,6 +38,8 @@
 #                       stopped. Measured by default (lib/runner-common.sh), 0
 #                       turns it off, and in command mode only this turns it on
 #   RUNNER_STALL_FLOOR  the lowest measured stall threshold (default 600)
+#   RUNNER_RUN_LOG_MAX_BYTES  the most .claude/logs/dream-agent.run.log keeps,
+#                       newest part first (default 10000000, at least 1000)
 #
 # Exit codes:
 #   0    the pass changed a dream journal and nothing else, and the journal was
@@ -66,10 +68,11 @@
 #   78   TRIPWIRE: a tripwire is set, or an earlier pass died before containment
 #   124  TIMEOUT: the watchdog killed a run that exceeded DREAM_PASS_TIMEOUT, and
 #        everything it started
-#   125  STALLED: the watchdog killed a claude-mode run whose stream stopped
-#        growing for the stall threshold, and everything it started. After 124 or
-#        125, KILL_FAILED in the log means a process may still be running and the
-#        run lock is kept, so later runs exit 75
+#   125  STALLED: the watchdog killed a run whose output stopped growing for the
+#        stall threshold (claude mode, or command mode with RUNNER_STALL_SECONDS
+#        set), and everything it started. After 124 or 125, KILL_FAILED in the
+#        log means a process may still be running. The run lock is kept, so later
+#        runs exit 75, and the tripwire is set
 #   127  the claude binary or the VAULT_AGENT_CMD wrapper was not found
 #   *    any other non-zero status is the agent's own
 
@@ -81,6 +84,8 @@ INFLIGHT=0
 SNAP_DIR=""
 SESSION_RECORDED=0
 AGENT_SESSION_ID=""
+KILL_FAILED_MARKED=0
+RUN_LOG_APPENDED=0
 
 # record_session_once
 # Records a claude-mode pass's session, once, however the pass ended, so a later
@@ -94,11 +99,17 @@ record_session_once() {
 }
 
 # On any exit: clear the in-flight marker only once containment has checked the
-# pass, then remove the temporary directory.
+# pass, then remove the temporary directory. The pre-pass backup goes with the
+# marker, unless a stop left a process that may have written after containment,
+# because the owner needs the backup to review what it wrote.
 on_exit() {
   if [ "$CONTAINMENT_CHECKED" -eq 1 ]; then
     clear_inflight "$ROOT" "$STATE"
-    rm -f "$STATE/inflight-backup.tar" 2>/dev/null
+    if [ "$KILL_FAILED_MARKED" -eq 1 ]; then
+      printf '[%s] The pre-pass backup is kept at %s for the review after KILL_FAILED.\n' "$(ts)" "$STATE/inflight-backup.tar" >> "$LOG"
+    else
+      rm -f "$STATE/inflight-backup.tar" 2>/dev/null
+    fi
   fi
   [ -n "$SNAP_DIR" ] && rm -rf "$SNAP_DIR"
   run_lock_release
@@ -118,6 +129,11 @@ on_signal() {
       && mark_kill_failed "$LOG" "$(cat "$SNAP_DIR/signal-stop")"
   fi
   record_session_once
+  # Before its output reached the run log, the pass's stream would go with the
+  # temporary directory, so it is kept in the state directory.
+  if [ "$RUN_LOG_APPENDED" -eq 0 ] && [ -n "$SNAP_DIR" ] && [ -f "$SNAP_DIR/run" ]; then
+    keep_run_output "$SNAP_DIR/run" "$STATE" "$RUNNER" "$LOG"
+  fi
   if [ "$INFLIGHT" -eq 1 ] && [ "$CONTAINMENT_CHECKED" -eq 0 ]; then
     : > "$SNAP_DIR/empty"
     if write_tripwire "$ROOT" "$STATE" "$RUNNER" \
@@ -288,6 +304,8 @@ main() {
   # run until it has been put back.
   contain_pass "$ROOT" "$STATE" "$RUNNER" "$SNAP_DIR" "$LOG" "$HEAD_BEFORE"
   contain_rc=$?
+  [ "$contain_rc" -eq 0 ] && CONTAINMENT_CHECKED=1
+  # Containment has run, so from here a signal leaves its tripwire as it is.
   # Nothing is written to the vault's logs between the agent's end and
   # containment, because the pass may have put a link in place of a log. What
   # the stop found, with a KILL_FAILED mark and tripwire, and the run's output
@@ -296,11 +314,11 @@ main() {
     report_stop "$LOG" dream-agent "$ROOT" "$STATE" "$RUNNER"
   fi
   append_run_log "$SNAP_DIR/run" "$RUN_OUT" "$LOG"
+  RUN_LOG_APPENDED=1
   record_session_once
   if [ "$contain_rc" -ne 0 ]; then
     exit "$contain_rc"
   fi
-  CONTAINMENT_CHECKED=1
   if [ "$CONTAINED" -eq 1 ]; then
     [ "$RUN_TIMED_OUT" -eq 1 ] && printf '[%s] (the run had also exceeded %ss and was killed)\n' "$(ts)" "$TIMEOUT" >> "$LOG"
     [ "$RUN_STALLED" -eq 1 ] && printf '[%s] (the run had also stalled for %ss and was killed)\n' "$(ts)" "$AGENT_STALL_SECONDS" >> "$LOG"

@@ -98,6 +98,16 @@ group_of() {
   ps -o pgid= -p "$1" 2>/dev/null | tr -d ' '
 }
 
+# group_members <pgid>
+# Outside Windows, prints each pid whose process group is <pgid>, one per line.
+# Returns 1 when ps gives no process list.
+group_members() {
+  local list
+  list="$(ps -A -o pid= -o pgid= 2>/dev/null)"
+  [ -n "$list" ] || return 1
+  printf '%s\n' "$list" | awk -v g="$1" '$2 == g { print $1 }'
+}
+
 # win_msys_tree <pid>
 # On Git Bash for Windows, prints "<pid> <winpid>" for the pid and each of its
 # descendants in the Git Bash process table. That table keeps a child's parent
@@ -129,15 +139,23 @@ win_msys_tree() {
 # "alive <id> <name>", "none" when there is none, and "unknown (...)" when
 # PowerShell does not finish within WINDOWS_STOP_LIMIT seconds (default 60).
 #
-# PowerShell takes one process list and works from it. <winpid> and <more
+# PowerShell takes one process list and works from it. With no list at all it
+# still runs taskkill on <winpid> and answers unknown. <winpid> and <more
 # winpids> count only for a process that started no later than <listed-epoch>,
 # the time the caller listed them, and a child only when it started no earlier
-# than its parent, because Windows reuses process ids. taskkill runs on the root
+# than its parent, because Windows reuses process ids. Times are compared in
+# UTC, so a daylight saving change cannot reorder them. taskkill runs on the root
 # only after that check, and each process is stopped, or reported alive, only
-# while its id still belongs to the process in that list. The ids, the nonce and
-# the time reach PowerShell in the environment, never on its command line, and
-# PowerShell leaves its own process out. Otherwise the sweep would find
-# PowerShell itself by the nonce and stop it before it could report.
+# while its id still belongs to the process in that list. The stop then goes in
+# rounds of a second, up to 10. Each round lists the processes again and adds
+# every new one that carries the nonce, and every child that started before its
+# stopped parent was stopped, because a process of the tree can start one
+# between the list and the stop. Rounds end once nothing picked is left.
+#
+# The ids, the nonce and the time reach PowerShell in the environment, never on
+# its command line, and PowerShell leaves its own process out. Otherwise the
+# sweep would find PowerShell itself by the nonce and stop it before it could
+# report.
 win_tree_stop() {
   local winpid="$1" nonce="$2" record="$3" more="${4:-}" listed="${5:-}" script limit out ps_pid ps_win waited=0
   is_uint "$winpid" || winpid=0
@@ -151,30 +169,45 @@ win_tree_stop() {
 \$nonce = [string]\$env:VAULT_STOP_NONCE
 \$listed = [DateTime]::MaxValue
 \$t = [long]0
-if ([long]::TryParse([string]\$env:VAULT_STOP_LISTED, [ref]\$t) -and \$t -gt 0) { \$listed = [DateTimeOffset]::FromUnixTimeSeconds(\$t + 1).LocalDateTime }
+if ([long]::TryParse([string]\$env:VAULT_STOP_LISTED, [ref]\$t) -and \$t -gt 0) { \$listed = [DateTimeOffset]::FromUnixTimeSeconds(\$t + 1).UtcDateTime }
 \$all = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)
+if (\$all.Count -eq 0) {
+  if (\$root -gt 0) { & taskkill.exe /T /F /PID \$root 2>&1 | Out-Null }
+  'unknown (PowerShell got no process list, so only taskkill on the agent ran)'
+  exit
+}
 \$byId = @{}
 foreach (\$p in \$all) { \$byId[[int]\$p.ProcessId] = \$p }
+function Born(\$p) { \$p.CreationDate.ToUniversalTime() }
 \$pick = @{}
-if (\$root -gt 0 -and \$byId.ContainsKey(\$root) -and \$byId[\$root].CreationDate -le \$listed) { \$pick[\$root] = \$true }
-foreach (\$x in ([string]\$env:VAULT_STOP_IDS).Split(' ')) { \$i = 0; if ([int]::TryParse(\$x, [ref]\$i) -and \$byId.ContainsKey(\$i) -and \$byId[\$i].CreationDate -le \$listed) { \$pick[\$i] = \$true } }
+if (\$root -gt 0 -and \$byId.ContainsKey(\$root) -and (Born \$byId[\$root]) -le \$listed) { \$pick[\$root] = \$true }
+foreach (\$x in ([string]\$env:VAULT_STOP_IDS).Split(' ')) { \$i = 0; if ([int]::TryParse(\$x, [ref]\$i) -and \$byId.ContainsKey(\$i) -and (Born \$byId[\$i]) -le \$listed) { \$pick[\$i] = \$true } }
+if (\$nonce) { foreach (\$p in \$all) { if (\$p.CommandLine -and \$p.CommandLine.Contains(\$nonce)) { \$pick[[int]\$p.ProcessId] = \$true } } }
+\$pick.Remove([int]\$PID)
 \$grew = \$true
 while (\$grew) {
   \$grew = \$false
   foreach (\$p in \$all) {
     \$id = [int]\$p.ProcessId; \$pp = [int]\$p.ParentProcessId
-    if (\$pick.ContainsKey(\$pp) -and -not \$pick.ContainsKey(\$id) -and \$byId[\$pp].CreationDate -le \$p.CreationDate) { \$pick[\$id] = \$true; \$grew = \$true }
+    if (\$id -ne \$PID -and \$pick.ContainsKey(\$pp) -and -not \$pick.ContainsKey(\$id) -and (Born \$byId[\$pp]) -le (Born \$p)) { \$pick[\$id] = \$true; \$grew = \$true }
   }
 }
-if (\$nonce) { foreach (\$p in \$all) { if (\$p.CommandLine -and \$p.CommandLine.Contains(\$nonce)) { \$pick[[int]\$p.ProcessId] = \$true } } }
-\$pick.Remove([int]\$PID)
 function Same(\$id) { \$c = Get-CimInstance Win32_Process -Filter ('ProcessId=' + \$id) -ErrorAction SilentlyContinue; if (\$c -and \$c.CreationDate -eq \$byId[\$id].CreationDate) { \$c } }
-if (\$pick.ContainsKey(\$root) -and (Same \$root)) { & taskkill.exe /T /F /PID \$root 2>&1 | Out-Null }
-foreach (\$id in @(\$pick.Keys)) { if (Same \$id) { Stop-Process -Id \$id -Force -ErrorAction SilentlyContinue } }
-Start-Sleep -Seconds 2
+\$stopAt = @{}
+if (\$pick.ContainsKey(\$root) -and (Same \$root)) { \$stopAt[\$root] = [DateTime]::UtcNow; & taskkill.exe /T /F /PID \$root 2>&1 | Out-Null }
 \$left = @()
-foreach (\$id in @(\$pick.Keys)) { \$c = Same \$id; if (\$c) { \$left += ('alive ' + \$id + ' ' + \$c.Name) } }
-if (\$nonce) { foreach (\$p in @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)) { if (\$p.CommandLine -and \$p.CommandLine.Contains(\$nonce) -and [int]\$p.ProcessId -ne \$PID -and -not \$pick.ContainsKey([int]\$p.ProcessId)) { \$left += ('alive ' + \$p.ProcessId + ' ' + \$p.Name) } } }
+for (\$round = 1; \$round -le 10; \$round++) {
+  foreach (\$id in @(\$pick.Keys)) { if (Same \$id) { if (-not \$stopAt.ContainsKey(\$id)) { \$stopAt[\$id] = [DateTime]::UtcNow }; Stop-Process -Id \$id -Force -ErrorAction SilentlyContinue } }
+  Start-Sleep -Seconds 1
+  foreach (\$p in @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)) {
+    \$id = [int]\$p.ProcessId; \$pp = [int]\$p.ParentProcessId
+    if (\$id -eq \$PID -or \$pick.ContainsKey(\$id)) { continue }
+    if ((\$nonce -and \$p.CommandLine -and \$p.CommandLine.Contains(\$nonce)) -or (\$stopAt.ContainsKey(\$pp) -and (Born \$p) -ge (Born \$byId[\$pp]) -and (Born \$p) -le \$stopAt[\$pp])) { \$byId[\$id] = \$p; \$pick[\$id] = \$true }
+  }
+  \$left = @()
+  foreach (\$id in @(\$pick.Keys)) { \$c = Same \$id; if (\$c) { \$left += ('alive ' + \$id + ' ' + \$c.Name) } }
+  if (\$left.Count -eq 0) { break }
+}
 if (\$left.Count -eq 0) { 'none' } else { \$left }"
   out="$(mktemp 2>/dev/null || mktemp -t winstop)" || out="$record.powershell"
   VAULT_STOP_ROOT="$winpid" VAULT_STOP_NONCE="$nonce" VAULT_STOP_IDS="$more" VAULT_STOP_LISTED="$listed" \
@@ -195,7 +228,7 @@ if (\$left.Count -eq 0) { 'none' } else { \$left }"
     printf 'unknown (PowerShell did not finish within %ss)\n' "$limit" >> "$record"
   else
     wait "$ps_pid" 2>/dev/null
-    tr -d '\r' < "$out" | awk '/^(none|alive [0-9]+ .*)$/' >> "$record"
+    tr -d '\r' < "$out" | awk '/^(none|alive [0-9]+ .*|unknown \(PowerShell .*\))$/' >> "$record"
   fi
   rm -f "$out"
 }
@@ -213,34 +246,52 @@ if (\$left.Count -eq 0) { 'none' } else { \$left }"
 # signalled as well, in every case. TERM comes first, then KILL after the grace
 # period. On Windows a native process ignores those signals, so the tree is
 # stopped with taskkill and the sweep in win_tree_stop.
+#
+# With RUN_REAPED=1 the command has already ended and been reaped, and its pid
+# may belong to another process. Outside Windows only the members left in its
+# process group are signalled, because the group id stays reserved while it has
+# members. On Windows only the nonce finds what it left.
 stop_tree() {
-  local pid="$1" grace="$2" record="$3" nonce="$4" own="$5" members winpid g p group=0 left listed
+  local pid="$1" grace="$2" record="$3" nonce="$4" own="$5" members winpid g p w group=0 left listed
   : > "$record"
   if is_windows_bash; then
+    listed="$(date +%s)"
+    if [ "${RUN_REAPED:-0}" = 1 ]; then
+      win_tree_stop 0 "$nonce" "$record" "" "$listed"
+      grep -qE '^(none|alive|unknown \(PowerShell)' "$record" || printf 'unknown (PowerShell gave no answer)\n' >> "$record"
+      return 0
+    fi
     # The tree is listed and stopped before any signal, while the command's own
     # process still links it to its children. A TERM first would let a Git Bash
     # wrapper exit and leave a child with no parent to be found by, and no
     # nonce on its command line.
-    listed="$(date +%s)"
     if ! members="$(win_msys_tree "$pid")"; then
       printf 'unknown (ps gave no process list, so the Git Bash processes of the tree are not known)\n' >> "$record"
     fi
     winpid="$(cat "/proc/$pid/winpid" 2>/dev/null)"
     win_tree_stop "$winpid" "$nonce" "$record" "$(printf '%s\n' "$members" | awk '$2 ~ /^[0-9]+$/ { printf "%s ", $2 }')" "$listed"
     grep -qE '^(none|alive|unknown \(PowerShell)' "$record" || printf 'unknown (PowerShell gave no answer)\n' >> "$record"
-    for p in $(printf '%s\n' "$members" | awk '{ print $1 }'); do kill -KILL "$p" 2>/dev/null; done
-    kill -KILL "$pid" 2>/dev/null
+    # Git Bash pids are handed out again once free, so each is signalled and
+    # checked only while it still names the Windows process that was listed.
+    printf '%s\n' "$members" | while read -r p w; do
+      [ -n "$p" ] && [ "$(cat "/proc/$p/winpid" 2>/dev/null)" = "$w" ] && kill -KILL "$p" 2>/dev/null
+    done
+    [ -n "$winpid" ] && [ "$(cat "/proc/$pid/winpid" 2>/dev/null)" = "$winpid" ] && kill -KILL "$pid" 2>/dev/null
     sleep 1
-    for p in $(printf '%s\n' "$members" | awk '{ print $1 }'); do
-      [ "$p" = "$pid" ] && continue
-      kill -0 "$p" 2>/dev/null && printf 'alive %s\n' "$p" >> "$record"
+    printf '%s\n' "$members" | while read -r p w; do
+      [ -n "$p" ] && [ "$p" != "$pid" ] || continue
+      [ "$(cat "/proc/$p/winpid" 2>/dev/null)" = "$w" ] && kill -0 "$p" 2>/dev/null && printf 'alive %s\n' "$p" >> "$record"
     done
     return 0
   fi
-  if ! members="$(tree_pids "$pid")"; then
+  if [ "${RUN_REAPED:-0}" = 1 ]; then
+    if ! members="$(group_members "$pid")"; then
+      printf 'unknown (ps gave no process list, so what the ended command left in its group is not known)\n' >> "$record"
+    fi
+  elif ! members="$(tree_pids "$pid")"; then
     printf 'unknown (ps gave no process list, so only the command itself could be stopped)\n' >> "$record"
   fi
-  if [ "$own" = 1 ] && [ "$(group_of "$pid")" = "$pid" ] && [ "$(group_of "$pid")" != "$(group_of "$$")" ]; then
+  if [ "${RUN_REAPED:-0}" != 1 ] && [ "$own" = 1 ] && [ "$(group_of "$pid")" = "$pid" ] && [ "$(group_of "$pid")" != "$(group_of "$$")" ]; then
     group=1
   fi
   if [ "$group" -eq 1 ]; then kill -TERM -- "-$pid" 2>/dev/null; fi
@@ -272,18 +323,22 @@ stop_tree() {
 # grown for that many seconds. Outside Windows the command starts in a process
 # group of its own, and a stop reaches everything it started (stop_tree). Sets
 # these globals:
-#   RUN_PID          the command's pid, so a signal handler can stop it
+#   RUN_PID          the command's pid, so a signal handler can stop it, set
+#                    while the command runs and while a stop of it runs, and
+#                    empty once the call returns
+#   RUN_REAPED       1 once the command has ended and been reaped, else 0
 #   RUN_RC           the command's exit status (143/137 when the watchdog fired)
 #   RUN_TIMED_OUT    1 if the timeout fired, else 0
 #   RUN_STALLED      1 if the output stopped growing for RUN_STALL_SECONDS, else 0
 #   RUN_KILL_FAILED  1 if a process of the stopped command was still running
-#                    afterwards, or its output kept growing, else 0
+#                    afterwards, the stop could not be checked, or its output
+#                    kept growing, else 0
 #   RUN_KILL_REPORT  what stop_tree recorded, one process per line
 #
 # Optional inputs, set for one call as VAR=value run_with_watchdog ...:
 #   RUN_STALL_SECONDS  seconds without output growth before a stop (0 = never)
 #   RUN_GAPS_FILE      where each silent stretch the watchdog saw is appended,
-#                      in seconds, for stall_threshold to learn from
+#                      in seconds, for record_stream_gaps to keep
 #   RUN_NONCE          a string in the command's arguments, which the Windows
 #                      stop uses to find processes that left the tree
 #
@@ -311,6 +366,7 @@ run_with_watchdog() {
   local pid=$!
   [ "$own" -eq 1 ] && set +m
   RUN_PID=$pid
+  RUN_REAPED=0
 
   (
     waited=0
@@ -340,13 +396,17 @@ run_with_watchdog() {
   # .claude/logs. RUN_RC carries the status.
   wait "$pid" 2>/dev/null
   RUN_RC=$?
-  # The pid is reaped and may be handed to another process, so a signal handler
-  # must not stop it any more.
-  RUN_PID=""
+  # The pid is reaped and may be handed to another process. While no stop has
+  # begun, a signal handler has nothing left to stop. While the watchdog's stop
+  # runs, what the command left may still be running, so the handler is still
+  # offered the pid, marked as reaped, and stop_tree then leaves the pid itself
+  # alone.
+  RUN_REAPED=1
   # A watchdog that has not begun a stop is only sleeping, so it is ended at
   # once. One that has is left to finish, and a stop cut short when the two met
   # is finished here.
   if [ ! -f "$flag" ] && [ ! -f "$flag.stalled" ]; then
+    RUN_PID=""
     kill "$watchdog" 2>/dev/null
   fi
   wait "$watchdog" 2>/dev/null
@@ -372,6 +432,8 @@ run_with_watchdog() {
     case "$RUN_KILL_REPORT" in *alive*|*unknown*|*growing*) RUN_KILL_FAILED=1 ;; esac
   fi
   rm -f "$flag" "$flag.stalled" "$flag.stopped"
+  RUN_PID=""
+  RUN_REAPED=0
   return 0
 }
 
@@ -965,32 +1027,43 @@ guard_exists() {
   [ -e "$p1" ] || [ -L "$p1" ] || [ -e "$p2" ] || [ -L "$p2" ]
 }
 
-# write_tripwire <root> <state-dir> <runner> <reason> <quarantine-dir> <handled-list> [<errors-list>]
+# write_tripwire <root> <state-dir> <runner> <reason> <quarantine-dir> <handled-list> [<errors-list> [stop]]
 # Writes the tripwire in the vault and in the state directory. Returns 0 when at
-# least one copy is verified in place, 1 when neither could be written.
+# least one copy is verified in place, 1 when neither could be written. With
+# "stop" the handled list is what a stop found, and nothing was quarantined.
 write_tripwire() {
-  local root="$1" state="$2" runner="$3" reason="$4" qdir="$5" handled="$6" errors="${7:-}" body ok=1
-  body="$(mktemp 2>/dev/null || mktemp -t tripwire)" || return 1
+  local root="$1" state="$2" runner="$3" reason="$4" qdir="$5" handled="$6" errors="${7:-}" shape="${8:-}" body ok=1
+  body="$(mktemp 2>/dev/null || mktemp -t tripwire 2>/dev/null)" || body="$state/tripwire-body.$$"
   {
     printf 'TRIPWIRE set by %s at %s\n\n' "$runner" "$(ts)"
     printf 'Reason: %s\n\n' "$reason"
-    printf 'Changed files were moved to the quarantine and restored from the pre-pass\n'
-    printf 'backup where one existed. Git HEAD and refs are never rewritten, so check them\n'
-    printf "with 'git reflog'. Anything under .git-common/ is outside the vault and was not\n"
-    printf 'restored.\n\n'
-    printf 'Quarantine: %s\n\n' "$qdir"
-    if [ -s "$handled" ]; then
-      printf 'Paths:\n'
+    if [ "$shape" = stop ]; then
+      printf 'What the stop found:\n'
       sed 's/^/  /' "$handled"
+      printf '\nThe run lock %s is marked KILL_FAILED as well, so no runner starts until it\n' "${RUN_LOCK_DIR:-$state/run.lock}"
+      printf 'is deleted. The pre-pass backup of the steering surfaces is kept at\n'
+      printf '%s. End the process, review the vault against it and\n' "$state/inflight-backup.tar"
+      printf "'git status', then delete this file and the lock folder.\n"
+    else
+      printf 'Changed files were moved to the quarantine and restored from the pre-pass\n'
+      printf 'backup where one existed. Git HEAD and refs are never rewritten, so check them\n'
+      printf "with 'git reflog'. Anything under .git-common/ is outside the vault and was not\n"
+      printf 'restored.\n\n'
+      printf 'Quarantine: %s\n\n' "$qdir"
+      if [ -s "$handled" ]; then
+        printf 'Paths:\n'
+        sed 's/^/  /' "$handled"
+      fi
     fi
     if [ -n "$errors" ] && [ -s "$errors" ]; then
       printf '\nCONTAINMENT-ERROR (not quarantined, or not restored. Check these first.)\n'
       sed 's/^/  /' "$errors"
     fi
     printf '\nNo runner, and not vault-check.sh, will run while this file exists.\n'
-    printf 'Review the paths above, then delete this file. The runners also keep a copy\n'
+    [ "$shape" = stop ] || printf 'Review the paths above, then delete this file. '
+    printf 'The runners also keep a copy\n'
     printf 'at %s. Delete that too.\n' "$state/$(basename "$TRIPWIRE_REL")"
-  } > "$body"
+  } > "$body" || { rm -f "$body"; return 1; }
   write_file_atomic "$root/$TRIPWIRE_REL" "$body" && ok=0
   write_file_atomic "$state/$(basename "$TRIPWIRE_REL")" "$body" && ok=0
   rm -f "$body"
@@ -1028,7 +1101,7 @@ clear_inflight() {
 tripwire_check() {
   local root="$1" state="$2" runner="$3" log="$4" marker empty wrote
   if guard_exists "$root" "$state" "$TRIPWIRE_REL"; then
-    printf '[%s] TRIPWIRE: refusing to run. A previous pass changed a steering or execution surface. Read %s, then delete it.\n' \
+    printf '[%s] TRIPWIRE: refusing to run. A previous pass changed a steering or execution surface, or a process of a stopped pass may still be running. Read %s, then delete it.\n' \
       "$(ts)" "$TRIPWIRE_REL" >> "$log"
     return 78
   fi
@@ -1186,10 +1259,11 @@ is_nonce() {
   case "$1" in ''|*[!A-Za-z0-9._-]*) return 1 ;; *) return 0 ;; esac
 }
 
-# uint_setting <variable-name> <default> <minimum> <log>
+# uint_setting <variable-name> <default> <minimum> <log> [<unit>]
 # Prints the variable's value when it is a plain whole number no smaller than
 # <minimum> and at most nine digits, so no sum of settings can overflow.
 # Otherwise prints <default>, after logging a warning when the variable was set.
+# <unit> names what the number counts in that warning (default seconds).
 uint_setting() {
   local value="${!1:-}"
   if [ -z "$value" ]; then
@@ -1197,8 +1271,8 @@ uint_setting() {
   elif is_uint "$value" && [ "${#value}" -le 9 ] && [ "$value" -ge "$3" ]; then
     printf '%s\n' "$value"
   else
-    printf '[%s] WARNING: %s "%s" is not a plain whole number of seconds (digits only, no leading zero, at most nine digits, at least %s). Using %s.\n' \
-      "$(ts)" "$1" "$value" "$3" "$2" >> "$4"
+    printf '[%s] WARNING: %s "%s" is not a usable number of %s (digits only, no leading zero, at most nine digits, at least %s). Using %s.\n' \
+      "$(ts)" "$1" "$value" "${5:-seconds}" "$3" "$2" >> "$4"
     printf '%s\n' "$2"
   fi
 }
@@ -1503,6 +1577,8 @@ run_lock_acquire() {
 # checked that nothing of the old pass is still running and removed the lock.
 mark_kill_failed() {
   local log="$1" report="$2"
+  # The runners keep the pre-pass backup on exit once this is set.
+  KILL_FAILED_MARKED=1
   if run_lock_held && printf 'kill_failed=%s\n' "$(date +%s)" >> "$RUN_LOCK_DIR/owner" 2>/dev/null; then
     printf '[%s] KILL_FAILED: a process of the stopped pass may still be running, so the run lock %s is kept and no pass will start. Check for it, stop it, then delete the lock folder. What the stop found:\n' "$(ts)" "$RUN_LOCK_DIR" >> "$log"
   else
@@ -2394,7 +2470,7 @@ stall_plan() {
     fi
     # A value that is not a whole number counts as unset, so command mode stays
     # off and claude mode keeps its measured threshold.
-    printf '[%s] WARNING: RUNNER_STALL_SECONDS="%s" is not a whole number of seconds, so it is ignored.\n' "$(ts)" "$RUNNER_STALL_SECONDS" >> "$log"
+    printf '[%s] WARNING: RUNNER_STALL_SECONDS="%s" is not digits only, with no leading zero and at most nine digits, so it is ignored.\n' "$(ts)" "$RUNNER_STALL_SECONDS" >> "$log"
   fi
   if [ "${AGENT_KIND:-claude}" != claude ]; then
     AGENT_STALL_SECONDS=0
@@ -2469,20 +2545,49 @@ record_runner_session() {
 # Adds a pass's output, which the runner kept outside the vault while the pass
 # ran, to the pass's run log in .claude/logs. Called after containment, because
 # the pass may have put a link or something other than a file where the run log
-# was. It writes only to a regular file or a new one, never through a link, and
-# cuts a run log larger than RUNNER_RUN_LOG_MAX_BYTES (default 10000000) to its
-# newest part, because the stream holds every event of every pass.
+# was. The new log is built in a temporary file beside it and renamed into
+# place, so nothing is ever written through a symbolic or hard link. A run log
+# that is a link, or a regular file with another name linked to it, is not read
+# and starts again. A log larger than RUNNER_RUN_LOG_MAX_BYTES (default
+# 10000000) keeps its newest part from the start of a line, because the stream
+# holds every event of every pass.
 append_run_log() {
-  local run="$1" out="$2" log="$3" max size
-  [ ! -L "$out" ] && { [ -f "$out" ] || [ ! -e "$out" ]; } || return 0
-  cat "$run" >> "$out" 2>/dev/null || return 0
-  max="$(uint_setting RUNNER_RUN_LOG_MAX_BYTES 10000000 1000 "$log")"
-  size="$(file_size "$out")"
-  if [ "$size" -gt "$max" ]; then
-    tail -c "$max" "$out" > "$out.tmp.$$" 2>/dev/null && mv -f "$out.tmp.$$" "$out" 2>/dev/null
-    rm -f "$out.tmp.$$" 2>/dev/null
+  local run="$1" out="$2" log="$3" max tmp old=""
+  [ -e "$out" ] && [ ! -f "$out" ] && [ ! -L "$out" ] && return 0
+  if [ -f "$out" ] && [ ! -L "$out" ]; then
+    if [ -n "$(find "$out" -links 1 2>/dev/null)" ]; then
+      old="$out"
+    else
+      printf '[%s] WARNING: %s has another name linked to it, so it was started again instead of added to.\n' "$(ts)" "$out" >> "$log"
+    fi
   fi
+  max="$(uint_setting RUNNER_RUN_LOG_MAX_BYTES 10000000 1000 "$log" bytes)"
+  tmp="$(mktemp "$out.XXXXXX" 2>/dev/null)" || return 0
+  { [ -z "$old" ] || cat "$old"; } > "$tmp" 2>/dev/null
+  # An old log cut off mid-line would glue its last line to this pass's first.
+  [ -s "$tmp" ] && [ -n "$(tail -c 1 "$tmp")" ] && printf '\n' >> "$tmp"
+  if cat "$run" >> "$tmp" 2>/dev/null; then
+    if [ "$(file_size "$tmp")" -gt "$max" ]; then
+      tail -c "$max" "$tmp" | sed 1d > "$tmp.cut" 2>/dev/null && mv -f "$tmp.cut" "$tmp" 2>/dev/null
+      rm -f "$tmp.cut" 2>/dev/null
+    fi
+    mv -f "$tmp" "$out" 2>/dev/null
+  fi
+  rm -f "$tmp" 2>/dev/null
   return 0
+}
+
+# keep_run_output <run-file> <state-dir> <runner> <log>
+# Keeps the output of a pass that ended before containment, whose run log in the
+# vault is not safe to write, in the state directory, cut like the run log.
+keep_run_output() {
+  local run="$1" dest="$2/$3.interrupted.run" max
+  [ -s "$run" ] || return 0
+  max="$(uint_setting RUNNER_RUN_LOG_MAX_BYTES 10000000 1000 "$4" bytes)"
+  rm -f "$dest" 2>/dev/null
+  if tail -c "$max" "$run" > "$dest" 2>/dev/null; then
+    printf '[%s] The output of the interrupted pass is kept at %s.\n' "$(ts)" "$dest" >> "$4"
+  fi
 }
 
 # report_stop <log> <what> <root> <state-dir> <runner>
@@ -2497,23 +2602,33 @@ report_stop() {
   fi
   if [ "${RUN_KILL_FAILED:-0}" -eq 1 ]; then
     mark_kill_failed "$log" "$RUN_KILL_REPORT"
-    list="$(mktemp 2>/dev/null || mktemp -t killfailed)" || list=""
-    if [ -n "$list" ]; then
-      printf '%s\n' "$RUN_KILL_REPORT" > "$list"
-      if [ -f "$root/$TRIPWIRE_REL" ] || [ -f "$state/$(basename "$TRIPWIRE_REL")" ]; then
-        # Containment set the tripwire already. Its list stays, and this is added.
-        for idx in "$root/$TRIPWIRE_REL" "$state/$(basename "$TRIPWIRE_REL")"; do
-          [ -f "$idx" ] && [ ! -L "$idx" ] || continue
-          { printf '\nAlso, a process of the stopped %s may still be running, so what it writes after containment is unchecked. End it, then review the vault. What the stop found:\n' "$what"
-            sed 's/^/  /' "$list"; } >> "$idx" 2>/dev/null
-        done
-      elif ! write_tripwire "$root" "$state" "$runner" \
-           "a process of the stopped $what may still be running, so what it writes after containment is unchecked. End it, then review the vault" \
-           "(none moved)" "$list"; then
-        printf '[%s] TRIPWIRE-ERROR: no tripwire could be written for the KILL_FAILED stop. The run lock is still marked.\n' "$(ts)" >> "$log"
-      fi
-      rm -f "$list"
+    # The list lives in the state directory when no temporary file can be made,
+    # because the tripwire must not depend on TMPDIR.
+    list="$(mktemp 2>/dev/null || mktemp -t killfailed 2>/dev/null)" || list="$state/kill-report.$$"
+    if ! printf '%s\n' "$RUN_KILL_REPORT" > "$list" 2>/dev/null; then
+      printf '[%s] TRIPWIRE-ERROR: no tripwire could be written for the KILL_FAILED stop, because its report could not be saved. The run lock is still marked.\n' "$(ts)" >> "$log"
+      return 0
     fi
+    # The tripwire counts as containment's only when containment set it in this
+    # run, or its copy is in the state directory, where the pass cannot write.
+    # A tripwire found only in the vault was written by the pass, and is
+    # replaced.
+    if [ "${CONTAINED:-0}" -eq 1 ] || [ -f "$state/$(basename "$TRIPWIRE_REL")" ]; then
+      for idx in "$root/$TRIPWIRE_REL" "$state/$(basename "$TRIPWIRE_REL")"; do
+        [ -f "$idx" ] && [ ! -L "$idx" ] || continue
+        { printf '\nAlso, a process of the stopped %s may still be running, so what it writes after containment is unchecked. The run lock is marked KILL_FAILED too, and the pre-pass backup is kept at %s. End it, then review the vault. What the stop found:\n' "$what" "$state/inflight-backup.tar"
+          sed 's/^/  /' "$list"; } >> "$idx" 2>/dev/null
+      done
+      if [ ! -f "$state/$(basename "$TRIPWIRE_REL")" ] && [ -f "$root/$TRIPWIRE_REL" ] && [ ! -L "$root/$TRIPWIRE_REL" ]; then
+        write_file_atomic "$state/$(basename "$TRIPWIRE_REL")" "$root/$TRIPWIRE_REL" \
+          || printf '[%s] WARNING: the tripwire could not be copied to the state directory %s.\n' "$(ts)" "$state" >> "$log"
+      fi
+    elif ! write_tripwire "$root" "$state" "$runner" \
+         "a process of the stopped $what may still be running, so what it writes after containment is unchecked" \
+         "(none moved)" "$list" "" stop; then
+      printf '[%s] TRIPWIRE-ERROR: no tripwire could be written for the KILL_FAILED stop. The run lock is still marked.\n' "$(ts)" >> "$log"
+    fi
+    rm -f "$list"
   fi
 }
 
