@@ -247,7 +247,11 @@ main() {
   # What the pass may write, and owns: dream journals, plus an auto-written
   # compaction stub it may leave but does not own.
   grep -vE '^20-projects/_logs/(dream-|compaction-)[^/]*\.md$' "$SNAP_DIR/changed" > "$SNAP_DIR/outside"
-  grep -E '^20-projects/_logs/dream-[^/]*\.md$' "$SNAP_DIR/changed" > "$SNAP_DIR/owned"
+  OWNED_PATTERN='^20-projects/_logs/dream-[^/]*\.md$'
+  grep -E "$OWNED_PATTERN" "$SNAP_DIR/changed" > "$SNAP_DIR/owned"
+  # Journals an earlier run left uncommitted are checked and committed with this
+  # pass's own, whether or not this pass touched them.
+  own_adopted "$SNAP_DIR" "$OWNED_PATTERN"
 
   if [ "$RUN_TIMED_OUT" -eq 1 ]; then
     printf '[%s] TIMEOUT: dream-agent exceeded %ss and was killed (status %s)\n' \
@@ -277,8 +281,9 @@ main() {
   # pass did anything. A dream journal must have been ADDED or CHANGED during this
   # run. Matching any dream-*.md, rather than today's date computed up front,
   # means a 23:59 run that writes after midnight still counts, and a journal left
-  # by an earlier run on the same day does not pre-satisfy the check.
-  if [ ! -s "$SNAP_DIR/owned" ]; then
+  # by an earlier run on the same day does not pre-satisfy the check. An adopted
+  # leftover does not either, which is why this reads the changes, not owned.
+  if ! grep -qE "$OWNED_PATTERN" "$SNAP_DIR/changed"; then
     printf '[%s] NO-ARTIFACT: exited 0 but no dream journal was added or changed\n' "$(ts)" >> "$LOG"
     exit 1
   fi
@@ -288,8 +293,21 @@ main() {
   commit_owned "$ROOT" dream "$SNAP_DIR/owned" "$SNAP_DIR/predirty" "$SNAP_DIR" "$LOG"
   commit_rc=$?
   case "$commit_rc" in
-    0) ;;
-    4|5) record_leftovers "$ROOT" "$SNAP_DIR/nohooks" "$STATE" "$RUNNER" "$SNAP_DIR"; exit "$commit_rc" ;;
+    0) forget_uncommitted "$STATE" "$RUNNER" ;;
+    4) record_leftovers "$ROOT" "$SNAP_DIR/nohooks" "$STATE" "$RUNNER" "$SNAP_DIR"; exit 4 ;;
+    5)
+      printf '[%s] The rejected journal is left in place, uncommitted, for review.\n' "$(ts)" >> "$LOG"
+      # Only the journals that pass the check on their own are recorded for the
+      # next run. A rejected one recorded too would be adopted and rejected again
+      # every night, and no later journal would be committed.
+      while IFS= read -r p; do
+        [ -n "$p" ] && CLAUDE_PROJECT_DIR="$ROOT" bash "$ROOT/.claude/scripts/vault-check.sh" -- "$p" </dev/null >/dev/null 2>&1 \
+          && printf '%s\n' "$p"
+      done < "$SNAP_DIR/owned" > "$SNAP_DIR/owned.passing"
+      mv -f "$SNAP_DIR/owned.passing" "$SNAP_DIR/owned"
+      record_leftovers "$ROOT" "$SNAP_DIR/nohooks" "$STATE" "$RUNNER" "$SNAP_DIR"
+      exit 5
+      ;;
     *) exit "$commit_rc" ;;
   esac
 

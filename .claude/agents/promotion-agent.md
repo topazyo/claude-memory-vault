@@ -45,18 +45,22 @@ it — and **verified**: you can point at what established it. A vivid one-off i
 Per `.claude/rules/verification.md`:
 
 - **The runner keeps the history, not you.** Before you start, it records the vault's recent
-  history and the long-tier changes since the last promotion pass in
-  `.claude/logs/promotion-pass.git-state.txt`. Read that file for what changed. After you finish,
-  it checks every note you wrote or changed and records them in history with a
-  `Vault-Pass: promotion` trailer. If any note fails the check, every note you changed is put back
-  as it was before the pass, so a malformed write never lands. You have no shell and need none.
-- If a note you mean to change already shows changes in that file that no promotion pass made,
-  someone may be editing it. Leave it alone and report it as pending with that reason. The runner
-  refuses to record over such a note anyway.
-- Run a trust sweep: re-verify high-stakes claims in long-term notes against reality, then stamp
-  `last_verified` and adjust `confidence`. **Only stamp what you actually re-probed** — a stamp
-  applied without a probe is an unearned stamp, and it suppresses its own detection by every
-  later pass.
+  history in `.claude/logs/promotion-pass.git-state.txt`, with the long-tier changes committed
+  since the last promotion pass kept apart from the ones nobody has committed yet. Read that file
+  for what changed. After you finish, it checks every note you wrote or changed and records them
+  in history with a `Vault-Pass: promotion` trailer. If any note fails the check, the notes you
+  changed are put back as they were before the pass and none is recorded. You have no shell and
+  need none.
+- If a note you mean to change shows uncommitted changes in that file, someone may be editing it.
+  Leave it alone and report it as pending with that reason. The runner refuses to record over such
+  a note anyway. A change someone committed since the last promotion pass is settled, and you may
+  build on it.
+- Run a trust sweep over the long-term notes, limited to what reading can check. You have no shell
+  and no network, so re-verify a claim only against other notes and files in the vault, then stamp
+  `last_verified` and adjust `confidence` for that claim. A claim about a system outside the vault
+  cannot be checked by reading, so report it as unverified and leave its stamp alone. **Only stamp
+  what you actually re-probed** — a stamp applied without a probe is an unearned stamp, and it
+  suppresses its own detection by every later pass.
 - The templates ship `last_verified: ""`. A note you create from one keeps it empty unless you
   re-probed its claim during this pass.
 - Spawned workers return status and file path only, never pasted content. This bounds

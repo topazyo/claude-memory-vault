@@ -1366,21 +1366,42 @@ record_uncommitted() {
 }
 
 # adopt_uncommitted <root> <empty-hooks-dir> <state-dir> <runner> <dirty-list>
-# Takes off the dirty list each file this runner recorded as left uncommitted
-# and that still has exactly those bytes, then forgets the record. A file that
-# differs was edited since, and stays on the list.
+# Takes off the dirty list each file on it that this runner recorded as left
+# uncommitted and that still has exactly those bytes, and lists those files in
+# <dirty-list>.adopted, which own_adopted later adds to the pass's own files. A
+# file that differs was edited since, and stays on the dirty list. The record
+# stays until a run commits or puts back its files (forget_uncommitted) or
+# records its own leftovers over it, so a run that stops before then loses
+# nothing.
 adopt_uncommitted() {
   local root="$1" hooks="$2" list="$3/$4.uncommitted" dirty="$5" blob p now
-  [ -f "$list" ] || return 0
   : > "$dirty.adopted"
+  [ -f "$list" ] || return 0
   while IFS=' ' read -r blob p; do
     [ -n "$p" ] && [ -f "$root/$p" ] && [ ! -L "$root/$p" ] || continue
+    grep -qxF -- "$p" "$dirty" || continue
     now="$(safe_git "$hooks" -C "$root" hash-object --no-filters -- "$p" 2>/dev/null)"
     [ -n "$now" ] && [ "$now" = "$blob" ] && printf '%s\n' "$p" >> "$dirty.adopted"
   done < "$list"
   awk 'FILENAME == ARGV[1] { adopted[$0] = 1; next } !($0 in adopted)' "$dirty.adopted" "$dirty" > "$dirty.kept"
   mv -f "$dirty.kept" "$dirty"
-  rm -f "$list" "$dirty.adopted"
+}
+
+# own_adopted <snap-dir> <owned-pattern>
+# Adds each adopted leftover in <snap-dir>/predirty.adopted whose path matches the
+# extended regular expression to <snap-dir>/owned, so it is checked and then
+# committed or put back with the files this pass changed.
+own_adopted() {
+  [ -s "$1/predirty.adopted" ] || return 0
+  { grep -E -- "$2" "$1/predirty.adopted"; cat "$1/owned"; } | LC_ALL=C sort -u > "$1/owned.new"
+  mv -f "$1/owned.new" "$1/owned"
+}
+
+# forget_uncommitted <state-dir> <runner>
+# Removes the record of files left uncommitted, once a run has committed them or
+# put them back.
+forget_uncommitted() {
+  rm -f "$1/$2.uncommitted" 2>/dev/null
 }
 
 # record_leftovers <root> <empty-hooks-dir> <state-dir> <runner> <snap-dir>
@@ -1397,33 +1418,79 @@ record_leftovers() {
   record_uncommitted "$1" "$2" "$3" "$4" "$snap/leftover"
 }
 
-# revert_owned <root> <empty-hooks-dir> <snap-dir> <commit-before-or-NONE> <quarantine-dir> <log>
-# Puts back the pre-pass state of every file in <snap-dir>/owned, after a check
-# rejected the pass's notes. A file that existed in the commit HEAD pointed at
-# before the pass is restored from it, and a file the pass created is moved to
-# the quarantine outside the vault. None of them was dirty before the pass
-# (owned_predirty stopped the run otherwise), so that commit holds their pre-pass
-# bytes. A file that existed before the pass but is in no commit, because git
-# ignores it, has no earlier bytes to go back to, so it is left in place and
-# listed rather than moved out of the vault. A file that changed after the second
-# snapshot is someone's edit, and is left alone and listed. Returns 1 when any
-# file could not be put back.
+# path_state <root> <relative-path>
+# What a snapshot line records for the path, "<checksum> <size>" for a file and
+# "L<checksum> 0" for a symlink, "other" for anything else that exists, such as
+# a folder, and nothing when the path is missing.
+path_state() {
+  if [ -L "$1/$2" ]; then
+    ( cd "$1" && fence_find "./$2" ) | cut -d' ' -f1,2
+  elif [ -f "$1/$2" ]; then
+    ( cd "$1" && cksum "./$2" 2>/dev/null ) | cut -d' ' -f1,2
+  elif [ -e "$1/$2" ]; then
+    printf 'other\n'
+  fi
+}
+
+# revert_owned <root> <empty-hooks-dir> <snap-dir> <path-list> <commit-before-or-NONE> <quarantine-dir> <log>
+# Puts back the pre-pass state of every file in <path-list>, after the runner
+# rejected the pass's notes. None of them was dirty before the pass, except a
+# leftover of this runner that adopt_uncommitted took off the dirty list, so the
+# commit HEAD pointed at before the pass holds their pre-pass bytes.
+#
+#   - A path that is not exactly as the second snapshot saw it (changed, removed,
+#     or now a folder or a link) is someone else's since, and is left alone.
+#   - A path whose blob in HEAD differs from the one in the commit before the
+#     pass was committed while the pass ran. Restoring it would undo that commit
+#     in the work tree, so it is left alone.
+#   - A file in the commit before the pass is copied to the quarantine outside
+#     the vault, because its bytes may include someone's edit made during the
+#     pass, and then restored from that commit. A symlink there is moved to the
+#     quarantine instead. When the copy fails the file is not restored.
+#   - A file in no commit is moved to the quarantine when the pass created it or
+#     it is an adopted leftover, and any folder left empty below the top folder
+#     is removed, unless it held files before the pass. One that existed before
+#     the pass because git ignores it has no earlier bytes to go back to, so it
+#     is left in place.
+#
+# Every path left alone is listed in the log. Returns 1 when any path in the
+# list could not be put back.
 revert_owned() {
-  local root="$1" hooks="$2" snap="$3" before="$4" qdir="$5" log="$6" p now was rc=0
+  local root="$1" hooks="$2" snap="$3" plist="$4" before="$5" qdir="$6" log="$7" p now was b_blob h_blob d rc=0
   local in_before='{ line = $0; sub(/^[^ ]* [^ ]* /, "", line) } line == path { found = 1; exit } END { exit found ? 0 : 1 }'
-  [ -s "$snap/owned" ] || return 0
+  local under_before='{ line = $0; sub(/^[^ ]* [^ ]* /, "", line) } index(line, pre) == 1 { found = 1; exit } END { exit found ? 0 : 1 }'
+  [ -s "$plist" ] || return 0
   while IFS= read -r p; do
     [ -n "$p" ] || continue
-    if [ -f "$root/$p" ] && [ ! -L "$root/$p" ]; then
-      now="$(cd "$root" && cksum "./$p" 2>/dev/null | cut -d' ' -f1,2)"
-      was="$(awk -v path="./$p" '{ line = $0; sub(/^[^ ]* [^ ]* /, "", line) } line == path { print $1 " " $2; exit }' "$snap/after")"
-      if [ "$now" != "$was" ]; then
-        printf '    %s (changed after the pass ended, so it was left as it is)\n' "$p" >> "$log"
-        rc=1
-        continue
-      fi
+    now="$(path_state "$root" "$p")"
+    was="$(awk -v path="./$p" '{ line = $0; sub(/^[^ ]* [^ ]* /, "", line) } line == path { print $1 " " $2; exit }' "$snap/after")"
+    if [ "$now" != "$was" ]; then
+      printf '    %s (changed after the pass ended, so it was left as it is)\n' "$p" >> "$log"
+      rc=1
+      continue
     fi
-    if [ "$before" != NONE ] && ( cd "$root" && MSYS_NO_PATHCONV=1 GIT_TERMINAL_PROMPT=0 git cat-file -e "$before:./$p" ) 2>/dev/null; then
+    b_blob=""
+    [ "$before" != NONE ] && b_blob="$(index_blob "$root" "$before" "$p")"
+    h_blob="$(index_blob "$root" HEAD "$p")"
+    if [ "$h_blob" != "$b_blob" ]; then
+      printf '    %s (committed while the pass ran, so it was left as it is)\n' "$p" >> "$log"
+      rc=1
+      continue
+    fi
+    if [ -n "$b_blob" ]; then
+      if [ -L "$root/$p" ]; then
+        if ! { mkdir -p "$qdir/$(dirname "$p")" && mv -f "$root/$p" "$qdir/$p"; } 2>/dev/null; then
+          printf '    %s (a link that could not be moved to the quarantine, so it was not restored)\n' "$p" >> "$log"
+          rc=1
+          continue
+        fi
+      elif [ -f "$root/$p" ]; then
+        if ! { mkdir -p "$qdir/$(dirname "$p")" && cp -p "$root/$p" "$qdir/$p"; } 2>/dev/null; then
+          printf '    %s (could not be copied to the quarantine, so it was not restored)\n' "$p" >> "$log"
+          rc=1
+          continue
+        fi
+      fi
       if safe_git "$hooks" -C "$root" restore --source="$before" --worktree -- "$p" 2>/dev/null; then
         printf '    %s (restored from %s)\n' "$p" "$before" >> "$log"
       else
@@ -1431,17 +1498,23 @@ revert_owned() {
         rc=1
       fi
     elif [ -e "$root/$p" ] || [ -L "$root/$p" ]; then
-      if awk -v path="./$p" "$in_before" "$snap/before"; then
+      if awk -v path="./$p" "$in_before" "$snap/before" && ! grep -qxF -- "$p" "$snap/predirty.adopted" 2>/dev/null; then
         printf '    %s (existed before the pass but is in no commit, so it could not be put back and was left as the pass wrote it)\n' "$p" >> "$log"
         rc=1
       elif mkdir -p "$qdir/$(dirname "$p")" 2>/dev/null && mv -f "$root/$p" "$qdir/$p" 2>/dev/null; then
         printf '    %s (new, moved to %s)\n' "$p" "$qdir/$p" >> "$log"
+        d="$(dirname "$p")"
+        while case "$d" in */*) true ;; *) false ;; esac; do
+          awk -v pre="./$d/" "$under_before" "$snap/before" && break
+          rmdir "$root/$d" 2>/dev/null || break
+          d="$(dirname "$d")"
+        done
       else
         printf '    %s (new, and could not be moved to the quarantine)\n' "$p" >> "$log"
         rc=1
       fi
     fi
-  done < "$snap/owned"
+  done < "$plist"
   return "$rc"
 }
 
@@ -1534,7 +1607,7 @@ commit_owned() {
 
   # The gate reads exactly the files about to be committed.
   if ! CLAUDE_PROJECT_DIR="$root" bash "$root/.claude/scripts/vault-check.sh" -- "${paths[@]}" > "$snap/check.out" 2>&1; then
-    printf '[%s] CHECK-FAILED: vault-check rejected the pass'"'"'s files, so they were not committed. They are left in place for review:\n' "$(ts)" >> "$log"
+    printf '[%s] CHECK-FAILED: vault-check rejected the pass'"'"'s files, so none of them was committed:\n' "$(ts)" >> "$log"
     sed 's/^/    /' "$snap/check.out" >> "$log"
     return 5
   fi
@@ -1753,13 +1826,16 @@ run_agent() {
       # Auto memory is switched off for the pass. Claude Code would otherwise
       # write memory files the fence has to treat as a planted instruction.
       #
-      # Neither agent's allowlist names Bash. --disallowedTools says it again on
-      # the command line, so a definition edited to add it still gets no shell. It
+      # Neither agent's allowlist names a tool that runs commands. --disallowedTools
+      # denies Bash, PowerShell (which Claude Code offers on Windows) and Monitor
+      # (which runs a command in the background) again on the command line, so a
+      # definition edited to add one still gets no shell. Claude Code accepts a
+      # name it does not offer, so the same list works on every platform. It
       # comes last because it takes a list, which would otherwise swallow the
       # prompt.
       export CLAUDE_CODE_DISABLE_AUTO_MEMORY=1
       run_with_watchdog "$timeout" "$out" \
-        "$AGENT_BIN" -p "$task" --agent "$agent" --permission-mode acceptEdits --disallowedTools Bash
+        "$AGENT_BIN" -p "$task" --agent "$agent" --permission-mode acceptEdits --disallowedTools Bash PowerShell Monitor
       ;;
     command)
       run_with_watchdog "$timeout" "$out" "$AGENT_BIN" "$prompt_rel"

@@ -435,10 +435,11 @@ long session, chopped into six compactions, look like six separate corroboration
 
 The output shape follows: the agent proposes, you dispose. Its journal is a list of suggestions
 with links, and promoting any of them is a human action. The weekly promotion-agent is allowed
-to write into the long tier, which is why it takes a git snapshot before it writes: its output
-is recoverable by `git` rather than by trust. Its runner fences where it may write (the long
-tier and a promotion report), but a fence only catches a write in the wrong place; undoing a bad
-write in the right place takes the snapshot, which is why `git` is a hard requirement.
+to write into the long tier, which is why its runner commits every note a pass writes, and puts
+back the notes of a pass that fails the check. Its output is recoverable by `git` rather than by
+trust. The runner fences where it may write (the long tier and a promotion report), but a fence
+only catches a write in the wrong place. Undoing a bad write in the right place takes the commit
+before it, which is why `git` is a hard requirement.
 
 ---
 

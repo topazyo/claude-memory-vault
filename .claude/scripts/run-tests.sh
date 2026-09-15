@@ -827,6 +827,24 @@ case "${FAKE_MODE:-nothing}" in
                   printf 'overwritten without frontmatter\n' > "31-standards/existing.md"
                   [ -f 31-standards/ignored-keep.md ] && printf 'pass edit\n' >> 31-standards/ignored-keep.md
                   printf 'PROMOTION-SUMMARY: promoted=2 pending=0\n' ;;
+  promote-glob-bad) printf 'no frontmatter\n' > "31-standards/[e]xisting.md"
+                  printf 'PROMOTION-SUMMARY: promoted=1 pending=0\n' ;;
+  promote-commit-bad) printf 'committed during the pass\n' >> "31-standards/existing.md"
+                  git -c user.name=sync -c user.email=sync@example.invalid -c commit.gpgsign=false \
+                    commit -q --no-verify -m "sync plugin" -- 31-standards/existing.md >/dev/null 2>&1
+                  printf 'no frontmatter\n' > "31-standards/rejected-new.md"
+                  printf 'PROMOTION-SUMMARY: promoted=1 pending=0\n' ;;
+  promote-delete) rm -f "31-standards/existing.md"
+                  mkdir -p 31-standards/newdir
+                  printf 'no frontmatter\n' > "31-standards/newdir/rejected-deep.md"
+                  printf 'PROMOTION-SUMMARY: promoted=1 pending=0\n' ;;
+  promote-leftover) printf -- '---\ntier: long\ntype: standard\n---\n\nleftover\n' > "31-standards/leftover.md"
+                  printf 'PROMOTION-SUMMARY: promoted=1 pending=0\n' ;;
+  promote-bad-hang) printf 'no frontmatter\n' > "31-standards/leftover-bad.md"
+                  exec sleep 60 ;;
+  promote-edit-fail) printf 'promoted\n' >> "31-standards/existing.md"
+                  exit 3 ;;
+  report-only)    printf -- '---\ntier: medium\ntype: project-log\n---\n\nreport\n' > "20-projects/_logs/promotion-report-only.md" ;;
   hang)           exec sleep 60 ;;
   summary)        printf 'did the work\nPROMOTION-SUMMARY: promoted=0 pending=1\n' ;;
   errors)         printf 'Error: something failed\n%.0s' $(seq 1 60) ;;
@@ -899,9 +917,11 @@ expect_rc "dream-pass: agent touches another note -> VIOLATION" 2  "$(runner dre
 printf -- '---\ntier: long\ntype: standard\n---\n\nexisting\n' > "$RV/31-standards/existing.md"
 expect_rc "dream-pass: hung agent is killed by the watchdog -> TIMEOUT" 124 "$(runner dream-pass.sh hang DREAM_PASS_TIMEOUT=2)"
 
-expect_rc "promotion-pass: summary line, no change -> OK"      0   "$(runner promotion-pass.sh summary)"
-# The agent has no shell, so the runner records the history it reads.
+# The agent has no shell, so the runner records the history it reads. Removed
+# first, so a file an earlier run left cannot pass for this run's.
 GIT_STATE="$RV/.claude/logs/promotion-pass.git-state.txt"
+rm -f "$GIT_STATE"
+expect_rc "promotion-pass: summary line, no change -> OK"      0   "$(runner promotion-pass.sh summary)"
 if [ "$RV_GIT" -eq 1 ]; then
   if grep -qx '## git log --oneline -10' "$GIT_STATE" 2>/dev/null && grep -qx '## git status --short' "$GIT_STATE" \
      && grep -q 'No earlier promotion pass commit was found' "$GIT_STATE"; then
@@ -940,10 +960,20 @@ else
   bad "claude mode argv -- got: $(tr '\n' ' ' < "$REC.argv" 2>/dev/null)"
 fi
 # The option takes a list, so it must come last or it would swallow what follows.
-if [ "$(tail -n 2 "$REC.argv" 2>/dev/null | tr '\n' ' ')" = '--disallowedTools Bash ' ]; then
-  ok "claude mode denies the Bash tool, in the last two arguments"
+# PowerShell and Monitor run commands too, and Claude Code offers PowerShell on
+# Windows. An unknown name in the list is accepted, so it is safe everywhere.
+if [ "$(tail -n 4 "$REC.argv" 2>/dev/null | tr '\n' ' ')" = '--disallowedTools Bash PowerShell Monitor ' ]; then
+  ok "claude mode denies the Bash, PowerShell and Monitor tools, in the last four arguments"
 else
-  bad "claude mode does not end with --disallowedTools Bash -- got: $(tr '\n' ' ' < "$REC.argv" 2>/dev/null)"
+  bad "claude mode does not end with --disallowedTools Bash PowerShell Monitor -- got: $(tr '\n' ' ' < "$REC.argv" 2>/dev/null)"
+fi
+rm -f "$REC.argv"
+runner promotion-pass.sh summary FAKE_RECORD="$REC" >/dev/null
+if grep -qx 'promotion-agent' "$REC.argv" 2>/dev/null \
+   && [ "$(tail -n 4 "$REC.argv" 2>/dev/null | tr '\n' ' ')" = '--disallowedTools Bash PowerShell Monitor ' ]; then
+  ok "the promotion agent is started with the same tool denials"
+else
+  bad "the promotion agent argv lacks the tool denials -- got: $(tr '\n' ' ' < "$REC.argv" 2>/dev/null)"
 fi
 
 rm -f "$REC.argv" "$REC.prompt"
@@ -1992,18 +2022,40 @@ if [ "$RV_GIT" -eq 1 ]; then
     bad "the promotion commit is wrong -- message: $(printf '%s' "$pc_msg" | tr '\n' '|')"
   fi
 
-  # The next pass is told what changed in the long tier since that commit,
-  # including an edit nobody has committed.
+  # The next pass is told what changed in the long tier since that commit, with
+  # a change someone committed kept apart from an edit nobody has committed yet.
+  printf 'a committed human edit\n' >> "$RV/31-standards/existing.md"
+  git -C "$RV" commit -q --no-verify -m "human edit" -- 31-standards/existing.md
   printf 'an uncommitted human edit\n' >> "$RV/$pc_note"
   new_case_state promotion-git-state
   expect_rc "promotion-pass: a pass after a promotion commit -> OK" 0 "$(RUNNER_NO_SETTLE=1 runner promotion-pass.sh summary)"
-  if grep -qF "since the last promotion pass ($pc_commit)" "$GIT_STATE" 2>/dev/null \
-     && grep -q '^+an uncommitted human edit' "$GIT_STATE" && grep -qF "$pc_note" "$GIT_STATE"; then
-    ok "the git state file shows the long-tier changes since the last promotion commit"
+  gs_committed="$(awk '/^## Long-tier changes committed since the last promotion pass/{f=1;next} /^## /{f=0} f' "$GIT_STATE" 2>/dev/null)"
+  gs_uncommitted="$(awk '/^## Uncommitted long-tier changes/{f=1;next} /^## /{f=0} f' "$GIT_STATE" 2>/dev/null)"
+  if grep -qF "committed since the last promotion pass ($pc_commit)" "$GIT_STATE" 2>/dev/null \
+     && printf '%s\n' "$gs_committed" | grep -q '^+a committed human edit' \
+     && ! printf '%s\n' "$gs_committed" | grep -q 'an uncommitted human edit' \
+     && printf '%s\n' "$gs_uncommitted" | grep -qF " M $pc_note" \
+     && printf '%s\n' "$gs_uncommitted" | grep -q '^+an uncommitted human edit'; then
+    ok "the git state file keeps long-tier changes committed since the last promotion apart from uncommitted ones"
   else
-    bad "the git state file does not show the changes since the last promotion commit"
+    bad "the git state file mixes or misses the long-tier changes -- committed: $(printf '%s' "$gs_committed" | tr '\n' '|' | cut -c1-300) uncommitted: $(printf '%s' "$gs_uncommitted" | tr '\n' '|' | cut -c1-300)"
   fi
   git -C "$RV" checkout -q -- "$pc_note"
+
+  # A git state file the runner cannot write stops the run, rather than leave
+  # the agent reading an earlier run's history.
+  rm -f "$GIT_STATE"
+  mkdir -p "$GIT_STATE"
+  new_case_state promotion-git-state-unwritable
+  : > "$PROMO_LOG"
+  rm -f "$REC.argv"
+  expect_rc "promotion-pass: the git state file cannot be written -> refused" 1 "$(runner promotion-pass.sh summary FAKE_RECORD="$REC")"
+  if [ ! -f "$REC.argv" ] && grep -q 'could not write the git state file' "$PROMO_LOG"; then
+    ok "an unwritable git state file never starts the agent, and the log says why"
+  else
+    bad "an unwritable git state file started the agent, or the log did not say why"
+  fi
+  rm -rf "$GIT_STATE"
 
   # A pass whose notes fail vault-check has every note it changed put back: a
   # tracked one restored from the commit before the pass, a new one moved out of
@@ -2022,6 +2074,13 @@ if [ "$RV_GIT" -eq 1 ]; then
   else
     bad "rejected notes were not all put back -- status: $(git -C "$RV" status --porcelain -- 31-standards | tr '\n' ' ') log: $(grep -A3 REVERTED "$PROMO_LOG" | tr '\n' '|')"
   fi
+  # The bytes a restore overwrites are kept, because they may be someone's edit.
+  pb_copy="$(find "$CASE_STATE/quarantine" -path '*-rejected/31-standards/existing.md' -type f 2>/dev/null | head -n 1)"
+  if [ -n "$pb_copy" ] && grep -q 'overwritten without frontmatter' "$pb_copy"; then
+    ok "a restored note's rejected bytes are copied to the quarantine before the restore"
+  else
+    bad "a restored note's rejected bytes were not kept -- copy: ${pb_copy:-none}"
+  fi
   git -C "$RV" checkout -q -- 31-standards/existing.md
   rm -f "$RV/31-standards/rejected-new.md"
 
@@ -2034,7 +2093,7 @@ if [ "$RV_GIT" -eq 1 ]; then
   new_case_state promotion-check-fails-ignored
   : > "$PROMO_LOG"
   expect_rc "promotion-pass: rejected notes and an edited note git ignores -> CHECK-FAILED" 5 "$(runner promotion-pass.sh promote-bad)"
-  if grep -q '^keep$' "$RV/31-standards/ignored-keep.md" 2>/dev/null \
+  if grep -q '^keep$' "$RV/31-standards/ignored-keep.md" 2>/dev/null && grep -q '^pass edit$' "$RV/31-standards/ignored-keep.md" \
      && grep -q '31-standards/ignored-keep.md (existed before the pass but is in no commit' "$PROMO_LOG" \
      && [ ! -e "$RV/31-standards/rejected-new.md" ]; then
     ok "an ignored note that existed before the pass stays in the vault and is listed"
@@ -2044,6 +2103,144 @@ if [ "$RV_GIT" -eq 1 ]; then
   cp "$TMP/exclude-promotion" "$RV/.git/info/exclude"
   git -C "$RV" checkout -q -- 31-standards/existing.md
   rm -f "$RV/31-standards/rejected-new.md" "$RV/31-standards/ignored-keep.md"
+
+  # A revert takes each path literally too. A rejected [e]xisting.md must not
+  # restore over someone's uncommitted edit to existing.md.
+  printf -- '---\ntier: long\ntype: standard\n---\n\nbracketed\n' > "$RV/31-standards/[e]xisting.md"
+  settle_owned "$RV"
+  printf 'a human edit\n' >> "$RV/31-standards/existing.md"
+  new_case_state promotion-revert-literal
+  : > "$PROMO_LOG"
+  expect_rc "promotion-pass: a rejected bracketed note next to a dirty sibling -> CHECK-FAILED" 5 \
+    "$(RUNNER_NO_SETTLE=1 runner promotion-pass.sh promote-glob-bad)"
+  if grep -q '^a human edit$' "$RV/31-standards/existing.md" && grep -q '^bracketed$' "$RV/31-standards/[e]xisting.md"; then
+    ok "the revert restores the bracketed note and leaves the dirty sibling it matches as a pattern alone"
+  else
+    bad "the revert reached the dirty sibling, or did not restore the bracketed note -- log: $(grep -A3 REVERTED "$PROMO_LOG" | tr '\n' '|')"
+  fi
+  git -C "$RV" checkout -q -- 31-standards/existing.md
+
+  # A note something else committed while the pass ran is not reverted to the
+  # commit before the pass, because that would undo the commit in the work tree.
+  settle_owned "$RV"
+  new_case_state promotion-revert-committed
+  : > "$PROMO_LOG"
+  expect_rc "promotion-pass: a rejected pass whose note was committed during it -> CHECK-FAILED" 5 \
+    "$(runner promotion-pass.sh promote-commit-bad)"
+  if [ -z "$(git -C "$RV" status --porcelain -- 31-standards/existing.md)" ] \
+     && grep -q '^committed during the pass$' "$RV/31-standards/existing.md" \
+     && grep -q '31-standards/existing.md (committed while the pass ran' "$PROMO_LOG" \
+     && [ ! -e "$RV/31-standards/rejected-new.md" ]; then
+    ok "a note committed during the pass keeps the committed bytes and is listed"
+  else
+    bad "a note committed during the pass was reverted under the commit -- status: $(git -C "$RV" status --porcelain -- 31-standards | tr '\n' ' ')"
+  fi
+  rm -f "$RV/31-standards/rejected-new.md"
+
+  # A pass that deletes a tracked note is still reverted, so deleting one cannot
+  # keep its other notes in place.
+  settle_owned "$RV"
+  pd_head="$(git -C "$RV" rev-parse HEAD)"
+  new_case_state promotion-delete
+  : > "$PROMO_LOG"
+  expect_rc "promotion-pass: the pass deletes a note and writes a rejected one -> VIOLATION" 2 "$(runner promotion-pass.sh promote-delete)"
+  if [ "$(git -C "$RV" rev-parse HEAD)" = "$pd_head" ] && [ -z "$(git -C "$RV" status --porcelain -- 31-standards)" ] \
+     && [ ! -e "$RV/31-standards/newdir" ] \
+     && [ -n "$(find "$CASE_STATE/quarantine" -path '*-rejected/31-standards/newdir/rejected-deep.md' -type f 2>/dev/null)" ] \
+     && grep -q 'REVERTED' "$PROMO_LOG"; then
+    ok "the deleted note is restored, the new note quarantined with its empty folder removed, and nothing committed"
+  else
+    bad "a deleting pass was not reverted -- status: $(git -C "$RV" status --porcelain -- 31-standards | tr '\n' ' ') log: $(tr '\n' '|' < "$PROMO_LOG" | cut -c1-400)"
+  fi
+  git -C "$RV" checkout -q -- 31-standards/existing.md
+  rm -rf "$RV/31-standards/newdir"
+
+  # A note a failed promotion commit left behind is committed by the next run,
+  # even when that run does not touch it.
+  settle_owned "$RV"
+  git -C "$RV" config commit.gpgsign true
+  git -C "$RV" config gpg.program false
+  new_case_state promotion-leftover
+  : > "$PROMO_LOG"
+  expect_rc "promotion-pass: signing the promotion commit fails -> COMMIT-FAILED" 4 "$(runner promotion-pass.sh promote-leftover)"
+  git -C "$RV" config commit.gpgsign false
+  git -C "$RV" config --unset gpg.program
+  if [ -s "$CASE_STATE/promotion-pass.uncommitted" ]; then
+    ok "a note a failed promotion commit left behind is recorded"
+  else
+    bad "a note a failed promotion commit left behind was not recorded"
+  fi
+  : > "$PROMO_LOG"
+  expect_rc "promotion-pass: the next run, which changes no note -> OK" 0 "$(RUNNER_NO_SETTLE=1 runner promotion-pass.sh summary)"
+  if [ "$(git -C "$RV" diff-tree --no-commit-id --name-only -r HEAD)" = 31-standards/leftover.md ] \
+     && git -C "$RV" log -1 --format=%B | grep -qx 'Vault-Pass: promotion' \
+     && [ -z "$(git -C "$RV" status --porcelain -- 31-standards/leftover.md)" ]; then
+    ok "the leftover note is committed by the next run, with its trailer"
+  else
+    bad "the leftover note was not committed by the next run -- status: $(git -C "$RV" status --porcelain -- 31-standards | tr '\n' ' ')"
+  fi
+
+  # A leftover that fails the check is reverted by the next run like the pass's
+  # own notes, and a new one goes to the quarantine.
+  settle_owned "$RV"
+  new_case_state promotion-leftover-bad
+  : > "$PROMO_LOG"
+  expect_rc "promotion-pass: a run killed after writing a malformed note -> TIMEOUT" 124 \
+    "$(runner promotion-pass.sh promote-bad-hang PROMOTION_PASS_TIMEOUT=2)"
+  expect_rc "promotion-pass: the next run checks that leftover -> CHECK-FAILED" 5 "$(RUNNER_NO_SETTLE=1 runner promotion-pass.sh summary)"
+  if [ ! -e "$RV/31-standards/leftover-bad.md" ] \
+     && [ -n "$(find "$CASE_STATE/quarantine" -path '*-rejected/31-standards/leftover-bad.md' -type f 2>/dev/null)" ]; then
+    ok "a malformed leftover is moved to the quarantine by the next run"
+  else
+    bad "a malformed leftover stayed in the long tier -- log: $(grep -A3 REVERTED "$PROMO_LOG" | tr '\n' '|')"
+  fi
+  rm -f "$RV/31-standards/leftover-bad.md"
+
+  # A failing pass that wrote into a note someone was editing is still a
+  # VIOLATION, whatever the agent's own status.
+  settle_owned "$RV"
+  printf 'a human edit\n' >> "$RV/31-standards/existing.md"
+  new_case_state promotion-predirty-fail
+  : > "$PROMO_LOG"
+  expect_rc "promotion-pass: a failing pass edits a note with uncommitted changes -> VIOLATION" 2 \
+    "$(RUNNER_NO_SETTLE=1 runner promotion-pass.sh promote-edit-fail)"
+  if grep -q 'already had uncommitted changes' "$PROMO_LOG"; then
+    ok "a failing pass that wrote into a dirty note is reported"
+  else
+    bad "a failing pass that wrote into a dirty note was not reported"
+  fi
+  git -C "$RV" checkout -q -- 31-standards/existing.md
+
+  # A report written by a pass that gave no summary is kept for the next run.
+  settle_owned "$RV"
+  new_case_state promotion-report-only
+  expect_rc "promotion-pass: only a promotion report and no summary -> NO-ARTIFACT" 1 "$(runner promotion-pass.sh report-only)"
+  if grep -q '20-projects/_logs/promotion-report-only.md' "$CASE_STATE/promotion-pass.uncommitted" 2>/dev/null; then
+    ok "a promotion report from a run with no summary is recorded as a leftover"
+  else
+    bad "a promotion report from a run with no summary was not recorded"
+  fi
+
+  # A path that became a folder after the second snapshot is someone else's, and
+  # a revert must not restore over it or move it out of the vault.
+  RVD="$TMP/revert-dir"
+  rm -rf "$RVD"
+  mkdir -p "$RVD/root/31-standards/raced.md" "$RVD/snap/nohooks"
+  printf 'kept\n' > "$RVD/root/31-standards/raced.md/inside.md"
+  printf '31-standards/raced.md\n' > "$RVD/snap/owned"
+  : > "$RVD/snap/after"
+  : > "$RVD/snap/before"
+  : > "$RVD/log"
+  ( . "$RV/.claude/scripts/lib/runner-common.sh"
+    revert_owned "$RVD/root" "$RVD/snap/nohooks" "$RVD/snap" "$RVD/snap/owned" NONE "$RVD/q" "$RVD/log" )
+  rvd_rc=$?
+  if [ "$rvd_rc" -eq 1 ] && [ -f "$RVD/root/31-standards/raced.md/inside.md" ] && [ ! -e "$RVD/q" ] \
+     && grep -q 'raced.md (changed after the pass ended' "$RVD/log"; then
+    ok "a path that became a folder after the pass is left in place and listed"
+  else
+    bad "a path that became a folder after the pass was moved or not listed (rc $rvd_rc) -- log: $(tr '\n' '|' < "$RVD/log")"
+  fi
+  rm -rf "$RVD"
 
   # A git operation in progress or a detached HEAD stops the run before the agent.
   settle_owned "$RV"
@@ -2192,6 +2389,17 @@ if [ "$RV_GIT" -eq 1 ]; then
     ok "a journal that fails vault-check stays in place, uncommitted, and the log shows the check"
   else
     bad "a journal that fails vault-check was committed, removed or not reported"
+  fi
+  # The rejected journal waits for a human. It must not be adopted and rejected
+  # again by every later run, which would then commit no journal at all.
+  : > "$RV_LOG"
+  expect_rc "dream-pass: the run after a rejected journal -> OK" 0 "$(RUNNER_NO_SETTLE=1 runner dream-pass.sh journal)"
+  if [ "$(git -C "$RV" diff-tree --no-commit-id --name-only -r HEAD)" = "$today_journal" ] \
+     && [ -f "$RV/20-projects/_logs/dream-$(date +%F)-bad.md" ] \
+     && [ -n "$(git -C "$RV" status --porcelain -- "20-projects/_logs/dream-$(date +%F)-bad.md")" ]; then
+    ok "the next run commits its own journal and leaves the rejected one uncommitted"
+  else
+    bad "the run after a rejected journal did not commit its own, or took the rejected one -- log: $(tr '\n' '|' < "$RV_LOG" | cut -c1-300)"
   fi
   rm -f "$RV/20-projects/_logs/dream-$(date +%F)-bad.md"
 
@@ -3079,10 +3287,21 @@ done
 # skill that could bring one back, and its instructions ask for no git command.
 # The runner keeps the history instead.
 PA="$ROOT/.claude/agents/promotion-agent.md"
+asks_for_shell() {  # asks_for_shell <file> - true when it names a shell tool or asks for a git command
+  grep -Eqi '(^|[^a-z])git (add|commit|diff|log|status|show|checkout|restore|reset|stash|rm|mv|push|pull|fetch|rebase|merge|tag|branch|blame|grep|rev-parse|cat-file)' "$1" \
+    || grep -Eq '(^|[^A-Za-z])(Bash|PowerShell|Monitor)([^A-Za-z]|$)' "$1"
+}
+printf 'Before writing, run git show HEAD to see the last commit.\n' > "$TMP/asks-git.md"
+printf 'Use the PowerShell tool to list the folder.\n' > "$TMP/asks-shell.md"
+if asks_for_shell "$TMP/asks-git.md" && asks_for_shell "$TMP/asks-shell.md"; then
+  ok "positive control: a definition that asks for git show or names PowerShell is caught"
+else
+  bad "positive control: the shell and git command check missed a known-bad definition"
+fi
 pa_front="$(awk 'NR==1&&/^---/{f=1;next} f&&/^---/{exit} f' "$PA" 2>/dev/null)"
 if printf '%s\n' "$pa_front" | grep -qx 'tools: Read, Glob, Grep, Write, Edit' \
    && ! printf '%s\n' "$pa_front" | grep -q '^skills:' \
-   && ! grep -Eq 'git (add|commit|diff|log|status)' "$PA"; then
+   && ! asks_for_shell "$PA"; then
   ok "promotion-agent has no shell, no skills, and asks for no git command"
 else
   bad "promotion-agent has a shell, a skill or a git command -- frontmatter: $(printf '%s' "$pa_front" | tr '\n' '|')"

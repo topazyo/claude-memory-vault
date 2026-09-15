@@ -432,8 +432,8 @@ a quarantine outside the vault, and sets a tripwire that stops every later run u
 looked. The promotion agent, which *does* write into the long tier, has no shell. Its runner fails
 the run if it wrote anywhere but the long tier or a promotion report. Otherwise the runner checks
 every note the pass changed and commits exactly those with a `Vault-Pass: promotion` trailer, so
-each unattended write is one revertible commit. A pass whose notes fail the check has all of them
-put back. The fence catches a write in the wrong place. Only git history can undo a bad write in
+each unattended write is one revertible commit. A pass whose notes fail the check has them put
+back, except a note someone changed or committed while it ran, which the log lists. The fence catches a write in the wrong place. Only git history can undo a bad write in
 the right one, which is why `git` is a hard requirement.
 
 ### 6. Degrade loudly
