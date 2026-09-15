@@ -79,6 +79,19 @@ RUNNER=dream-pass
 CONTAINMENT_CHECKED=0
 INFLIGHT=0
 SNAP_DIR=""
+SESSION_RECORDED=0
+AGENT_SESSION_ID=""
+
+# record_session_once
+# Records a claude-mode pass's session, once, however the pass ended, so a later
+# capture of Claude Code sessions never takes a runner's pass for a person's
+# work. The stream is read from the runner's private copy.
+record_session_once() {
+  [ "$SESSION_RECORDED" -eq 0 ] && [ -n "$AGENT_SESSION_ID" ] && [ "${AGENT_KIND:-}" = claude ] \
+    && [ -n "$SNAP_DIR" ] && [ -f "$SNAP_DIR/run" ] || return 0
+  SESSION_RECORDED=1
+  record_runner_session "$STATE" "$RUNNER" "$SNAP_DIR/run" 0 "$AGENT_SESSION_ID" "$LOG"
+}
 
 # On any exit: clear the in-flight marker only once containment has checked the
 # pass, then remove the temporary directory.
@@ -95,9 +108,16 @@ on_exit() {
 # trusted to have run, so set the tripwire now rather than leave the vault to the
 # next pass's baseline.
 on_signal() {
-  # The whole tree, so a child of the agent cannot keep writing after the exit.
-  [ -n "${RUN_PID:-}" ] && stop_tree "$RUN_PID" 2 "${TMPDIR:-/tmp}/dream-pass-signal.$$" "${AGENT_SESSION_ID:-}" 1 \
-    && rm -f "${TMPDIR:-/tmp}/dream-pass-signal.$$"
+  # The whole tree, so a child of the agent or of a git step cannot keep writing
+  # after the exit. RUN_PID is set only while such a command runs, and then the
+  # private temporary directory exists. A stop that may have left a process marks
+  # the run lock.
+  if [ -n "${RUN_PID:-}" ] && [ -n "$SNAP_DIR" ] && [ -d "$SNAP_DIR" ]; then
+    stop_tree "$RUN_PID" 2 "$SNAP_DIR/signal-stop" "${AGENT_SESSION_ID:-}" 1
+    grep -qE '^(alive|unknown)' "$SNAP_DIR/signal-stop" 2>/dev/null \
+      && mark_kill_failed "$LOG" "$(cat "$SNAP_DIR/signal-stop")"
+  fi
+  record_session_once
   if [ "$INFLIGHT" -eq 1 ] && [ "$CONTAINMENT_CHECKED" -eq 0 ]; then
     : > "$SNAP_DIR/empty"
     if write_tripwire "$ROOT" "$STATE" "$RUNNER" \
@@ -246,17 +266,19 @@ main() {
   fi
   INFLIGHT=1
   # The stall threshold, the session id, and where the watchdog notes the
-  # silent stretches this pass has. The run log keeps earlier runs, so this
-  # run's part starts at its present size.
+  # silent stretches this pass has.
   stall_plan "$STATE" "$RUNNER" "$LOG"
   AGENT_SESSION_ID="$(new_uuid)"
   AGENT_GAPS_FILE="$SNAP_DIR/gaps"
-  RUN_OUT_OFFSET="$(file_size "$RUN_OUT")"
 
   printf '[%s] starting dream-agent via %s (timeout %ss, stall %ss, %s, session %s)\n' \
     "$(ts)" "$AGENT_KIND" "$TIMEOUT" "$AGENT_STALL_SECONDS" "$AGENT_STALL_NOTE" "$AGENT_SESSION_ID" >> "$LOG"
 
-  run_agent "$TIMEOUT" "$RUN_OUT" dream-agent "$TASK" "$PROMPT_REL"
+  # The stream goes to a private file outside the vault, where the pass cannot
+  # rewrite what the watchdog measures or the session record reads. It is added
+  # to the run log after containment.
+  : > "$SNAP_DIR/run"
+  run_agent "$TIMEOUT" "$SNAP_DIR/run" dream-agent "$TASK" "$PROMPT_REL"
 
   snapshot_tree "$ROOT" "$SNAP_DIR/after"
   changed_paths "$SNAP_DIR/before" "$SNAP_DIR/after" > "$SNAP_DIR/changed"
@@ -268,23 +290,17 @@ main() {
   contain_rc=$?
   # Nothing is written to the vault's logs between the agent's end and
   # containment, because the pass may have put a link in place of a log. What
-  # the stop found, and a KILL_FAILED mark on the lock, come now.
+  # the stop found, with a KILL_FAILED mark and tripwire, and the run's output
+  # come now.
   if [ "$RUN_TIMED_OUT" -eq 1 ] || [ "$RUN_STALLED" -eq 1 ]; then
-    report_stop "$LOG" dream-agent "$ROOT"
+    report_stop "$LOG" dream-agent "$ROOT" "$STATE" "$RUNNER"
   fi
+  append_run_log "$SNAP_DIR/run" "$RUN_OUT" "$LOG"
+  record_session_once
   if [ "$contain_rc" -ne 0 ]; then
     exit "$contain_rc"
   fi
   CONTAINMENT_CHECKED=1
-  # The session is recorded however the pass ended, so a later capture of Claude
-  # Code sessions never takes a runner's pass for a person's work. A clean pass's
-  # silent stretches teach the stall threshold.
-  if [ "$AGENT_KIND" = claude ]; then
-    record_runner_session "$STATE" "$RUNNER" "$RUN_OUT" "$RUN_OUT_OFFSET" "$AGENT_SESSION_ID" "$LOG"
-    if [ "$RUN_TIMED_OUT" -eq 0 ] && [ "$RUN_STALLED" -eq 0 ] && [ "$RUN_RC" -eq 0 ]; then
-      record_stream_gaps "$STATE" "$RUNNER" "$AGENT_GAPS_FILE"
-    fi
-  fi
   if [ "$CONTAINED" -eq 1 ]; then
     [ "$RUN_TIMED_OUT" -eq 1 ] && printf '[%s] (the run had also exceeded %ss and was killed)\n' "$(ts)" "$TIMEOUT" >> "$LOG"
     [ "$RUN_STALLED" -eq 1 ] && printf '[%s] (the run had also stalled for %ss and was killed)\n' "$(ts)" "$AGENT_STALL_SECONDS" >> "$LOG"
@@ -386,6 +402,8 @@ main() {
     *) exit "$commit_rc" ;;
   esac
 
+  # Only a pass that ended OK teaches the stall threshold.
+  [ "$AGENT_KIND" = claude ] && record_stream_gaps "$STATE" "$RUNNER" "$AGENT_GAPS_FILE"
   printf '[%s] OK: %s\n' "$(ts)" "$(tr '\n' ' ' < "$SNAP_DIR/owned")" >> "$LOG"
   exit 0
 }
