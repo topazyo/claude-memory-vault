@@ -390,8 +390,8 @@ Use the shipped runners. They resolve the vault from their own location, guard f
 binary that a scheduler's minimal PATH cannot see, log to `.claude/logs/`, kill a pass that hangs,
 fail a pass that writes outside its allowed folders, and (the part that matters) assert that the
 pass actually produced something. Exit codes are `0` OK, `1` no artifact, `2` write outside the
-fence, `3` refused (see below), `64` unknown `VAULT_AGENT`, `124` timeout, `127` no `claude` or
-wrapper; `docs/reference.md` § 4.3 has the full table.
+fence, `3` refused (see below), `64` unknown `VAULT_AGENT`, `124` timeout, `125` stalled, `127` no
+`claude` or wrapper; `docs/reference.md` § 4.3 has the full table.
 
 ```cron
 # dream pass, nightly at 02:30
@@ -404,7 +404,10 @@ If `claude` is not on the PATH cron gives you (it usually is not, since cron run
 profile), set `CLAUDE_BIN` to the full path in the crontab. The watchdog limits are environment
 variables too: `DREAM_PASS_TIMEOUT` (default 3600 seconds) and `PROMOTION_PASS_TIMEOUT` (default
 5400). Set them the same way, as `NAME=value` lines above the entries, if a pass legitimately needs
-longer.
+longer. A claude-mode pass whose output stops for the stall threshold is stopped sooner, with exit
+125. The threshold is 10 minutes until three clean passes are measured, then 1.5 times the longest
+silence those passes usually have, and never below 10 minutes. Each run logs it.
+`RUNNER_STALL_SECONDS` sets it outright, and `RUNNER_STALL_FLOOR` changes the 10-minute floor.
 
 **Why not call `claude` directly from cron?** Two reasons. The agent is selected with the
 `--agent <name>` *flag*, not by putting a slash command in the prompt, so a hand-rolled line is
@@ -633,8 +636,9 @@ so a missing timeout turns one hang into permanent silence.
 
 Make the task's limit longer than everything the runner can spend before it exits on its own:
 the wait for the run lock (`RUN_LOCK_WAIT`, default 30 minutes), the pass's own timeout, the
-watchdog's grace period, and two git steps of `RUNNER_GIT_TIMEOUT` (default 2 minutes each), each
-with its own grace period, to commit the pass's notes, plus a margin. Then the runner always kills a hung pass first, logs
+watchdog's grace period, about a minute to stop the pass's process tree and check that it is gone,
+and two git steps of `RUNNER_GIT_TIMEOUT` (default 2 minutes each), each with its own grace period,
+to commit the pass's notes, plus a margin. Then the runner always kills a hung pass first, logs
 `TIMEOUT` with exit 124, and releases its lock. A limit shorter than that lets Task Scheduler end
 the runner mid-pass with no cleanup, which leaves its lock and in-flight marker behind. The next run
 then reclaims the lock after it goes stale and sets the tripwire. Change the existing task object
@@ -712,6 +716,8 @@ removes `.claude/logs/`. Your notes are plain Markdown and are untouched.
 | Runner exits 4 and the log says `COMMIT-FAILED` | Staging or committing the pass's notes failed or ran past `RUNNER_GIT_TIMEOUT`, for example a signing key that needs a passphrase, no git identity, or a busy `index.lock` | The log shows git's output. Fix the cause and rerun, and the next run of the same pass checks the notes the failed one left and commits them, or puts them back when they fail the check, as long as nobody has edited them. If the log says the files could not be taken back out of the index, run `git reset -- <file>` first. Delete an `index.lock` the log names once no git command is running |
 | Runner exits 70, or exits 130 or 143 after a signal, and the log says `TRIPWIRE-ERROR` | Containment was needed but no tripwire could be written, for example a full disk | Free the space, then run the pass by hand. It refuses with 78 and writes the tripwire, which you then review |
 | Runner exits 124 and the log says `TIMEOUT` | The pass exceeded `DREAM_PASS_TIMEOUT` / `PROMOTION_PASS_TIMEOUT` and was killed | Check the `.run.log` for where it stalled; raise the limit only if the pass was making progress |
+| Runner exits 125 and the log says `STALLED` | A claude-mode pass wrote nothing to its stream for the stall threshold the log names, and was stopped with everything it started | Read the end of the `.run.log`. A pass waiting on a slow tool or a rate limit is not stalled, so raise `RUNNER_STALL_SECONDS` or `RUNNER_STALL_FLOOR` if that is what you see. The notes it left are checked by the next run |
+| Runner exits 124 or 125, the log says `KILL_FAILED`, and every later run exits 75 | A process of the stopped pass was still running after the stop, or its output kept growing, so the runner kept its run lock to stop another pass from racing it | Find the process the log lists (on Windows, a `claude` or `bash` whose command line holds the session id the log names) and end it. Then delete the `run.lock` folder the log names |
 
 ### One more, because it is the template's biggest customization cost
 

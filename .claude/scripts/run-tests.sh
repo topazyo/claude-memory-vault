@@ -72,6 +72,24 @@ trap 'cleanup; exit 143' TERM
 # hook; the CI jobs on newer bash cover it.)
 NOT_FOUND="$TMP/not-found"
 : > "$NOT_FOUND"
+
+# skip <id> <reason> prints a platform-gated control that could not run here,
+# and ran <id> records one that did. The summary fails any control named in
+# RUN_TESTS_REQUIRED that never ran.
+RAN_CONTROLS="$TMP/ran-controls"
+SKIPPED_CONTROLS="$TMP/skipped-controls"
+: > "$RAN_CONTROLS"
+: > "$SKIPPED_CONTROLS"
+skip() {
+  printf '  SKIP  %s: %s (not counted)\n' "$1" "$2"
+  printf '%s %s\n' "$1" "$2" >> "$SKIPPED_CONTROLS"
+}
+ran() {
+  printf '%s\n' "$1" >> "$RAN_CONTROLS"
+}
+is_windows_host() {
+  case "$(uname -s 2>/dev/null)" in MINGW*|MSYS*|CYGWIN*) return 0 ;; *) return 1 ;; esac
+}
 command_not_found_handle() {
   printf '%s\n' "$1" >> "$NOT_FOUND"
   printf 'run-tests: command not found: %s\n' "$1" >&2
@@ -264,7 +282,7 @@ else
     if printf '%s' "$out_shape" | grep -q "missing 'tier'"; then ok "[jq] Copilot toolArgs as a JSON string is linted"
     else bad "[jq] Copilot string toolArgs -- got: ${out_shape:-<silence>}"; fi
   else
-    printf '  SKIP  [jq] Copilot toolArgs as a JSON string (jq not installed; not counted)\n'
+    skip jq-copilot-toolargs 'Copilot toolArgs as a JSON string: jq is not installed'
   fi
 
   # --ack-json: {} on stdout for Hermes, nothing on stdout otherwise.
@@ -712,7 +730,19 @@ journal() {
   [ -f "$j" ] || printf -- '---\ntier: medium\ntype: project-log\n---\n\n' > "$j"
   printf 'journal\n' >> "$j"
 }
+body() {
 case "${FAKE_MODE:-nothing}" in
+  # Progress watchdog modes. One streams a line a second, one starts a
+  # grandchild that outlives its parent and writes a heartbeat file, then stays
+  # silent. The grandchild carries the run's nonce on its command line.
+  stream)         for i in 1 2 3 4 5 6 7 8; do printf 'progress %s\n' "$i"; sleep 1; done
+                  journal ;;
+  silent-grandchild) ( ( exec bash -c 'while :; do printf x >> "$1"; sleep 1; done' fake-heartbeat "$FAKE_HEARTBEAT" "$NONCE" ) &
+                  printf '%s\n' "$!" > "$FAKE_HEARTBEAT.pid" )
+                  exec sleep 120 ;;
+  plainsummary)   printf 'PROMOTION-SUMMARY: promoted=1 pending=0\n' >&2 ;;
+  streamsummary)  printf '{"type":"result","subtype":"success","is_error":false,"result":"Promoted nothing this week.\\nPROMOTION-SUMMARY: promoted=0 pending=2"}\n' ;;
+  midsummary)     printf '{"type":"result","subtype":"success","is_error":false,"result":"I would print PROMOTION-SUMMARY: promoted=1 pending=0 if I had finished."}\n' ;;
   # Containment modes: each plants one way a steered pass could run code or
   # steer later sessions, next to a legitimate journal write.
   plugin)         journal
@@ -853,6 +883,28 @@ case "${FAKE_MODE:-nothing}" in
                   printf 'tampered\n' >> "CLAUDE.md" ;;
   *)              : ;;
 esac
+}
+# Started with -p, the real CLI streams one JSON event per line: an init event
+# naming the session, and a result event holding the final text. The fake does
+# the same for the lines a runner reads, and passes everything else through.
+session=""
+prev=""
+for a in "$@"; do
+  [ "$prev" = --session-id ] && session="$a"
+  prev="$a"
+done
+NONCE="${session:-${VAULT_RUN_NONCE:-}}"
+if [ "${1:-}" = -p ]; then
+  printf '{"type":"system","subtype":"init","session_id":"%s"}\n' "$session"
+  ( body; exit 0 ) | while IFS= read -r line; do
+    case "$line" in
+      PROMOTION-SUMMARY:*) printf '{"type":"result","subtype":"success","is_error":false,"result":"%s"}\n' "$line" ;;
+      *) printf '%s\n' "$line" ;;
+    esac
+  done
+  exit "${PIPESTATUS[0]}"
+fi
+body
 exit 0
 FAKE_EOF
 chmod +x "$FAKE"
@@ -967,6 +1019,19 @@ if [ "$(tail -n 4 "$REC.argv" 2>/dev/null | tr '\n' ' ')" = '--disallowedTools B
 else
   bad "claude mode does not end with --disallowedTools Bash PowerShell Monitor -- got: $(tr '\n' ' ' < "$REC.argv" 2>/dev/null)"
 fi
+# The stream flags let the watchdog see progress, and the session id is chosen
+# by the runner. Claude Code refuses stream-json under -p without --verbose.
+rec_argv="$(tr '\n' ' ' < "$REC.argv" 2>/dev/null)"
+case "$rec_argv" in
+  *"--output-format stream-json --verbose --include-partial-messages --session-id "*)
+    rec_session="$(awk 'prev == "--session-id" { print; exit } { prev = $0 }' "$REC.argv")"
+    if printf '%s\n' "$rec_session" | grep -Eqx '[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}'; then
+      ok "claude mode streams JSON with --verbose and partial messages, under a version 4 session id the runner chose"
+    else
+      bad "claude mode session id is not a version 4 UUID -- got: $rec_session"
+    fi ;;
+  *) bad "claude mode lacks the stream flags or the session id -- got: $rec_argv" ;;
+esac
 rm -f "$REC.argv"
 runner promotion-pass.sh summary FAKE_RECORD="$REC" >/dev/null
 if grep -qx 'promotion-agent' "$REC.argv" 2>/dev/null \
@@ -1051,6 +1116,173 @@ if grep -q 'The promotion bar' "$REC.prompt" 2>/dev/null && grep -q 'PROMOTION-S
 else
   bad "promotion-pass prompt file content is wrong or missing"
 fi
+
+# --- progress watchdog ---
+#
+# A pass whose output stops growing is stopped long before its wall-clock
+# timeout, and a stop reaches every process the pass started, including one
+# whose parent has already exited. The thresholds are seconds here instead of
+# minutes.
+
+printf '\n=== scheduled runners: progress watchdog ===\n'
+
+# A pass that keeps streaming is never stopped, however long it runs.
+new_case_state stream
+: > "$RV/.claude/logs/dream-agent.log"
+rm -f "$REC.argv"
+expect_rc "dream-pass: a pass that streams a line a second, stall threshold 5s -> OK" 0 \
+  "$(runner dream-pass.sh stream RUNNER_STALL_SECONDS=5 FAKE_RECORD="$REC")"
+st_session="$(awk 'prev == "--session-id" { print; exit } { prev = $0 }' "$REC.argv" 2>/dev/null)"
+if grep -q 'stall 5s, set by RUNNER_STALL_SECONDS' "$RV/.claude/logs/dream-agent.log" \
+   && grep -q "session $st_session" "$RV/.claude/logs/dream-agent.log"; then
+  ok "the start line logs the stall threshold, where it came from, and the session id"
+else
+  bad "the start line does not log the stall threshold and session -- log: $(tr '\n' '|' < "$RV/.claude/logs/dream-agent.log" | cut -c1-300)"
+fi
+if [ -n "$st_session" ] && awk -F '\t' -v id="$st_session" '$2 == "dream-pass" && $3 == id && $4 == "confirmed" { found = 1 } END { exit found ? 0 : 1 }' "$CASE_STATE/runner-sessions.tsv" 2>/dev/null; then
+  ok "the pass's session id is recorded in runner-sessions.tsv, confirmed by the stream's init event"
+else
+  bad "the session id was not recorded as confirmed -- tsv: $(tr '\n' '|' < "$CASE_STATE/runner-sessions.tsv" 2>/dev/null)"
+fi
+if [ -s "$CASE_STATE/dream-pass.stream-gaps" ] && awk '$1 !~ /^[0-9]+$/ || $2 !~ /^[0-9]+$/ { bad = 1 } END { exit bad ? 1 : 0 }' "$CASE_STATE/dream-pass.stream-gaps"; then
+  ok "a clean pass's silent stretches are recorded for the stall threshold"
+else
+  bad "no silent stretches were recorded after a clean pass"
+fi
+
+# A silent pass is stopped with 125, and so is the grandchild it left behind.
+HB="$TMP/heartbeat"
+rm -f "$HB" "$HB.pid"
+new_case_state stall
+: > "$RV/.claude/logs/dream-agent.log"
+stall_start="$(date +%s)"
+expect_rc "dream-pass: a silent pass with a grandchild, stall threshold 3s -> STALLED" 125 \
+  "$(runner dream-pass.sh silent-grandchild RUNNER_STALL_SECONDS=3 FAKE_HEARTBEAT="$HB")"
+stall_took=$(( $(date +%s) - stall_start ))
+if is_windows_host; then ran taskkill; ran noncesweep; else ran groupkill; fi
+hb_pid="$(cat "$HB.pid" 2>/dev/null)"
+hb_one="$(wc -c < "$HB" 2>/dev/null | tr -d ' ')"
+sleep 3
+hb_two="$(wc -c < "$HB" 2>/dev/null | tr -d ' ')"
+if [ -n "$hb_pid" ] && ! kill -0 "$hb_pid" 2>/dev/null && [ -n "$hb_one" ] && [ "$hb_one" = "$hb_two" ] \
+   && rm -f "$HB" && [ ! -e "$HB" ]; then
+  ok "the stopped pass's grandchild is gone, its heartbeat file stopped growing and can be deleted"
+else
+  bad "the grandchild outlived the stop -- pid ${hb_pid:-none} alive: $(kill -0 "$hb_pid" 2>/dev/null && echo yes || echo no), heartbeat ${hb_one:-?} then ${hb_two:-?} bytes"
+fi
+if [ "$stall_took" -lt 60 ] && grep -q 'STALLED: dream-agent wrote no output for 3s' "$RV/.claude/logs/dream-agent.log" \
+   && ! grep -q KILL_FAILED "$RV/.claude/logs/dream-agent.log" && [ ! -e "$CASE_STATE/run.lock" ]; then
+  ok "a stall is logged, the stop is verified, and the run lock is released"
+else
+  bad "the stall was not logged, took ${stall_took}s, or left the lock -- log: $(tr '\n' '|' < "$RV/.claude/logs/dream-agent.log" | cut -c1-400)"
+fi
+[ -n "$hb_pid" ] && kill -KILL "$hb_pid" 2>/dev/null
+
+# The wall-clock timeout reaches the grandchild too.
+rm -f "$HB" "$HB.pid"
+new_case_state timeout-tree
+expect_rc "dream-pass: a silent pass with a grandchild exceeds its timeout -> TIMEOUT" 124 \
+  "$(runner dream-pass.sh silent-grandchild DREAM_PASS_TIMEOUT=3 RUNNER_STALL_SECONDS=0 FAKE_HEARTBEAT="$HB")"
+hb_pid="$(cat "$HB.pid" 2>/dev/null)"
+if [ -n "$hb_pid" ] && ! kill -0 "$hb_pid" 2>/dev/null; then
+  ok "a timeout stops the grandchild as well"
+else
+  bad "a timeout left the grandchild running (pid ${hb_pid:-none})"
+fi
+[ -n "$hb_pid" ] && kill -KILL "$hb_pid" 2>/dev/null
+rm -f "$HB" "$HB.pid"
+
+# Command mode knows nothing of the harness's output, so it has no stall
+# threshold unless one is set.
+new_case_state stall-command
+: > "$RV/.claude/logs/dream-agent.log"
+expect_rc "command mode: journal written, no stall threshold set -> OK" 0 \
+  "$(runner dream-pass.sh journal VAULT_AGENT=command VAULT_AGENT_CMD="$FAKE" VAULT_ALLOW_UNENFORCED_TOOLS=1)"
+if grep -q 'stall 0s, off in command mode unless RUNNER_STALL_SECONDS is set' "$RV/.claude/logs/dream-agent.log" \
+   && [ ! -e "$CASE_STATE/runner-sessions.tsv" ]; then
+  ok "command mode logs that stall detection is off, and records no Claude Code session"
+else
+  bad "command mode stall or session handling is wrong -- log: $(tr '\n' '|' < "$RV/.claude/logs/dream-agent.log" | cut -c1-300)"
+fi
+
+# The threshold is the floor until enough passes are measured, then 1.5 times
+# their p99 silence, never below the floor.
+new_case_state stall-plan
+mkdir -p "$CASE_STATE"
+sp_got="$( . "$RV/.claude/scripts/lib/runner-common.sh"
+  unset RUNNER_STALL_SECONDS
+  AGENT_KIND=claude
+  RUNNER_STALL_FLOOR=600
+  printf '100 5\n100 7\n200 6\n' > "$CASE_STATE/dream-pass.stream-gaps"
+  stall_plan "$CASE_STATE" dream-pass "$TMP/stall-plan.log"
+  printf '%s|' "$AGENT_STALL_SECONDS"
+  i=0
+  : > "$CASE_STATE/dream-pass.stream-gaps"
+  while [ "$i" -lt 99 ]; do printf '300 10\n' >> "$CASE_STATE/dream-pass.stream-gaps"; i=$((i + 1)); done
+  printf '400 900\n500 20\n' >> "$CASE_STATE/dream-pass.stream-gaps"
+  stall_plan "$CASE_STATE" dream-pass "$TMP/stall-plan.log"
+  printf '%s|' "$AGENT_STALL_SECONDS"
+  printf '400 900\n400 900\n' >> "$CASE_STATE/dream-pass.stream-gaps"
+  stall_plan "$CASE_STATE" dream-pass "$TMP/stall-plan.log"
+  printf '%s|%s' "$AGENT_STALL_SECONDS" "$AGENT_STALL_NOTE" )"
+case "$sp_got" in
+  "600|600|1350|1.5 times the p99 silence of 900s over 3 recorded passes")
+    ok "the stall threshold is the floor with too few passes or a low p99, and 1.5 times a high p99" ;;
+  *) bad "stall_plan chose the wrong thresholds -- got: $sp_got" ;;
+esac
+
+# A stop that leaves a process running marks the run lock, and no later pass
+# starts until a human removes it, however old the lock is.
+new_case_state kill-failed
+mkdir -p "$CASE_STATE"
+: > "$TMP/kill-failed.log"
+( . "$RV/.claude/scripts/lib/runner-common.sh"
+  # A pid no system hands out, because stop_tree really signals it.
+  tree_pids() { printf '%s\n999999999\n' "$1"; }
+  pid_alive() { [ "$1" = 999999999 ]; }
+  win_tree_stop() { printf 'alive 999999999 survivor\n' >> "$3"; }
+  RUN_LOCK_WAIT=0
+  run_lock_acquire "$CASE_STATE" "$TMP/no-such-vault" dream-pass "$TMP/kill-failed.log" 1 || exit 9
+  WATCHDOG_POLL=1 WATCHDOG_GRACE=1 run_with_watchdog 1 "$TMP/kill-failed.out" sleep 30
+  [ "$RUN_TIMED_OUT" -eq 1 ] && [ "$RUN_KILL_FAILED" -eq 1 ] || exit 8
+  report_stop "$TMP/kill-failed.log" test-agent "$TMP/no-such-vault"
+  run_lock_release )
+kf_rc=$?
+kf_later="$( . "$RV/.claude/scripts/lib/runner-common.sh"
+  RUN_LOCK_WAIT=0
+  run_lock_acquire "$CASE_STATE" "$TMP/no-such-vault" dream-pass "$TMP/kill-failed.log" 1
+  printf '%s' "$?"
+  RUN_LOCK_DIR="" )"
+if [ "$kf_rc" -eq 0 ] && [ -d "$CASE_STATE/run.lock" ] && grep -q '^kill_failed=' "$CASE_STATE/run.lock/owner" \
+   && [ "$kf_later" = 75 ] && grep -q 'KILL_FAILED: a process of the stopped pass may still be running' "$TMP/kill-failed.log" \
+   && grep -q 'LOCKED: the run lock is marked KILL_FAILED' "$TMP/kill-failed.log"; then
+  ok "a stop that leaves a process marks the lock KILL_FAILED, keeps it, and a later runner exits 75"
+else
+  bad "a failed stop was not held in the lock (rc $kf_rc, later $kf_later) -- log: $(tr '\n' '|' < "$TMP/kill-failed.log" | cut -c1-400)"
+fi
+rm -rf "$CASE_STATE/run.lock"
+
+# A process group is signalled only when the command leads its own group and
+# that group is not the runner's. Otherwise each process of the tree is.
+if ! is_windows_host; then
+  : > "$TMP/kill-calls"
+  ( . "$RV/.claude/scripts/lib/runner-common.sh"
+    group_of() { printf '7\n'; }
+    kill() { printf '%s\n' "$*" >> "$TMP/kill-calls"; builtin kill "$@"; }
+    sleep 30 &
+    stop_tree "$!" 1 "$TMP/kill-record" "" 1 )
+  if [ -s "$TMP/kill-calls" ] && ! grep -q -- '-- -' "$TMP/kill-calls" && grep -q -- '-TERM' "$TMP/kill-calls"; then
+    ok "a group kill is refused when the command's group is the runner's, and its tree is stopped instead"
+  else
+    bad "a group kill was sent to a group the command does not lead -- calls: $(tr '\n' '|' < "$TMP/kill-calls")"
+  fi
+fi
+
+# In claude mode the summary line counts only in the stream's result event.
+new_case_state stream-summary
+expect_rc "promotion-pass: the summary is in the result event after other text -> OK" 0 "$(runner promotion-pass.sh streamsummary)"
+expect_rc "promotion-pass: a plain summary line outside the stream -> NO-ARTIFACT" 1 "$(runner promotion-pass.sh plainsummary)"
+expect_rc "promotion-pass: the summary text in the middle of a sentence -> NO-ARTIFACT" 1 "$(runner promotion-pass.sh midsummary)"
 
 # --- containment of steering and execution surfaces ---
 #
@@ -1137,7 +1369,7 @@ if [ "$RV_GIT" -eq 1 ]; then
     fi
     tripwire_clear
   else
-    printf '  SKIP  core.fsmonitor containment: this git does not run a configured fsmonitor command (not counted)\n'
+    skip core-fsmonitor-containment 'core.fsmonitor containment: this git does not run a configured fsmonitor command'
   fi
 
   # A hook under .git/hooks runs on the matching git operation.
@@ -1158,7 +1390,7 @@ if [ "$RV_GIT" -eq 1 ]; then
     fi
     tripwire_clear
   else
-    printf '  SKIP  .git/hooks containment: this git did not run a post-commit hook (not counted)\n'
+    skip git-hooks-containment '.git/hooks containment: this git did not run a post-commit hook'
   fi
 
   # HEAD and refs are not fenced, because a human or a sync plugin may commit
@@ -1199,7 +1431,7 @@ if [ "$RV_GIT" -eq 1 ]; then
     cp "$TMP/ref-before" "$RV/.git/$head_ref"
     tripwire_clear
   else
-    printf '  SKIP  ref containment: the test vault has no loose branch ref (not counted)\n'
+    skip ref-containment 'ref containment: the test vault has no loose branch ref'
   fi
 
   # git gc --auto after an ordinary commit rewrites .git/info/refs. That runs
@@ -1211,7 +1443,7 @@ if [ "$RV_GIT" -eq 1 ]; then
   if [ -f "$RV/.git/info/refs" ] && [ ! -e "$RV/.claude/logs/runner-tripwire" ]; then
     ok "a rewritten .git/info/refs sets no tripwire"
   elif [ ! -f "$RV/.git/info/refs" ]; then
-    printf '  SKIP  info/refs negative control: git update-server-info wrote nothing here (not counted)\n'
+    skip info-refs-negative-control 'info/refs negative control: git update-server-info wrote nothing here'
   else
     bad "a rewritten .git/info/refs set the tripwire"
     tripwire_clear
@@ -1305,7 +1537,7 @@ if [ "$RV_GIT" -eq 1 ]; then
     fi
     tripwire_clear
   else
-    printf '  SKIP  worktree vault containment: git worktree add failed here (not counted)\n'
+    skip worktree-vault-containment 'worktree vault containment: git worktree add failed here'
   fi
 
   # A symlinked hook: the link's target is an allowed note, so only a fence that
@@ -1334,11 +1566,11 @@ if [ "$RV_GIT" -eq 1 ]; then
     rm -f "$RV/31-standards/.claude"
     tripwire_clear
   else
-    printf '  SKIP  symlinked-hook containment: ln -s does not create symlinks here (not counted)\n'
+    skip symlinked-hook-containment 'symlinked-hook containment: ln -s does not create symlinks here'
   fi
   rm -f "$TMP/link-probe"
 else
-  printf '  SKIP  git containment cases: git is unavailable or the test vault could not be committed (not counted)\n'
+  skip git-containment-cases 'git containment cases: git is unavailable or the test vault could not be committed'
 fi
 rm -f "$RV/fsmonitor-ran" "$RV/hook-ran" "$RV/vaulthook-ran"
 
@@ -1374,6 +1606,7 @@ rm -rf "$RV/31-standards/ext"
 # folder, not be restored through the link into the folder it points at.
 ln -s "$RV/31-standards" "$TMP/hookslink-probe" 2>/dev/null
 if [ -L "$TMP/hookslink-probe" ]; then
+  ran symlink
   mkdir -p "$RV/31-standards/ext/.git/hooks"
   printf '[core]\n\tbare = false\n' > "$RV/31-standards/ext/.git/config"
   printf '#!/bin/sh\n' > "$RV/31-standards/ext/.git/hooks/pre-commit.sample"
@@ -1465,7 +1698,7 @@ if [ -L "$TMP/hookslink-probe" ]; then
   cp "$TMP/plugins-before.json" "$RV/.obsidian/community-plugins.json"
   rm -rf "$RV/.obsidian/plugins"
 else
-  printf '  SKIP  symlink containment (a nested hooks folder, a folder or .obsidian swapped for a link, a new link, a kept .obsidian link): ln -s does not create symlinks here (not counted)\n'
+  skip symlink 'symlink containment (a nested hooks folder, a folder or .obsidian swapped for a link, a new link, a kept .obsidian link): ln -s does not create symlinks here'
 fi
 rm -f "$TMP/hookslink-probe"
 
@@ -1598,7 +1831,7 @@ if [ -L "$SNR/.git/modules/ext/info" ]; then
     bad "a symlink under .git/modules was left out of the fence"
   fi
 else
-  printf '  SKIP  symlink under .git/modules: ln -s does not create symlinks here (not counted)\n'
+  skip symlink-under-git-modules 'symlink under .git/modules: ln -s does not create symlinks here'
 fi
 rm -rf "$SNR"
 # A .obsidian, a .git and a .git/info that are symlinks are fenced as links, and
@@ -1659,7 +1892,7 @@ if ln -s "$SNL/obsidian" "$SNL/vault/.obsidian" 2>/dev/null && [ -L "$SNL/vault/
     bad "a path below a link that appeared after the second snapshot was followed -- errors: $(tr '\n' '|' < "$SNL/errors" 2>/dev/null)"
   fi
 else
-  printf '  SKIP  symlinked .obsidian, .git and .git/info, and links during containment: ln -s does not create symlinks here (not counted)\n'
+  skip symlinked-obsidian-and-git 'symlinked .obsidian, .git and .git/info, and links during containment: ln -s does not create symlinks here'
 fi
 rm -rf "$SNL"
 # For a vault that is a linked worktree, the shared git directory's modules are
@@ -1856,7 +2089,7 @@ make_runner_vault() {
 NGV="$TMP/nogit-vault"
 make_runner_vault "$NGV"
 if command -v git >/dev/null 2>&1 && git -C "$NGV" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-  printf '  SKIP  non-git vault: the temporary folder is inside a git work tree (not counted)\n'
+  skip non-git-vault 'non-git vault: the temporary folder is inside a git work tree'
 else
   new_case_state nogit
   expect_rc "dream-pass: a vault that is not a git repository -> OK" 0 "$(RUNNER_VAULT="$NGV" runner dream-pass.sh journal)"
@@ -1902,7 +2135,7 @@ if command -v git >/dev/null 2>&1; then
       bad "a vault inside a larger repository was committed into it, or the log did not say why"
     fi
   else
-    printf '  SKIP  vault inside a larger repository: the outer repository could not be committed (not counted)\n'
+    skip vault-inside-a-larger-repository 'vault inside a larger repository: the outer repository could not be committed'
   fi
   rm -rf "$OUTER"
 fi
@@ -2265,7 +2498,7 @@ if [ "$RV_GIT" -eq 1 ]; then
       bad "a detached HEAD stopped the run without saying why"
     fi
   else
-    printf '  SKIP  detached HEAD: the test vault could not be detached (not counted)\n'
+    skip detached-head 'detached HEAD: the test vault could not be detached'
   fi
 
   # A commit that fails, here because signing fails, leaves nothing staged.
@@ -2421,7 +2654,7 @@ if [ "$RV_GIT" -eq 1 ]; then
   cp "$TMP/exclude-before" "$RV/.git/info/exclude"
   rm -f "$RV/20-projects/_logs/dream-$(date +%F)-ignored.md"
 else
-  printf '  SKIP  runner commits: git is unavailable or the test vault could not be committed (not counted)\n'
+  skip runner-commits 'runner commits: git is unavailable or the test vault could not be committed'
 fi
 
 # --- run lock ---
@@ -2521,7 +2754,7 @@ if [ ! -r "$LOCK/owner" ]; then
   expect_rc "an old lock whose owner file cannot be read -> LOCKED, never reclaimed" 75 "$(runner dream-pass.sh journal)"
   chmod 644 "$LOCK/owner" 2>/dev/null
 else
-  printf '  SKIP  unreadable owner file: chmod 000 leaves files readable here (not counted)\n'
+  skip unreadable-owner-file 'unreadable owner file: chmod 000 leaves files readable here'
 fi
 
 # The clock was set back after a dead runner took the lock, so its start time and
@@ -2721,7 +2954,7 @@ if [ -n "$holder_winpid" ] && command -v powershell.exe >/dev/null 2>&1; then
   plant_lock dream-pass 999999 "$((now_s - 5000))" 1 planted 999999996
   expect_rc "an old lock whose Windows process id no process has -> reclaimed, OK" 0 "$(runner dream-pass.sh journal)"
 else
-  printf '  SKIP  Windows process id checks against PowerShell: not Git Bash on Windows (not counted)\n'
+  skip windows-process-id-checks-against-powershell 'Windows process id checks against PowerShell: not Git Bash on Windows'
 fi
 # The Windows lookup through a stand-in powershell.exe, which runs on every
 # platform. A PowerShell that cannot answer (missing, blocked or failing) must not
@@ -2778,7 +3011,7 @@ soon_stamp="$(TZ=UTC0 date -d "@$soon" +%Y%m%d%H%M.%S 2>/dev/null || TZ=UTC0 dat
 if [ -n "$soon_stamp" ] && TZ=UTC0 touch -t "$soon_stamp" "$CASE_STATE/run.lock" 2>/dev/null; then
   expect_rc "an owner-less lock dated a minute ahead -> LOCKED, not taken for a clock set back" 75 "$(runner dream-pass.sh journal)"
 else
-  printf '  SKIP  near-future lock: this date or touch cannot set a time a minute ahead (not counted)\n'
+  skip near-future-lock 'near-future lock: this date or touch cannot set a time a minute ahead'
 fi
 
 # A file where the lock directory belongs is an error, not a lock held by nobody,
@@ -2818,7 +3051,7 @@ if ln -s "$CASE_STATE/elsewhere" "$CASE_STATE/run.lock" 2>/dev/null && [ -L "$CA
     bad "a symlinked run lock was used as a lock, or not reported"
   fi
 else
-  printf '  SKIP  symlinked run lock: ln -s does not create symlinks here (not counted)\n'
+  skip symlinked-run-lock 'symlinked run lock: ln -s does not create symlinks here'
 fi
 rm -rf "$CASE_STATE/run.lock"
 
@@ -2925,7 +3158,7 @@ if [ -d /proc/2 ] && [ -r /proc/2/cmdline ] && [ -z "$(tr -d '\0' < /proc/2/cmdl
   plant_lock dream-pass 2 "$((now_s - 5000))" 10
   expect_rc "an old lock whose pid now belongs to a kernel thread -> reclaimed, OK" 0 "$(runner dream-pass.sh journal)"
 else
-  printf '  SKIP  kernel-thread pid: no readable, empty /proc/2/cmdline here (not counted)\n'
+  skip kernel-thread-pid 'kernel-thread pid: no readable, empty /proc/2/cmdline here'
 fi
 
 # A signal while waiting for the lock. The runner exits, and the lock it never
@@ -2975,10 +3208,10 @@ if [ "$RV_GIT" -eq 1 ]; then
     expect_rc "worktree vault: an old index.lock in its own git directory -> LOCKED" 75 "$(RUNNER_VAULT="$WT" runner dream-pass.sh journal)"
     rm -f "$wt_gitdir/index.lock"
   else
-    printf '  SKIP  worktree index.lock: no worktree vault was created here (not counted)\n'
+    skip worktree-index-lock 'worktree index.lock: no worktree vault was created here'
   fi
 else
-  printf '  SKIP  git index.lock checks: git is unavailable or the test vault could not be committed (not counted)\n'
+  skip git-index-lock-checks 'git index.lock checks: git is unavailable or the test vault could not be committed'
 fi
 
 # Two real runners at once. The first holds the lock while its agent hangs, the
@@ -3121,7 +3354,7 @@ if [ -n "$(find "$TMP/state-open" -maxdepth 0 -perm -0002 2>/dev/null)" ]; then
   fi
   rm -rf "$TMP/open-no-sticky"
 else
-  printf '  SKIP  world-writable state directory and folder: chmod 777 sets no such mode here (not counted)\n'
+  skip world-writable-state-directory-and-folder 'world-writable state directory and folder: chmod 777 sets no such mode here'
 fi
 # A mode check that cannot run refuses the run, rather than passing it.
 mkdir -p "$SHIM/find-perm"
@@ -3199,11 +3432,11 @@ if [ -L "$TMP/vault-link" ]; then
       bad "a symlinked state directory in a world-writable folder was refused for another reason, or silently"
     fi
   else
-    printf '  SKIP  symlinked state directory in a world-writable folder: chmod 1777 sets no such mode here (not counted)\n'
+    skip symlinked-state-directory-in-a-world-writable-folder 'symlinked state directory in a world-writable folder: chmod 1777 sets no such mode here'
   fi
   rm -rf "$TMP/shared-folder"
 else
-  printf '  SKIP  symlinked vault spellings: ln -s does not create symlinks here (not counted)\n'
+  skip symlinked-vault-spellings 'symlinked vault spellings: ln -s does not create symlinks here'
 fi
 # On Windows and macOS the file system ignores case, so a differently cased
 # spelling is the same vault.
@@ -3223,7 +3456,7 @@ if [ -n "$rv_upper" ] && [ -d "$rv_upper" ]; then
     *) bad "a new VAULT_STATE_DIR inside the vault, spelled in other case, was accepted" ;;
   esac
 else
-  printf '  SKIP  differently cased vault spellings: the file system here is case-sensitive (not counted)\n'
+  skip differently-cased-vault-spellings 'differently cased vault spellings: the file system here is case-sensitive'
 fi
 
 # vault-check refuses while the tripwire is set, so neither a report nor the
@@ -3376,8 +3609,19 @@ if [ -n "${BASH_VERSINFO:-}" ] && [ "${BASH_VERSINFO[0]}" -ge 4 ]; then
     bad "the suite called a command that does not exist: $missing"
   done < "$NOT_FOUND"
 else
-  printf '  SKIP  missing-command check needs bash 4 or later (this is bash %s; not counted)\n' "${BASH_VERSION:-?}"
+  skip missing-command "missing-command check: needs bash 4 or later, and this is bash ${BASH_VERSION:-?}"
 fi
+
+# A platform-gated control that skipped proves nothing on that platform. CI
+# names, per operating system, the controls that must have run there, in
+# RUN_TESTS_REQUIRED, and any of them that did not run fails the suite.
+for req in ${RUN_TESTS_REQUIRED:-}; do
+  if grep -qx -- "$req" "$RAN_CONTROLS" 2>/dev/null; then
+    ok "required control $req ran on this platform"
+  else
+    bad "required control $req did not run on this platform -- skipped: $(grep "^$req " "$SKIPPED_CONTROLS" 2>/dev/null | cut -d' ' -f2- | head -n 1)"
+  fi
+done
 
 printf '\n=== %s passed, %s failed ===\n' "$pass" "$fail"
 [ "$fail" -eq 0 ] || exit 1

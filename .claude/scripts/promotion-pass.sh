@@ -39,6 +39,10 @@
 #   RUN_LOCK_WAIT           seconds to wait for another pass's run lock (default 1800)
 #   RUN_LOCK_POLL           seconds between checks while waiting (default 30)
 #   RUNNER_GIT_TIMEOUT      seconds each git step of the commit may take (default 120)
+#   RUNNER_STALL_SECONDS    seconds without new stream output before a pass is
+#                           stopped. Measured by default (lib/runner-common.sh),
+#                           0 turns it off, and in command mode only this turns it on
+#   RUNNER_STALL_FLOOR      the lowest measured stall threshold (default 600)
 #
 # Exit codes:
 #   0    the pass reported a summary or changed the long tier, wrote nowhere else,
@@ -63,12 +67,18 @@
 #   64   VAULT_AGENT is not claude or command
 #   70   TRIPWIRE-ERROR: containment was needed but no tripwire could be written
 #   75   LOCKED: another pass held the run lock, or git's index.lock stayed, for
-#        RUN_LOCK_WAIT seconds, the index.lock is more than 10 minutes old,
+#        RUN_LOCK_WAIT seconds, the run lock is marked KILL_FAILED, the
+#        index.lock is more than 10 minutes old,
 #        another runner took the lock over before the pass started, a git
 #        merge, rebase, cherry-pick, revert or bisect is in progress, or HEAD is
 #        detached
 #   78   TRIPWIRE: a tripwire is set, or an earlier pass died before containment
-#   124  TIMEOUT: the watchdog killed a run that exceeded PROMOTION_PASS_TIMEOUT
+#   124  TIMEOUT: the watchdog killed a run that exceeded PROMOTION_PASS_TIMEOUT,
+#        and everything it started
+#   125  STALLED: the watchdog killed a claude-mode run whose stream stopped
+#        growing for the stall threshold, and everything it started. After 124 or
+#        125, KILL_FAILED in the log means a process may still be running and the
+#        run lock is kept, so later runs exit 75
 #   127  the claude binary or the VAULT_AGENT_CMD wrapper was not found
 #   *    any other non-zero status is the agent's own
 
@@ -94,7 +104,9 @@ on_exit() {
 # trusted to have run, so set the tripwire now rather than leave the vault to the
 # next pass's baseline.
 on_signal() {
-  [ -n "${RUN_PID:-}" ] && kill -TERM "$RUN_PID" 2>/dev/null
+  # The whole tree, so a child of the agent cannot keep writing after the exit.
+  [ -n "${RUN_PID:-}" ] && stop_tree "$RUN_PID" 2 "${TMPDIR:-/tmp}/promotion-pass-signal.$$" "${AGENT_SESSION_ID:-}" 1 \
+    && rm -f "${TMPDIR:-/tmp}/promotion-pass-signal.$$"
   if [ "$INFLIGHT" -eq 1 ] && [ "$CONTAINMENT_CHECKED" -eq 0 ]; then
     : > "$SNAP_DIR/empty"
     if write_tripwire "$ROOT" "$STATE" "$RUNNER" \
@@ -262,7 +274,13 @@ main() {
     exit 1
   fi
   INFLIGHT=1
-  printf '[%s] starting promotion-agent weekly pass via %s (timeout %ss)\n' "$(ts)" "$AGENT_KIND" "$TIMEOUT" >> "$LOG"
+  # The stall threshold, the session id, and where the watchdog notes the
+  # silent stretches this pass has.
+  stall_plan "$STATE" "$RUNNER" "$LOG"
+  AGENT_SESSION_ID="$(new_uuid)"
+  AGENT_GAPS_FILE="$SNAP_DIR/gaps"
+  printf '[%s] starting promotion-agent weekly pass via %s (timeout %ss, stall %ss, %s, session %s)\n' \
+    "$(ts)" "$AGENT_KIND" "$TIMEOUT" "$AGENT_STALL_SECONDS" "$AGENT_STALL_NOTE" "$AGENT_SESSION_ID" >> "$LOG"
 
   # This run's output goes to its own file, so the evidence checked below is the
   # agent's output from THIS run - never the runner's own log lines, never a
@@ -270,6 +288,9 @@ main() {
   : > "$SNAP_DIR/run"
 
   run_agent "$TIMEOUT" "$SNAP_DIR/run" promotion-agent "$TASK" "$PROMPT_REL"
+  if [ "$RUN_TIMED_OUT" -eq 1 ] || [ "$RUN_STALLED" -eq 1 ]; then
+    report_stop "$LOG" promotion-agent "$ROOT"
+  fi
 
   cat "$SNAP_DIR/run" >> "$RUN_OUT" 2>/dev/null
 
@@ -285,8 +306,18 @@ main() {
     exit "$contain_rc"
   fi
   CONTAINMENT_CHECKED=1
+  # The session is recorded however the pass ended, so a later capture of Claude
+  # Code sessions never takes a runner's pass for a person's work. A clean pass's
+  # silent stretches teach the stall threshold.
+  if [ "$AGENT_KIND" = claude ]; then
+    record_runner_session "$STATE" "$RUNNER" "$SNAP_DIR/run" 0 "$AGENT_SESSION_ID" "$LOG"
+    if [ "$RUN_TIMED_OUT" -eq 0 ] && [ "$RUN_STALLED" -eq 0 ] && [ "$RUN_RC" -eq 0 ]; then
+      record_stream_gaps "$STATE" "$RUNNER" "$AGENT_GAPS_FILE"
+    fi
+  fi
   if [ "$CONTAINED" -eq 1 ]; then
     [ "$RUN_TIMED_OUT" -eq 1 ] && printf '[%s] (the run had also exceeded %ss and was killed)\n' "$(ts)" "$TIMEOUT" >> "$LOG"
+    [ "$RUN_STALLED" -eq 1 ] && printf '[%s] (the run had also stalled for %ss and was killed)\n' "$(ts)" "$AGENT_STALL_SECONDS" >> "$LOG"
     exit 2
   fi
 
@@ -310,6 +341,12 @@ main() {
     record_leftovers "$ROOT" "$SNAP_DIR/nohooks" "$STATE" "$RUNNER" "$SNAP_DIR"
     exit 124
   fi
+  if [ "$RUN_STALLED" -eq 1 ]; then
+    printf '[%s] STALLED: promotion-agent wrote no output for %ss (%s) and was killed (status %s)\n' \
+      "$(ts)" "$AGENT_STALL_SECONDS" "$AGENT_STALL_NOTE" "$RUN_RC" >> "$LOG"
+    record_leftovers "$ROOT" "$SNAP_DIR/nohooks" "$STATE" "$RUNNER" "$SNAP_DIR"
+    exit 125
+  fi
 
   printf '[%s] promotion-agent exited with code %s\n' "$(ts)" "$RUN_RC" >> "$LOG"
 
@@ -332,7 +369,18 @@ main() {
   # ARTIFACT ASSERTION. Promoting nothing is a legitimate outcome, so a pass may
   # change no note at all - but then it must say so with the summary line. A pass
   # with neither a long-tier change nor a summary produced no evidence it ran.
-  summary="$(grep -E "^${SUMMARY_MARKER}" "$SNAP_DIR/run" | tail -n 1)"
+  if [ "$AGENT_KIND" = claude ]; then
+    # In the stream the agent's final text is the "result" string of the result
+    # event, JSON-escaped. The line counts only there, at the start of the text
+    # or right after an escaped line break.
+    summary="$(awk 'index($0, "\"type\":\"result\"") {
+        s = $0
+        while (match(s, /("|\\n)PROMOTION-SUMMARY: promoted=[0-9]+ pending=[0-9]+/)) { last = substr(s, RSTART, RLENGTH); s = substr(s, RSTART + RLENGTH) }
+      }
+      END { if (last != "") { sub(/^[^P]*/, "", last); print last } }' "$SNAP_DIR/run")"
+  else
+    summary="$(grep -E "^${SUMMARY_MARKER}" "$SNAP_DIR/run" | tail -n 1)"
+  fi
   long_changes="$(awk '/^(31-standards|40-llm-wiki\/wiki)\//{n++} END{print n+0}' "$SNAP_DIR/changed")"
   if [ -z "$summary" ] && [ "${long_changes:-0}" -eq 0 ]; then
     printf '[%s] NO-ARTIFACT: exited 0 with no %s line and no long-tier change\n' \
