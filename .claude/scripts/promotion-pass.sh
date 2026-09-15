@@ -19,8 +19,8 @@
 # Vault-Pass: promotion trailer. Notes that fail the check are put back as they
 # were before the pass, except a note someone changed or committed meanwhile,
 # which the log lists. Notes a pass leaves uncommitted, because it timed out,
-# failed or its commit failed, are checked by the next run before they are
-# committed or put back. See "Containment" and "Runner commits" in
+# failed or its commit failed, are checked by the next run before its agent
+# starts, then committed with that run's notes or put back. See "Containment" and "Runner commits" in
 # lib/runner-common.sh. Run it manually a few times first.
 #
 # EXAMPLE cron entry (Saturday 20:00):
@@ -51,9 +51,9 @@
 #   2    VIOLATION: files outside the allowed write areas changed during the run
 #        (steering surfaces among them are contained and the tripwire is set),
 #        or the pass changed a long-tier note or promotion report that already
-#        had uncommitted changes, even if the agent then failed, or one it
-#        changed is no longer a regular file. In those last two cases, when the
-#        agent succeeded, the pass's other notes are put back as for exit 5
+#        had uncommitted changes, or one it changed is no longer a regular file,
+#        even if the agent then failed. In those last two cases the pass's other
+#        notes are put back as for exit 5
 #   3    REFUSED: command mode without VAULT_ALLOW_UNENFORCED_TOOLS=1
 #   4    COMMIT-FAILED: staging or committing the notes failed or ran past
 #        RUNNER_GIT_TIMEOUT, and they are left uncommitted
@@ -193,6 +193,27 @@ main() {
   git_rc=$?
   [ "$git_rc" -eq 0 ] || exit "$git_rc"
 
+  # Files someone was already editing, which the pass must not change.
+  : > "$SNAP_DIR/predirty"
+  : > "$SNAP_DIR/predirty.adopted"
+  if [ "$VAULT_GIT" -eq 1 ] && ! git_dirty_paths "$ROOT" "$SNAP_DIR/nohooks" "$SNAP_DIR/predirty"; then
+    printf '[%s] ERROR: git status failed, so the files already being edited are unknown. Refusing to run.\n' "$(ts)" >> "$LOG"
+    exit 1
+  fi
+  if [ "$VAULT_GIT" -eq 1 ]; then
+    # Notes an earlier run of this runner left uncommitted, and nobody has
+    # touched since, are this runner's own, not someone's edit. One that fails
+    # the check is put back now, so it cannot take this pass's notes down with it.
+    adopt_uncommitted "$ROOT" "$SNAP_DIR/nohooks" "$STATE" "$RUNNER" "$SNAP_DIR/predirty"
+    head_now="$(head_state "$ROOT" "$SNAP_DIR/nohooks")"
+    check_leftovers "$ROOT" "$SNAP_DIR" "${head_now##* }" \
+      "$STATE/quarantine/$(date +%Y%m%dT%H%M%S)-$RUNNER-$$-leftover" "$LOG" 1
+    if [ -s "$SNAP_DIR/predirty.adopted" ]; then
+      printf '[%s] ADOPTED: notes an earlier run left uncommitted are checked and committed, or put back, with this pass:\n' "$(ts)" >> "$LOG"
+      sed 's/^/    /' "$SNAP_DIR/predirty.adopted" >> "$LOG"
+    fi
+  fi
+
   # The agent has no shell, so the runner records the history it needs: recent
   # commits, the long-tier changes committed since the last promotion pass, and
   # the long-tier changes nobody has committed yet, kept apart so a note a human
@@ -219,6 +240,10 @@ main() {
       if safe_git "$SNAP_DIR/nohooks" -C "$ROOT" rev-parse -q --verify HEAD >/dev/null 2>&1; then
         safe_git "$SNAP_DIR/nohooks" -C "$ROOT" diff HEAD -- 31-standards 40-llm-wiki/wiki 2>&1 | head -n 400
       fi
+      if [ -s "$SNAP_DIR/predirty.adopted" ]; then
+        printf '\n## Notes an earlier promotion pass left uncommitted, which the runner checks and commits with yours\n'
+        cat "$SNAP_DIR/predirty.adopted"
+      fi
       printf '\n## git status --short\n'
       safe_git "$SNAP_DIR/nohooks" -C "$ROOT" status --short 2>&1
     else
@@ -229,16 +254,6 @@ main() {
     printf '[%s] ERROR: could not write the git state file %s, so the agent would have no history to read. Refusing to run.\n' "$(ts)" "$GIT_STATE_FILE" >> "$LOG"
     exit 1
   fi
-
-  # Files someone was already editing, which the pass must not change.
-  : > "$SNAP_DIR/predirty"
-  if [ "$VAULT_GIT" -eq 1 ] && ! git_dirty_paths "$ROOT" "$SNAP_DIR/nohooks" "$SNAP_DIR/predirty"; then
-    printf '[%s] ERROR: git status failed, so the files already being edited are unknown. Refusing to run.\n' "$(ts)" >> "$LOG"
-    exit 1
-  fi
-  # Notes an earlier run of this runner left uncommitted, and nobody has touched
-  # since, are this runner's own, not someone's edit.
-  [ "$VAULT_GIT" -eq 1 ] && adopt_uncommitted "$ROOT" "$SNAP_DIR/nohooks" "$STATE" "$RUNNER" "$SNAP_DIR/predirty"
 
   snapshot_tree "$ROOT" "$SNAP_DIR/before"
   # Containment needs the pre-pass copy. Without it, refuse rather than run a pass
@@ -304,10 +319,33 @@ main() {
   # with this pass's own, whether or not this pass touched them.
   own_adopted "$SNAP_DIR" "$OWNED_PATTERN"
 
+  # put_back <exit-status>
+  # Puts back the notes the pass owns, except the ones someone was already
+  # editing, whose pre-pass bytes are in no commit, forgets the leftover record,
+  # and exits.
+  put_back() {
+    awk 'FILENAME == ARGV[1] { dirty[$0] = 1; next } !($0 in dirty)' "$SNAP_DIR/predirty" "$SNAP_DIR/owned" > "$SNAP_DIR/revert"
+    if [ -s "$SNAP_DIR/revert" ]; then
+      printf '[%s] REVERTED: the notes the pass changed are put back as they were before the pass, except any listed as left:\n' "$(ts)" >> "$LOG"
+      if ! revert_owned "$ROOT" "$SNAP_DIR/nohooks" "$SNAP_DIR" "$SNAP_DIR/revert" "${HEAD_BEFORE##* }" \
+             "$STATE/quarantine/$(date +%Y%m%dT%H%M%S)-$RUNNER-$$-rejected" "$LOG"; then
+        printf '[%s] ERROR: some notes could not be put back, as listed above. Review them before the next pass.\n' "$(ts)" >> "$LOG"
+      fi
+    fi
+    forget_uncommitted "$STATE" "$RUNNER"
+    exit "$1"
+  }
+
   if [ "$RUN_TIMED_OUT" -eq 1 ]; then
     printf '[%s] TIMEOUT: promotion-agent exceeded %ss and was killed (status %s)\n' \
       "$(ts)" "$TIMEOUT" "$RUN_RC" >> "$LOG"
-    record_leftovers "$ROOT" "$SNAP_DIR/nohooks" "$STATE" "$RUNNER" "$SNAP_DIR"
+    # What the pass wrote before it was killed is still listed.
+    if [ -s "$SNAP_DIR/outside" ]; then
+      printf '[%s] VIOLATION: files outside the allowed write areas changed before the pass was killed, so nothing it wrote is recorded for the next run:\n' "$(ts)" >> "$LOG"
+      LC_ALL=C sort -u "$SNAP_DIR/outside" | sed 's/^/    /' >> "$LOG"
+    fi
+    [ "$VAULT_GIT" -eq 1 ] && owned_predirty "$SNAP_DIR/owned" "$SNAP_DIR/predirty" "$SNAP_DIR" "$LOG"
+    record_leftovers "$ROOT" "$SNAP_DIR/nohooks" "$STATE" "$RUNNER" "$SNAP_DIR" "$LOG"
     exit 124
   fi
 
@@ -320,12 +358,14 @@ main() {
   fi
 
   if [ "$RUN_RC" -ne 0 ]; then
-    record_leftovers "$ROOT" "$SNAP_DIR/nohooks" "$STATE" "$RUNNER" "$SNAP_DIR"
-    # A failing pass that wrote into a note someone was editing is still a
-    # violation, whatever the agent's own status.
-    if [ "$VAULT_GIT" -eq 1 ] && ! owned_predirty "$SNAP_DIR/owned" "$SNAP_DIR/predirty" "$SNAP_DIR" "$LOG"; then
-      exit 2
+    # A failing pass that wrote into a note someone was editing, or removed or
+    # replaced a note, is a violation whatever the agent's own status, and is put
+    # back like a pass whose commit stopped for that reason. Any other failing
+    # pass leaves its notes for the next run to check.
+    if [ "$VAULT_GIT" -eq 1 ] && ! check_owned "$ROOT" "$SNAP_DIR/owned" "$SNAP_DIR/predirty" "$SNAP_DIR" "$LOG"; then
+      put_back 2
     fi
+    record_leftovers "$ROOT" "$SNAP_DIR/nohooks" "$STATE" "$RUNNER" "$SNAP_DIR" "$LOG"
     exit "$RUN_RC"
   fi
 
@@ -338,7 +378,7 @@ main() {
     printf '[%s] NO-ARTIFACT: exited 0 with no %s line and no long-tier change\n' \
       "$(ts)" "$SUMMARY_MARKER" >> "$LOG"
     # A promotion report such a run wrote is kept for the next run to check.
-    record_leftovers "$ROOT" "$SNAP_DIR/nohooks" "$STATE" "$RUNNER" "$SNAP_DIR"
+    record_leftovers "$ROOT" "$SNAP_DIR/nohooks" "$STATE" "$RUNNER" "$SNAP_DIR" "$LOG"
     exit 1
   fi
 
@@ -352,21 +392,10 @@ main() {
   case "$commit_rc" in
     0) forget_uncommitted "$STATE" "$RUNNER" ;;
     4)
-      record_leftovers "$ROOT" "$SNAP_DIR/nohooks" "$STATE" "$RUNNER" "$SNAP_DIR"
+      record_leftovers "$ROOT" "$SNAP_DIR/nohooks" "$STATE" "$RUNNER" "$SNAP_DIR" "$LOG"
       exit 4
       ;;
-    2|5)
-      awk 'FILENAME == ARGV[1] { dirty[$0] = 1; next } !($0 in dirty)' "$SNAP_DIR/predirty" "$SNAP_DIR/owned" > "$SNAP_DIR/revert"
-      if [ -s "$SNAP_DIR/revert" ]; then
-        printf '[%s] REVERTED: the notes the pass changed are put back as they were before the pass, except any listed as left:\n' "$(ts)" >> "$LOG"
-        if ! revert_owned "$ROOT" "$SNAP_DIR/nohooks" "$SNAP_DIR" "$SNAP_DIR/revert" "${HEAD_BEFORE##* }" \
-               "$STATE/quarantine/$(date +%Y%m%dT%H%M%S)-$RUNNER-$$-rejected" "$LOG"; then
-          printf '[%s] ERROR: some notes could not be put back, as listed above. Review them before the next pass.\n' "$(ts)" >> "$LOG"
-        fi
-      fi
-      forget_uncommitted "$STATE" "$RUNNER"
-      exit "$commit_rc"
-      ;;
+    2|5) put_back "$commit_rc" ;;
     *) exit "$commit_rc" ;;
   esac
 
