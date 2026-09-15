@@ -21,7 +21,8 @@
 # which the log lists. Notes a pass leaves uncommitted, because it timed out,
 # failed or its commit failed, are checked by the next run before its agent
 # starts, then committed with that run's notes or put back. See "Containment"
-# and "Runner commits" in lib/runner-common.sh. Run it manually a few times first.
+# and "Runner commits" in lib/runner-common.sh. Run it manually a few times
+# first.
 #
 # EXAMPLE cron entry (Saturday 20:00):
 #   0 20 * * 6 /path/to/your-vault/.claude/scripts/promotion-pass.sh
@@ -56,8 +57,8 @@
 #        (steering surfaces among them are contained and the tripwire is set),
 #        or the pass changed a long-tier note or promotion report that already
 #        had uncommitted changes, or one it changed is no longer a regular file,
-#        even if the agent then failed. In those last two cases the pass's other
-#        notes are put back as for exit 5
+#        even if the agent then failed, timed out or gave no summary. In those
+#        last two cases the pass's other notes are put back as for exit 5
 #   3    REFUSED: command mode without VAULT_ALLOW_UNENFORCED_TOOLS=1
 #   4    COMMIT-FAILED: staging or committing the notes failed or ran past
 #        RUNNER_GIT_TIMEOUT, and they are left uncommitted
@@ -275,7 +276,9 @@ main() {
     exit 1
   fi
   HEAD_BEFORE="$(head_state "$ROOT" "$SNAP_DIR/nohooks")"
-  # The last check before anything is written to the shared state directory.
+  # The last check before the in-flight marker and backup are written to the
+  # shared state directory. A leftover put back above has already written its
+  # quarantine copy there.
   if ! run_lock_held; then
     printf '[%s] LOCKED: another runner replaced or removed this one'"'"'s owner file in the run lock before the pass started. Not starting.\n' "$(ts)" >> "$LOG"
     exit 75
@@ -299,15 +302,10 @@ main() {
 
   # This run's output goes to its own file, so the evidence checked below is the
   # agent's output from THIS run - never the runner's own log lines, never a
-  # previous run's. It is appended to the history log afterwards.
+  # previous run's. It is appended to the history log after containment.
   : > "$SNAP_DIR/run"
 
   run_agent "$TIMEOUT" "$SNAP_DIR/run" promotion-agent "$TASK" "$PROMPT_REL"
-  if [ "$RUN_TIMED_OUT" -eq 1 ] || [ "$RUN_STALLED" -eq 1 ]; then
-    report_stop "$LOG" promotion-agent "$ROOT"
-  fi
-
-  cat "$SNAP_DIR/run" >> "$RUN_OUT" 2>/dev/null
 
   snapshot_tree "$ROOT" "$SNAP_DIR/after"
   changed_paths "$SNAP_DIR/before" "$SNAP_DIR/after" > "$SNAP_DIR/changed"
@@ -317,6 +315,18 @@ main() {
   # run until it has been put back.
   contain_pass "$ROOT" "$STATE" "$RUNNER" "$SNAP_DIR" "$LOG" "$HEAD_BEFORE"
   contain_rc=$?
+  # Nothing is written to the vault's logs between the agent's end and
+  # containment, because the pass may have put a link in place of a log. What
+  # the stop found, and a KILL_FAILED mark on the lock, come now.
+  if [ "$RUN_TIMED_OUT" -eq 1 ] || [ "$RUN_STALLED" -eq 1 ]; then
+    report_stop "$LOG" promotion-agent "$ROOT"
+  fi
+  # The pass could have put a link, or something other than a file, where the
+  # run log was. Containment has moved a link out by now, and the output is
+  # written only to a regular file or a new one, never through a link.
+  if [ ! -L "$RUN_OUT" ] && { [ -f "$RUN_OUT" ] || [ ! -e "$RUN_OUT" ]; }; then
+    cat "$SNAP_DIR/run" >> "$RUN_OUT" 2>/dev/null
+  fi
   if [ "$contain_rc" -ne 0 ]; then
     exit "$contain_rc"
   fi
@@ -381,8 +391,12 @@ main() {
     if [ -s "$SNAP_DIR/outside" ]; then
       printf '[%s] VIOLATION: files outside the allowed write areas changed before the pass was killed, so nothing it wrote is recorded for the next run:\n' "$(ts)" >> "$LOG"
       LC_ALL=C sort -u "$SNAP_DIR/outside" | sed 's/^/    /' >> "$LOG"
+      [ "$VAULT_GIT" -eq 1 ] && owned_predirty "$SNAP_DIR/owned" "$SNAP_DIR/predirty" "$SNAP_DIR" "$LOG"
+    elif [ "$VAULT_GIT" -eq 1 ] && ! check_owned "$ROOT" "$SNAP_DIR/owned" "$SNAP_DIR/predirty" "$SNAP_DIR" "$LOG"; then
+      # Put back as a failing pass is, so a pass that hangs cannot keep its
+      # other notes for the next run to commit.
+      put_back 2
     fi
-    [ "$VAULT_GIT" -eq 1 ] && owned_predirty "$SNAP_DIR/owned" "$SNAP_DIR/predirty" "$SNAP_DIR" "$LOG"
     record_leftovers "$ROOT" "$SNAP_DIR/nohooks" "$STATE" "$RUNNER" "$SNAP_DIR" "$LOG"
     exit "$stop_rc"
   fi
@@ -426,7 +440,11 @@ main() {
   if [ -z "$summary" ] && [ "${long_changes:-0}" -eq 0 ]; then
     printf '[%s] NO-ARTIFACT: exited 0 with no %s line and no long-tier change\n' \
       "$(ts)" "$SUMMARY_MARKER" >> "$LOG"
-    # A promotion report such a run wrote is kept for the next run to check.
+    # A promotion report such a run wrote is kept for the next run to check,
+    # unless the run also deleted a report or wrote into one someone was editing.
+    if [ "$VAULT_GIT" -eq 1 ] && ! check_owned "$ROOT" "$SNAP_DIR/owned" "$SNAP_DIR/predirty" "$SNAP_DIR" "$LOG"; then
+      put_back 2
+    fi
     record_leftovers "$ROOT" "$SNAP_DIR/nohooks" "$STATE" "$RUNNER" "$SNAP_DIR" "$LOG"
     exit 1
   fi

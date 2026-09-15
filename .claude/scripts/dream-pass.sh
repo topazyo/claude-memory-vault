@@ -48,7 +48,9 @@
 #        read the vault's repository
 #   2    VIOLATION: files outside the dream journals changed during the run
 #        (steering surfaces among them are contained and the tripwire is set),
-#        or the pass changed a journal that already had uncommitted changes
+#        or the pass changed a journal that already had uncommitted changes, or
+#        one it changed is no longer a regular file, even if the agent then
+#        failed or timed out. Nothing it wrote is recorded for the next run
 #   3    REFUSED: command mode without VAULT_ALLOW_UNENFORCED_TOOLS=1
 #   4    COMMIT-FAILED: staging or committing the journal failed or ran past
 #        RUNNER_GIT_TIMEOUT, and the journal is left uncommitted and unstaged
@@ -255,9 +257,6 @@ main() {
     "$(ts)" "$AGENT_KIND" "$TIMEOUT" "$AGENT_STALL_SECONDS" "$AGENT_STALL_NOTE" "$AGENT_SESSION_ID" >> "$LOG"
 
   run_agent "$TIMEOUT" "$RUN_OUT" dream-agent "$TASK" "$PROMPT_REL"
-  if [ "$RUN_TIMED_OUT" -eq 1 ] || [ "$RUN_STALLED" -eq 1 ]; then
-    report_stop "$LOG" dream-agent "$ROOT"
-  fi
 
   snapshot_tree "$ROOT" "$SNAP_DIR/after"
   changed_paths "$SNAP_DIR/before" "$SNAP_DIR/after" > "$SNAP_DIR/changed"
@@ -267,6 +266,12 @@ main() {
   # run until it has been put back.
   contain_pass "$ROOT" "$STATE" "$RUNNER" "$SNAP_DIR" "$LOG" "$HEAD_BEFORE"
   contain_rc=$?
+  # Nothing is written to the vault's logs between the agent's end and
+  # containment, because the pass may have put a link in place of a log. What
+  # the stop found, and a KILL_FAILED mark on the lock, come now.
+  if [ "$RUN_TIMED_OUT" -eq 1 ] || [ "$RUN_STALLED" -eq 1 ]; then
+    report_stop "$LOG" dream-agent "$ROOT"
+  fi
   if [ "$contain_rc" -ne 0 ]; then
     exit "$contain_rc"
   fi
@@ -295,6 +300,16 @@ main() {
   # pass's own, whether or not this pass touched them.
   own_adopted "$SNAP_DIR" "$OWNED_PATTERN"
 
+  # no_record_exit
+  # A pass that wrote into a journal someone was editing, or removed or replaced
+  # a journal, has nothing recorded for the next run, whether it timed out,
+  # stalled, failed or finished, so the next run cannot commit its other
+  # journals while that change stays. Its journals are left in place for review.
+  no_record_exit() {
+    printf '[%s] Nothing the pass wrote is recorded for the next run. Its journals are left in place for review.\n' "$(ts)" >> "$LOG"
+    exit 2
+  }
+
   if [ "$RUN_TIMED_OUT" -eq 1 ] || [ "$RUN_STALLED" -eq 1 ]; then
     if [ "$RUN_TIMED_OUT" -eq 1 ]; then
       printf '[%s] TIMEOUT: dream-agent exceeded %ss and was killed (status %s)\n' \
@@ -309,8 +324,10 @@ main() {
     if [ -s "$SNAP_DIR/outside" ]; then
       printf '[%s] VIOLATION: files outside the dream journals changed before the pass was killed, so nothing it wrote is recorded for the next run:\n' "$(ts)" >> "$LOG"
       sed 's/^/    /' "$SNAP_DIR/outside" >> "$LOG"
+      [ "$VAULT_GIT" -eq 1 ] && owned_predirty "$SNAP_DIR/owned" "$SNAP_DIR/predirty" "$SNAP_DIR" "$LOG"
+    elif [ "$VAULT_GIT" -eq 1 ] && ! check_owned "$ROOT" "$SNAP_DIR/owned" "$SNAP_DIR/predirty" "$SNAP_DIR" "$LOG"; then
+      no_record_exit
     fi
-    [ "$VAULT_GIT" -eq 1 ] && owned_predirty "$SNAP_DIR/owned" "$SNAP_DIR/predirty" "$SNAP_DIR" "$LOG"
     record_leftovers "$ROOT" "$SNAP_DIR/nohooks" "$STATE" "$RUNNER" "$SNAP_DIR" "$LOG"
     exit "$stop_rc"
   fi
@@ -328,6 +345,9 @@ main() {
   fi
 
   if [ "$RUN_RC" -ne 0 ]; then
+    if [ "$VAULT_GIT" -eq 1 ] && ! check_owned "$ROOT" "$SNAP_DIR/owned" "$SNAP_DIR/predirty" "$SNAP_DIR" "$LOG"; then
+      no_record_exit
+    fi
     record_leftovers "$ROOT" "$SNAP_DIR/nohooks" "$STATE" "$RUNNER" "$SNAP_DIR" "$LOG"
     exit "$RUN_RC"
   fi

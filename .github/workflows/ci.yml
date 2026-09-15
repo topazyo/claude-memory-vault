@@ -55,7 +55,7 @@ jobs:
       - name: Control suite
         shell: bash
         env:
-          RUN_TESTS_REQUIRED: ${{ matrix.os == 'windows-latest' && 'taskkill noncesweep' || 'groupkill symlink' }}
+          RUN_TESTS_REQUIRED: ${{ matrix.os == 'windows-latest' && 'taskkill noncesweep win-sweep-report win-orphan-stop' || 'groupkill symlink run-log-link line-break-name' }}
         run: bash .claude/scripts/run-tests.sh
 
       # vault-check.sh exits 1 when it scans zero notes, so a path-resolution
@@ -81,7 +81,7 @@ jobs:
 
       - name: Control suite under bash 3.2
         env:
-          RUN_TESTS_REQUIRED: groupkill symlink
+          RUN_TESTS_REQUIRED: groupkill symlink run-log-link line-break-name
         run: /bin/bash .claude/scripts/run-tests.sh
 
       - name: Frontmatter invariants under bash 3.2

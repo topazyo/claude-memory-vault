@@ -91,21 +91,47 @@ group_of() {
   ps -o pgid= -p "$1" 2>/dev/null | tr -d ' '
 }
 
-# win_tree_stop <winpid> <nonce> <record-file>
+# win_msys_tree <pid>
+# On Git Bash for Windows, prints "<pid> <winpid>" for the pid and each of its
+# descendants in the Git Bash process table. That table keeps a child's parent
+# even after the Windows process between them has exited, which happens every
+# time Git Bash runs a program, so it finds children the Windows parent ids no
+# longer link.
+win_msys_tree() {
+  ps -l 2>/dev/null | awk -v root="$1" '
+    NR > 1 { sub(/^[^0-9]*/, ""); n++; pid[n] = $1; ppid[n] = $2; win[n] = $4 }
+    END {
+      keep[root] = 1
+      for (i = 1; i <= n; i++) if (pid[i] == root) print pid[i], win[i]
+      grew = 1
+      while (grew) {
+        grew = 0
+        for (i = 1; i <= n; i++) if ((ppid[i] in keep) && !(pid[i] in keep)) { keep[pid[i]] = 1; print pid[i], win[i]; grew = 1 }
+      }
+    }'
+}
+
+# win_tree_stop <winpid> <nonce> <record-file> [<more winpids>]
 # On Windows, stops the native process tree under <winpid> with taskkill, then
 # stops every process whose command line carries <nonce>, which finds one whose
-# parent in the tree had already exited. Appends to <record-file> each process
-# still running afterwards, as "alive <id> <name>", and "none" when there is
-# none. A process counts as a child only when it started no earlier than its
-# parent, because Windows reuses process ids.
+# parent in the tree had already exited, and every process in the space-separated
+# <more winpids>. Appends to <record-file> each process still running afterwards,
+# as "alive <id> <name>", and "none" when there is none. A process counts as a
+# child only when it started no earlier than its parent, because Windows reuses
+# process ids.
+#
+# The nonce reaches PowerShell in the environment, never on its command line,
+# and PowerShell leaves its own process out. Otherwise the sweep would find
+# PowerShell itself by the nonce and stop it before it could report.
 win_tree_stop() {
-  local winpid="$1" nonce="$2" record="$3" script
+  local winpid="$1" nonce="$2" record="$3" more="${4:-}" script
   is_uint "$winpid" || winpid=0
   [ "$winpid" -gt 0 ] && MSYS_NO_PATHCONV=1 taskkill /T /F /PID "$winpid" >/dev/null 2>&1
   case "$nonce" in *[!A-Za-z0-9-]*) nonce="" ;; esac
+  case "$more" in *[!0-9\ ]*) more="" ;; esac
   script="\$ProgressPreference = 'SilentlyContinue'
 \$root = $winpid
-\$nonce = '$nonce'
+\$nonce = [string]\$env:VAULT_STOP_NONCE
 \$all = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)
 \$byId = @{}
 foreach (\$p in \$all) { \$byId[[int]\$p.ProcessId] = \$p }
@@ -120,13 +146,15 @@ while (\$grew) {
   }
 }
 if (\$nonce) { foreach (\$p in \$all) { if (\$p.CommandLine -and \$p.CommandLine.Contains(\$nonce)) { \$pick[[int]\$p.ProcessId] = \$true } } }
-foreach (\$id in \$pick.Keys) { Stop-Process -Id \$id -Force -ErrorAction SilentlyContinue }
+foreach (\$x in ([string]\$env:VAULT_STOP_IDS).Split(' ')) { if (\$x -match '^[0-9]+\$' -and \$byId.ContainsKey([int]\$x)) { \$pick[[int]\$x] = \$true } }
+\$pick.Remove([int]\$PID)
+foreach (\$id in @(\$pick.Keys)) { Stop-Process -Id \$id -Force -ErrorAction SilentlyContinue }
 Start-Sleep -Seconds 2
 \$left = @()
 foreach (\$id in \$pick.Keys) { \$q = Get-Process -Id \$id -ErrorAction SilentlyContinue; if (\$q) { \$left += ('alive ' + \$id + ' ' + \$q.ProcessName) } }
-if (\$nonce) { foreach (\$p in @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)) { if (\$p.CommandLine -and \$p.CommandLine.Contains(\$nonce) -and -not \$pick.ContainsKey([int]\$p.ProcessId)) { \$left += ('alive ' + \$p.ProcessId + ' ' + \$p.Name) } } }
+if (\$nonce) { foreach (\$p in @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)) { if (\$p.CommandLine -and \$p.CommandLine.Contains(\$nonce) -and [int]\$p.ProcessId -ne \$PID -and -not \$pick.ContainsKey([int]\$p.ProcessId)) { \$left += ('alive ' + \$p.ProcessId + ' ' + \$p.Name) } } }
 if (\$left.Count -eq 0) { 'none' } else { \$left }"
-  env MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' powershell.exe -NoProfile -NonInteractive -Command "$script" 2>/dev/null \
+  VAULT_STOP_NONCE="$nonce" VAULT_STOP_IDS="$more" MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' powershell.exe -NoProfile -NonInteractive -Command "$script" 2>/dev/null \
     | tr -d '\r' | awk '/^(none|alive [0-9]+ .*)$/' >> "$record"
 }
 
@@ -146,13 +174,21 @@ stop_tree() {
   local pid="$1" grace="$2" record="$3" nonce="$4" own="$5" members winpid g p group=0 left
   : > "$record"
   if is_windows_bash; then
+    # The tree is listed and stopped before any signal, while the command's own
+    # process still links it to its children. A TERM first would let a Git Bash
+    # wrapper exit and leave a child with no parent to be found by, and no
+    # nonce on its command line.
+    members="$(win_msys_tree "$pid")"
     winpid="$(cat "/proc/$pid/winpid" 2>/dev/null)"
-    kill -TERM "$pid" 2>/dev/null
-    g=0
-    while [ "$g" -lt "$grace" ] && kill -0 "$pid" 2>/dev/null; do sleep 1; g=$((g + 1)); done
-    win_tree_stop "$winpid" "$nonce" "$record"
-    kill -KILL "$pid" 2>/dev/null
+    win_tree_stop "$winpid" "$nonce" "$record" "$(printf '%s\n' "$members" | awk '$2 ~ /^[0-9]+$/ { printf "%s ", $2 }')"
     [ -s "$record" ] || printf 'unknown (PowerShell gave no answer)\n' >> "$record"
+    for p in $(printf '%s\n' "$members" | awk '{ print $1 }'); do kill -KILL "$p" 2>/dev/null; done
+    kill -KILL "$pid" 2>/dev/null
+    sleep 1
+    for p in $(printf '%s\n' "$members" | awk '{ print $1 }'); do
+      [ "$p" = "$pid" ] && continue
+      kill -0 "$p" 2>/dev/null && printf 'alive %s\n' "$p" >> "$record"
+    done
     return 0
   fi
   members="$(tree_pids "$pid")"
@@ -252,7 +288,9 @@ run_with_watchdog() {
   ) &
   local watchdog=$!
 
-  wait "$pid"
+  # bash reports a job killed by a signal on stderr, which launchd writes into
+  # .claude/logs. RUN_RC carries the status.
+  wait "$pid" 2>/dev/null
   RUN_RC=$?
   # A watchdog that has not begun a stop is only sleeping, so it is ended at
   # once. One that has is left to finish, and a stop cut short when the two met
@@ -320,12 +358,15 @@ git_dirs_of() {
 # A path with a line break in it is left out. It would print as two lines, and
 # the second could name any path, such as .git, which containment would then
 # move out of the vault. snapshot_tree sums such paths into one line of their own.
+# find matches names in the C locale, byte by byte, because in some UTF-8 locales
+# a * does not match a byte that is not valid UTF-8, and such a name would slip
+# past the test.
 RUNNER_NL='
 '
 LINE_BREAK_MARKER=".runner-line-break-names"
 fence_find() {
-  find "$@" ! -path "*$RUNNER_NL*" -type f -exec cksum {} + 2>/dev/null
-  find "$@" ! -path "*$RUNNER_NL*" -type l -print 2>/dev/null | while IFS= read -r link; do
+  LC_ALL=C find "$@" ! -path "*$RUNNER_NL*" -type f -exec cksum {} + 2>/dev/null
+  LC_ALL=C find "$@" ! -path "*$RUNNER_NL*" -type l -print 2>/dev/null | while IFS= read -r link; do
     printf 'L%s 0 %s\n' "$(readlink "$link" 2>/dev/null | cksum | cut -d' ' -f1)" "$link"
   done
 }
@@ -426,21 +467,24 @@ snapshot_tree() {
   (
     cd "$root" || exit 1
     fence_find . \( -path ./.git -o -path ./.claude/logs -o -path ./.obsidian \) -prune -o
-    # .claude/logs holds what the runners and the hooks write while a pass runs,
-    # so only those file names are left out of the fence. Any other file there,
-    # such as a planted CLAUDE.md, and any symlink, is fenced.
+    # .claude/logs holds what the runners, the hooks and the launchd jobs in
+    # setup.md write while a pass runs, so only those file names are left out of
+    # the fence. Any other file there, such as a planted CLAUDE.md, and any
+    # symlink, is fenced.
     if [ -L .claude/logs ]; then
       fence_find ./.claude/logs
     elif [ -d .claude/logs ]; then
       fence_find ./.claude/logs \( -type f \( -name '*.log' -o -name dream-pass.git-state.txt -o -name promotion-pass.git-state.txt \
         -o -name dream-pass.prompt.md -o -name promotion-pass.prompt.md -o -name runner-tripwire -o -name runner-inflight \
-        -o -name 'runner-tripwire.tmp.*' -o -name 'runner-inflight.tmp.*' \) \) -prune -o
+        -o -name 'runner-tripwire.tmp.*' -o -name 'runner-inflight.tmp.*' \
+        -o -name dream-pass.launchd.out -o -name dream-pass.launchd.err \
+        -o -name promotion-pass.launchd.out -o -name promotion-pass.launchd.err \) \) -prune -o
     fi
-    # Every path with a line break, outside .claude/logs, summed by name and
+    # Every path with a line break, .claude/logs included, summed by name and
     # content into one line under a name no file has. A change to any of them
     # changes the line, and containment moves them out (move_line_break_names).
-    lb="$( { find . -path ./.claude/logs -prune -o -path "*$RUNNER_NL*" -print; \
-             find . -path ./.claude/logs -prune -o -path "*$RUNNER_NL*" -type f -exec cksum {} +; } 2>/dev/null )"
+    lb="$( { LC_ALL=C find . -path "*$RUNNER_NL*" -print; \
+             LC_ALL=C find . -path "*$RUNNER_NL*" -type f -exec cksum {} +; } 2>/dev/null )"
     [ -n "$lb" ] && printf 'N%s 0 ./%s\n' "$(printf '%s' "$lb" | cksum | cut -d' ' -f1)" "$LINE_BREAK_MARKER"
     # The scan above prunes .obsidian by name, so a .obsidian that is a symlink
     # gets its own line here. The files below are still read through it.
@@ -632,17 +676,19 @@ steering_filter() {
     {
       lp = tolower($0)
       islink = (lp in link)
-      # In the vault .claude/logs only files the runners and hooks do not write
-      # are fenced, so any change there is a planted file. The names left out
-      # are the ones snapshot_tree leaves out. The logs of a worktree belong to
-      # its session, and stay out.
+      # In the vault .claude/logs only files the runners, hooks and launchd jobs
+      # do not write are fenced, so any change there is a planted file. The
+      # names left out are the ones snapshot_tree leaves out. The logs of a
+      # worktree belong to its session, and stay out.
       if (lp ~ /^\.claude\/logs\//) {
         n = split(lp, part, "/")
         base = part[n]
         if (base ~ /\.log$/ || base == "dream-pass.git-state.txt" || base == "promotion-pass.git-state.txt" \
             || base == "dream-pass.prompt.md" || base == "promotion-pass.prompt.md" \
             || base == "runner-tripwire" || base == "runner-inflight" \
-            || base ~ /^runner-tripwire\.tmp\./ || base ~ /^runner-inflight\.tmp\./) next
+            || base ~ /^runner-tripwire\.tmp\./ || base ~ /^runner-inflight\.tmp\./ \
+            || base == "dream-pass.launchd.out" || base == "dream-pass.launchd.err" \
+            || base == "promotion-pass.launchd.out" || base == "promotion-pass.launchd.err") next
         print $0
         next
       }
@@ -1620,10 +1666,11 @@ git_dirty_paths() {
 # uncommitted, in the state directory, so the next run can tell a journal this
 # runner left behind from one someone has edited since. Each line is the blob
 # id, a tab, and the path, read back as a whole line, so a name that ends in a
-# space stays its own name. A record that cannot be written is logged.
+# space stays its own name. A record that cannot be written in full is logged,
+# and the earlier record is kept.
 RUNNER_TAB="$(printf '\t')"
 record_uncommitted() {
-  local root="$1" hooks="$2" list="$3/$4.uncommitted" log="${6:-/dev/null}" p blob
+  local root="$1" hooks="$2" list="$3/$4.uncommitted" log="${6:-/dev/null}" p blob failed=0
   if ! : > "$list.new" 2>/dev/null; then
     printf '[%s] WARNING: could not record the files this pass left uncommitted in %s, so the next run will take them for someone'"'"'s edit.\n' "$(ts)" "$3" >> "$log"
     return 0
@@ -1632,9 +1679,12 @@ record_uncommitted() {
     [ -n "$p" ] && [ -f "$root/$p" ] && [ ! -L "$root/$p" ] || continue
     [ -n "$(safe_git "$hooks" -C "$root" status --porcelain -- "$p" 2>/dev/null)" ] || continue
     blob="$(safe_git "$hooks" -C "$root" hash-object --no-filters -- "$p" 2>/dev/null)" || continue
-    [ -n "$blob" ] && printf '%s\t%s\n' "$blob" "$p" >> "$list.new"
+    if [ -n "$blob" ] && ! printf '%s\t%s\n' "$blob" "$p" >> "$list.new" 2>/dev/null; then
+      failed=1
+    fi
   done < "$5"
-  if ! mv -f "$list.new" "$list" 2>/dev/null; then
+  if [ "$failed" -eq 1 ] || ! mv -f "$list.new" "$list" 2>/dev/null; then
+    rm -f "$list.new" 2>/dev/null
     printf '[%s] WARNING: could not record the files this pass left uncommitted in %s, so the next run will take them for someone'"'"'s edit.\n' "$(ts)" "$3" >> "$log"
   fi
 }
@@ -1682,14 +1732,14 @@ forget_uncommitted() {
   rm -f "$1/$2.uncommitted" 2>/dev/null
 }
 
-# record_leftovers <root> <empty-hooks-dir> <state-dir> <runner> <snap-dir>
+# record_leftovers <root> <empty-hooks-dir> <state-dir> <runner> <snap-dir> [<log>]
 # After a pass that wrote only where it may (<snap-dir>/outside is empty) but
 # whose files were not committed, because it timed out, failed, or its commit
 # failed, records the files in <snap-dir>/owned for adopt_uncommitted. A file that
 # was already dirty before this pass is not recorded, because it holds someone
 # else's edit too.
 record_leftovers() {
-  local snap="$5"
+  local snap="$5" log="${6:-/dev/null}" p was
   [ "${VAULT_GIT:-0}" -eq 1 ] || return 0
   [ -s "$snap/outside" ] && return 0
   awk 'FILENAME == ARGV[1] { dirty[$0] = 1; next } !($0 in dirty)' "$snap/predirty" "$snap/owned" > "$snap/leftover"
@@ -1698,6 +1748,24 @@ record_leftovers() {
   if [ -s "$snap/commit-mismatch" ]; then
     awk 'FILENAME == ARGV[1] { changed[$0] = 1; next } !($0 in changed)' "$snap/commit-mismatch" "$snap/leftover" > "$snap/leftover.kept"
     mv -f "$snap/leftover.kept" "$snap/leftover"
+  fi
+  # So does a file that is no longer as the second snapshot saw it, such as a
+  # note someone edited while a slow commit step ran.
+  : > "$snap/leftover.kept"
+  : > "$snap/leftover.changed"
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    was="$(P="./$p" awk '{ line = $0; sub(/^[^ ]* [^ ]* /, "", line) } line == ENVIRON["P"] { print $1 " " $2; exit }' "$snap/after")"
+    if [ "$(path_state "$1" "$p")" = "$was" ]; then
+      printf '%s\n' "$p" >> "$snap/leftover.kept"
+    else
+      printf '%s\n' "$p" >> "$snap/leftover.changed"
+    fi
+  done < "$snap/leftover"
+  mv -f "$snap/leftover.kept" "$snap/leftover"
+  if [ -s "$snap/leftover.changed" ]; then
+    printf '[%s] NOT-RECORDED: these files changed after the pass ended, so the next run will take them for someone'"'"'s edit:\n' "$(ts)" >> "$log"
+    sed 's/^/    /' "$snap/leftover.changed" >> "$log"
   fi
   record_uncommitted "$1" "$2" "$3" "$4" "$snap/leftover" "${6:-}"
 }
@@ -1715,11 +1783,13 @@ check_leftovers() {
   mkdir -p "$pre"
   : > "$pre/failed"
   : > "$pre/after"
+  : > "$pre/check.out"
   while IFS= read -r p; do
     [ -n "$p" ] || continue
-    CLAUDE_PROJECT_DIR="$root" bash "$root/.claude/scripts/vault-check.sh" -- "$p" </dev/null >/dev/null 2>&1 && continue
+    CLAUDE_PROJECT_DIR="$root" bash "$root/.claude/scripts/vault-check.sh" -- "$p" </dev/null >"$pre/check.one" 2>&1 && continue
     printf '%s\n' "$p" >> "$pre/failed"
     printf '%s ./%s\n' "$(path_state "$root" "$p")" "$p" >> "$pre/after"
+    cat "$pre/check.one" >> "$pre/check.out"
   done < "$snap/predirty.adopted"
   [ -s "$pre/failed" ] || return 0
   awk 'FILENAME == ARGV[1] { failed[$0] = 1; next } !($0 in failed)' "$pre/failed" "$snap/predirty.adopted" > "$snap/predirty.adopted.kept"
@@ -1727,11 +1797,13 @@ check_leftovers() {
     cp "$pre/after" "$pre/before"
     cp "$snap/predirty.adopted" "$pre/predirty.adopted"
     printf '[%s] LEFTOVER-REJECTED: files an earlier run left uncommitted fail vault-check, so they are put back before this pass starts:\n' "$(ts)" >> "$log"
+    sed 's/^/    vault-check: /' "$pre/check.out" >> "$log"
     if ! revert_owned "$root" "$snap/nohooks" "$pre" "$pre/failed" "$head" "$qdir" "$log"; then
       printf '[%s] ERROR: some of those files could not be put back, as listed above. Review them.\n' "$(ts)" >> "$log"
     fi
   else
     printf '[%s] LEFTOVER-REJECTED: files an earlier run left uncommitted fail vault-check, so they are left in place for review and not committed:\n' "$(ts)" >> "$log"
+    sed 's/^/    vault-check: /' "$pre/check.out" >> "$log"
     sed 's/^/    /' "$pre/failed" >> "$log"
     # Back on the dirty list, so this pass may not write them either.
     cat "$pre/failed" "$snap/predirty" | LC_ALL=C sort -u > "$snap/predirty.new"
@@ -1799,17 +1871,27 @@ revert_owned() {
 # revert_path <pass: 1|2>
 # One path of revert_owned, which it reads from the caller's p, root, hooks,
 # snap, before, qdir and log, and whose rc it sets to 1 when the path could not
-# be put back. On the first pass a path that is now a folder, and was a folder
-# holding files in the second snapshot, is set aside in <plist>.deferred, so
-# the files in it are moved out first and the path can then be restored.
+# be put back. A path that is now a folder, and that the second snapshot saw
+# as no file, is a note the pass replaced with a folder. An empty one is removed
+# and the note restored. On the first pass one holding files the second
+# snapshot saw is set aside in <plist>.deferred, so the files in it are moved
+# out first and the path can then be restored. One still holding anything after
+# that is left.
 revert_path() {
   local now was b_blob h_blob d
   now="$(path_state "$root" "$p")"
   was="$(P="./$p" awk '{ line = $0; sub(/^[^ ]* [^ ]* /, "", line) } line == ENVIRON["P"] { print $1 " " $2; exit }' "$snap/after")"
-  if [ "$1" = 1 ] && [ "$now" = other ] && [ -z "$was" ] \
-     && P="./$p/" awk '{ line = $0; sub(/^[^ ]* [^ ]* /, "", line) } index(line, ENVIRON["P"]) == 1 { found = 1; exit } END { exit found ? 0 : 1 }' "$snap/after"; then
-    printf '%s\n' "$p" >> "$plist.deferred"
-    return 0
+  if [ "$now" = other ] && [ -z "$was" ] && [ -d "$root/$p" ] && [ ! -L "$root/$p" ]; then
+    if rmdir "$root/$p" 2>/dev/null; then
+      now=""
+    elif [ "$1" = 2 ]; then
+      printf '    %s (replaced by a folder that is still not empty, so it was not restored)\n' "$p" >> "$log"
+      rc=1
+      return 0
+    elif P="./$p/" awk '{ line = $0; sub(/^[^ ]* [^ ]* /, "", line) } index(line, ENVIRON["P"]) == 1 { found = 1; exit } END { exit found ? 0 : 1 }' "$snap/after"; then
+      printf '%s\n' "$p" >> "$plist.deferred"
+      return 0
+    fi
   fi
   if [ "$now" != "$was" ]; then
     printf '    %s (changed after the pass ended, so it was left as it is)\n' "$p" >> "$log"
@@ -2063,17 +2145,36 @@ commit_owned() {
 }
 
 # move_line_break_names <root> <quarantine-dir> <errors-out>
-# Moves every path with a line break in its name, outside .claude/logs, to the
-# quarantine as line-break-name-<n>, the outermost one of a nested set only.
-# find hands the names over NUL-separated, so no line is ever read as a path.
+# Moves every path with a line break in its name to the quarantine as
+# line-break-name-<n>, the outermost one of a nested set only, and lists each
+# original path, quoted by printf %q, in names.txt beside them.
+#
+# They go into a folder made here with mkdir, which fails on anything already
+# at that name, never into one that may exist. Containment has already moved
+# the pass's planted links into the quarantine under their vault paths, and a
+# link there named like the destination would carry the move out of it. find
+# runs from inside the vault, so a vault reached through a symlinked path is
+# searched too, and hands the names over NUL-separated, so no line is ever read
+# as a path.
 move_line_break_names() {
-  local root="$1" qdir="$2" errors="$3"
+  local root="$1" qdir="$2" errors="$3" lbq i=0
   mkdir -p "$qdir" 2>/dev/null
-  find "$root" -path "$root/.claude/logs" -prune -o -path "*$RUNNER_NL*" -prune -print0 2>/dev/null | {
+  lbq="$qdir/line-break-names"
+  while ! mkdir "$lbq" 2>/dev/null; do
+    i=$((i + 1))
+    if [ "$i" -gt 20 ]; then
+      printf '%s (no new quarantine folder could be made for file names with a line break, so they are still in the vault)\n' "$LINE_BREAK_MARKER" >> "$errors"
+      return 0
+    fi
+    lbq="$qdir/line-break-names.$i"
+  done
+  ( cd "$root" && LC_ALL=C find . -path "*$RUNNER_NL*" -prune -print0 2>/dev/null ) | {
     n=0
     while IFS= read -r -d '' f; do
       n=$((n + 1))
-      if ! mv -f "$f" "$qdir/line-break-name-$n" 2>/dev/null; then
+      if mv -f "$root/${f#./}" "$lbq/line-break-name-$n" 2>/dev/null; then
+        printf 'line-break-name-%s %q\n' "$n" "${f#./}" >> "$lbq/names.txt"
+      else
         printf '%s (a file name with a line break could not be moved to the quarantine, so it is still in the vault)\n' "$LINE_BREAK_MARKER" >> "$errors"
       fi
     done
