@@ -51,7 +51,9 @@ If you touched a note without re-checking what it asserts, move `last_reviewed` 
 
 ## Automated writes (agents)
 
-- Snapshot (git) and diff before automated writes; abort on unexpected drift.
+- Snapshot (git) and diff before automated writes, and abort on unexpected drift. A scheduled pass
+  has no shell, so its runner does this for it. The runner records the history for the agent to
+  read and commits exactly the notes the pass wrote.
 - Spawned workers return status and path only, never pasted content. This bounds hallucination:
   a worker that reports "wrote 31-standards/foo.md" can be checked against the filesystem, while
   a worker that reports a paragraph of prose cannot.

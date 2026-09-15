@@ -155,7 +155,7 @@ claude-memory-vault/
 │   ├── adapters/opencode/vault.js   # OpenCode plugin, opt-in: copy to .opencode/plugins/ to enable
 │   ├── agents/
 │   │   ├── dream-agent.md           # scheduled consolidation; READ-AND-PROPOSE ONLY, one output file
-│   │   └── promotion-agent.md       # weekly medium → long promotion; git-snapshots before writing
+│   │   └── promotion-agent.md       # weekly medium → long promotion, no shell, the runner commits its notes
 │   ├── hooks/
 │   │   ├── vault-lint.sh            # advisory lint; hook JSON on stdin or file paths as arguments; exits 0
 │   │   ├── postcompact-wrap-up.sh   # one idempotent, size-capped compaction stub per session
@@ -247,7 +247,7 @@ stays small.
 | session → medium | `/obsidian-save` | Writes the dated project log, with a promotion-candidates section |
 | session summary | `/wrap-up` | Produces the structured end-of-session summary a log — or a human — then consumes. It does not write the log itself |
 | medium → long | `/preserve` | You nominate one candidate; it becomes a standard or a wiki entity |
-| medium → long | `promotion-agent` (weekly) | Same hop, unattended; takes a git snapshot before writing |
+| medium → long | `promotion-agent` (weekly) | Same hop, unattended. The runner checks its notes and commits them, or puts them back |
 | consolidation | `dream-agent` (scheduled) | Reads broadly, writes exactly **one** dated journal file of proposals |
 | compaction → medium | `postcompact-wrap-up.sh` hook | Drops a stub log so a compacted session's material is recoverable |
 | medium → session | `/resume` | Reads the recent logs back into a fresh session |
@@ -268,9 +268,10 @@ Code gets the most automation), and (strongly recommended) `jq`. See [Requiremen
    ```
 
    If you are starting your own history, `rm -rf .git && git init`, then commit immediately
-   (`git add -A && git commit -m "initial vault"`). A repository with zero commits gives the
-   promotion agent's git snapshot nothing to revert to. The vault is meant to be a repository you
-   commit to, so that "what did we believe last quarter" is answerable from `git log`.
+   (`git add -A && git commit -m "initial vault"`). The runners commit each pass's notes on top of
+   your history, and a promotion pass whose notes fail the check is put back to the last commit
+   before it. The vault is meant to be a repository you commit to, so that "what did we believe
+   last quarter" is answerable from `git log`.
 
 2. **Open the folder as an Obsidian vault.** *Open folder as vault* → pick `<your-vault>`.
    Obsidian will pick up the bundled `.obsidian/` configuration, including the tier-coloured
@@ -428,10 +429,13 @@ changed. When the changed file could run code or steer later sessions (an Obsidi
 an instruction file, memory, git's config), failing is not enough, because the file would still be
 there next time something opens the vault. So the runner restores it, keeps what the pass wrote in
 a quarantine outside the vault, and sets a tripwire that stops every later run until you have
-looked. The promotion agent, which *does* write into the long tier, takes a git snapshot first so
-every unattended write is revertible with one command, and its runner fails the run if it wrote
-anywhere but the long tier or a promotion report. The fence catches a write in the wrong place;
-only the snapshot can undo a bad write in the right one, which is why `git` is a hard requirement.
+looked. The promotion agent, which *does* write into the long tier, has no shell. Its runner fails
+the run if it wrote anywhere but the long tier or a promotion report. Otherwise the runner checks
+every note the pass changed and commits exactly those with a `Vault-Pass: promotion` trailer, so
+each unattended write is one revertible commit. A pass whose notes fail the check has them put
+back, except a note someone changed or committed while it ran, which the log lists. The fence
+catches a write in the wrong place. Only git history can undo a bad write in the right one, which
+is why `git` is a hard requirement.
 
 ### 6. Degrade loudly
 
@@ -455,7 +459,7 @@ where a violation can actually stop something.
 | Dependency | Status | Notes |
 | --- | --- | --- |
 | `bash` | required | Git Bash on Windows; every hook, checker and runner is bash |
-| `git` | required | For the clone, for `git log` as the audit trail, and because the promotion agent's git snapshot is what makes its writes revertible |
+| `git` | required | For the clone, for `git log` as the audit trail, and because the runners' commits are what make an unattended pass's writes revertible |
 | Obsidian | required | Any recent version; open the repo root as a vault |
 | Obsidian **Dataview** | **required** | Every dashboard is a Dataview query; without it they render as code blocks |
 | `jq` | strongly recommended | Parses hook input. **Not bundled with Git for Windows**, so install it separately. Without it the lint hook falls back to a `sed` path-parse and warns loudly |

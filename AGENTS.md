@@ -157,7 +157,7 @@ you believe the violation count; an absence claim needs a positive control.
 | `bash .claude/scripts/vault-check.sh` | Frontmatter invariants C1–C5 over six content tiers, or only the notes named after `--` | `0 violation(s) across N file(s)`, N > 0; exit 0 |
 | `bash .claude/scripts/run-tests.sh` | Control suite for the hooks and runners — known-bad inputs that must be flagged, known-good inputs that must stay silent — in a temp dir | `=== N passed, 0 failed ===`; exit 0 |
 | `bash .claude/scripts/dream-pass.sh` | Nightly consolidation pass (`.cmd` wrapper for Task Scheduler) | One dated journal in `20-projects/_logs/`, committed with a `Vault-Pass: dream` trailer in a git vault; exit 0 |
-| `bash .claude/scripts/promotion-pass.sh` | Weekly medium → long promotion (`.cmd` wrapper) | A `PROMOTION-SUMMARY:` line or long-tier notes; exit 0 |
+| `bash .claude/scripts/promotion-pass.sh` | Weekly medium → long promotion (`.cmd` wrapper) | A `PROMOTION-SUMMARY:` line or long-tier notes, committed with a `Vault-Pass: promotion` trailer in a git vault; exit 0 |
 | `bash .claude/hooks/vault-lint.sh <file>...` | Advisory lint of the named notes: frontmatter and invisible characters | Silence for a clean note; always exit 0 |
 | `git config core.hooksPath .claude/githooks` | Opt-in pre-commit gate that runs `vault-check.sh` | A commit with a violating note is refused |
 
@@ -204,7 +204,7 @@ there. The table below is the summary.
 | Compaction stub | PostCompact hook | Shipped for Codex, Gemini CLI and Cursor; OpenCode's opt-in plugin |
 | Read deny for `.env`, `.env.*`, `secrets/` | Enforced by `.claude/settings.json` for its file-read tool | Blocked by Windsurf's read hook and OpenCode's opt-in plugin; hidden from Cursor's agent and Gemini CLI's search by ignore files; **guidance only** everywhere else. No harness stops a shell command from reading them |
 | Skills | Slash commands | Read natively from `.agents/skills/` by Codex, Gemini CLI, Cursor, Copilot, OpenCode and Hermes; elsewhere follow `SKILL.md` as a checklist |
-| Scheduled passes | `VAULT_AGENT=claude` (default); the agents' `tools:` allowlists are enforced | `VAULT_AGENT=command` with your own wrapper. **Refused** (exit 3) until `VAULT_ALLOW_UNENFORCED_TOOLS=1`, which you set only after sandboxing the wrapper: no shell and no network for the dream pass, `git` and no network for the promotion pass |
+| Scheduled passes | `VAULT_AGENT=claude` (default); the agents' `tools:` allowlists are enforced | `VAULT_AGENT=command` with your own wrapper. **Refused** (exit 3) until `VAULT_ALLOW_UNENFORCED_TOOLS=1`, which you set only after sandboxing the wrapper so that neither pass has a shell or network access. The runner does the git work itself |
 
 The runners' snapshot fence works the same under every harness, but it only sees files that change
 inside the vault. It cannot see a shell command, network traffic, or a write outside the vault.

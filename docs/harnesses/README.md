@@ -103,7 +103,7 @@ a wrapper for its harness. Two points apply to all of them:
 
 - The wrapper receives the prompt file path as `$1`. Its name contains `dream-pass` or
   `promotion-pass`, so one wrapper can set up each pass differently.
-- Set `VAULT_ALLOW_UNENFORCED_TOOLS=1` only after the harness's own sandbox leaves the dream pass
-  with no shell and no network, and the promotion pass with `git` but no network. The guides say
+- Set `VAULT_ALLOW_UNENFORCED_TOOLS=1` only after the harness's own sandbox leaves both passes
+  with no shell and no network (the runner does the git work itself). The guides say
   which settings do that where the harness documents them. Where it does not, run the harness in
   a container that enforces it.

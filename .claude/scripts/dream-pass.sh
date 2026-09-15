@@ -44,7 +44,9 @@
 #        read the vault's repository
 #   2    VIOLATION: files outside the dream journals changed during the run
 #        (steering surfaces among them are contained and the tripwire is set),
-#        or the pass changed a journal that already had uncommitted changes
+#        or the pass changed a journal that already had uncommitted changes, or
+#        one it changed is no longer a regular file, even if the agent then
+#        failed or timed out. Nothing it wrote is recorded for the next run
 #   3    REFUSED: command mode without VAULT_ALLOW_UNENFORCED_TOOLS=1
 #   4    COMMIT-FAILED: staging or committing the journal failed or ran past
 #        RUNNER_GIT_TIMEOUT, and the journal is left uncommitted and unstaged
@@ -97,20 +99,6 @@ on_signal() {
     fi
   fi
   exit "$1"
-}
-
-# record_leftover_journals
-# After a pass that wrote only journals but could not commit them (it timed out,
-# failed, or its commit or check failed), records the journals' bytes, so the
-# next run commits them instead of taking them for someone's edit. A journal that
-# was already dirty before this pass is not recorded, because it holds someone
-# else's edit too.
-record_leftover_journals() {
-  [ "${VAULT_GIT:-0}" -eq 1 ] || return 0
-  grep -vE '^20-projects/_logs/(dream-|compaction-)[^/]*\.md$' "$SNAP_DIR/changed" | grep -q . && return 0
-  grep -E '^20-projects/_logs/dream-[^/]*\.md$' "$SNAP_DIR/changed" > "$SNAP_DIR/leftover-all"
-  awk 'FILENAME == ARGV[1] { dirty[$0] = 1; next } !($0 in dirty)' "$SNAP_DIR/predirty" "$SNAP_DIR/leftover-all" > "$SNAP_DIR/leftover"
-  record_uncommitted "$ROOT" "$SNAP_DIR/nohooks" "$STATE" "$RUNNER" "$SNAP_DIR/leftover"
 }
 
 # Everything else runs inside main, and the script's last lines call it and
@@ -212,7 +200,16 @@ main() {
   fi
   # A journal an earlier run of this runner left uncommitted, and nobody has
   # touched since, is this runner's own, not someone's edit.
-  [ "$VAULT_GIT" -eq 1 ] && adopt_uncommitted "$ROOT" "$SNAP_DIR/nohooks" "$STATE" "$RUNNER" "$SNAP_DIR/predirty"
+  # One that fails the check is left in place for review, not committed.
+  : > "$SNAP_DIR/predirty.adopted"
+  if [ "$VAULT_GIT" -eq 1 ]; then
+    adopt_uncommitted "$ROOT" "$SNAP_DIR/nohooks" "$STATE" "$RUNNER" "$SNAP_DIR/predirty"
+    check_leftovers "$ROOT" "$SNAP_DIR" NONE "" "$LOG" 0
+    if [ -s "$SNAP_DIR/predirty.adopted" ]; then
+      printf '[%s] ADOPTED: journals an earlier run left uncommitted are checked and committed with this pass:\n' "$(ts)" >> "$LOG"
+      sed 's/^/    /' "$SNAP_DIR/predirty.adopted" >> "$LOG"
+    fi
+  fi
 
   snapshot_tree "$ROOT" "$SNAP_DIR/before"
   # Containment needs the pre-pass copy. Without it, refuse rather than run a pass
@@ -258,10 +255,37 @@ main() {
     exit 2
   fi
 
+  # What the pass may write, and owns: dream journals, plus an auto-written
+  # compaction stub it may leave but does not own.
+  grep -vE '^20-projects/_logs/(dream-|compaction-)[^/]*\.md$' "$SNAP_DIR/changed" > "$SNAP_DIR/outside"
+  OWNED_PATTERN='^20-projects/_logs/dream-[^/]*\.md$'
+  grep -E "$OWNED_PATTERN" "$SNAP_DIR/changed" > "$SNAP_DIR/owned"
+  # Journals an earlier run left uncommitted are checked and committed with this
+  # pass's own, whether or not this pass touched them.
+  own_adopted "$SNAP_DIR" "$OWNED_PATTERN"
+
+  # no_record_exit
+  # A pass that wrote into a journal someone was editing, or removed or replaced
+  # a journal, has nothing recorded for the next run, whether it timed out,
+  # failed or finished, so the next run cannot commit its other journals while
+  # that change stays. Its journals are left in place for review.
+  no_record_exit() {
+    printf '[%s] Nothing the pass wrote is recorded for the next run. Its journals are left in place for review.\n' "$(ts)" >> "$LOG"
+    exit 2
+  }
+
   if [ "$RUN_TIMED_OUT" -eq 1 ]; then
     printf '[%s] TIMEOUT: dream-agent exceeded %ss and was killed (status %s)\n' \
       "$(ts)" "$TIMEOUT" "$RUN_RC" >> "$LOG"
-    record_leftover_journals
+    # What the pass wrote before it was killed is still listed.
+    if [ -s "$SNAP_DIR/outside" ]; then
+      printf '[%s] VIOLATION: files outside the dream journals changed before the pass was killed, so nothing it wrote is recorded for the next run:\n' "$(ts)" >> "$LOG"
+      sed 's/^/    /' "$SNAP_DIR/outside" >> "$LOG"
+      [ "$VAULT_GIT" -eq 1 ] && owned_predirty "$SNAP_DIR/owned" "$SNAP_DIR/predirty" "$SNAP_DIR" "$LOG"
+    elif [ "$VAULT_GIT" -eq 1 ] && ! check_owned "$ROOT" "$SNAP_DIR/owned" "$SNAP_DIR/predirty" "$SNAP_DIR" "$LOG"; then
+      no_record_exit
+    fi
+    record_leftovers "$ROOT" "$SNAP_DIR/nohooks" "$STATE" "$RUNNER" "$SNAP_DIR" "$LOG"
     exit 124
   fi
 
@@ -271,7 +295,6 @@ main() {
   # auto-written compaction stub - was written by a pass that is only allowed to
   # write its journal. If something else writes to the vault while the pass runs
   # (a sync client, an editor), this fires too; the paths it names tell you which.
-  grep -vE '^20-projects/_logs/(dream-|compaction-)[^/]*\.md$' "$SNAP_DIR/changed" > "$SNAP_DIR/outside"
   if [ -s "$SNAP_DIR/outside" ]; then
     printf '[%s] VIOLATION: files outside the dream journal changed during the run:\n' "$(ts)" >> "$LOG"
     sed 's/^/    /' "$SNAP_DIR/outside" >> "$LOG"
@@ -279,7 +302,10 @@ main() {
   fi
 
   if [ "$RUN_RC" -ne 0 ]; then
-    record_leftover_journals
+    if [ "$VAULT_GIT" -eq 1 ] && ! check_owned "$ROOT" "$SNAP_DIR/owned" "$SNAP_DIR/predirty" "$SNAP_DIR" "$LOG"; then
+      no_record_exit
+    fi
+    record_leftovers "$ROOT" "$SNAP_DIR/nohooks" "$STATE" "$RUNNER" "$SNAP_DIR" "$LOG"
     exit "$RUN_RC"
   fi
 
@@ -287,20 +313,33 @@ main() {
   # pass did anything. A dream journal must have been ADDED or CHANGED during this
   # run. Matching any dream-*.md, rather than today's date computed up front,
   # means a 23:59 run that writes after midnight still counts, and a journal left
-  # by an earlier run on the same day does not pre-satisfy the check.
-  if ! grep -qE '^20-projects/_logs/dream-[^/]*\.md$' "$SNAP_DIR/changed"; then
+  # by an earlier run on the same day does not pre-satisfy the check. An adopted
+  # leftover does not either, which is why this reads the changes, not owned.
+  if ! grep -qE "$OWNED_PATTERN" "$SNAP_DIR/changed"; then
     printf '[%s] NO-ARTIFACT: exited 0 but no dream journal was added or changed\n' "$(ts)" >> "$LOG"
     exit 1
   fi
 
   # COMMIT. Exactly the journals the pass changed, checked first, with trailers
   # that let later tooling tell a pass's commit from a human's.
-  grep -E '^20-projects/_logs/dream-[^/]*\.md$' "$SNAP_DIR/changed" > "$SNAP_DIR/owned"
   commit_owned "$ROOT" dream "$SNAP_DIR/owned" "$SNAP_DIR/predirty" "$SNAP_DIR" "$LOG"
   commit_rc=$?
   case "$commit_rc" in
-    0) ;;
-    4|5) record_leftover_journals; exit "$commit_rc" ;;
+    0) forget_uncommitted "$STATE" "$RUNNER" ;;
+    4) record_leftovers "$ROOT" "$SNAP_DIR/nohooks" "$STATE" "$RUNNER" "$SNAP_DIR" "$LOG"; exit 4 ;;
+    5)
+      printf '[%s] The rejected journal is left in place, uncommitted, for review.\n' "$(ts)" >> "$LOG"
+      # Only the journals that pass the check on their own are recorded for the
+      # next run. A rejected one recorded too would be adopted and rejected again
+      # every night, and no later journal would be committed.
+      while IFS= read -r p; do
+        [ -n "$p" ] && CLAUDE_PROJECT_DIR="$ROOT" bash "$ROOT/.claude/scripts/vault-check.sh" -- "$p" </dev/null >/dev/null 2>&1 \
+          && printf '%s\n' "$p"
+      done < "$SNAP_DIR/owned" > "$SNAP_DIR/owned.passing"
+      mv -f "$SNAP_DIR/owned.passing" "$SNAP_DIR/owned"
+      record_leftovers "$ROOT" "$SNAP_DIR/nohooks" "$STATE" "$RUNNER" "$SNAP_DIR" "$LOG"
+      exit 5
+      ;;
     *) exit "$commit_rc" ;;
   esac
 

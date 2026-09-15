@@ -238,7 +238,7 @@ research, reimplemented as conventions or small scripts rather than copied:
 | Superseded as a state, not a deletion | eugeniughelbur's lesson states, Graphiti's invalidate-not-delete | `status: superseded` with `superseded_by`, and `99-archive/` instead of delete |
 | Frontmatter and link conformance | breferrari/obsidian-mind write validation, ballred/obsidian-claude-pkm link checks | An advisory lint hook plus Dataview conformance dashboards |
 | Trust sweeps and post-condition re-reads | COG's memory-hygiene sweeps and post-condition checks | Folded into the promotion agent, which re-reads what it wrote |
-| Snapshot before an automated write | itechmeat/open-second-brain (principle only) | A git commit before the promotion agent writes |
+| Snapshot before an automated write | itechmeat/open-second-brain (principle only) | The runner commits exactly what the promotion pass wrote, after checking it, and puts back notes that fail |
 | Consolidation between sessions, not during them | Letta's sleep-time compute, basic-memory-skills | A scheduled dream pass, separate from the working session |
 | A checker that fails the build | GBrain's CI-enforced system-of-record check | `vault-check.sh`, run in CI on three operating systems |
 | Conflicts surfaced, never silently resolved | GBrain's synthesis rule, with the mem0 contradiction issue as the counter-example | `contradicts:` frontmatter, with both notes left active |

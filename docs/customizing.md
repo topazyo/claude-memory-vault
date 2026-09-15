@@ -334,9 +334,9 @@ frontmatter. If you write an agent meant to run **unattended** on a schedule, co
 that makes `dream-agent` safe: its only write is one dated journal file, and it never mutates an
 existing note. Propose, don't execute. An unattended agent with edit rights over your long-term
 tier can quietly rewrite the knowledge you rely on, and you find out weeks later. (`promotion-agent`
-does write into the long tier. It takes a git snapshot before writing, which is what makes a bad
-write revertible and why git is a hard dependency. Its runner fails any run that wrote outside
-the long tier or a promotion report.)
+does write into the long tier, with no shell. Its runner fails any run that wrote outside the long
+tier or a promotion report, checks every note the pass changed, and commits exactly those or puts
+them all back. That commit is what makes a bad write revertible, and why git is a hard dependency.)
 
 For scheduling, use the shipped runners rather than a hand-rolled cron line: `dream-pass.sh` /
 `.cmd` and `promotion-pass.sh` / `.cmd` in `.claude/scripts/`. They kill a hung pass (exit 124),
