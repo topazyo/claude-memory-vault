@@ -599,9 +599,13 @@ Around that call, each runner does several things an exit code cannot:
 - **Script integrity.** Each runner's body is a function called on the script's last lines, so an
   edit made to the script while it runs is never executed by that run. Every git command a runner
   issues runs with no hooks, no fsmonitor, no signature checks and no prompts (`core.hooksPath`
-  set to an empty temporary directory), the journal commit below included. That is not a sandbox.
-  A filter declared in `.gitattributes` can still run on a command that reads the work tree, which
-  is why the runners call git on the vault only while its config is known to be the pre-pass one.
+  set to an empty temporary directory), the journal commit below included. Each path it names is
+  taken literally (`GIT_LITERAL_PATHSPECS=1`), because git otherwise also reads a path as a
+  pattern, and a journal named `dream-[x].md` would then stage someone's `dream-x.md`. Git's other
+  pathspec settings are turned off for those commands, because git refuses to combine them with
+  the literal one. That is not a sandbox. A filter declared in `.gitattributes` can still run on a command that reads the work
+  tree, which is why the runners call git on the vault only while its config is known to be the
+  pre-pass one.
 - **Artifact assertion.** A pass that exits 0 but left no evidence it ran exits **1**
   (NO-ARTIFACT). For `dream-pass` a `dream-*.md` journal must have been added or changed during
   this run; matching any date rather than today's keeps a run that crosses midnight valid. For

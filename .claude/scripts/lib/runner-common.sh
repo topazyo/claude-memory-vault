@@ -1197,11 +1197,29 @@ run_lock_release() {
 # filter can still run on commands that read the work tree, which is why the
 # runners call git on a vault only while its config is known to be the pre-pass
 # one.
+#
+# Every path is taken literally (GIT_LITERAL_PATHSPECS). Git otherwise reads a
+# path after -- as a pattern as well, so a note a pass named [e]xisting.md would
+# also stage, commit or restore someone's existing.md. The other pathspec
+# settings are turned off, because git refuses to combine any of them with the
+# literal one, and a scheduler's environment could carry them.
+LITERAL_PATHS="GIT_LITERAL_PATHSPECS=1 GIT_GLOB_PATHSPECS=0 GIT_NOGLOB_PATHSPECS=0 GIT_ICASE_PATHSPECS=0"
 safe_git() {
   local hooks="$1"
   shift
-  GIT_TERMINAL_PROMPT=0 git -c core.hooksPath="$hooks" -c core.fsmonitor=false \
+  # $LITERAL_PATHS is unquoted on purpose, so env gets one assignment per word.
+  env GIT_TERMINAL_PROMPT=0 $LITERAL_PATHS git -c core.hooksPath="$hooks" -c core.fsmonitor=false \
     -c log.showSignature=false "$@"
+}
+
+# git_ignores <root> <empty-hooks-dir> <relative-path>
+# True when git ignores the path. check-ignore refuses GIT_LITERAL_PATHSPECS and
+# exits 128, which would read as "not ignored", so it runs with every pathspec
+# setting off. It needs none, because it tests each argument as one path and
+# never expands it.
+git_ignores() {
+  env GIT_TERMINAL_PROMPT=0 GIT_LITERAL_PATHSPECS=0 GIT_GLOB_PATHSPECS=0 GIT_NOGLOB_PATHSPECS=0 GIT_ICASE_PATHSPECS=0 \
+    git -c core.hooksPath="$2" -c core.fsmonitor=false -C "$1" check-ignore -q -- "$3" 2>/dev/null
 }
 
 # head_state <root> <empty-hooks-dir>
@@ -1435,7 +1453,7 @@ commit_owned() {
       printf '[%s] VIOLATION: %s is not a regular file after the pass (removed, or replaced by a link or a folder), so nothing was committed.\n' "$(ts)" "$p" >> "$log"
       return 2
     fi
-    if safe_git "$hooks" -C "$root" check-ignore -q -- "$p" 2>/dev/null; then
+    if git_ignores "$root" "$hooks" "$p"; then
       printf '[%s] NOTE: %s is ignored by git, so it was not committed.\n' "$(ts)" "$p" >> "$log"
       continue
     fi
@@ -1465,10 +1483,10 @@ commit_owned() {
   cat "$snap/commit-blobs" >> "$snap/commit-msg"
   for step in add commit; do
     if [ "$step" = add ]; then
-      run_with_watchdog "$timeout" "$snap/git.out" env GIT_TERMINAL_PROMPT=0 \
+      run_with_watchdog "$timeout" "$snap/git.out" env GIT_TERMINAL_PROMPT=0 $LITERAL_PATHS \
         git -C "$root" -c core.hooksPath="$hooks" -c core.fsmonitor=false add -- "${paths[@]}"
     else
-      run_with_watchdog "$timeout" "$snap/git.out" env GIT_TERMINAL_PROMPT=0 \
+      run_with_watchdog "$timeout" "$snap/git.out" env GIT_TERMINAL_PROMPT=0 $LITERAL_PATHS \
         git -C "$root" -c core.hooksPath="$hooks" -c core.fsmonitor=false commit -q --only -F "$snap/commit-msg" -- "${paths[@]}"
     fi
     RUN_PID=""
