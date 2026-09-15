@@ -149,11 +149,13 @@ win_msys_tree() {
 # while its id still belongs to the process in that list. The stop then goes in
 # rounds of a second, up to 10. Each round lists the processes again and adds
 # every new one that carries the nonce, and every child that started before its
-# parent's stop returned, because a process of the tree can start one between
-# the list and the end of its stop. A child whose parent id now belongs to a
-# newer process, which started no later than the child, is that process's, and
-# is left alone. An id already picked counts as picked only while it still
-# belongs to the same process. Rounds end once nothing picked is left.
+# parent's stop began, because a process of the tree can start one between the
+# list and the stop. A child started while its parent's stop ran is found only by
+# the nonce, because after the stop the parent's id may belong to a process that
+# has come and gone. A child whose parent id now belongs to a newer process,
+# which started no later than the child, is that process's, and is left alone.
+# An id already picked counts as picked only while it still belongs to the same
+# process. Rounds end once nothing picked is left.
 #
 # The ids, the nonce and the time reach PowerShell in the environment, never on
 # its command line, and PowerShell leaves its own process out. Otherwise the
@@ -197,10 +199,10 @@ while (\$grew) {
 }
 function Same(\$id) { \$c = Get-CimInstance Win32_Process -Filter ('ProcessId=' + \$id) -ErrorAction SilentlyContinue; if (\$c -and \$c.CreationDate -eq \$byId[\$id].CreationDate) { \$c } }
 \$stopAt = @{}
-if (\$pick.ContainsKey(\$root) -and (Same \$root)) { & taskkill.exe /T /F /PID \$root 2>&1 | Out-Null; \$stopAt[\$root] = [DateTime]::UtcNow }
+if (\$pick.ContainsKey(\$root) -and (Same \$root)) { \$stopAt[\$root] = [DateTime]::UtcNow; & taskkill.exe /T /F /PID \$root 2>&1 | Out-Null }
 \$left = @()
 for (\$round = 1; \$round -le 10; \$round++) {
-  foreach (\$id in @(\$pick.Keys)) { if (Same \$id) { Stop-Process -Id \$id -Force -ErrorAction SilentlyContinue; if (-not \$stopAt.ContainsKey(\$id)) { \$stopAt[\$id] = [DateTime]::UtcNow } } }
+  foreach (\$id in @(\$pick.Keys)) { if (Same \$id) { if (-not \$stopAt.ContainsKey(\$id)) { \$stopAt[\$id] = [DateTime]::UtcNow }; Stop-Process -Id \$id -Force -ErrorAction SilentlyContinue } }
   Start-Sleep -Seconds 1
   \$now = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)
   \$nowById = @{}
@@ -430,14 +432,16 @@ run_with_watchdog() {
   [ -f "$flag.stalled" ] && RUN_STALLED=1
   if [ -f "$flag.stopped" ]; then
     RUN_KILL_REPORT="$(cat "$flag.stopped" 2>/dev/null)"
+    # Set before the growth check, so a signal handler during it sees the result.
+    case "$RUN_KILL_REPORT" in *alive*|*unknown*) RUN_KILL_FAILED=1 ;; esac
     # A stopped command whose output still grows has a writer left somewhere.
     before_size="$(file_size "$out")"
     sleep 2
     after_size="$(file_size "$out")"
     if [ "$before_size" != "$after_size" ]; then
       RUN_KILL_REPORT="$(printf '%s\noutput still growing after the stop\n' "$RUN_KILL_REPORT")"
+      RUN_KILL_FAILED=1
     fi
-    case "$RUN_KILL_REPORT" in *alive*|*unknown*|*growing*) RUN_KILL_FAILED=1 ;; esac
   fi
   rm -f "$flag" "$flag.stalled" "$flag.stopped"
   RUN_PID=""
@@ -598,7 +602,8 @@ snapshot_tree() {
       fence_find ./.claude/logs \( -type f \( -name '*.log' -o -name dream-pass.git-state.txt -o -name promotion-pass.git-state.txt \
         -o -name dream-pass.prompt.md -o -name promotion-pass.prompt.md -o -name runner-tripwire -o -name runner-inflight \
         -o -name 'runner-tripwire.tmp.*' -o -name 'runner-inflight.tmp.*' \
-        -o -name 'dream-agent.run.log.??????' -o -name 'promotion-agent.run.log.??????' \
+        -o -name 'dream-agent.run.log.runner-tmp.[A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9]' \
+        -o -name 'promotion-agent.run.log.runner-tmp.[A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9]' \
         -o -name dream-pass.launchd.out -o -name dream-pass.launchd.err \
         -o -name promotion-pass.launchd.out -o -name promotion-pass.launchd.err \) \) -prune -o
     fi
@@ -809,8 +814,8 @@ steering_filter() {
             || base == "dream-pass.prompt.md" || base == "promotion-pass.prompt.md" \
             || base == "runner-tripwire" || base == "runner-inflight" \
             || base ~ /^runner-tripwire\.tmp\./ || base ~ /^runner-inflight\.tmp\./ \
-            || base ~ /^dream-agent\.run\.log\.[a-z0-9][a-z0-9][a-z0-9][a-z0-9][a-z0-9][a-z0-9]$/ \
-            || base ~ /^promotion-agent\.run\.log\.[a-z0-9][a-z0-9][a-z0-9][a-z0-9][a-z0-9][a-z0-9]$/ \
+            || base ~ /^dream-agent\.run\.log\.runner-tmp\.[a-z0-9][a-z0-9][a-z0-9][a-z0-9][a-z0-9][a-z0-9]$/ \
+            || base ~ /^promotion-agent\.run\.log\.runner-tmp\.[a-z0-9][a-z0-9][a-z0-9][a-z0-9][a-z0-9][a-z0-9]$/ \
             || base == "dream-pass.launchd.out" || base == "dream-pass.launchd.err" \
             || base == "promotion-pass.launchd.out" || base == "promotion-pass.launchd.err") next
         print $0
@@ -1053,8 +1058,10 @@ write_tripwire() {
     body=""
   done
   [ -n "$body" ] || return 1
-  write_file_atomic "$1/$TRIPWIRE_REL" "$body" && ok=0
+  # The state directory copy first. A signal handler takes that copy as proof
+  # that this run set the tripwire, and adds to it instead of replacing it.
   write_file_atomic "$state/$(basename "$TRIPWIRE_REL")" "$body" && ok=0
+  write_file_atomic "$1/$TRIPWIRE_REL" "$body" && ok=0
   rm -f "$body"
   return "$ok"
 }
@@ -1141,10 +1148,10 @@ clear_inflight() {
 tripwire_check() {
   local root="$1" state="$2" runner="$3" log="$4" marker empty wrote tw
   if guard_exists "$root" "$state" "$TRIPWIRE_REL"; then
-    # Named by the copy that is there, which is only the state directory's when
-    # the vault's copy was deleted.
-    tw="$root/$TRIPWIRE_REL"
-    [ -e "$tw" ] || [ -L "$tw" ] || tw="$state/$(basename "$TRIPWIRE_REL")"
+    # The state directory copy is named when it is a file, because the pass
+    # cannot write it. The vault's copy is named otherwise.
+    tw="$state/$(basename "$TRIPWIRE_REL")"
+    [ -f "$tw" ] && [ ! -L "$tw" ] || tw="$root/$TRIPWIRE_REL"
     printf '[%s] TRIPWIRE: refusing to run. A previous pass changed a steering or execution surface, was interrupted before containment, or may have left a process running. Read %s and do what it says, then delete it and its copy.\n' \
       "$(ts)" "$tw" >> "$log"
     return 78
@@ -2618,8 +2625,9 @@ file_mode() {
 # runner keeps it elsewhere.
 append_run_log() {
   local run="$1" out="$2" log="$3" max="" tmp="" part="" old="" mode=""
-  # A runner stopped in the middle of an append leaves its temporary files.
-  rm -f "$out".?????? 2>/dev/null
+  # A runner stopped in the middle of an append leaves its temporary files. Their
+  # names have a part of their own, so no other file beside the log matches.
+  rm -f "$out".runner-tmp.?????? 2>/dev/null
   if [ -L "$out" ] && { ! rm -f "$out" 2>/dev/null || [ -L "$out" ]; }; then
     printf '[%s] WARNING: %s is a link that could not be removed, so the run output was not added to it.\n' "$(ts)" "$out" >> "$log"
     return 1
@@ -2638,12 +2646,16 @@ append_run_log() {
   fi
   [ -n "$mode" ] || mode="$(printf '%o' $((0666 & ~0$(umask))))"
   max="$(uint_setting RUNNER_RUN_LOG_MAX_BYTES 10000000 1000 "$log" bytes)"
-  if ! tmp="$(mktemp "$out.XXXXXX" 2>/dev/null)"; then
+  if [ -n "$old" ] && [ ! -r "$old" ]; then
+    printf '[%s] WARNING: %s could not be read, so it was left as it was and the run output was not added to it.\n' "$(ts)" "$out" >> "$log"
+    return 1
+  fi
+  if ! tmp="$(mktemp "$out.runner-tmp.XXXXXX" 2>/dev/null)"; then
     printf '[%s] WARNING: no temporary file could be made beside %s, so the run output was not added to it.\n' "$(ts)" "$out" >> "$log"
     return 1
   fi
   if [ -n "$old" ] && ! cat "$old" > "$tmp" 2>/dev/null; then
-    printf '[%s] WARNING: %s could not be read, so it was left as it was and the run output was not added to it.\n' "$(ts)" "$out" >> "$log"
+    printf '[%s] WARNING: %s could not be copied beside it, for example on a full disk, so it was left as it was and the run output was not added to it.\n' "$(ts)" "$out" >> "$log"
     rm -f "$tmp"
     return 1
   fi
@@ -2655,7 +2667,7 @@ append_run_log() {
     return 1
   fi
   if [ "$(file_size "$tmp")" -gt "$max" ]; then
-    if part="$(mktemp "$out.XXXXXX" 2>/dev/null)" && cap_copy "$tmp" "$part" "$max" && mv -f "$part" "$tmp" 2>/dev/null; then
+    if part="$(mktemp "$out.runner-tmp.XXXXXX" 2>/dev/null)" && cap_copy "$tmp" "$part" "$max" && mv -f "$part" "$tmp" 2>/dev/null; then
       :
     else
       printf '[%s] WARNING: %s could not be cut to %s bytes, so it is kept whole this time.\n' "$(ts)" "$out" "$max" >> "$log"
@@ -2678,15 +2690,23 @@ append_run_log() {
 # the pass ended before containment or the run log could not be written, in the
 # state directory. It is cut like the run log.
 keep_run_output() {
-  local run="$1" dest="$2/$3.interrupted.run" max
+  local run="$1" dest="$2/$3.interrupted.run" max="" tmp=""
   [ -s "$run" ] || return 0
   max="$(uint_setting RUNNER_RUN_LOG_MAX_BYTES 10000000 1000 "$4" bytes)"
-  rm -f "$dest" 2>/dev/null
+  # Written beside the earlier kept output and renamed over it, so a failed copy
+  # leaves that one in place.
+  tmp="$dest.tmp.$$"
   if [ "$(file_size "$run")" -gt "$max" ]; then
-    cap_copy "$run" "$dest" "$max"
+    cap_copy "$run" "$tmp" "$max"
   else
-    cat "$run" > "$dest" 2>/dev/null
-  fi && printf '[%s] The output of the pass is kept at %s.\n' "$(ts)" "$dest" >> "$4"
+    cat "$run" > "$tmp" 2>/dev/null
+  fi && mv -f "$tmp" "$dest" 2>/dev/null && {
+    printf '[%s] The output of the pass is kept at %s.\n' "$(ts)" "$dest" >> "$4"
+    return 0
+  }
+  rm -f "$tmp" 2>/dev/null
+  printf '[%s] WARNING: the output of the pass could not be kept at %s, so it is lost.\n' "$(ts)" "$dest" >> "$4"
+  return 1
 }
 
 # report_stop <log> <what> <root> <state-dir> <runner>
@@ -2696,7 +2716,7 @@ keep_run_output() {
 # clears STOP_REPORT_PENDING, which a runner's signal handler reads to finish a
 # report a signal cut short or came before.
 report_stop() {
-  local log="$1" what="$2" root="$3" state="$4" runner="$5" idx list lock backup
+  local log="$1" what="$2" root="$3" state="$4" runner="$5" idx="" list="" lock="" backup="" writes=""
   idx="$(git_index_lock_path "$root")"
   if [ -n "$idx" ] && [ -e "$idx" ]; then
     printf '[%s] WARNING: %s was left behind by the stopped %s. Remove it once no git process is running.\n' "$(ts)" "$idx" "$what" >> "$log"
@@ -2726,16 +2746,22 @@ report_stop() {
     else
       backup='No pre-pass backup was made to review against.'
     fi
-    # The tripwire counts as containment's only when containment set it in this
-    # run, or its copy is in the state directory, where the pass cannot write.
-    # A tripwire found only in the vault was written by the pass, and is
-    # replaced, and so is a tripwire of which no copy is a regular file.
+    # Before a runner has recorded that containment ran (its signal handler, or a
+    # containment error), the wording leaves containment out.
+    if [ "${CONTAINMENT_CHECKED:-1}" -eq 0 ]; then
+      writes="$what may still be running, so what it writes is unchecked"
+    else
+      writes="$what may still be running, so what it writes after containment is unchecked"
+    fi
+    # The tripwire counts as this run's only when containment set it, or its copy
+    # is in the state directory, where the pass cannot write. Otherwise a tripwire
+    # found only in the vault was written by the pass, and is replaced, and so is
+    # a tripwire of which no copy is a regular file.
     if { [ "${CONTAINED:-0}" -eq 1 ] || [ -f "$state/$(basename "$TRIPWIRE_REL")" ]; } \
-       && note_tripwire "$root" "$state" "$log" "Also, a process of the stopped $what may still be running, so what it writes after containment is unchecked. $lock $backup End it, then review the vault. What the stop found:
+       && note_tripwire "$root" "$state" "$log" "Also, a process of the stopped $writes. $lock $backup End it, then review the vault. What the stop found:
 $(sed 's/^/  /' "$list")"; then
       :
-    elif ! write_tripwire "$root" "$state" "$runner" \
-         "a process of the stopped $what may still be running, so what it writes after containment is unchecked" \
+    elif ! write_tripwire "$root" "$state" "$runner" "a process of the stopped $writes" \
          "(none moved)" "$list" "" stop; then
       printf '[%s] TRIPWIRE-ERROR: no tripwire could be written for the KILL_FAILED stop.\n' "$(ts)" >> "$log"
     fi
@@ -2746,22 +2772,25 @@ $(sed 's/^/  /' "$list")"; then
 
 # note_tripwire <root> <state-dir> <log> <text>
 # Adds <text> as a paragraph to each copy of the tripwire that is a regular file,
-# and copies the vault's copy to the state directory when that one is missing.
-# Returns 1 when neither copy is a regular file, so the caller writes a whole
-# tripwire instead.
+# then writes a missing copy from the one that is there. Returns 1 when neither
+# copy is a regular file, so the caller writes a whole tripwire instead.
 note_tripwire() {
-  local root="$1" state="$2" log="$3" text="$4" f found=1
-  for f in "$root/$TRIPWIRE_REL" "$state/$(basename "$TRIPWIRE_REL")"; do
+  local root="$1" state="$2" log="$3" text="$4" f="" found=1 vault="$1/$TRIPWIRE_REL" kept="$2/$(basename "$TRIPWIRE_REL")"
+  for f in "$vault" "$kept"; do
     [ -f "$f" ] && [ ! -L "$f" ] || continue
     found=0
     printf '\n%s\n' "$text" >> "$f" 2>/dev/null \
       || printf '[%s] TRIPWIRE-ERROR: a note could not be added to %s, which is still set.\n' "$(ts)" "$f" >> "$log"
   done
-  if [ "$found" -eq 0 ] && [ ! -f "$state/$(basename "$TRIPWIRE_REL")" ]; then
-    write_file_atomic "$state/$(basename "$TRIPWIRE_REL")" "$root/$TRIPWIRE_REL" \
+  [ "$found" -eq 0 ] || return 1
+  if [ ! -f "$kept" ] || [ -L "$kept" ]; then
+    write_file_atomic "$kept" "$vault" \
       || printf '[%s] WARNING: the tripwire could not be copied to the state directory %s.\n' "$(ts)" "$state" >> "$log"
+  elif [ ! -f "$vault" ] || [ -L "$vault" ]; then
+    write_file_atomic "$vault" "$kept" \
+      || printf '[%s] WARNING: the tripwire could not be copied to %s.\n' "$(ts)" "$vault" >> "$log"
   fi
-  return "$found"
+  return 0
 }
 
 # run_agent <timeout> <output-file> <agent-name> <task> <prompt-file-relative>

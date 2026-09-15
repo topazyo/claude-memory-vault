@@ -46,8 +46,10 @@ if [ -f "$RUNNER_LIB" ]; then
   state_dir="$( . "$RUNNER_LIB" && vault_state_dir "$ROOT")"
 fi
 if [ -n "$state_dir" ]; then
-  TRIPWIRES="$TRIPWIRES
-$state_dir/runner-tripwire"
+  # The state directory copy is checked, and named, first, because a pass
+  # cannot write it.
+  TRIPWIRES="$state_dir/runner-tripwire
+$TRIPWIRES"
 else
   printf 'vault-check: WARNING - could not work out the runners'"'"' state directory from %s, so the tripwire copy kept there was not checked.\n' "$RUNNER_LIB" >&2
 fi

@@ -117,7 +117,8 @@ on_exit() {
     fi
   fi
   # What a tripwire or stop report left when a signal cut it short.
-  [ -n "${STATE:-}" ] && rm -f "$STATE/tripwire-body.$$" "$STATE/kill-report.$$" "$STATE/runner-tripwire.tmp.$$" 2>/dev/null
+  [ -n "${STATE:-}" ] && rm -f "$STATE/tripwire-body.$$" "$STATE/kill-report.$$" "$STATE/runner-tripwire.tmp.$$" "$STATE/$RUNNER.interrupted.run.tmp.$$" 2>/dev/null
+  [ -n "${ROOT:-}" ] && rm -f "$ROOT/$TRIPWIRE_REL.tmp.$$" 2>/dev/null
   [ -n "$SNAP_DIR" ] && rm -rf "$SNAP_DIR"
   run_lock_release
 }
@@ -126,15 +127,22 @@ on_exit() {
 # trusted to have run, so set the tripwire now rather than leave the vault to the
 # next pass's baseline.
 on_signal() {
+  local report=""
   # The whole tree, so a child of the agent or of a git step cannot keep writing
   # after the exit. RUN_PID is set while such a command runs, and while the
   # watchdog finishes stopping one that has ended (RUN_REAPED=1). Then the private
   # temporary directory exists. A stop that may have left a process marks the run
-  # lock.
+  # lock. Before containment the tripwire below is set, so the stop's report goes
+  # into it as well.
   if [ -n "${RUN_PID:-}" ] && [ -n "$SNAP_DIR" ] && [ -d "$SNAP_DIR" ]; then
     stop_tree "$RUN_PID" 2 "$SNAP_DIR/signal-stop" "${AGENT_SESSION_ID:-}" 1
-    grep -qE '^(alive|unknown)' "$SNAP_DIR/signal-stop" 2>/dev/null \
-      && mark_kill_failed "$LOG" "$(cat "$SNAP_DIR/signal-stop")"
+    if grep -qE '^(alive|unknown)' "$SNAP_DIR/signal-stop" 2>/dev/null; then
+      if [ "$INFLIGHT" -eq 1 ] && [ "$CONTAINMENT_CHECKED" -eq 0 ]; then
+        report="$(cat "$SNAP_DIR/signal-stop")"
+      else
+        mark_kill_failed "$LOG" "$(cat "$SNAP_DIR/signal-stop")"
+      fi
+    fi
   fi
   record_session_once
   # Before its output reached the run log, the pass's stream would go with the
@@ -163,10 +171,18 @@ on_signal() {
   fi
   # A stop by the watchdog that may have left a process, and that the runner had
   # not reported yet, is reported now, so the lock is marked and the tripwire says
-  # so.
+  # so. Before the run log is written that includes a result the watchdog has set
+  # while run_agent had not returned.
   if [ "$STOP_REPORT_PENDING" -eq 1 ]; then
+    report="$AGENT_KILL_REPORT${report:+
+$report}"
+  elif [ "$RUN_LOG_APPENDED" -eq 0 ] && [ "${RUN_KILL_FAILED:-0}" -eq 1 ] && [ "$KILL_FAILED_MARKED" -eq 0 ]; then
+    report="${RUN_KILL_REPORT:-}${report:+
+$report}"
+  fi
+  if [ -n "$report" ]; then
     RUN_KILL_FAILED=1
-    RUN_KILL_REPORT="$AGENT_KILL_REPORT"
+    RUN_KILL_REPORT="$report"
     report_stop "$LOG" dream-agent "$ROOT" "$STATE" "$RUNNER"
   fi
   exit "$1"
@@ -340,7 +356,14 @@ main() {
   if [ "$RUN_TIMED_OUT" -eq 1 ] || [ "$RUN_STALLED" -eq 1 ]; then
     report_stop "$LOG" dream-agent "$ROOT" "$STATE" "$RUNNER"
   fi
-  append_run_log "$SNAP_DIR/run" "$RUN_OUT" "$LOG" || keep_run_output "$SNAP_DIR/run" "$STATE" "$RUNNER" "$LOG"
+  # A process the stop may have left can swap the run log's temporary file for a
+  # link while it is built, so after KILL_FAILED the output stays out of the vault.
+  if [ "$KILL_FAILED_MARKED" -eq 1 ]; then
+    printf '[%s] A process of the stopped pass may still be running, so the run output is not added to %s.\n' "$(ts)" "$RUN_OUT" >> "$LOG"
+    keep_run_output "$SNAP_DIR/run" "$STATE" "$RUNNER" "$LOG"
+  else
+    append_run_log "$SNAP_DIR/run" "$RUN_OUT" "$LOG" || keep_run_output "$SNAP_DIR/run" "$STATE" "$RUNNER" "$LOG"
+  fi
   RUN_LOG_APPENDED=1
   record_session_once
   if [ "$contain_rc" -ne 0 ]; then

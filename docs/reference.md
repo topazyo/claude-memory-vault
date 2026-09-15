@@ -475,10 +475,11 @@ Around that call, each runner does several things an exit code cannot:
   whose command line holds the session id. It stops a listed id only while that id still belongs
   to a process that started before the tree was listed, so an id Windows has given to a new
   process is left alone. Then it lists the processes again once a second, up to 10 times, and
-  stops each new one that holds the session id or started before its parent's stop returned,
-  because a process of the tree can start another during the stop. A child whose parent id now
-  belongs to a newer process is that process's, and is left alone. A program that Git Bash starts
-  by exec has no Windows parent left, so only the session id finds it. PowerShell gets the id in its
+  stops each new one that holds the session id or started before its parent's stop began,
+  because a process of the tree can start another between the list and the stop. A child started
+  while its parent's stop ran, or a child whose parent id now belongs to a newer process, is found
+  only by the session id. A program that Git Bash starts by exec has no Windows parent left, so
+  only the session id finds it too. PowerShell gets the id in its
   environment, leaves itself out, and is itself stopped after 60 seconds, which counts as an
   unknown result. A command-mode wrapper gets
   the id in `VAULT_RUN_NONCE`, and only a process that puts it on its own command line can be
@@ -490,10 +491,14 @@ Around that call, each runner does several things an exit code cannot:
   because a process of the pass may still be writing after containment ran, and keeps the
   pre-pass backup `inflight-backup.tar` in the state directory for the review. The tripwire says
   whether the lock could be marked and whether there is a backup. When containment set the
-  tripwire in the same run, the stop's report is added to it. A tripwire found only in the vault was
-  written by the pass, and is replaced. A signal that arrives before the runner has reported such
-  a stop reports it, and a signal after containment wrote its tripwire leaves that tripwire in
-  place with a note. The runner still exits 124 or 125. A marked lock
+  tripwire in the same run, the stop's report is added to it. Otherwise a tripwire found only in
+  the vault was written by the pass, and is replaced. A signal that arrives once the watchdog's
+  stop has found such a process, and before the runner has reported it, reports it. A signal after
+  containment wrote its tripwire leaves that tripwire in place with a note, and before containment
+  the signal's own stop names what it found in the tripwire the signal sets. After such a stop the
+  run's output is kept in the state directory, not added to the run log in the vault, because a
+  process left running could swap the log's temporary file for a link. The runner still exits 124
+  or 125. A marked lock
   is never released or reclaimed, so every later run exits **75** until a human has made sure
   nothing of the old pass is running, reviewed the vault, deleted the tripwire and deleted the
   lock folder. A stop of a commit step, or a stop made by a signal to the runner, that leaves a
@@ -1096,8 +1101,8 @@ while a note under `40-llm-wiki/wiki/` is covered by the six-tier rules only.
 | `.claude/hooks/read-guard.sh` | `2` blocked (`.env`, `.env.*`, `secrets/`) · `0` allowed, or no path to check | `.claude/logs/read-guard.log` (`BLOCKED:`, `DEGRADED:`); the reason also to stderr |
 | `.claude/scripts/vault-check.sh` | `0` notes scanned, no violations · `1` one or more violations (including a malformed date), no content-tier folder found, zero notes scanned (`VACUOUS`), or a named note that is not a readable file | stdout, plus the `VACUOUS` and unreadable-note lines on stderr — never writes to a note |
 | `.claude/scripts/run-tests.sh` | `0` all controls passed · `1` at least one failed · `130` SIGINT · `143` SIGTERM | stdout only; fixtures in a temp dir, removed on exit |
-| `.claude/scripts/dream-pass.sh` / `.cmd` | `0` OK · `1` NO-ARTIFACT · `2` VIOLATION · `3` REFUSED · `4` COMMIT-FAILED · `5` CHECK-FAILED · `64` unknown `VAULT_AGENT` · `70` TRIPWIRE-ERROR · `75` LOCKED · `78` TRIPWIRE · `124` TIMEOUT · `125` STALLED · `127` `claude`, wrapper or Git Bash not found · otherwise the agent's code | `.claude/logs/dream-agent.log` · agent output in `dream-agent.run.log` · `dream-pass.git-state.txt` · `dream-pass.prompt.md` in command mode · `runner-tripwire` after a contained violation or a `KILL_FAILED` stop · `dream-pass.interrupted.run` in the state directory after a signal, or when the run log could not be written |
-| `.claude/scripts/promotion-pass.sh` / `.cmd` | `0` OK · `1` NO-ARTIFACT · `2` VIOLATION · `3` REFUSED · `4` COMMIT-FAILED · `5` CHECK-FAILED · `64` unknown `VAULT_AGENT` · `70` TRIPWIRE-ERROR · `75` LOCKED · `78` TRIPWIRE · `124` TIMEOUT · `125` STALLED · `127` `claude`, wrapper or Git Bash not found · otherwise the agent's code | `.claude/logs/promotion-agent.log` · agent output added to `promotion-agent.run.log` · `promotion-pass.git-state.txt` · `promotion-pass.prompt.md` in command mode · `runner-tripwire` after a contained violation or a `KILL_FAILED` stop · `promotion-pass.interrupted.run` in the state directory after a signal, or when the run log could not be written |
+| `.claude/scripts/dream-pass.sh` / `.cmd` | `0` OK · `1` NO-ARTIFACT · `2` VIOLATION · `3` REFUSED · `4` COMMIT-FAILED · `5` CHECK-FAILED · `64` unknown `VAULT_AGENT` · `70` TRIPWIRE-ERROR · `75` LOCKED · `78` TRIPWIRE · `124` TIMEOUT · `125` STALLED · `127` `claude`, wrapper or Git Bash not found · otherwise the agent's code | `.claude/logs/dream-agent.log` · agent output in `dream-agent.run.log` · `dream-pass.git-state.txt` · `dream-pass.prompt.md` in command mode · `runner-tripwire` after a contained violation or a `KILL_FAILED` stop · `dream-pass.interrupted.run` in the state directory after a signal or a `KILL_FAILED` stop, or when the run log could not be written |
+| `.claude/scripts/promotion-pass.sh` / `.cmd` | `0` OK · `1` NO-ARTIFACT · `2` VIOLATION · `3` REFUSED · `4` COMMIT-FAILED · `5` CHECK-FAILED · `64` unknown `VAULT_AGENT` · `70` TRIPWIRE-ERROR · `75` LOCKED · `78` TRIPWIRE · `124` TIMEOUT · `125` STALLED · `127` `claude`, wrapper or Git Bash not found · otherwise the agent's code | `.claude/logs/promotion-agent.log` · agent output added to `promotion-agent.run.log` · `promotion-pass.git-state.txt` · `promotion-pass.prompt.md` in command mode · `runner-tripwire` after a contained violation or a `KILL_FAILED` stop · `promotion-pass.interrupted.run` in the state directory after a signal or a `KILL_FAILED` stop, or when the run log could not be written |
 | `.claude/githooks/pre-commit` | `vault-check.sh`'s status: `0` commit proceeds · `1` commit refused | stdout/stderr only |
 | `dream-agent` | n/a (agent) | one file: `20-projects/_logs/dream-<YYYY-MM-DD>.md` |
 | `promotion-agent` | n/a (agent) | `31-standards/`, `40-llm-wiki/wiki/`, optionally `20-projects/_logs/promotion-*.md`, committed by its runner |
