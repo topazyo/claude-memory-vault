@@ -818,6 +818,7 @@ case "${FAKE_MODE:-nothing}" in
                   git -c user.name=sync -c user.email=sync@example.invalid -c commit.gpgsign=false \
                     commit -q --no-verify -m "sync plugin" -- "$j" >/dev/null 2>&1 ;;
   ignoredjournal) printf -- '---\ntier: medium\ntype: project-log\n---\n\nignored\n' > "20-projects/_logs/dream-$(date +%F)-ignored.md" ;;
+  globjournal)    printf -- '---\ntier: medium\ntype: project-log\n---\n\nbracketed\n' > "20-projects/_logs/dream-[g]lob.md" ;;
   promote-edit)   printf 'promoted\n' >> "31-standards/existing.md"
                   printf 'PROMOTION-SUMMARY: promoted=1 pending=0\n' ;;
   promote-unique) printf -- '---\ntier: long\ntype: standard\n---\n\nunique\n' > "31-standards/promoted-unique.md"
@@ -1917,6 +1918,33 @@ if [ "$RV_GIT" -eq 1 ]; then
   git -C "$RV" rm -q --cached -- 31-standards/staged-bad.md
   rm -f "$RV/10-daily/unrelated-bad.md" "$RV/31-standards/staged-bad.md"
 
+  # Git reads a path after -- as a pattern, so a journal named dream-[g]lob.md
+  # would also match someone's dirty dream-glob.md. The runner's git calls must
+  # take each path literally, or the human's edit is committed as the pass's.
+  printf -- '---\ntier: medium\ntype: project-log\n---\n\nsibling\n' > "$RV/20-projects/_logs/dream-glob.md"
+  settle_owned "$RV"
+  printf 'a human edit\n' >> "$RV/20-projects/_logs/dream-glob.md"
+  commit_case commit-literal-paths
+  expect_rc "dream-pass: a bracketed journal name next to a dirty sibling journal -> OK" 0 \
+    "$(RUNNER_NO_SETTLE=1 runner dream-pass.sh globjournal)"
+  if [ "$(git -C "$RV" diff-tree --no-commit-id --name-only -r HEAD)" = '20-projects/_logs/dream-[g]lob.md' ] \
+     && [ "$(git -C "$RV" status --porcelain -- 20-projects/_logs/dream-glob.md)" = ' M 20-projects/_logs/dream-glob.md' ] \
+     && ! git -C "$RV" show HEAD:20-projects/_logs/dream-glob.md 2>/dev/null | grep -q 'a human edit'; then
+    ok "the bracketed journal alone is committed, and the dirty sibling it matches as a pattern stays uncommitted"
+  else
+    bad "a bracketed path reached another file -- committed: $(git -C "$RV" diff-tree --no-commit-id --name-only -r HEAD | tr '\n' ' ') sibling: $(git -C "$RV" status --porcelain -- 20-projects/_logs/dream-glob.md)"
+  fi
+  git -C "$RV" checkout -q -- 20-projects/_logs/dream-glob.md
+  # Git refuses to combine the literal setting with an inherited pathspec
+  # setting, so the runner turns those off rather than fail every commit.
+  commit_case commit-inherited-pathspecs
+  expect_rc "dream-pass: the environment sets GIT_ICASE_PATHSPECS=1 -> OK" 0 "$(runner dream-pass.sh journal GIT_ICASE_PATHSPECS=1)"
+  if grep -q 'COMMITTED:' "$RV_LOG"; then
+    ok "an inherited pathspec setting does not stop the journal commit"
+  else
+    bad "an inherited pathspec setting stopped the journal commit -- log: $(tr '\n' '|' < "$RV_LOG")"
+  fi
+
   # A journal someone was already editing is not committed over.
   settle_owned "$RV"
   printf 'a human edit\n' >> "$RV/$today_journal"
@@ -2174,7 +2202,9 @@ if [ "$RV_GIT" -eq 1 ]; then
   settle_owned "$RV"
   cj_head="$(git -C "$RV" rev-parse HEAD)"
   new_case_state commit-ignored
-  expect_rc "dream-pass: git ignores the journal -> OK" 0 "$(runner dream-pass.sh ignoredjournal)"
+  # GIT_LITERAL_PATHSPECS=1 from the environment too, because check-ignore
+  # refuses it and a refusal must not read as "not ignored".
+  expect_rc "dream-pass: git ignores the journal -> OK" 0 "$(runner dream-pass.sh ignoredjournal GIT_LITERAL_PATHSPECS=1)"
   if [ "$(git -C "$RV" rev-parse HEAD)" = "$cj_head" ] && grep -q 'is ignored by git, so it was not committed' "$RV_LOG"; then
     ok "an ignored journal is not committed, and the log notes it"
   else
