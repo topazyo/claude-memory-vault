@@ -674,7 +674,7 @@ printf '\n=== scheduled runners (fake claude) ===\n'
 
 RV="$TMP/runnervault"
 mkdir -p "$RV/.claude/scripts/lib" "$RV/.claude/agents" "$RV/20-projects/_logs" "$RV/31-standards" "$RV/40-llm-wiki/wiki"
-cp "$ROOT/.claude/scripts/dream-pass.sh" "$ROOT/.claude/scripts/promotion-pass.sh" "$RV/.claude/scripts/" 2>/dev/null
+cp "$ROOT/.claude/scripts/dream-pass.sh" "$ROOT/.claude/scripts/promotion-pass.sh" "$ROOT/.claude/scripts/vault-check.sh" "$RV/.claude/scripts/" 2>/dev/null
 cp "$ROOT/.claude/scripts/lib/runner-common.sh" "$RV/.claude/scripts/lib/" 2>/dev/null
 cp "$ROOT/.claude/agents/dream-agent.md" "$ROOT/.claude/agents/promotion-agent.md" "$RV/.claude/agents/" 2>/dev/null
 printf -- '---\ntier: long\ntype: standard\n---\n\nexisting\n' > "$RV/31-standards/existing.md"
@@ -690,6 +690,10 @@ if command -v git >/dev/null 2>&1 && git init -q "$RV" >/dev/null 2>&1 \
    && git -C "$RV" -c user.name=suite -c user.email=suite@example.invalid -c commit.gpgsign=false \
         commit -q -m init >/dev/null 2>&1; then
   RV_GIT=1
+  # The runners commit, and a CI machine has no identity of its own.
+  git -C "$RV" config user.name suite
+  git -C "$RV" config user.email suite@example.invalid
+  git -C "$RV" config commit.gpgsign false
 fi
 
 FAKE="$TMP/fake-claude"
@@ -702,7 +706,12 @@ if [ -n "${FAKE_RECORD:-}" ]; then
   [ -f "${1:-}" ] && cp "$1" "$FAKE_RECORD.prompt"
   printf '%s\n' "${CLAUDE_CODE_DISABLE_AUTO_MEMORY:-unset}" > "$FAKE_RECORD.automemory"
 fi
-journal() { mkdir -p 20-projects/_logs; printf 'journal\n' >> "20-projects/_logs/dream-$(date +%F).md"; }
+journal() {
+  j="20-projects/_logs/dream-$(date +%F).md"
+  mkdir -p 20-projects/_logs
+  [ -f "$j" ] || printf -- '---\ntier: medium\ntype: project-log\n---\n\n' > "$j"
+  printf 'journal\n' >> "$j"
+}
 case "${FAKE_MODE:-nothing}" in
   # Containment modes: each plants one way a steered pass could run code or
   # steer later sessions, next to a legitimate journal write.
@@ -798,10 +807,20 @@ case "${FAKE_MODE:-nothing}" in
   vaulthook)      journal
                   printf 'touch vaulthook-ran\n' >> .claude/githooks/pre-commit ;;
   journal)        journal ;;
-  memory)         printf 'journal\n' >> "20-projects/_logs/dream-$(date +%F).md"
+  memory)         journal
                   mkdir -p 90-auto-memory && printf 'planted\n' >> "90-auto-memory/note.md" ;;
-  stray)          printf 'journal\n' >> "20-projects/_logs/dream-$(date +%F).md"
+  stray)          journal
                   printf 'tampered\n' >> "31-standards/existing.md" ;;
+  badjournal)     printf 'no frontmatter\n' > "20-projects/_logs/dream-$(date +%F)-bad.md" ;;
+  rmjournal)      rm -f "20-projects/_logs/dream-$(date +%F).md" ;;
+  journalcommit)  journal
+                  git add -- "$j" >/dev/null 2>&1
+                  git -c user.name=sync -c user.email=sync@example.invalid -c commit.gpgsign=false \
+                    commit -q --no-verify -m "sync plugin" -- "$j" >/dev/null 2>&1 ;;
+  ignoredjournal) printf -- '---\ntier: medium\ntype: project-log\n---\n\nignored\n' > "20-projects/_logs/dream-$(date +%F)-ignored.md" ;;
+  globjournal)    printf -- '---\ntier: medium\ntype: project-log\n---\n\nbracketed\n' > "20-projects/_logs/dream-[g]lob.md" ;;
+  promote-edit)   printf 'promoted\n' >> "31-standards/existing.md"
+                  printf 'PROMOTION-SUMMARY: promoted=1 pending=0\n' ;;
   hang)           exec sleep 60 ;;
   summary)        printf 'did the work\nPROMOTION-SUMMARY: promoted=0 pending=1\n' ;;
   errors)         printf 'Error: something failed\n%.0s' $(seq 1 60) ;;
@@ -814,9 +833,37 @@ exit 0
 FAKE_EOF
 chmod +x "$FAKE"
 
+# settle_owned <vault>
+# Commits whatever an earlier case left in the areas a pass owns, so one case's
+# journal or note is not the next case's file that was already being edited.
+# RUNNER_NO_SETTLE=1 skips it for a case that sets up such a file on purpose.
+settle_owned() {
+  local v="$1" d f
+  local -a dirs files
+  dirs=()
+  files=()
+  [ "$RV_GIT" -eq 1 ] && [ -z "${RUNNER_NO_SETTLE:-}" ] || return 0
+  for d in 20-projects/_logs 31-standards 40-llm-wiki/wiki; do
+    [ -d "$v/$d" ] && dirs+=("$d")
+  done
+  [ "${#dirs[@]}" -gt 0 ] || return 0
+  [ -n "$(git -C "$v" status --porcelain --untracked-files=all -- "${dirs[@]}" 2>/dev/null)" ] || return 0
+  git -C "$v" add -A -- "${dirs[@]}" >/dev/null 2>&1
+  # The exact staged files, because a folder with nothing tracked in it fails
+  # as a commit pathspec.
+  while IFS= read -r f; do
+    [ -n "$f" ] && files+=("$f")
+  done <<EOF
+$(git -C "$v" diff --cached --name-only -- "${dirs[@]}" 2>/dev/null)
+EOF
+  [ "${#files[@]}" -gt 0 ] || return 0
+  git -C "$v" -c commit.gpgsign=false commit -q --no-verify -m settle -- "${files[@]}" >/dev/null 2>&1
+}
+
 runner() {  # runner <script> <mode> [extra env...]
   local script="$1" mode="$2"
   shift 2
+  settle_owned "${RUNNER_VAULT:-$RV}"
   # The harness variables are reset first so an exported VAULT_AGENT on the
   # machine running the suite cannot change which path a test exercises. Extra
   # assignments passed in "$@" come later, and env lets the later one win.
@@ -1661,6 +1708,418 @@ new_case_state marker-live-pid
 printf 'runner=promotion-pass\npid=%s\nstarted=now\n' "$$" > "$RV/.claude/logs/runner-inflight"
 expect_rc "a marker whose pid is alive, found under the run lock -> TRIPWIRE" 78 "$(runner dream-pass.sh journal)"
 tripwire_clear
+
+# --- runner commits ---
+#
+# The dream runner commits exactly the journal the pass changed, checked first and
+# with trailers, and leaves every other file in the index and the work tree as it
+# found it. A file someone was already editing is never committed over.
+
+printf '\n=== scheduled runners: commits ===\n'
+
+# The dirty-path intersection must not read an empty first list as "every path".
+: > "$TMP/pib-empty"
+printf 'a\nb\n' > "$TMP/pib-list"
+printf 'b\nc\n' > "$TMP/pib-other"
+pib_empty="$( . "$ROOT/.claude/scripts/lib/runner-common.sh" && paths_in_both "$TMP/pib-empty" "$TMP/pib-list" | tr '\n' '|')"
+pib_full="$( . "$ROOT/.claude/scripts/lib/runner-common.sh" && paths_in_both "$TMP/pib-other" "$TMP/pib-list" | tr '\n' '|')"
+if [ -z "$pib_empty" ] && [ "$pib_full" = 'b|' ]; then
+  ok "paths_in_both finds nothing against an empty list, and only the shared path against another"
+else
+  bad "paths_in_both misjudged the lists -- against empty: $pib_empty, against another: $pib_full"
+fi
+
+# Both sides of a staged rename are dirty, because either may be someone's edit.
+if command -v git >/dev/null 2>&1; then
+  GDP="$TMP/dirty-rename"
+  rm -rf "$GDP" "$TMP/dirty-rename-hooks"
+  mkdir -p "$GDP/notes" "$TMP/dirty-rename-hooks"
+  git init -q "$GDP" >/dev/null 2>&1
+  printf 'x\n' > "$GDP/notes/old name.md"
+  git -C "$GDP" add -A >/dev/null 2>&1
+  git -C "$GDP" -c user.name=s -c user.email=s@example.invalid -c commit.gpgsign=false commit -q -m init >/dev/null 2>&1
+  git -C "$GDP" mv "notes/old name.md" "notes/new name.md" >/dev/null 2>&1
+  printf 'y\n' > "$GDP/notes/untracked.md"
+  gdp_got="$( . "$ROOT/.claude/scripts/lib/runner-common.sh" && git_dirty_paths "$GDP" "$TMP/dirty-rename-hooks" "$TMP/dirty-rename.out" && tr '\n' '|' < "$TMP/dirty-rename.out")"
+  if [ "$gdp_got" = 'notes/new name.md|notes/old name.md|notes/untracked.md|' ]; then
+    ok "git_dirty_paths lists both sides of a staged rename and an untracked file"
+  else
+    bad "git_dirty_paths missed a side of a rename -- got: $gdp_got"
+  fi
+  rm -rf "$GDP" "$TMP/dirty-rename-hooks" "$TMP/dirty-rename.out"
+fi
+
+# vault-check refuses an option it does not know, rather than reading it as a note.
+vco="$(bash "$ROOT/.claude/scripts/vault-check.sh" --stale 2>&1)"
+vco_rc=$?
+if [ "$vco_rc" -eq 1 ] && printf '%s\n' "$vco" | grep -q 'unknown option --stale'; then
+  ok "vault-check refuses an unknown option"
+else
+  bad "vault-check accepted an unknown option (rc $vco_rc)"
+fi
+
+# No runner stages everything or skips hooks, outside comments.
+if awk '!/^[ \t]*#/ && /add -A|add --all|add -u|add \.|commit -a|commit --all|--no-verify/ { found = 1 } END { exit !found }' \
+     "$ROOT/.claude/scripts/dream-pass.sh" "$ROOT/.claude/scripts/promotion-pass.sh" "$ROOT/.claude/scripts/lib/runner-common.sh"; then
+  bad "a runner stages everything or commits with --no-verify"
+else
+  ok "no runner stages everything or commits with --no-verify"
+fi
+
+# vault-check on named notes checks exactly those, wherever they are, and fails a
+# name that is not a file.
+VCA="$TMP/vc-args"
+rm -rf "$VCA"
+mkdir -p "$VCA/10-daily" "$VCA/elsewhere"
+printf -- '---\ntier: short\ntype: daily\n---\n\nok\n' > "$VCA/10-daily/good.md"
+printf 'no frontmatter\n' > "$VCA/10-daily/bad.md"
+printf -- '---\ntier: short\ntype: daily\n---\n\nok\n' > "$VCA/elsewhere/named.md"
+vca_one="$(CLAUDE_PROJECT_DIR="$VCA" bash "$ROOT/.claude/scripts/vault-check.sh" -- 10-daily/good.md 2>&1)"
+vca_one_rc=$?
+vca_three="$(CLAUDE_PROJECT_DIR="$VCA" bash "$ROOT/.claude/scripts/vault-check.sh" 10-daily/good.md "$VCA/10-daily/bad.md" elsewhere/named.md 2>&1)"
+vca_three_rc=$?
+vca_gone="$(CLAUDE_PROJECT_DIR="$VCA" bash "$ROOT/.claude/scripts/vault-check.sh" -- 10-daily/good.md 10-daily/missing.md 2>&1)"
+vca_gone_rc=$?
+if [ "$vca_one_rc" -eq 0 ] && printf '%s\n' "$vca_one" | grep -q '0 violation(s) across 1 file(s)' \
+   && [ "$vca_three_rc" -eq 1 ] && printf '%s\n' "$vca_three" | grep -q '1 violation(s) across 3 file(s)' \
+   && [ "$vca_gone_rc" -eq 1 ] && printf '%s\n' "$vca_gone" | grep -q 'missing.md is not a readable file'; then
+  ok "vault-check checks only the named notes, relative or absolute, and fails a name that is not a file"
+else
+  bad "vault-check on named notes -- one: rc $vca_one_rc, three: rc $vca_three_rc, missing: rc $vca_gone_rc $(printf '%s' "$vca_gone" | tr '\n' '|')"
+fi
+rm -rf "$VCA"
+
+# make_runner_vault <dir>: a minimal vault holding the dream runner and its agent.
+make_runner_vault() {
+  rm -rf "$1"
+  mkdir -p "$1/.claude/scripts/lib" "$1/.claude/agents" "$1/20-projects/_logs"
+  cp "$RV/.claude/scripts/dream-pass.sh" "$RV/.claude/scripts/vault-check.sh" "$1/.claude/scripts/"
+  cp "$RV/.claude/scripts/lib/runner-common.sh" "$1/.claude/scripts/lib/"
+  cp "$RV/.claude/agents/dream-agent.md" "$1/.claude/agents/"
+}
+
+# A vault that is not a git repository still passes, and the log says nothing
+# was committed.
+NGV="$TMP/nogit-vault"
+make_runner_vault "$NGV"
+if command -v git >/dev/null 2>&1 && git -C "$NGV" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  printf '  SKIP  non-git vault: the temporary folder is inside a git work tree (not counted)\n'
+else
+  new_case_state nogit
+  expect_rc "dream-pass: a vault that is not a git repository -> OK" 0 "$(RUNNER_VAULT="$NGV" runner dream-pass.sh journal)"
+  if grep -q "not a git repository, so the pass's files were not committed" "$NGV/.claude/logs/dream-agent.log" 2>/dev/null; then
+    ok "a non-git vault notes that the journal was not committed"
+  else
+    bad "a non-git vault did not say the journal was not committed"
+  fi
+fi
+rm -rf "$NGV"
+
+if command -v git >/dev/null 2>&1; then
+  # A vault that has a .git git cannot read is a repository that must not pass as
+  # none.
+  BGV="$TMP/broken-git-vault"
+  make_runner_vault "$BGV"
+  printf 'gitdir: %s\n' "$TMP/no-such-git-dir" > "$BGV/.git"
+  new_case_state broken-git
+  expect_rc "dream-pass: a vault whose .git git cannot read -> refused" 1 "$(RUNNER_VAULT="$BGV" runner dream-pass.sh journal)"
+  if grep -q 'git could not read this vault' "$BGV/.claude/logs/dream-agent.log" 2>/dev/null; then
+    ok "a repository git cannot read stops the run, and the log quotes git"
+  else
+    bad "a repository git cannot read was not reported"
+  fi
+  rm -rf "$BGV"
+
+  # A vault that is a folder inside a larger repository, such as a home folder
+  # kept in git, is never committed into that repository.
+  OUTER="$TMP/outer-repo"
+  rm -rf "$OUTER"
+  make_runner_vault "$OUTER/vault"
+  printf 'outer\n' > "$OUTER/README"
+  if git init -q "$OUTER" >/dev/null 2>&1 && git -C "$OUTER" add -A >/dev/null 2>&1 \
+     && git -C "$OUTER" -c user.name=s -c user.email=s@example.invalid -c commit.gpgsign=false commit -q -m init >/dev/null 2>&1; then
+    outer_head="$(git -C "$OUTER" rev-parse HEAD)"
+    new_case_state subfolder-vault
+    expect_rc "dream-pass: a vault that is a folder inside a larger repository -> OK" 0 \
+      "$(RUNNER_NO_SETTLE=1 RUNNER_VAULT="$OUTER/vault" runner dream-pass.sh journal)"
+    if [ "$(git -C "$OUTER" rev-parse HEAD)" = "$outer_head" ] && [ -z "$(git -C "$OUTER" diff --cached --name-only)" ] \
+       && grep -q 'folder inside the larger repository' "$OUTER/vault/.claude/logs/dream-agent.log" 2>/dev/null; then
+      ok "a vault inside a larger repository commits nothing there, and the log says why"
+    else
+      bad "a vault inside a larger repository was committed into it, or the log did not say why"
+    fi
+  else
+    printf '  SKIP  vault inside a larger repository: the outer repository could not be committed (not counted)\n'
+  fi
+  rm -rf "$OUTER"
+fi
+
+if [ "$RV_GIT" -eq 1 ]; then
+  today_journal="20-projects/_logs/dream-$(date +%F).md"
+  RV_LOG="$RV/.claude/logs/dream-agent.log"
+  # A fresh state directory and an empty log, so no check passes on a line an
+  # earlier case wrote.
+  commit_case() {
+    new_case_state "$1"
+    : > "$RV_LOG"
+  }
+  commit_case commit-journal
+  expect_rc "dream-pass: journal written in a git vault -> OK" 0 "$(runner dream-pass.sh journal)"
+  cj_blob="$(git -C "$RV" rev-parse -q --verify "HEAD:$today_journal" 2>/dev/null)"
+  cj_msg="$(git -C "$RV" log -1 --format=%B 2>/dev/null)"
+  if [ -n "$cj_blob" ] && printf '%s\n' "$cj_msg" | grep -qx 'Vault-Pass: dream' \
+     && printf '%s\n' "$cj_msg" | grep -qxF "Vault-Pass-Blob: $cj_blob $today_journal" \
+     && [ "$(git -C "$RV" diff-tree --no-commit-id --name-only -r HEAD)" = "$today_journal" ] \
+     && [ -z "$(git -C "$RV" status --porcelain -- "$today_journal")" ]; then
+    ok "the journal alone is committed, with Vault-Pass and a Vault-Pass-Blob trailer that matches HEAD"
+  else
+    bad "the journal commit is wrong -- message: $(printf '%s' "$cj_msg" | tr '\n' '|')"
+  fi
+
+  # An unrelated note that fails vault-check, one untracked and one staged, is
+  # neither checked, committed nor unstaged.
+  mkdir -p "$RV/10-daily"
+  printf 'no frontmatter\n' > "$RV/10-daily/unrelated-bad.md"
+  printf 'no frontmatter\n' > "$RV/31-standards/staged-bad.md"
+  git -C "$RV" add -- 31-standards/staged-bad.md
+  commit_case commit-unrelated
+  expect_rc "dream-pass: an unrelated failing note is untracked and another is staged -> OK" 0 \
+    "$(RUNNER_NO_SETTLE=1 runner dream-pass.sh journal)"
+  if [ "$(git -C "$RV" diff-tree --no-commit-id --name-only -r HEAD)" = "$today_journal" ] \
+     && [ "$(git -C "$RV" diff --cached --name-only)" = 31-standards/staged-bad.md ] \
+     && [ "$(git -C "$RV" status --porcelain -- 10-daily/unrelated-bad.md)" = '?? 10-daily/unrelated-bad.md' ]; then
+    ok "the commit holds only the journal, and the unrelated notes stay untracked and staged"
+  else
+    bad "the runner's commit touched unrelated notes -- staged now: $(git -C "$RV" diff --cached --name-only | tr '\n' ' ')"
+  fi
+  git -C "$RV" rm -q --cached -- 31-standards/staged-bad.md
+  rm -f "$RV/10-daily/unrelated-bad.md" "$RV/31-standards/staged-bad.md"
+
+  # Git reads a path after -- as a pattern, so a journal named dream-[g]lob.md
+  # would also match someone's dirty dream-glob.md. The runner's git calls must
+  # take each path literally, or the human's edit is committed as the pass's.
+  printf -- '---\ntier: medium\ntype: project-log\n---\n\nsibling\n' > "$RV/20-projects/_logs/dream-glob.md"
+  settle_owned "$RV"
+  printf 'a human edit\n' >> "$RV/20-projects/_logs/dream-glob.md"
+  commit_case commit-literal-paths
+  expect_rc "dream-pass: a bracketed journal name next to a dirty sibling journal -> OK" 0 \
+    "$(RUNNER_NO_SETTLE=1 runner dream-pass.sh globjournal)"
+  if [ "$(git -C "$RV" diff-tree --no-commit-id --name-only -r HEAD)" = '20-projects/_logs/dream-[g]lob.md' ] \
+     && [ "$(git -C "$RV" status --porcelain -- 20-projects/_logs/dream-glob.md)" = ' M 20-projects/_logs/dream-glob.md' ] \
+     && ! git -C "$RV" show HEAD:20-projects/_logs/dream-glob.md 2>/dev/null | grep -q 'a human edit'; then
+    ok "the bracketed journal alone is committed, and the dirty sibling it matches as a pattern stays uncommitted"
+  else
+    bad "a bracketed path reached another file -- committed: $(git -C "$RV" diff-tree --no-commit-id --name-only -r HEAD | tr '\n' ' ') sibling: $(git -C "$RV" status --porcelain -- 20-projects/_logs/dream-glob.md)"
+  fi
+  git -C "$RV" checkout -q -- 20-projects/_logs/dream-glob.md
+  # Git refuses to combine the literal setting with an inherited pathspec
+  # setting, so the runner turns those off rather than fail every commit.
+  commit_case commit-inherited-pathspecs
+  expect_rc "dream-pass: the environment sets GIT_ICASE_PATHSPECS=1 -> OK" 0 "$(runner dream-pass.sh journal GIT_ICASE_PATHSPECS=1)"
+  if grep -q 'COMMITTED:' "$RV_LOG"; then
+    ok "an inherited pathspec setting does not stop the journal commit"
+  else
+    bad "an inherited pathspec setting stopped the journal commit -- log: $(tr '\n' '|' < "$RV_LOG")"
+  fi
+
+  # A journal someone was already editing is not committed over.
+  settle_owned "$RV"
+  printf 'a human edit\n' >> "$RV/$today_journal"
+  cj_head="$(git -C "$RV" rev-parse HEAD)"
+  commit_case commit-predirty
+  expect_rc "dream-pass: the pass appends to a journal with uncommitted changes -> VIOLATION" 2 \
+    "$(RUNNER_NO_SETTLE=1 runner dream-pass.sh journal)"
+  if [ "$(git -C "$RV" rev-parse HEAD)" = "$cj_head" ] && grep -q 'a human edit' "$RV/$today_journal" \
+     && grep -q 'already had uncommitted changes' "$RV_LOG"; then
+    ok "a journal with uncommitted changes is left as it is and nothing is committed"
+  else
+    bad "a journal with uncommitted changes was committed, or the log did not say why"
+  fi
+
+  # The promotion runner gives the same answer for a long-tier note.
+  settle_owned "$RV"
+  printf 'a human edit\n' >> "$RV/31-standards/existing.md"
+  new_case_state promotion-predirty
+  : > "$RV/.claude/logs/promotion-agent.log"
+  expect_rc "promotion-pass: the pass edits a long-tier note with uncommitted changes -> VIOLATION" 2 \
+    "$(RUNNER_NO_SETTLE=1 runner promotion-pass.sh promote-edit)"
+  if grep -q 'already had uncommitted changes' "$RV/.claude/logs/promotion-agent.log" 2>/dev/null; then
+    ok "the promotion runner reports a long-tier note that already had uncommitted changes"
+  else
+    bad "the promotion runner did not report a note that already had uncommitted changes"
+  fi
+  git -C "$RV" checkout -q -- 31-standards/existing.md
+
+  # A git operation in progress or a detached HEAD stops the run before the agent.
+  settle_owned "$RV"
+  git -C "$RV" rev-parse HEAD > "$RV/.git/MERGE_HEAD"
+  commit_case git-merging
+  rm -f "$REC.argv"
+  expect_rc "dream-pass: a merge is in progress -> LOCKED" 75 "$(runner dream-pass.sh journal FAKE_RECORD="$REC")"
+  if [ ! -f "$REC.argv" ] && grep -q 'git operation is in progress' "$RV_LOG"; then
+    ok "a merge in progress never starts the agent, and the log names it"
+  else
+    bad "a merge in progress started the agent, or the log did not say why"
+  fi
+  rm -f "$RV/.git/MERGE_HEAD"
+  cj_branch="$(git -C "$RV" symbolic-ref -q --short HEAD)"
+  if [ -n "$cj_branch" ] && git -C "$RV" checkout -q --detach >/dev/null 2>&1; then
+    commit_case git-detached
+    expect_rc "dream-pass: HEAD is detached -> LOCKED" 75 "$(runner dream-pass.sh journal)"
+    git -C "$RV" checkout -q "$cj_branch"
+    if grep -q 'HEAD is detached' "$RV_LOG"; then
+      ok "a detached HEAD is named as the reason"
+    else
+      bad "a detached HEAD stopped the run without saying why"
+    fi
+  else
+    printf '  SKIP  detached HEAD: the test vault could not be detached (not counted)\n'
+  fi
+
+  # A commit that fails, here because signing fails, leaves nothing staged.
+  git -C "$RV" config commit.gpgsign true
+  git -C "$RV" config gpg.program false
+  commit_case commit-sign-fails
+  settle_owned "$RV"
+  cj_head="$(git -C "$RV" rev-parse HEAD)"
+  expect_rc "dream-pass: signing the journal commit fails -> COMMIT-FAILED" 4 "$(runner dream-pass.sh journal)"
+  if [ "$(git -C "$RV" rev-parse HEAD)" = "$cj_head" ] && [ -z "$(git -C "$RV" diff --cached --name-only)" ] \
+     && grep -q 'COMMIT-FAILED: git commit exited' "$RV_LOG" && ! grep -q 'could not be taken back out of the index' "$RV_LOG"; then
+    ok "a failed commit leaves the journal uncommitted and unstaged, and the log says so"
+  else
+    bad "a failed commit left something staged or committed -- staged: $(git -C "$RV" diff --cached --name-only | tr '\n' ' ')"
+  fi
+  git -C "$RV" config commit.gpgsign false
+  # The journal that failed run left behind is the runner's own, so the next run,
+  # the same day and with nothing settled in between, commits it with its own
+  # addition instead of taking it for someone's edit. The record lives in the
+  # state directory, so the rerun keeps the failed run's.
+  : > "$RV_LOG"
+  expect_rc "dream-pass: the run after a failed commit, same day -> OK" 0 "$(RUNNER_NO_SETTLE=1 runner dream-pass.sh journal)"
+  if [ "$(git -C "$RV" diff-tree --no-commit-id --name-only -r HEAD)" = "$today_journal" ] \
+     && [ -z "$(git -C "$RV" status --porcelain -- "$today_journal")" ]; then
+    ok "the journal a failed commit left behind is committed by the next run"
+  else
+    bad "the journal a failed commit left behind was not committed by the next run"
+  fi
+  # A signing program that never returns is stopped at RUNNER_GIT_TIMEOUT.
+  printf '#!/bin/sh\nsleep 20\n' > "$TMP/gpg-hang"
+  chmod +x "$TMP/gpg-hang"
+  git -C "$RV" config commit.gpgsign true
+  git -C "$RV" config gpg.program "$TMP/gpg-hang"
+  commit_case commit-sign-hangs
+  hang_start="$(date +%s)"
+  expect_rc "dream-pass: signing the journal commit hangs -> COMMIT-FAILED" 4 "$(runner dream-pass.sh journal RUNNER_GIT_TIMEOUT=3)"
+  hang_took=$(( $(date +%s) - hang_start ))
+  if [ "$hang_took" -lt 60 ] && grep -q 'did not finish within 3s' "$RV_LOG"; then
+    ok "a hung commit is stopped at RUNNER_GIT_TIMEOUT"
+  else
+    bad "a hung commit was not stopped in time (${hang_took}s)"
+  fi
+  # Whether the stopped commit could be unstaged depends on how the platform
+  # stopped git. The log must say which it was.
+  if [ -z "$(git -C "$RV" diff --cached --name-only)" ] || grep -q 'could not be taken back out of the index' "$RV_LOG"; then
+    ok "a hung commit leaves the journal unstaged, or the log says it could not"
+  else
+    bad "a hung commit left the journal staged without saying so"
+  fi
+  git -C "$RV" config --unset gpg.program
+  git -C "$RV" config commit.gpgsign false
+  rm -f "$RV/.git/index.lock"
+  git -C "$RV" reset -q -- "$today_journal" 2>/dev/null
+  # A journal edited after the failed run is someone's edit now, not the runner's
+  # leftover.
+  printf 'a human fix\n' >> "$RV/$today_journal"
+  cj_head="$(git -C "$RV" rev-parse HEAD)"
+  : > "$RV_LOG"
+  if [ -s "$CASE_STATE/dream-pass.uncommitted" ]; then
+    ok "a journal a stopped commit left behind is recorded in the state directory"
+  else
+    bad "a journal a stopped commit left behind was not recorded"
+  fi
+  expect_rc "dream-pass: the run after a failed commit, with the journal edited since -> VIOLATION" 2 \
+    "$(RUNNER_NO_SETTLE=1 runner dream-pass.sh journal)"
+  if [ "$(git -C "$RV" rev-parse HEAD)" = "$cj_head" ] && grep -q 'a human fix' "$RV/$today_journal" \
+     && grep -q 'already had uncommitted changes' "$RV_LOG"; then
+    ok "a leftover journal edited since the failed run is treated as someone's edit"
+  else
+    bad "a leftover journal edited since the failed run was committed"
+  fi
+
+  # The commit runs no hooks, because hook managers read ordinary files a pass
+  # can write. vault-check on the journal is the gate instead.
+  settle_owned "$RV"
+  mkdir -p "$TMP/vault-hooks"
+  printf '#!/bin/sh\ntouch "%s"\n' "$TMP/vault-hook-ran" > "$TMP/vault-hooks/pre-commit"
+  cp "$TMP/vault-hooks/pre-commit" "$TMP/vault-hooks/commit-msg"
+  chmod +x "$TMP/vault-hooks/pre-commit" "$TMP/vault-hooks/commit-msg"
+  rm -f "$TMP/vault-hook-ran"
+  git -C "$RV" config core.hooksPath "$TMP/vault-hooks"
+  commit_case commit-no-hooks
+  expect_rc "dream-pass: the vault has commit hooks configured -> OK" 0 "$(runner dream-pass.sh journal)"
+  if [ ! -e "$TMP/vault-hook-ran" ] && [ "$(git -C "$RV" diff-tree --no-commit-id --name-only -r HEAD)" = "$today_journal" ]; then
+    ok "the runner's commit runs none of the vault's hooks"
+  else
+    bad "the runner's commit ran a vault hook, or made no commit"
+  fi
+  git -C "$RV" config --unset core.hooksPath
+  rm -rf "$TMP/vault-hooks" "$TMP/vault-hook-ran"
+
+  # A journal the pass removed is not a file to commit.
+  settle_owned "$RV"
+  cj_head="$(git -C "$RV" rev-parse HEAD)"
+  commit_case commit-removed
+  expect_rc "dream-pass: the pass removes today's journal -> VIOLATION" 2 "$(runner dream-pass.sh rmjournal)"
+  if [ "$(git -C "$RV" rev-parse HEAD)" = "$cj_head" ] && grep -q 'is not a regular file after the pass' "$RV_LOG"; then
+    ok "a removed journal commits nothing, and the log says why"
+  else
+    bad "a removed journal was committed, or the log did not say why"
+  fi
+  git -C "$RV" checkout -q -- "$today_journal"
+
+  # A journal something else committed during the pass, such as a sync plugin,
+  # leaves nothing to commit.
+  commit_case commit-already
+  expect_rc "dream-pass: the journal is committed by something else during the pass -> OK" 0 "$(runner dream-pass.sh journalcommit)"
+  if grep -q 'HEAD already holds' "$RV_LOG" && git -C "$RV" log -1 --format=%s | grep -q 'sync plugin'; then
+    ok "a journal already in HEAD is noted, and no second commit is made"
+  else
+    bad "a journal already in HEAD was not noted, or was committed again"
+  fi
+
+  # A journal that fails vault-check is left in place and not committed.
+  settle_owned "$RV"
+  cj_head="$(git -C "$RV" rev-parse HEAD)"
+  new_case_state commit-check-fails
+  expect_rc "dream-pass: the journal fails vault-check -> CHECK-FAILED" 5 "$(runner dream-pass.sh badjournal)"
+  if [ "$(git -C "$RV" rev-parse HEAD)" = "$cj_head" ] && [ -f "$RV/20-projects/_logs/dream-$(date +%F)-bad.md" ] \
+     && [ -z "$(git -C "$RV" diff --cached --name-only)" ] && grep -q 'CHECK-FAILED' "$RV_LOG"; then
+    ok "a journal that fails vault-check stays in place, uncommitted, and the log shows the check"
+  else
+    bad "a journal that fails vault-check was committed, removed or not reported"
+  fi
+  rm -f "$RV/20-projects/_logs/dream-$(date +%F)-bad.md"
+
+  # A journal git ignores is not committed, and the pass still succeeds.
+  mkdir -p "$RV/.git/info"
+  cp "$RV/.git/info/exclude" "$TMP/exclude-before" 2>/dev/null || : > "$TMP/exclude-before"
+  printf '20-projects/_logs/dream-*-ignored.md\n' >> "$RV/.git/info/exclude"
+  settle_owned "$RV"
+  cj_head="$(git -C "$RV" rev-parse HEAD)"
+  new_case_state commit-ignored
+  # GIT_LITERAL_PATHSPECS=1 from the environment too, because check-ignore
+  # refuses it and a refusal must not read as "not ignored".
+  expect_rc "dream-pass: git ignores the journal -> OK" 0 "$(runner dream-pass.sh ignoredjournal GIT_LITERAL_PATHSPECS=1)"
+  if [ "$(git -C "$RV" rev-parse HEAD)" = "$cj_head" ] && grep -q 'is ignored by git, so it was not committed' "$RV_LOG"; then
+    ok "an ignored journal is not committed, and the log notes it"
+  else
+    bad "an ignored journal was committed, or not noted"
+  fi
+  cp "$TMP/exclude-before" "$RV/.git/info/exclude"
+  rm -f "$RV/20-projects/_logs/dream-$(date +%F)-ignored.md"
+else
+  printf '  SKIP  runner commits: git is unavailable or the test vault could not be committed (not counted)\n'
+fi
 
 # --- run lock ---
 #
