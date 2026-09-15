@@ -1303,6 +1303,111 @@ else
 fi
 rm -f "$RV/.claude/logs/dream-agent.run.log"
 
+# append_run_log, called directly. A link at the run-log path is removed and
+# never followed, so a link to a directory gets nothing moved into it.
+rl="$TMP/runlog-direct"
+mkdir -p "$rl/logs" "$rl/elsewhere"
+printf '{"line":1}\n' > "$rl/run"
+if ln -s "$rl/elsewhere" "$rl/logs/agent.run.log" 2>/dev/null && [ -L "$rl/logs/agent.run.log" ]; then
+  ( . "$RV/.claude/scripts/lib/runner-common.sh"
+    append_run_log "$rl/run" "$rl/logs/agent.run.log" "$rl/log" )
+  if [ -z "$(ls -A "$rl/elsewhere")" ] && [ -f "$rl/logs/agent.run.log" ] && [ ! -L "$rl/logs/agent.run.log" ] \
+     && grep -q '"line":1' "$rl/logs/agent.run.log"; then
+    ok "a run log that is a link to a directory is replaced by a file, and nothing is moved into the directory"
+    ran run-log-dirlink
+  else
+    bad "the run output went through a link to a directory -- directory: [$(ls -A "$rl/elsewhere" | tr '\n' ' ')] log: [$(tr '\n' '|' < "$rl/log" 2>/dev/null)]"
+  fi
+else
+  skip run-log-dirlink 'a run log that is a link to a directory: ln -s does not create symlinks here'
+fi
+rm -rf "$rl/logs" "$rl/log"
+mkdir -p "$rl/logs"
+# A newest line longer than the cap keeps its end, instead of an empty log.
+head -c 1500 /dev/zero | tr '\0' 'y' > "$rl/run"
+printf '\n' >> "$rl/run"
+( . "$RV/.claude/scripts/lib/runner-common.sh"
+  export RUNNER_RUN_LOG_MAX_BYTES=1000
+  append_run_log "$rl/run" "$rl/logs/long.run.log" "$rl/log" )
+rl_long="$(wc -c < "$rl/logs/long.run.log" 2>/dev/null | tr -d ' ')"
+if [ "${rl_long:-0}" -gt 0 ] && [ "${rl_long:-0}" -le 1000 ] && grep -q 'yyy' "$rl/logs/long.run.log"; then
+  ok "a newest line longer than the cap keeps its end in the run log"
+else
+  bad "a newest line longer than the cap emptied the run log -- ${rl_long:-missing} bytes"
+fi
+# A cut that lands exactly on a line start keeps that line.
+awk 'BEGIN { s = sprintf("%97s", ""); gsub(/ /, "z", s); for (i = 1; i <= 30; i++) printf "%02d%s\n", i, s }' > "$rl/run"
+( . "$RV/.claude/scripts/lib/runner-common.sh"
+  export RUNNER_RUN_LOG_MAX_BYTES=1000
+  append_run_log "$rl/run" "$rl/logs/exact.run.log" "$rl/log" )
+if [ "$(awk 'END { print NR }' "$rl/logs/exact.run.log" 2>/dev/null)" = 10 ] && [ "$(head -c 2 "$rl/logs/exact.run.log")" = 21 ]; then
+  ok "a cut that lands on a line start keeps that whole line"
+else
+  bad "a cut on a line start dropped a line -- $(awk 'END { print NR }' "$rl/logs/exact.run.log" 2>/dev/null) lines, first [$(head -c 2 "$rl/logs/exact.run.log")]"
+fi
+# A stray temporary file from a runner stopped mid-append is removed, and its
+# name is not a steering surface.
+printf '{"line":1}\n' > "$rl/run"
+printf 'stray\n' > "$rl/logs/agent.run.log.AbC123"
+( . "$RV/.claude/scripts/lib/runner-common.sh"
+  append_run_log "$rl/run" "$rl/logs/agent.run.log" "$rl/log" )
+rl_steer="$( . "$RV/.claude/scripts/lib/runner-common.sh"
+  printf '.claude/logs/dream-agent.run.log.AbC123\n.claude/logs/dream-agent.run.log.AbC123x\n' | steering_filter )"
+if [ ! -e "$rl/logs/agent.run.log.AbC123" ] && [ "$rl_steer" = '.claude/logs/dream-agent.run.log.AbC123x' ]; then
+  ok "a stray run-log temporary file is removed, and only its exact name is left out of the fence"
+else
+  bad "a stray run-log temporary file stayed or is fenced -- exists: $([ -e "$rl/logs/agent.run.log.AbC123" ] && echo yes || echo no), steering: [$(printf '%s' "$rl_steer" | tr '\n' '|')]"
+fi
+# The run log keeps the mode it had, and a new one gets the umask's mode.
+rm -rf "$rl/logs" "$rl/log"
+mkdir -p "$rl/logs"
+printf 'old\n' > "$rl/logs/mode.run.log"
+chmod 640 "$rl/logs/mode.run.log" 2>/dev/null
+if [ "$(ls -ln "$rl/logs/mode.run.log" | cut -c2-10)" = 'rw-r-----' ]; then
+  ( . "$RV/.claude/scripts/lib/runner-common.sh"
+    umask 022
+    append_run_log "$rl/run" "$rl/logs/mode.run.log" "$rl/log"
+    append_run_log "$rl/run" "$rl/logs/new.run.log" "$rl/log" )
+  if [ "$(ls -ln "$rl/logs/mode.run.log" | cut -c2-10)" = 'rw-r-----' ] && [ "$(ls -ln "$rl/logs/new.run.log" | cut -c2-10)" = 'rw-r--r--' ]; then
+    ok "the run log keeps its mode, and a new run log gets the umask's mode"
+  else
+    bad "the run log's mode changed -- old log $(ls -ln "$rl/logs/mode.run.log" | cut -c1-10), new log $(ls -ln "$rl/logs/new.run.log" | cut -c1-10)"
+  fi
+else
+  skip runlog-mode 'the run log mode: chmod does not set these permission bits here'
+fi
+# An old run log that cannot be read is left as it was, and the call fails
+# loudly so the runner keeps the output elsewhere.
+printf 'history line\n' > "$rl/logs/hist.run.log"
+chmod 200 "$rl/logs/hist.run.log" 2>/dev/null
+if ! cat "$rl/logs/hist.run.log" > /dev/null 2>&1; then
+  ( . "$RV/.claude/scripts/lib/runner-common.sh"
+    append_run_log "$rl/run" "$rl/logs/hist.run.log" "$rl/log" )
+  rl_rc=$?
+  chmod 600 "$rl/logs/hist.run.log"
+  if [ "$rl_rc" -ne 0 ] && grep -q 'history line' "$rl/logs/hist.run.log" && ! grep -q '"line"' "$rl/logs/hist.run.log" \
+     && grep -q 'could not be read' "$rl/log" 2>/dev/null; then
+    ok "an unreadable run log keeps its history, and the failed append is logged and reported"
+  else
+    bad "an unreadable run log lost its history or failed silently -- rc $rl_rc, log: [$(tr '\n' '|' < "$rl/log" 2>/dev/null)]"
+  fi
+else
+  chmod 600 "$rl/logs/hist.run.log" 2>/dev/null
+  skip runlog-unreadable 'an unreadable run log: this user can read a mode 0200 file'
+fi
+# A runner whose run log cannot be written keeps the output in the state
+# directory and says so.
+new_case_state runlog-notfile
+mkdir -p "$RV/.claude/logs/dream-agent.run.log"
+expect_rc "dream-pass: journal written with a folder where the run log goes -> OK" 0 "$(runner dream-pass.sh journal)"
+if grep -q 'subtype":"init' "$CASE_STATE/dream-pass.interrupted.run" 2>/dev/null \
+   && grep -q 'is not a file, so the run output was not added to it' "$RV/.claude/logs/dream-agent.log"; then
+  ok "a run log that cannot be written leaves the output in the state directory, with a warning"
+else
+  bad "the output of a pass whose run log is a folder was lost -- kept: $([ -f "$CASE_STATE/dream-pass.interrupted.run" ] && echo yes || echo no)"
+fi
+rmdir "$RV/.claude/logs/dream-agent.run.log"
+
 # A silent pass is stopped with 125, and so is the grandchild it left behind.
 HB="$TMP/heartbeat"
 rm -f "$HB" "$HB.pid"
@@ -1399,6 +1504,7 @@ mkdir -p "$CASE_STATE" "$TMP/kill-failed-vault/.claude/logs"
 # A tripwire in the vault alone was written during the pass, so by the pass. It
 # is replaced, and the copy the pass cannot reach is written too.
 printf 'planted by the pass, delete this and the lock\n' > "$TMP/kill-failed-vault/.claude/logs/runner-tripwire"
+printf 'backup\n' > "$CASE_STATE/inflight-backup.tar"
 : > "$TMP/kill-failed.log"
 ( . "$RV/.claude/scripts/lib/runner-common.sh"
   # A pid no system hands out, because stop_tree really signals it.
@@ -1477,6 +1583,62 @@ if grep -q 'alive 999999999' "$CASE_STATE/runner-tripwire" 2>/dev/null \
 else
   bad "no tripwire was set for a failed stop when mktemp failed -- log: $(tr '\n' '|' < "$TMP/kill-failed-notmp.log" 2>/dev/null)"
 fi
+# No lock was held there, and no backup was made, so the tripwire says so and
+# does not tell the owner to delete a lock folder.
+if grep -q 'could not be marked KILL_FAILED' "$CASE_STATE/runner-tripwire" 2>/dev/null \
+   && ! grep -q 'the lock folder' "$CASE_STATE/runner-tripwire" && ! grep -q 'backup of the steering surfaces is kept' "$CASE_STATE/runner-tripwire" \
+   && grep -q 'No pre-pass backup' "$CASE_STATE/runner-tripwire"; then
+  ok "a tripwire for a lock that could not be marked, with no backup, says both and names no lock folder to delete"
+else
+  bad "the tripwire claims a marked lock or a kept backup that do not exist -- [$(tr '\n' '|' < "$CASE_STATE/runner-tripwire" 2>/dev/null)]"
+fi
+
+# When a temporary file is made but cannot be written, as in a full TMPDIR, the
+# report and the tripwire body are written in the state directory.
+new_case_state kill-failed-fulltmp
+mkdir -p "$CASE_STATE" "$TMP/kill-failed-fulltmp/.claude/logs" "$TMP/shim-mktemp-unwritable"
+printf '#!/bin/sh\nprintf "%%s\\n" "%s/no-such-folder/tmpfile"\n' "$TMP" > "$TMP/shim-mktemp-unwritable/mktemp"
+chmod +x "$TMP/shim-mktemp-unwritable/mktemp"
+( . "$RV/.claude/scripts/lib/runner-common.sh"
+  RUN_KILL_FAILED=1 RUN_KILL_REPORT='alive 999999999 survivor' CONTAINED=0
+  PATH="$TMP/shim-mktemp-unwritable:$PATH"
+  report_stop "$TMP/kill-failed-fulltmp.log" test-agent "$TMP/kill-failed-fulltmp" "$CASE_STATE" dream-pass )
+if grep -q 'alive 999999999' "$CASE_STATE/runner-tripwire" 2>/dev/null \
+   && grep -q 'alive 999999999' "$TMP/kill-failed-fulltmp/.claude/logs/runner-tripwire" 2>/dev/null \
+   && [ -z "$(ls "$CASE_STATE" | grep -E '^(kill-report|tripwire-body)\.')" ]; then
+  ok "a stop that leaves a process sets the tripwire when the temporary files cannot be written, and leaves none behind"
+else
+  bad "no tripwire was set when the temporary files could not be written -- state: [$(ls "$CASE_STATE" | tr '\n' ' ')] log: $(tr '\n' '|' < "$TMP/kill-failed-fulltmp.log" 2>/dev/null)"
+fi
+
+# Containment's tripwire in the vault alone, in this run, gets the report, and
+# the state directory gets a copy of it.
+new_case_state kill-failed-vaultonly
+mkdir -p "$CASE_STATE" "$TMP/kill-failed-vaultonly/.claude/logs"
+printf 'containment wrote this\n' > "$TMP/kill-failed-vaultonly/.claude/logs/runner-tripwire"
+( . "$RV/.claude/scripts/lib/runner-common.sh"
+  RUN_KILL_FAILED=1 RUN_KILL_REPORT='alive 999999999 survivor' CONTAINED=1
+  report_stop "$TMP/kill-failed-vaultonly.log" test-agent "$TMP/kill-failed-vaultonly" "$CASE_STATE" dream-pass )
+if grep -q 'containment wrote this' "$CASE_STATE/runner-tripwire" 2>/dev/null && grep -q 'alive 999999999' "$CASE_STATE/runner-tripwire" \
+   && grep -q 'containment wrote this' "$TMP/kill-failed-vaultonly/.claude/logs/runner-tripwire"; then
+  ok "containment's tripwire found only in the vault gets the stop's report and is copied to the state directory"
+else
+  bad "containment's vault-only tripwire was not reported and copied -- state: [$(tr '\n' '|' < "$CASE_STATE/runner-tripwire" 2>/dev/null)]"
+fi
+
+# Containment set the tripwire, but no copy is a regular file any more, so the
+# whole stop tripwire is written.
+new_case_state kill-failed-nocopy
+mkdir -p "$CASE_STATE" "$TMP/kill-failed-nocopy/.claude/logs"
+( . "$RV/.claude/scripts/lib/runner-common.sh"
+  RUN_KILL_FAILED=1 RUN_KILL_REPORT='alive 999999999 survivor' CONTAINED=1
+  report_stop "$TMP/kill-failed-nocopy.log" test-agent "$TMP/kill-failed-nocopy" "$CASE_STATE" dream-pass )
+if grep -q '^What the stop found:' "$CASE_STATE/runner-tripwire" 2>/dev/null \
+   && grep -q 'alive 999999999' "$TMP/kill-failed-nocopy/.claude/logs/runner-tripwire" 2>/dev/null; then
+  ok "a stop report with no tripwire copy left writes the whole stop tripwire"
+else
+  bad "a stop report with no tripwire copy left wrote nothing -- log: $(tr '\n' '|' < "$TMP/kill-failed-nocopy.log" 2>/dev/null)"
+fi
 
 # The Windows check has a time limit. A PowerShell that does not answer is
 # stopped, and the stop is recorded as unknown rather than waited on forever.
@@ -1550,13 +1712,21 @@ fi
 # a reaped command reaches only what is left of its process group, never the
 # pid itself, which may belong to another process by then.
 if ! is_windows_host; then
-  rm -f "$TMP/stopping.seen"
+  rm -f "$TMP/stopping.seen" "$TMP/stopping.leader"
+  # The trap exits, as the runners' handlers do, so the watchdog's stop is not
+  # run a second time. The signal is sent once the command itself has ended,
+  # which is when the stop has begun, and the stop's grace keeps it going.
   ( . "$RV/.claude/scripts/lib/runner-common.sh"
-    trap 'printf "%s %s\n" "${RUN_PID:-none}" "${RUN_REAPED:-0}" > "$TMP/stopping.seen"' USR1
-    WATCHDOG_POLL=1 WATCHDOG_GRACE=6 run_with_watchdog 1 "$TMP/stopping.out" \
-      bash -c '(trap "" TERM; exec sleep 20) & exec sleep 20' ) &
+    trap 'printf "%s %s\n" "${RUN_PID:-none}" "${RUN_REAPED:-0}" > "$TMP/stopping.seen"; exit 0' USR1
+    WATCHDOG_POLL=1 WATCHDOG_GRACE=8 run_with_watchdog 1 "$TMP/stopping.out" \
+      bash -c 'printf "%s\n" "$$" > "$1"; (trap "" TERM; exec sleep 20) & exec sleep 20' stopping "$TMP/stopping.leader" ) &
   st_sub=$!
-  sleep 4
+  st_wait=0
+  while [ "$st_wait" -lt 60 ] && { [ ! -s "$TMP/stopping.leader" ] || kill -0 "$(cat "$TMP/stopping.leader")" 2>/dev/null; }; do
+    sleep 1
+    st_wait=$((st_wait + 1))
+  done
+  sleep 1
   kill -USR1 "$st_sub" 2>/dev/null
   wait "$st_sub" 2>/dev/null
   st_seen="$(cat "$TMP/stopping.seen" 2>/dev/null)"
@@ -1581,11 +1751,13 @@ if ! is_windows_host; then
      && grep -qx -- "-TERM $rg_member" "$TMP/reaped-calls" \
      && ! grep -qE -- "(^| )-?$rg_pid\$" "$TMP/reaped-calls"; then
     ok "a stop of a reaped command signals the members left in its group, not its pid"
+    ran reaped-group
   else
     bad "a stop of a reaped command signalled its pid, or missed its group -- leader $rg_pid member $rg_member calls: $(tr '\n' '|' < "$TMP/reaped-calls")"
   fi
   [ -n "$rg_member" ] && kill -KILL "$rg_member" 2>/dev/null
 else
+  skip stopping "a signal during the watchdog's stop is offered the reaped command: not outside Windows"
   skip reaped-group 'stop of a reaped command by its process group: not outside Windows'
 fi
 
@@ -1597,6 +1769,19 @@ if [ "$rp_after" = "[]" ]; then
   ok "run_with_watchdog clears RUN_PID once the command has ended"
 else
   bad "run_with_watchdog left RUN_PID set to a reaped command -- got: $rp_after"
+fi
+# With no stop begun, RUN_PID is cleared before the idle watchdog is ended, so a
+# signal handler in that wait is not offered the reaped pid. The watchdog is
+# the one process the call signals by a bare pid.
+: > "$TMP/rp-kills"
+( . "$RV/.claude/scripts/lib/runner-common.sh"
+  kill() { printf '%s [%s]\n' "$*" "${RUN_PID:-}" >> "$TMP/rp-kills"; builtin kill "$@"; }
+  WATCHDOG_POLL=1 run_with_watchdog 10 "$TMP/run-pid.out" true )
+rp_plain="$(awk '$1 ~ /^[0-9]+$/' "$TMP/rp-kills")"
+if [ -n "$rp_plain" ] && ! printf '%s\n' "$rp_plain" | grep -qv '\[\]$'; then
+  ok "run_with_watchdog clears RUN_PID before it ends an idle watchdog"
+else
+  bad "RUN_PID was still set when the idle watchdog was ended -- kills: $(tr '\n' '|' < "$TMP/rp-kills")"
 fi
 
 # The suite's own guard. A lock marked KILL_FAILED, and the tripwire its stop
@@ -1759,8 +1944,13 @@ if is_windows_host; then
   # A process of the tree can start another between PowerShell's process list
   # and the stop. Each round of the stop lists again, so a child that carries the
   # nonce and started in that gap is stopped too, not left running and reported.
+  # Each fork child starts a sleep without the nonce. Git Bash starts it by exec,
+  # and the Windows process that did so exits at once, so no rule of the stop can
+  # link the sleep to the tree. The sleeps carry a mark of their own, so the
+  # cleanup below still ends them.
   wf_nonce="$( . "$RV/.claude/scripts/lib/runner-common.sh" && new_uuid)"
-  bash -c 'while :; do bash -c "sleep 60; :" fork-child "$1" & sleep 0.3; done' fork-spawner "$wf_nonce" 2>/dev/null &
+  wf_mark="60.$RANDOM$RANDOM"
+  bash -c 'while :; do bash -c "sleep $2; :" fork-child "$1" & sleep 0.3; done' fork-spawner "$wf_nonce" "$wf_mark" 2>/dev/null &
   wf_spawner=$!
   sleep 1
   : > "$TMP/win-fork.record"
@@ -1776,12 +1966,16 @@ if is_windows_host; then
   fi
   kill -KILL "$wf_spawner" 2>/dev/null
   wait "$wf_spawner" 2>/dev/null
-  VAULT_PROBE_NONCE="$wf_nonce" MSYS_NO_PATHCONV=1 powershell.exe -NoProfile -NonInteractive -Command '$n = $env:VAULT_PROBE_NONCE; Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -and $_.CommandLine.Contains($n) } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }' >/dev/null 2>&1
+  VAULT_PROBE_NONCE="$wf_nonce" VAULT_PROBE_MARK="$wf_mark" MSYS_NO_PATHCONV=1 powershell.exe -NoProfile -NonInteractive -Command '$n = $env:VAULT_PROBE_NONCE; $m = $env:VAULT_PROBE_MARK; Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -and ($_.CommandLine.Contains($n) -or $_.CommandLine.Contains($m)) } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }' >/dev/null 2>&1
 else
   skip win-sweep-report 'Windows nonce sweep report: not Git Bash on Windows'
   skip win-orphan-stop 'Windows stop of a wrapper child: not Git Bash on Windows'
   skip win-fork-stop 'Windows stop of a child started during the stop: not Git Bash on Windows'
   skip win-native-tree 'Windows stop of a native program and its child: not Git Bash on Windows'
+  skip win-survivor 'Windows stop records a surviving child: not Git Bash on Windows'
+  skip win-late 'Windows stop leaves a process that started after the listing: not Git Bash on Windows'
+  skip win-reaped 'Windows stop of a reaped command: not Git Bash on Windows'
+  skip win-kill-check "Git Bash's KILL checks the Windows id first: not Git Bash on Windows"
 fi
 
 # A process group is signalled only when the command leads its own group and
@@ -3527,7 +3721,7 @@ if [ "$RV_GIT" -eq 1 ]; then
     : > "$TMP/git-step/predirty"
     : > "$TMP/git-step.log"
     ( . "$RV/.claude/scripts/lib/runner-common.sh"
-      stop_tree() { : > "$3"; builtin kill -KILL "$1" 2>/dev/null; printf 'alive 999999999\n' >> "$3"; }
+      stop_tree() { : > "$3"; builtin kill -KILL -- "-$1" 2>/dev/null; builtin kill -KILL "$1" 2>/dev/null; printf 'alive 999999999\n' >> "$3"; }
       RUN_LOCK_WAIT=0
       run_lock_acquire "$TMP/state-git-step-kill" "$RV" dream-pass "$TMP/git-step.log" 1 || exit 9
       VAULT_GIT=1 RUNNER_GIT_TIMEOUT=2 WATCHDOG_POLL=1 WATCHDOG_GRACE=1 \
@@ -4099,8 +4293,10 @@ rm -rf "$CASE_STATE/run.lock"
 # which the owner needs to review what that process wrote.
 for s in dream-pass.sh promotion-pass.sh; do
   cc_line="$(grep -n '^  \[ "\$contain_rc" -eq 0 \] && CONTAINMENT_CHECKED=1' "$RV/.claude/scripts/$s" | head -n 1 | cut -d: -f1)"
-  rs_line="$(grep -n '^    report_stop ' "$RV/.claude/scripts/$s" | head -n 1 | cut -d: -f1)"
   cr_line="$(grep -n '^  contain_rc=\$?' "$RV/.claude/scripts/$s" | head -n 1 | cut -d: -f1)"
+  # The main body's report_stop, after containment. The signal handler calls it
+  # too, earlier in the file.
+  rs_line="$(awk -v from="${cr_line:-0}" 'NR > from && /^    report_stop / { print NR; exit }' "$RV/.claude/scripts/$s")"
   if [ -n "$cc_line" ] && [ -n "$rs_line" ] && [ -n "$cr_line" ] && [ "$cc_line" -eq $((cr_line + 1)) ] && [ "$cc_line" -lt "$rs_line" ]; then
     ok "$s records that containment ran as soon as it returns"
   else
@@ -4338,6 +4534,77 @@ fi
 [ -n "$hb_pid" ] && kill -KILL "$hb_pid" 2>/dev/null
 rm -f "$HB" "$HB.pid"
 tripwire_clear
+
+# A signal inside the runner's own reporting. Two hooks, each on only when its
+# variable is set, are added to the vault's copy of the library for these cases
+# and removed after. The first makes the watchdog's stop report a survivor and
+# holds report_stop after containment, before it marks the lock. It runs in a
+# command substitution, so the runner handles the signal once the hold ends and
+# before the next step. The second holds containment right after it wrote the
+# state directory copy of its tripwire, and waits in the background, so the
+# signal is handled at once.
+cp "$RV/.claude/scripts/lib/runner-common.sh" "$TMP/runner-common.orig"
+cat >> "$RV/.claude/scripts/lib/runner-common.sh" <<'HOOKS'
+
+# Test hooks added by run-tests.sh.
+if [ -n "${HOOK_REPORT_MARK:-}" ]; then
+  stop_tree() { kill -KILL -- "-$1" 2>/dev/null; kill -KILL "$1" 2>/dev/null; printf 'alive 999999999 survivor\n' > "$3"; }
+  git_index_lock_path() {
+    if [ "${RUN_KILL_FAILED:-0}" -eq 1 ] && [ ! -e "$HOOK_REPORT_MARK" ]; then
+      : > "$HOOK_REPORT_MARK"
+      sleep 10
+    fi
+  }
+fi
+if [ -n "${HOOK_TRIPWIRE_MARK:-}" ]; then
+  write_file_atomic() {
+    local path="$1" src="$2" tmp="$1.tmp.$$"
+    mkdir -p "$(dirname "$path")" 2>/dev/null
+    cp "$src" "$tmp" 2>/dev/null && mv -f "$tmp" "$path" 2>/dev/null
+    rm -f "$tmp" 2>/dev/null
+    case "$path" in
+      */.claude/logs/runner-tripwire) ;;
+      */runner-tripwire) if [ ! -e "$HOOK_TRIPWIRE_MARK" ]; then : > "$HOOK_TRIPWIRE_MARK"; sleep 30 & wait "$!"; fi ;;
+    esac
+    [ -f "$path" ] && [ ! -L "$path" ]
+  }
+fi
+HOOKS
+# A signal while the runner reports a stop that left a process, after
+# containment, still marks the lock, sets the tripwire and keeps the backup.
+new_case_state signal-report
+SIG_WAIT_FILE="$TMP/hook-report.mark"
+rm -f "$SIG_WAIT_FILE"
+term_hung_pass DREAM_PASS_TIMEOUT=2 HOOK_REPORT_MARK="$SIG_WAIT_FILE"
+SIG_WAIT_FILE=""
+expect_rc "TERM while the runner reports a stop that left a process -> exit 143" 143 "$sig_rc"
+if grep -q '^kill_failed=' "$CASE_STATE/run.lock/owner" 2>/dev/null \
+   && grep -q 'alive 999999999' "$CASE_STATE/runner-tripwire" 2>/dev/null \
+   && grep -q 'alive 999999999' "$RV/.claude/logs/runner-tripwire" 2>/dev/null \
+   && [ -s "$CASE_STATE/inflight-backup.tar" ]; then
+  ok "a signal during the stop's report still marks the lock, sets both tripwire copies and keeps the backup"
+else
+  bad "a signal during the stop's report lost it -- lock: [$(tr '\n' '|' < "$CASE_STATE/run.lock/owner" 2>/dev/null)] tripwire: $([ -f "$CASE_STATE/runner-tripwire" ] && echo yes || echo no) backup: $([ -s "$CASE_STATE/inflight-backup.tar" ] && echo yes || echo no)"
+fi
+rm -rf "$CASE_STATE/run.lock"
+tripwire_clear
+# A signal after containment wrote its tripwire, before containment returned,
+# keeps that tripwire and adds a note, instead of replacing it with one that
+# says containment did not run.
+new_case_state signal-contained
+SIG_WAIT_FILE="$TMP/hook-tripwire.mark"
+rm -f "$SIG_WAIT_FILE"
+term_hung_pass FAKE_MODE=plugin HOOK_TRIPWIRE_MARK="$SIG_WAIT_FILE"
+SIG_WAIT_FILE=""
+expect_rc "TERM right after containment wrote its tripwire -> exit 143" 143 "$sig_rc"
+if grep -q '^Quarantine: ' "$CASE_STATE/runner-tripwire" 2>/dev/null && ! grep -q 'containment did not run' "$CASE_STATE/runner-tripwire" \
+   && grep -q 'interrupted by a signal' "$CASE_STATE/runner-tripwire" && grep -q '^Quarantine: ' "$RV/.claude/logs/runner-tripwire" 2>/dev/null; then
+  ok "a signal after containment wrote its tripwire keeps that tripwire, with a note"
+else
+  bad "a signal after containment wrote its tripwire replaced it -- [$(tr '\n' '|' < "$CASE_STATE/runner-tripwire" 2>/dev/null | cut -c1-300)]"
+fi
+tripwire_clear
+cp "$TMP/runner-common.orig" "$RV/.claude/scripts/lib/runner-common.sh"
 
 # VAULT_STATE_DIR: a Windows-style path (what a .cmd wrapper sets) is converted,
 # and a path inside the vault is refused out loud.

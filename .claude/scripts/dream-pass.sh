@@ -85,7 +85,10 @@ SNAP_DIR=""
 SESSION_RECORDED=0
 AGENT_SESSION_ID=""
 KILL_FAILED_MARKED=0
+KILL_FAILED_LOCKED=0
 RUN_LOG_APPENDED=0
+STOP_REPORT_PENDING=0
+AGENT_KILL_REPORT=""
 
 # record_session_once
 # Records a claude-mode pass's session, once, however the pass ended, so a later
@@ -105,12 +108,16 @@ record_session_once() {
 on_exit() {
   if [ "$CONTAINMENT_CHECKED" -eq 1 ]; then
     clear_inflight "$ROOT" "$STATE"
-    if [ "$KILL_FAILED_MARKED" -eq 1 ]; then
+    if [ "$KILL_FAILED_MARKED" -eq 0 ]; then
+      rm -f "$STATE/inflight-backup.tar" 2>/dev/null
+    elif [ -s "$STATE/inflight-backup.tar" ]; then
       printf '[%s] The pre-pass backup is kept at %s for the review after KILL_FAILED.\n' "$(ts)" "$STATE/inflight-backup.tar" >> "$LOG"
     else
-      rm -f "$STATE/inflight-backup.tar" 2>/dev/null
+      printf '[%s] WARNING: there is no pre-pass backup at %s to review against after KILL_FAILED.\n' "$(ts)" "$STATE/inflight-backup.tar" >> "$LOG"
     fi
   fi
+  # What a tripwire or stop report left when a signal cut it short.
+  [ -n "${STATE:-}" ] && rm -f "$STATE/tripwire-body.$$" "$STATE/kill-report.$$" "$STATE/runner-tripwire.tmp.$$" 2>/dev/null
   [ -n "$SNAP_DIR" ] && rm -rf "$SNAP_DIR"
   run_lock_release
 }
@@ -120,9 +127,10 @@ on_exit() {
 # next pass's baseline.
 on_signal() {
   # The whole tree, so a child of the agent or of a git step cannot keep writing
-  # after the exit. RUN_PID is set only while such a command runs, and then the
-  # private temporary directory exists. A stop that may have left a process marks
-  # the run lock.
+  # after the exit. RUN_PID is set while such a command runs, and while the
+  # watchdog finishes stopping one that has ended (RUN_REAPED=1). Then the private
+  # temporary directory exists. A stop that may have left a process marks the run
+  # lock.
   if [ -n "${RUN_PID:-}" ] && [ -n "$SNAP_DIR" ] && [ -d "$SNAP_DIR" ]; then
     stop_tree "$RUN_PID" 2 "$SNAP_DIR/signal-stop" "${AGENT_SESSION_ID:-}" 1
     grep -qE '^(alive|unknown)' "$SNAP_DIR/signal-stop" 2>/dev/null \
@@ -136,7 +144,14 @@ on_signal() {
   fi
   if [ "$INFLIGHT" -eq 1 ] && [ "$CONTAINMENT_CHECKED" -eq 0 ]; then
     : > "$SNAP_DIR/empty"
-    if write_tripwire "$ROOT" "$STATE" "$RUNNER" \
+    # A tripwire this run already set, by containment or by a stop's report,
+    # stays as it is, with a note. tripwire_check made sure neither copy existed
+    # when the run started, and the pass cannot write the state directory copy.
+    if { [ "${CONTAINED:-0}" -eq 1 ] || [ -f "$STATE/$(basename "$TRIPWIRE_REL")" ]; } \
+       && note_tripwire "$ROOT" "$STATE" "$LOG" "The runner was then interrupted by a signal, so its log may lack some of what is above."; then
+      clear_inflight "$ROOT" "$STATE"
+      printf '[%s] INTERRUPTED after the tripwire was set. The tripwire is kept.\n' "$(ts)" >> "$LOG"
+    elif write_tripwire "$ROOT" "$STATE" "$RUNNER" \
          "the pass was interrupted by a signal before containment ran, so the vault's steering surfaces are unverified (the pre-pass backup is $STATE/inflight-backup.tar)" \
          "(none, because containment did not run)" "$SNAP_DIR/empty"; then
       clear_inflight "$ROOT" "$STATE"
@@ -145,6 +160,14 @@ on_signal() {
       # With no tripwire the marker stays, so the next run still refuses.
       printf '[%s] TRIPWIRE-ERROR: interrupted before containment and no tripwire could be written. The in-flight marker is kept.\n' "$(ts)" >> "$LOG"
     fi
+  fi
+  # A stop by the watchdog that may have left a process, and that the runner had
+  # not reported yet, is reported now, so the lock is marked and the tripwire says
+  # so.
+  if [ "$STOP_REPORT_PENDING" -eq 1 ]; then
+    RUN_KILL_FAILED=1
+    RUN_KILL_REPORT="$AGENT_KILL_REPORT"
+    report_stop "$LOG" dream-agent "$ROOT" "$STATE" "$RUNNER"
   fi
   exit "$1"
 }
@@ -295,6 +318,10 @@ main() {
   # to the run log after containment.
   : > "$SNAP_DIR/run"
   run_agent "$TIMEOUT" "$SNAP_DIR/run" dream-agent "$TASK" "$PROMPT_REL"
+  # A stop that may have left a process is reported after containment. Until
+  # report_stop has done it, a signal does it instead.
+  AGENT_KILL_REPORT="${RUN_KILL_REPORT:-}"
+  STOP_REPORT_PENDING="${RUN_KILL_FAILED:-0}"
 
   snapshot_tree "$ROOT" "$SNAP_DIR/after"
   changed_paths "$SNAP_DIR/before" "$SNAP_DIR/after" > "$SNAP_DIR/changed"
@@ -313,7 +340,7 @@ main() {
   if [ "$RUN_TIMED_OUT" -eq 1 ] || [ "$RUN_STALLED" -eq 1 ]; then
     report_stop "$LOG" dream-agent "$ROOT" "$STATE" "$RUNNER"
   fi
-  append_run_log "$SNAP_DIR/run" "$RUN_OUT" "$LOG"
+  append_run_log "$SNAP_DIR/run" "$RUN_OUT" "$LOG" || keep_run_output "$SNAP_DIR/run" "$STATE" "$RUNNER" "$LOG"
   RUN_LOG_APPENDED=1
   record_session_once
   if [ "$contain_rc" -ne 0 ]; then
