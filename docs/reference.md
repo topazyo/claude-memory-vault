@@ -334,8 +334,17 @@ a lint that does nothing and a lint that found nothing wrong print the same thin
   the decoy untouched.
 - **Pre-commit gate** — allows a commit on a conformant vault even with an inherited
   `CLAUDE_PROJECT_DIR` pointing at a broken one, and refuses it once a note violates C1.
+- **Progress watchdog** — a pass that streams a line a second is not stopped, a silent pass is
+  stopped with 125 together with a grandchild whose parent already exited, a timeout reaches that
+  grandchild too, a failed stop marks and keeps the run lock, and in claude mode the summary line
+  counts only inside the stream's result event.
 - **Dependency report** (informational, never fails the run) — whether `jq`, `perl`, or `grep -P`
   are present, and what degrades without each.
+
+A control that cannot run on the platform in hand prints `SKIP <id>: <reason> (not counted)`.
+Set `RUN_TESTS_REQUIRED` to a space-separated list of those ids and the suite fails any of them
+that did not run. The CI jobs set it per operating system: `taskkill noncesweep` on Windows and
+`groupkill symlink` on Linux, macOS and bash 3.2.
 
 The fixture vault is created at a path containing spaces (`.../some one/my vault/`) on purpose:
 that is the case word-splitting bugs break on, while still printing a reassuring "0 violations".

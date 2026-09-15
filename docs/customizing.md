@@ -339,7 +339,8 @@ tier or a promotion report, checks every note the pass changed, and commits exac
 them all back. That commit is what makes a bad write revertible, and why git is a hard dependency.)
 
 For scheduling, use the shipped runners rather than a hand-rolled cron line: `dream-pass.sh` /
-`.cmd` and `promotion-pass.sh` / `.cmd` in `.claude/scripts/`. They kill a hung pass (exit 124),
+`.cmd` and `promotion-pass.sh` / `.cmd` in `.claude/scripts/`. They kill a hung pass (exit 124)
+or one whose stream stops (exit 125), with everything it started,
 fail a pass that wrote outside its allowed folders (exit 2), contain a change to a steering or
 execution surface (restore, quarantine, tripwire), and carry an **artifact assertion** (if the
 pass exits 0 having produced no artifact, the runner exits 1), so a silent no-op cannot
