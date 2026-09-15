@@ -54,7 +54,8 @@ Per `.claude/rules/verification.md`:
 - If a note you mean to change shows uncommitted changes in that file, someone may be editing it.
   Leave it alone and report it as pending with that reason. The runner refuses to record over such
   a note anyway. A change someone committed since the last promotion pass is settled, and you may
-  build on it.
+  build on it. So is a note the file lists under "Notes an earlier promotion pass left
+  uncommitted", which is an earlier pass's own work that the runner checks and records with yours.
 - Run a trust sweep over the long-term notes, limited to what reading can check. You have no shell
   and no network, so re-verify a claim only against other notes and files in the vault, then stamp
   `last_verified` and adjust `confidence` for that claim. A claim about a system outside the vault

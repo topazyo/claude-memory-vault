@@ -461,7 +461,9 @@ Around that call, each runner does several things an exit code cannot:
   check fails, it logs `KILL_FAILED` with what it found, marks the run lock, keeps it, and exits
   124 or 125 as usual. A marked lock is never released or reclaimed, so every later run exits
   **75** until a human has made sure nothing of the old pass is running and deleted the lock
-  folder. After a stop the runner also names a leftover `index.lock`.
+  folder. After a stop the runner also names a leftover `index.lock`, and the log still lists,
+  under `VIOLATION`, any file the pass wrote outside its allowed areas, and any note it wrote that
+  someone was already editing, before it was stopped.
 
   Every session a claude-mode pass ran under is appended to `runner-sessions.tsv` in the state
   directory, with the time, the runner and whether the stream's init event confirmed the id, so a
@@ -476,8 +478,13 @@ Around that call, each runner does several things an exit code cannot:
 
   The fence checksums symlinks by their target, so swapping a file for a link, or retargeting one,
   counts as a change. A `.obsidian` or `.git` that is itself a symlink is fenced as a link as well,
-  and the files described below are still fenced through it. Only `.claude/logs` is left out of
-  the vault-wide scan, and in `.obsidian/`
+  and the files described below are still fenced through it. In `.claude/logs` only the files the
+  runners and hooks write there are left out: `*.log`, the two `*.git-state.txt` and
+  `*.prompt.md` files, `runner-tripwire` and `runner-inflight`. Any other file or symlink there,
+  such as a planted `CLAUDE.md`, is fenced and counts as a steering surface. A path with a line
+  break in its name is never read as a line, because its second line could name any path, such as
+  `.git`. Such paths are summed into one fence line, a change to them counts as a steering surface,
+  and containment moves them to the quarantine as `line-break-name-<n>`. In `.obsidian/`
   only what carries or enables code is fenced: `community-plugins.json` and the `plugins/`,
   `themes/` and `snippets/` folders. Obsidian rewrites its workspace, graph and app settings while it
   is open, and none of them runs anything. The code-bearing part must be fenced, because `.obsidian/`
@@ -639,9 +646,9 @@ Around that call, each runner does several things an exit code cannot:
   taken literally (`GIT_LITERAL_PATHSPECS=1`), because git otherwise also reads a path as a
   pattern, and a journal named `dream-[x].md` would then stage someone's `dream-x.md`. Git's other
   pathspec settings are turned off for those commands, because git refuses to combine them with
-  the literal one. That is not a sandbox. A filter declared in `.gitattributes` can still run on a command that reads the work
-  tree, which is why the runners call git on the vault only while its config is known to be the
-  pre-pass one.
+  the literal one. That is not a sandbox. A filter declared in `.gitattributes` can still run on
+  a command that reads the work tree, which is why the runners call git on the vault only while
+  its config is known to be the pre-pass one.
 - **Artifact assertion.** A pass that exits 0 but left no evidence it ran exits **1**
   (NO-ARTIFACT). For `dream-pass` a `dream-*.md` journal must have been added or changed during
   this run; matching any date rather than today's keeps a run that crosses midnight valid. For
@@ -678,17 +685,19 @@ Around that call, each runner does several things an exit code cannot:
 
   On exit 5 the passes differ. The dream pass leaves the rejected journal in place, uncommitted,
   for you to fix or delete. The promotion pass puts back the notes it changed, because the long
-  tier steers later sessions, and logs each under `REVERTED`. It does the same on exit 2 when the
-  commit stopped because a note the pass changed was already being edited, or is no longer a
-  regular file, so a pass that deletes one note cannot keep its other notes in place. A note
-  someone was already editing is never put back, because its pre-pass bytes are in no commit.
+  tier steers later sessions, and logs each under `REVERTED`. It does the same on exit 2 when a
+  note the pass changed was already being edited, or is no longer a regular file, whether the
+  agent succeeded or failed, so a pass that deletes one note cannot keep its other notes in place.
+  A note someone was already editing is never put back, because its pre-pass bytes are in no
+  commit.
   - A note that was in the commit HEAD pointed at before the pass is first copied to a quarantine
     folder ending in `-rejected` in the state directory, and then restored from that commit. The
-    copy keeps an edit you made to that note while the pass ran. When the copy fails, the note is
-    not restored.
-  - A deleted note is restored the same way.
+    log names the copy, which keeps an edit you made to that note while the pass ran. When the
+    copy fails, the note is not restored.
+  - A deleted note is restored the same way, and so is a note the pass replaced with a folder,
+    once the files in that folder are in the quarantine.
   - A new note is moved to that quarantine folder, and a folder the move leaves empty is removed
-    unless it held files before the pass.
+    unless it held other files before the pass. The tier folders themselves are never removed.
   - A note git ignores that existed before the pass is in no commit, so there is nothing to
     restore, and it is left as the pass wrote it.
   - A note that is no longer exactly as the pass left it (changed again, removed, or now a folder
@@ -703,10 +712,19 @@ Around that call, each runner does several things an exit code cannot:
   Files the runner could not commit are recorded with their exact bytes in the state directory.
   That covers exit 124, exit 4, the agent's own failure, a promotion pass's NO-ARTIFACT exit 1,
   and a dream pass's exit 5 for the journals that pass the check on their own, after a pass that
-  wrote only where it may. A file someone was already editing is never recorded. The next run of
-  the same pass adds each recorded file that nobody has changed since to the files it checks,
-  whether or not that run touches it. The file is then committed with that run's changes, or put
-  back like them. The record stays until a run commits or puts back its files, or records its own
+  wrote only where it may. A file someone was already editing is never recorded, and neither is
+  one that changed while the commit checked it. A pass stopped by a signal records nothing,
+  because it sets the tripwire and its files are left for you to review. Each record line is the
+  blob id, a tab and the path, so a name that ends in a space stays its own name. A record that
+  cannot be written is logged.
+
+  The next run of the same pass takes each recorded file that nobody has changed since, and logs
+  it under `ADOPTED`. Before its agent starts it checks each one on its own. One that fails is
+  logged under `LEFTOVER-REJECTED`. The promotion pass puts it back then, as above, and the dream
+  pass leaves it in place for review. Either way it cannot make that run's own files fail with it.
+  The rest join the files that run checks, whether or not the run touches them, and are committed
+  with its changes or put back like them. The promotion pass lists them for its agent in the git
+  state file. The record stays until a run commits or puts back its files, or records its own
   leftovers in its place. A recorded file edited since counts as someone's edit, so fix a rejected
   journal and commit it yourself, or delete it. A file that was clean before the pass and edited by
   you or a sync client while the pass ran cannot be told apart from the pass's own writing, and is
@@ -718,11 +736,12 @@ Around that call, each runner does several things an exit code cannot:
 Neither agent is given a shell, so each runner writes the history its agent reads before the run.
 `dream-pass.sh` writes `git log --oneline -5` and `git status --short` to
 `.claude/logs/dream-pass.git-state.txt`. `promotion-pass.sh` writes
-`.claude/logs/promotion-pass.git-state.txt` in four sections. They are `git log --oneline -10`,
-the long-tier changes committed between the last commit with a `Vault-Pass: promotion` trailer
-and HEAD (a `--stat` summary and the first 400 lines of the diff), the long-tier changes nobody
-has committed yet (their `git status --short` lines and the first 400 lines of their diff), and
-`git status --short` for the whole vault. A note someone committed therefore never looks like
+`.claude/logs/promotion-pass.git-state.txt` in up to five sections. They are
+`git log --oneline -10`, the long-tier changes committed between the last commit with a
+`Vault-Pass: promotion` trailer and HEAD (a `--stat` summary and the first 400 lines of the
+diff), the long-tier changes nobody has committed yet (their `git status --short` lines and the
+first 400 lines of their diff), the notes an earlier promotion pass left uncommitted that this run
+adopted, when there are any, and `git status --short` for the whole vault. A note someone committed therefore never looks like
 work in progress. The runner removes the file first and refuses to start with exit 1 when it
 cannot write a new one, so the agent never reads an earlier run's history.
 
@@ -734,7 +753,7 @@ harness session cannot point an unattended pass, and its fence, at a different v
 | --- | --- |
 | `0` | OK: the artifact assertion held, nothing outside the fence changed, and the pass's files were committed, HEAD already held them, git ignores them, or the vault is not a repository of its own |
 | `1` | NO-ARTIFACT, the runner could not create its temporary directory, use its state directory, write its in-flight marker or (promotion pass) its git state file, run `git status` or back up the steering surfaces, git cannot read the vault's repository, or (command mode) the agent definition file is missing |
-| `2` | VIOLATION: a file outside the allowed write areas changed during the run. When steering surfaces are among them they are contained and the tripwire is set. Also when the pass changed a file it owns that already had uncommitted changes before it started, even if the agent then failed, or a file it owns and changed is no longer a regular file. The runner commits nothing. When the commit stopped for one of those last two reasons, the promotion pass also puts back its other notes, as for exit 5 |
+| `2` | VIOLATION: a file outside the allowed write areas changed during the run. When steering surfaces are among them they are contained and the tripwire is set. Also when the pass changed a file it owns that already had uncommitted changes before it started, or a file it owns and changed is no longer a regular file. The runner commits nothing. For the promotion pass those last two reasons give exit 2 even when the agent failed, and the pass's other notes are put back, as for exit 5 |
 | `3` | REFUSED: `VAULT_AGENT=command` without `VAULT_ALLOW_UNENFORCED_TOOLS=1`; the agent was not started |
 | `4` | COMMIT-FAILED: staging or committing the pass's files failed, ran longer than `RUNNER_GIT_TIMEOUT`, or a file changed while it was checked. The files are left in place and uncommitted, and the log says whether they could be unstaged. Also a commit that was made but does not hold the checked content, which the log names |
 | `5` | CHECK-FAILED: `vault-check.sh` rejected a file the pass changed, and nothing was committed. The dream pass leaves the journal in place. The promotion pass puts back every note it changed, except any the log lists as left as it is, and logs them under `REVERTED` |
@@ -897,11 +916,13 @@ Safety constraints, all load-bearing:
   then checks and commits exactly the notes it changed, or puts them back (§4.3). That commit
   is what makes a bad pass reversible, which is why `git` is a hard dependency. The runner's write
   fence catches writes outside the allowed areas, but only git can undo a bad write inside them.
-  A pass that times out, fails or is stopped leaves its notes uncommitted, and the next pass
-  checks them before they are committed or put back.
+  A pass that times out or fails leaves its notes uncommitted, and the next pass checks them before
+  they are committed or put back. A pass stopped by a signal sets the tripwire instead, and its
+  notes wait for your review.
 - **Leave a note alone that shows uncommitted changes no promotion pass made.** Someone may be
   editing it. The agent reports it as pending, and the runner refuses to commit over such a note
-  anyway. A note someone committed since the last promotion pass is fair to build on.
+  anyway. A note someone committed since the last promotion pass is fair to build on, and so is a
+  note the git state file lists as left uncommitted by an earlier promotion pass.
 - **Run the trust sweep only on what reading can check.** The agent has no shell and no network,
   so it re-verifies a claim only against other notes and files in the vault, and stamps
   `last_verified` only for a claim it checked that way. A claim about a system outside the vault

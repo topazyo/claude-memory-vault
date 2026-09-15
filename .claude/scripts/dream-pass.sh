@@ -210,7 +210,16 @@ main() {
   fi
   # A journal an earlier run of this runner left uncommitted, and nobody has
   # touched since, is this runner's own, not someone's edit.
-  [ "$VAULT_GIT" -eq 1 ] && adopt_uncommitted "$ROOT" "$SNAP_DIR/nohooks" "$STATE" "$RUNNER" "$SNAP_DIR/predirty"
+  # One that fails the check is left in place for review, not committed.
+  : > "$SNAP_DIR/predirty.adopted"
+  if [ "$VAULT_GIT" -eq 1 ]; then
+    adopt_uncommitted "$ROOT" "$SNAP_DIR/nohooks" "$STATE" "$RUNNER" "$SNAP_DIR/predirty"
+    check_leftovers "$ROOT" "$SNAP_DIR" NONE "" "$LOG" 0
+    if [ -s "$SNAP_DIR/predirty.adopted" ]; then
+      printf '[%s] ADOPTED: journals an earlier run left uncommitted are checked and committed with this pass:\n' "$(ts)" >> "$LOG"
+      sed 's/^/    /' "$SNAP_DIR/predirty.adopted" >> "$LOG"
+    fi
+  fi
 
   snapshot_tree "$ROOT" "$SNAP_DIR/before"
   # Containment needs the pre-pass copy. Without it, refuse rather than run a pass
@@ -286,17 +295,24 @@ main() {
   # pass's own, whether or not this pass touched them.
   own_adopted "$SNAP_DIR" "$OWNED_PATTERN"
 
-  if [ "$RUN_TIMED_OUT" -eq 1 ]; then
-    printf '[%s] TIMEOUT: dream-agent exceeded %ss and was killed (status %s)\n' \
-      "$(ts)" "$TIMEOUT" "$RUN_RC" >> "$LOG"
-    record_leftovers "$ROOT" "$SNAP_DIR/nohooks" "$STATE" "$RUNNER" "$SNAP_DIR"
-    exit 124
-  fi
-  if [ "$RUN_STALLED" -eq 1 ]; then
-    printf '[%s] STALLED: dream-agent wrote no output for %ss (%s) and was killed (status %s)\n' \
-      "$(ts)" "$AGENT_STALL_SECONDS" "$AGENT_STALL_NOTE" "$RUN_RC" >> "$LOG"
-    record_leftovers "$ROOT" "$SNAP_DIR/nohooks" "$STATE" "$RUNNER" "$SNAP_DIR"
-    exit 125
+  if [ "$RUN_TIMED_OUT" -eq 1 ] || [ "$RUN_STALLED" -eq 1 ]; then
+    if [ "$RUN_TIMED_OUT" -eq 1 ]; then
+      printf '[%s] TIMEOUT: dream-agent exceeded %ss and was killed (status %s)\n' \
+        "$(ts)" "$TIMEOUT" "$RUN_RC" >> "$LOG"
+      stop_rc=124
+    else
+      printf '[%s] STALLED: dream-agent wrote no output for %ss (%s) and was killed (status %s)\n' \
+        "$(ts)" "$AGENT_STALL_SECONDS" "$AGENT_STALL_NOTE" "$RUN_RC" >> "$LOG"
+      stop_rc=125
+    fi
+    # What the pass wrote before it was killed is still listed.
+    if [ -s "$SNAP_DIR/outside" ]; then
+      printf '[%s] VIOLATION: files outside the dream journals changed before the pass was killed, so nothing it wrote is recorded for the next run:\n' "$(ts)" >> "$LOG"
+      sed 's/^/    /' "$SNAP_DIR/outside" >> "$LOG"
+    fi
+    [ "$VAULT_GIT" -eq 1 ] && owned_predirty "$SNAP_DIR/owned" "$SNAP_DIR/predirty" "$SNAP_DIR" "$LOG"
+    record_leftovers "$ROOT" "$SNAP_DIR/nohooks" "$STATE" "$RUNNER" "$SNAP_DIR" "$LOG"
+    exit "$stop_rc"
   fi
 
   printf '[%s] dream-agent exited with code %s\n' "$(ts)" "$RUN_RC" >> "$LOG"
@@ -312,7 +328,7 @@ main() {
   fi
 
   if [ "$RUN_RC" -ne 0 ]; then
-    record_leftovers "$ROOT" "$SNAP_DIR/nohooks" "$STATE" "$RUNNER" "$SNAP_DIR"
+    record_leftovers "$ROOT" "$SNAP_DIR/nohooks" "$STATE" "$RUNNER" "$SNAP_DIR" "$LOG"
     exit "$RUN_RC"
   fi
 
@@ -333,7 +349,7 @@ main() {
   commit_rc=$?
   case "$commit_rc" in
     0) forget_uncommitted "$STATE" "$RUNNER" ;;
-    4) record_leftovers "$ROOT" "$SNAP_DIR/nohooks" "$STATE" "$RUNNER" "$SNAP_DIR"; exit 4 ;;
+    4) record_leftovers "$ROOT" "$SNAP_DIR/nohooks" "$STATE" "$RUNNER" "$SNAP_DIR" "$LOG"; exit 4 ;;
     5)
       printf '[%s] The rejected journal is left in place, uncommitted, for review.\n' "$(ts)" >> "$LOG"
       # Only the journals that pass the check on their own are recorded for the
@@ -344,7 +360,7 @@ main() {
           && printf '%s\n' "$p"
       done < "$SNAP_DIR/owned" > "$SNAP_DIR/owned.passing"
       mv -f "$SNAP_DIR/owned.passing" "$SNAP_DIR/owned"
-      record_leftovers "$ROOT" "$SNAP_DIR/nohooks" "$STATE" "$RUNNER" "$SNAP_DIR"
+      record_leftovers "$ROOT" "$SNAP_DIR/nohooks" "$STATE" "$RUNNER" "$SNAP_DIR" "$LOG"
       exit 5
       ;;
     *) exit "$commit_rc" ;;
