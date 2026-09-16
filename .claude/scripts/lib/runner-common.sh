@@ -363,6 +363,11 @@ run_with_watchdog() {
   local poll="${WATCHDOG_POLL:-5}" grace="${WATCHDOG_GRACE:-15}" stall="${RUN_STALL_SECONDS:-0}"
   local gaps="${RUN_GAPS_FILE:-}" nonce="${RUN_NONCE:-}" flag own=0 before_size after_size
   is_uint "$stall" || stall=0
+  # The stop result belongs to the command started here from now on, so a result
+  # an earlier watchdog left, such as a stopped liveness probe of the run lock,
+  # cannot be read by a signal handler while this command runs.
+  RUN_KILL_FAILED=0
+  RUN_KILL_REPORT=""
   flag="$(mktemp 2>/dev/null || mktemp -t runner)" || flag="${out}.watchdog"
   rm -f "$flag" "$flag.stalled" "$flag.stopped"
 
@@ -739,7 +744,8 @@ INFLIGHT_REL=".claude/logs/runner-inflight"
 # Reads relative paths on stdin and prints the ones that are steering or
 # execution surfaces. One awk program, so the fence, the backup and containment
 # can never disagree about the set, and matching is case-insensitive (a
-# case-insensitive filesystem loads Gemini.md as GEMINI.md). Inside
+# case-insensitive filesystem loads Gemini.md as GEMINI.md), except for the
+# temporary names of the run log in .claude/logs, which match as written. Inside
 # .claude/worktrees/<name>/ the same rules apply to the rest of the path, so a
 # worktree's own CLAUDE.md or .claude/ counts and its notes do not. The symlink
 # entries of the snapshots named as arguments mark which paths are links, because
@@ -805,8 +811,11 @@ steering_filter() {
       islink = (lp in link)
       # In the vault .claude/logs only files the runners, hooks and launchd jobs
       # do not write are fenced, so any change there is a planted file. The
-      # names left out are the ones snapshot_tree leaves out. The logs of a
-      # worktree belong to its session, and stay out.
+      # names left out are the ones snapshot_tree leaves out. snapshot_tree
+      # matches them as written and this filter in any case, so a planted name
+      # that differs only in case is listed and reported, and not contained. The
+      # temporary names of the run log match as written on both sides. The logs
+      # of a worktree belong to its session, and stay out.
       if (lp ~ /^\.claude\/logs\//) {
         n = split(lp, part, "/")
         base = part[n]
@@ -1151,17 +1160,23 @@ clear_inflight() {
 # Call it while holding the run lock. No other pass can then be running, so any
 # in-flight marker belongs to a pass that died, whatever process now has its pid.
 tripwire_check() {
-  local root="$1" state="$2" runner="$3" log="$4" marker empty wrote tw
+  local root="$1" state="$2" runner="$3" log="$4" marker empty wrote tw advice
   if guard_exists "$root" "$state" "$TRIPWIRE_REL"; then
     # The state directory copy is named when it is a file, because the pass
     # cannot write it. The vault's copy is named otherwise, and only when it is
-    # there, so the owner is never sent to a path that holds nothing.
+    # there, so the owner is never sent to a path that holds nothing. A pass can
+    # write the vault's copy unseen, so its instructions are not vouched for.
+    # vault-check.sh names the copy by the same rule.
     tw="$state/$(basename "$TRIPWIRE_REL")"
+    advice="Read $tw and do what it says, then delete it and its copy."
     if [ ! -f "$tw" ] || [ -L "$tw" ]; then
-      { [ -e "$root/$TRIPWIRE_REL" ] || [ -L "$root/$TRIPWIRE_REL" ]; } && tw="$root/$TRIPWIRE_REL"
+      if [ -e "$root/$TRIPWIRE_REL" ] || [ -L "$root/$TRIPWIRE_REL" ]; then
+        tw="$root/$TRIPWIRE_REL"
+        advice="Read $tw, then delete it and anything at $state/$(basename "$TRIPWIRE_REL"). No copy in the state directory is a file, and a pass can write the copy in the vault, so a pass may have written this one. Check its reason against this log before you do anything it says."
+      fi
     fi
-    printf '[%s] TRIPWIRE: refusing to run. A previous pass changed a steering or execution surface, was interrupted before containment, or may have left a process running. Read %s and do what it says, then delete it and its copy.\n' \
-      "$(ts)" "$tw" >> "$log"
+    printf '[%s] TRIPWIRE: refusing to run. A previous pass changed a steering or execution surface, was interrupted before containment, or may have left a process running. %s\n' \
+      "$(ts)" "$advice" >> "$log"
     return 78
   fi
   if guard_exists "$root" "$state" "$INFLIGHT_REL"; then
@@ -2701,20 +2716,13 @@ append_run_log() {
 # keep_run_output <run-file> <state-dir> <runner> <log>
 # Keeps the output of a pass that did not reach its run log in the vault, because
 # the pass ended before containment or the run log could not be written, in the
-# state directory. It is cut like the run log.
+# state directory. It is cut like the run log. The runner's temporary directory
+# goes when it exits, so this copy is the only one left, and it is never lost to
+# something in the way of its name.
 keep_run_output() {
-  local run="$1" dest="$2/$3.interrupted.run" max="" tmp=""
+  local run="$1" dest="$2/$3.interrupted.run" max="" tmp="" in_way="" alt=""
   [ -s "$run" ] || return 0
   max="$(uint_setting RUNNER_RUN_LOG_MAX_BYTES 10000000 1000 "$4" bytes)"
-  # A link at the destination would send the output wherever it points, and a
-  # folder there would swallow it under a name nobody would look for, while the
-  # rename still reported success. The link goes, and anything else that is not a
-  # file is refused.
-  [ -L "$dest" ] && rm -f "$dest" 2>/dev/null
-  if { [ -e "$dest" ] || [ -L "$dest" ]; } && { [ ! -f "$dest" ] || [ -L "$dest" ]; }; then
-    printf '[%s] WARNING: the output of the pass could not be kept at %s, because that path is not a file, so it is lost.\n' "$(ts)" "$dest" >> "$4"
-    return 1
-  fi
   # Written beside the earlier kept output and renamed over it, so a failed copy
   # leaves that one in place.
   tmp="$dest.tmp.$$"
@@ -2722,12 +2730,44 @@ keep_run_output() {
     cap_copy "$run" "$tmp" "$max"
   else
     cat "$run" > "$tmp" 2>/dev/null
-  fi && mv -f "$tmp" "$dest" 2>/dev/null && [ -f "$dest" ] && [ ! -L "$dest" ] && {
-    printf '[%s] The output of the pass is kept at %s.\n' "$(ts)" "$dest" >> "$4"
-    return 0
+  fi || {
+    rm -f "$tmp" 2>/dev/null
+    printf '[%s] WARNING: the output of the pass could not be kept at %s, so it is lost. Anything left at that path is from an earlier run.\n' "$(ts)" "$dest" >> "$4"
+    return 1
   }
+  # A link at the path would send the rename wherever it points, and a folder
+  # there would take the file inside it. A link is removed, so the rename replaces
+  # the name, and an empty folder is removed. A fifo or any other file is simply
+  # renamed over. Checked just before the rename, after the copy.
+  [ -L "$dest" ] && rm -f "$dest" 2>/dev/null
+  [ -d "$dest" ] && [ ! -L "$dest" ] && rmdir "$dest" 2>/dev/null
+  if [ -L "$dest" ]; then
+    in_way="a link that could not be removed"
+  elif [ -d "$dest" ]; then
+    in_way="a folder that is not empty"
+  fi
+  if [ -z "$in_way" ] && mv -f "$tmp" "$dest" 2>/dev/null; then
+    if [ -f "$dest" ] && [ ! -L "$dest" ]; then
+      printf '[%s] The output of the pass is kept at %s.\n' "$(ts)" "$dest" >> "$4"
+      return 0
+    fi
+    # Something took the path between the check and the rename, and the rename
+    # moved the output into it.
+    printf '[%s] WARNING: something took the place of %s while the output of the pass was being kept, so the output may be inside it as %s.\n' \
+      "$(ts)" "$dest" "${tmp##*/}" >> "$4"
+    return 1
+  fi
+  # What is in the way stays as it is for the owner to look at, and the output is
+  # kept under a new name beside it.
+  [ -n "$in_way" ] || in_way="a path the output could not be renamed to"
+  alt="$(mktemp "$dest.XXXXXX" 2>/dev/null)"
+  if [ -n "$alt" ] && mv -f "$tmp" "$alt" 2>/dev/null && [ -f "$alt" ] && [ ! -L "$alt" ]; then
+    printf '[%s] WARNING: %s is %s, so the output of the pass is kept at %s instead.\n' "$(ts)" "$dest" "$in_way" "$alt" >> "$4"
+    return 0
+  fi
   rm -f "$tmp" 2>/dev/null
-  printf '[%s] WARNING: the output of the pass could not be kept at %s, so it is lost. Anything left at that path is from an earlier run.\n' "$(ts)" "$dest" >> "$4"
+  [ -n "$alt" ] && [ ! -s "$alt" ] && rm -f "$alt" 2>/dev/null
+  printf '[%s] WARNING: the output of the pass could not be kept at %s, which is %s, or beside it, so it is lost.\n' "$(ts)" "$dest" "$in_way" >> "$4"
   return 1
 }
 

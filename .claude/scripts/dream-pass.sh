@@ -89,8 +89,10 @@ KILL_FAILED_LOCKED=0
 RUN_LOG_APPENDED=0
 STOP_REPORT_PENDING=0
 AGENT_KILL_REPORT=""
-# 1 only while the agent's own run owns the watchdog's result, so a signal cannot
-# read a result another watchdog left, such as the run lock's liveness probe.
+# 1 only while the agent's own run owns the watchdog's result. Until run_agent
+# starts its watchdog, this keeps a signal from reading a result another watchdog
+# left, such as the run lock's liveness probe. The agent's watchdog clears any
+# such result as it starts, and the probe clears its own.
 AGENT_RUNNING=0
 
 # record_session_once
@@ -176,7 +178,7 @@ on_signal() {
   # not reported yet, is reported now, so the lock is marked and the tripwire says
   # so. Before the run log is written that includes a result the watchdog has set
   # while run_agent had not returned, which is why the result is read only while
-  # the agent's own run owns it.
+  # the agent's own run owns it, which AGENT_RUNNING records.
   if [ "$STOP_REPORT_PENDING" -eq 1 ]; then
     report="$AGENT_KILL_REPORT${report:+
 $report}"

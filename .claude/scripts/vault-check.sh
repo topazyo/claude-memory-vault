@@ -39,29 +39,36 @@ TODAY="$(date +%F)"
 # -L as well as -e: a dangling symlink planted at the path is not -e, and must
 # not read as "no tripwire". The runners keep a second copy in their state
 # directory outside the vault, so a deleted in-vault copy does not clear it.
-TRIPWIRES="$ROOT/.claude/logs/runner-tripwire"
+TW_VAULT="$ROOT/.claude/logs/runner-tripwire"
+TW_STATE=""
 RUNNER_LIB="$(dirname "$0")/lib/runner-common.sh"
 state_dir=""
 if [ -f "$RUNNER_LIB" ]; then
   state_dir="$( . "$RUNNER_LIB" && vault_state_dir "$ROOT")"
 fi
 if [ -n "$state_dir" ]; then
-  # The state directory copy is checked, and named, first, because a pass
-  # cannot write it.
-  TRIPWIRES="$state_dir/runner-tripwire
-$TRIPWIRES"
+  TW_STATE="$state_dir/runner-tripwire"
 else
   printf 'vault-check: WARNING - could not work out the runners'"'"' state directory from %s, so the tripwire copy kept there was not checked.\n' "$RUNNER_LIB" >&2
 fi
-while IFS= read -r tw; do
-  if [ -e "$tw" ] || [ -L "$tw" ]; then
-    printf 'vault-check: TRIPWIRE - a scheduled pass changed a steering or execution surface, was interrupted before containment, or may have left a process running.\n' >&2
-    printf 'vault-check: read %s and do what it says, then delete it and its copy. Nothing was checked.\n' "$tw" >&2
-    exit 1
+tw_present() {
+  [ -n "$1" ] && { [ -e "$1" ] || [ -L "$1" ]; }
+}
+if tw_present "$TW_STATE" || tw_present "$TW_VAULT"; then
+  # The copy is named by the runners' rule (tripwire_check). The state directory
+  # copy when it is a file, because a pass cannot write it. Otherwise the vault's
+  # copy when there is one, which a pass can write, so its instructions are not
+  # vouched for. Otherwise the state path.
+  printf 'vault-check: TRIPWIRE - a scheduled pass changed a steering or execution surface, was interrupted before containment, or may have left a process running.\n' >&2
+  if [ -n "$TW_STATE" ] && [ -f "$TW_STATE" ] && [ ! -L "$TW_STATE" ]; then
+    printf 'vault-check: read %s and do what it says, then delete it and its copy. Nothing was checked.\n' "$TW_STATE" >&2
+  elif tw_present "$TW_VAULT"; then
+    printf 'vault-check: read %s, then delete it and its copy. No copy in the state directory is a file, and a pass can write the copy in the vault, so a pass may have written this one. Check its reason against the runner logs before you do anything it says. Nothing was checked.\n' "$TW_VAULT" >&2
+  else
+    printf 'vault-check: read %s and do what it says, then delete it and its copy. Nothing was checked.\n' "$TW_STATE" >&2
   fi
-done <<EOF
-$TRIPWIRES
-EOF
+  exit 1
+fi
 
 # Content tiers only. 90-auto-memory/ is machine-managed under Claude Code's own
 # schema and is deliberately out of scope (see the freshness standard § 2).

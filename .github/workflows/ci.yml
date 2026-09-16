@@ -55,7 +55,7 @@ jobs:
       - name: Control suite
         shell: bash
         env:
-          RUN_TESTS_REQUIRED: ${{ matrix.os == 'windows-latest' && 'win-native-tree noncesweep win-sweep-report win-orphan-stop win-fork-stop signal-scope runlog-tmp-case' || 'groupkill symlink run-log-link run-log-dirlink reaped-group line-break-name signal-scope runlog-tmp-case keep-output-dirlink tripwire-name' }}
+          RUN_TESTS_REQUIRED: ${{ matrix.os == 'windows-latest' && 'win-native-tree noncesweep win-sweep-report win-orphan-stop win-fork-stop signal-scope runlog-tmp-case' || 'groupkill symlink run-log-link run-log-dirlink reaped-group line-break-name signal-scope runlog-tmp-case keep-output-dirlink tripwire-name keep-output-fifo' }}
         run: bash .claude/scripts/run-tests.sh
 
       # vault-check.sh exits 1 when it scans zero notes, so a path-resolution
@@ -81,7 +81,7 @@ jobs:
 
       - name: Control suite under bash 3.2
         env:
-          RUN_TESTS_REQUIRED: groupkill symlink run-log-link run-log-dirlink reaped-group line-break-name signal-scope runlog-tmp-case keep-output-dirlink tripwire-name
+          RUN_TESTS_REQUIRED: groupkill symlink run-log-link run-log-dirlink reaped-group line-break-name signal-scope runlog-tmp-case keep-output-dirlink tripwire-name keep-output-fifo
         run: /bin/bash .claude/scripts/run-tests.sh
 
       - name: Frontmatter invariants under bash 3.2

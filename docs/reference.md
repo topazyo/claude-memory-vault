@@ -522,10 +522,13 @@ Around that call, each runner does several things an exit code cannot:
   its newest part from the start of a line, or the end of its last line when that line alone is
   longer. A pass stopped by a signal before its output reached the run log, or whose run log could
   not be written, has the output kept as `<runner>.interrupted.run` in the state directory, and the
-  log says why. That copy is written beside the earlier one and renamed over it, a link there is
-  removed first, and anything else at that path that is not a file is refused rather than written
-  into, so the log never reports a copy that landed somewhere else. When the copy fails, what the
-  log says is lost is this run's output, and anything left at that path is from an earlier run.
+  log says why. That copy is written beside the earlier one and renamed over it. A link or an empty
+  folder at that path is removed first, so nothing is written through a link or into a folder. A
+  folder that holds files, or a link that cannot be removed, is left for you to look at, and the
+  output is kept under a new name beside it, `<runner>.interrupted.run.<six characters>`, which the
+  log's `WARNING` names. When something takes the path during the rename, the log says the output
+  may be inside it. When the copy itself fails, what the log says is lost is this run's output, and
+  anything left at that path is from an earlier run.
 - **Write fence.** The runner checksums every file in the vault before and after the run and exits
   **2** with the offending paths logged if anything changed outside the allowed areas. For
   `dream-pass` that is `20-projects/_logs/dream-*.md`. For `promotion-pass` it is `31-standards/`
@@ -539,10 +542,13 @@ Around that call, each runner does several things an exit code cannot:
   and the files described below are still fenced through it. In `.claude/logs` only the files the
   runners, the hooks and the documented schedulers write there are left out: `*.log`, the two
   `*.git-state.txt` and `*.prompt.md` files, `runner-tripwire` and `runner-inflight` with their
-  `.tmp.*` files, and the launchd output files `setup.md` names (`dream-pass.launchd.out`,
+  `.tmp.*` files, the run logs' temporary files `dream-agent.run.log.runner-tmp.XXXXXX` and
+  `promotion-agent.run.log.runner-tmp.XXXXXX` (six ASCII letters or digits, in exactly that case),
+  and the launchd output files `setup.md` names (`dream-pass.launchd.out`,
   `dream-pass.launchd.err`, `promotion-pass.launchd.out` and `promotion-pass.launchd.err`). Any
   other file or symlink there, such as a planted `CLAUDE.md`, is fenced and counts as a steering
-  surface. A path with a line break in its name, anywhere in the vault, is never read as a line,
+  surface. A planted name that differs from one of the other names only in case is listed and
+  reported as a violation, but not quarantined. A path with a line break in its name, anywhere in the vault, is never read as a line,
   because its second line could name any path, such as `.git`. Such paths are summed into one
   fence line, a change to them counts as a steering surface, and containment moves each of them to
   a folder made for them in the quarantine, as `line-break-name-<n>`, with its original path in
@@ -616,7 +622,10 @@ Around that call, each runner does several things an exit code cannot:
   could not be contained, and the quarantine, and a second copy in the state directory. While either
   copy exists, both runners exit **78** without starting an agent, `vault-check.sh` exits 1 without
   checking anything, and `/resume` shows the tripwire instead of a briefing. Clear it by reviewing
-  the paths and then deleting both copies. If no copy can be written, the runner exits **70**
+  the paths and then deleting both copies. The refusal names the state directory copy when it is a
+  file, because a pass cannot write it. When only the vault's copy is a file, the runners and
+  `vault-check.sh` name that copy and say a pass may have written it, so check its reason against
+  the runner log before you follow anything it says. If no copy can be written, the runner exits **70**
   (TRIPWIRE-ERROR) and leaves its in-flight marker, so the next run still refuses. When a signal
   stops a pass and no copy of the tripwire can be written, the runner logs the same TRIPWIRE-ERROR
   keyword and keeps its marker too, but exits with the signal's code, 130 or 143.
