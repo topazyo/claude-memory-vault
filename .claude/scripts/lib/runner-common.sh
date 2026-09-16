@@ -810,12 +810,17 @@ steering_filter() {
       if (lp ~ /^\.claude\/logs\//) {
         n = split(lp, part, "/")
         base = part[n]
+        # A temporary file of the run log is matched on the name as it stands,
+        # because snapshot_tree leaves out that same name. A name whose fixed
+        # part differs in case belongs to no runner, and stays fenced.
+        m = split($0, opart, "/")
+        obase = opart[m]
         if (base ~ /\.log$/ || base == "dream-pass.git-state.txt" || base == "promotion-pass.git-state.txt" \
             || base == "dream-pass.prompt.md" || base == "promotion-pass.prompt.md" \
             || base == "runner-tripwire" || base == "runner-inflight" \
             || base ~ /^runner-tripwire\.tmp\./ || base ~ /^runner-inflight\.tmp\./ \
-            || base ~ /^dream-agent\.run\.log\.runner-tmp\.[a-z0-9][a-z0-9][a-z0-9][a-z0-9][a-z0-9][a-z0-9]$/ \
-            || base ~ /^promotion-agent\.run\.log\.runner-tmp\.[a-z0-9][a-z0-9][a-z0-9][a-z0-9][a-z0-9][a-z0-9]$/ \
+            || obase ~ /^dream-agent\.run\.log\.runner-tmp\.[A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9]$/ \
+            || obase ~ /^promotion-agent\.run\.log\.runner-tmp\.[A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9]$/ \
             || base == "dream-pass.launchd.out" || base == "dream-pass.launchd.err" \
             || base == "promotion-pass.launchd.out" || base == "promotion-pass.launchd.err") next
         print $0
@@ -1149,9 +1154,12 @@ tripwire_check() {
   local root="$1" state="$2" runner="$3" log="$4" marker empty wrote tw
   if guard_exists "$root" "$state" "$TRIPWIRE_REL"; then
     # The state directory copy is named when it is a file, because the pass
-    # cannot write it. The vault's copy is named otherwise.
+    # cannot write it. The vault's copy is named otherwise, and only when it is
+    # there, so the owner is never sent to a path that holds nothing.
     tw="$state/$(basename "$TRIPWIRE_REL")"
-    [ -f "$tw" ] && [ ! -L "$tw" ] || tw="$root/$TRIPWIRE_REL"
+    if [ ! -f "$tw" ] || [ -L "$tw" ]; then
+      { [ -e "$root/$TRIPWIRE_REL" ] || [ -L "$root/$TRIPWIRE_REL" ]; } && tw="$root/$TRIPWIRE_REL"
+    fi
     printf '[%s] TRIPWIRE: refusing to run. A previous pass changed a steering or execution surface, was interrupted before containment, or may have left a process running. Read %s and do what it says, then delete it and its copy.\n' \
       "$(ts)" "$tw" >> "$log"
     return 78
@@ -1368,7 +1376,12 @@ windows_runner_alive() {
     "\$ProgressPreference = 'SilentlyContinue'; \$p = Get-Process -Id $1 -ErrorAction SilentlyContinue; if (-not \$p -or \$p.ProcessName -notmatch '^(bash|sh)\$') { 'none' } else { try { [math]::Floor((\$p.StartTime.ToUniversalTime() - [datetime]'1970-01-01').TotalSeconds) } catch { 'unknown' } }"
   start="$(LC_ALL=C awk '{ sub(/\r$/, ""); sub(/^\357\273\277/, ""); if ($0 == "none" || $0 == "unknown" || $0 ~ /^[0-9]+$/) { print; exit } }' "$out" 2>/dev/null)"
   rm -f "$out"
+  # This watchdog stopped a lock probe, not a pass. Its result is cleared, so a
+  # probe that had to be stopped cannot later be read as a pass that left a
+  # process running and mark the run lock for good.
   RUN_PID=""
+  RUN_KILL_FAILED=0
+  RUN_KILL_REPORT=""
   [ "$start" = none ] && return 1
   is_uint "$start" || return 0
   [ -z "$2" ] || [ "$start" -le "$2" ]
@@ -2693,6 +2706,15 @@ keep_run_output() {
   local run="$1" dest="$2/$3.interrupted.run" max="" tmp=""
   [ -s "$run" ] || return 0
   max="$(uint_setting RUNNER_RUN_LOG_MAX_BYTES 10000000 1000 "$4" bytes)"
+  # A link at the destination would send the output wherever it points, and a
+  # folder there would swallow it under a name nobody would look for, while the
+  # rename still reported success. The link goes, and anything else that is not a
+  # file is refused.
+  [ -L "$dest" ] && rm -f "$dest" 2>/dev/null
+  if { [ -e "$dest" ] || [ -L "$dest" ]; } && { [ ! -f "$dest" ] || [ -L "$dest" ]; }; then
+    printf '[%s] WARNING: the output of the pass could not be kept at %s, because that path is not a file, so it is lost.\n' "$(ts)" "$dest" >> "$4"
+    return 1
+  fi
   # Written beside the earlier kept output and renamed over it, so a failed copy
   # leaves that one in place.
   tmp="$dest.tmp.$$"
@@ -2700,12 +2722,12 @@ keep_run_output() {
     cap_copy "$run" "$tmp" "$max"
   else
     cat "$run" > "$tmp" 2>/dev/null
-  fi && mv -f "$tmp" "$dest" 2>/dev/null && {
+  fi && mv -f "$tmp" "$dest" 2>/dev/null && [ -f "$dest" ] && [ ! -L "$dest" ] && {
     printf '[%s] The output of the pass is kept at %s.\n' "$(ts)" "$dest" >> "$4"
     return 0
   }
   rm -f "$tmp" 2>/dev/null
-  printf '[%s] WARNING: the output of the pass could not be kept at %s, so it is lost.\n' "$(ts)" "$dest" >> "$4"
+  printf '[%s] WARNING: the output of the pass could not be kept at %s, so it is lost. Anything left at that path is from an earlier run.\n' "$(ts)" "$dest" >> "$4"
   return 1
 }
 

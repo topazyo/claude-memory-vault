@@ -522,7 +522,10 @@ Around that call, each runner does several things an exit code cannot:
   its newest part from the start of a line, or the end of its last line when that line alone is
   longer. A pass stopped by a signal before its output reached the run log, or whose run log could
   not be written, has the output kept as `<runner>.interrupted.run` in the state directory, and the
-  log says why.
+  log says why. That copy is written beside the earlier one and renamed over it, a link there is
+  removed first, and anything else at that path that is not a file is refused rather than written
+  into, so the log never reports a copy that landed somewhere else. When the copy fails, what the
+  log says is lost is this run's output, and anything left at that path is from an earlier run.
 - **Write fence.** The runner checksums every file in the vault before and after the run and exits
   **2** with the offending paths logged if anything changed outside the allowed areas. For
   `dream-pass` that is `20-projects/_logs/dream-*.md`. For `promotion-pass` it is `31-standards/`

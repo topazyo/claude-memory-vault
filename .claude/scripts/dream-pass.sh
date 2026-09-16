@@ -89,6 +89,9 @@ KILL_FAILED_LOCKED=0
 RUN_LOG_APPENDED=0
 STOP_REPORT_PENDING=0
 AGENT_KILL_REPORT=""
+# 1 only while the agent's own run owns the watchdog's result, so a signal cannot
+# read a result another watchdog left, such as the run lock's liveness probe.
+AGENT_RUNNING=0
 
 # record_session_once
 # Records a claude-mode pass's session, once, however the pass ended, so a later
@@ -172,11 +175,12 @@ on_signal() {
   # A stop by the watchdog that may have left a process, and that the runner had
   # not reported yet, is reported now, so the lock is marked and the tripwire says
   # so. Before the run log is written that includes a result the watchdog has set
-  # while run_agent had not returned.
+  # while run_agent had not returned, which is why the result is read only while
+  # the agent's own run owns it.
   if [ "$STOP_REPORT_PENDING" -eq 1 ]; then
     report="$AGENT_KILL_REPORT${report:+
 $report}"
-  elif [ "$RUN_LOG_APPENDED" -eq 0 ] && [ "${RUN_KILL_FAILED:-0}" -eq 1 ] && [ "$KILL_FAILED_MARKED" -eq 0 ]; then
+  elif [ "$AGENT_RUNNING" -eq 1 ] && [ "$RUN_LOG_APPENDED" -eq 0 ] && [ "${RUN_KILL_FAILED:-0}" -eq 1 ] && [ "$KILL_FAILED_MARKED" -eq 0 ]; then
     report="${RUN_KILL_REPORT:-}${report:+
 $report}"
   fi
@@ -333,11 +337,13 @@ main() {
   # rewrite what the watchdog measures or the session record reads. It is added
   # to the run log after containment.
   : > "$SNAP_DIR/run"
+  AGENT_RUNNING=1
   run_agent "$TIMEOUT" "$SNAP_DIR/run" dream-agent "$TASK" "$PROMPT_REL"
   # A stop that may have left a process is reported after containment. Until
   # report_stop has done it, a signal does it instead.
   AGENT_KILL_REPORT="${RUN_KILL_REPORT:-}"
   STOP_REPORT_PENDING="${RUN_KILL_FAILED:-0}"
+  AGENT_RUNNING=0
 
   snapshot_tree "$ROOT" "$SNAP_DIR/after"
   changed_paths "$SNAP_DIR/before" "$SNAP_DIR/after" > "$SNAP_DIR/changed"

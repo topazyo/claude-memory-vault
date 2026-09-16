@@ -1292,10 +1292,10 @@ rm -f "$RV/.claude/logs/dream-agent.run.log"
 if ln "$TMP/runlog-hardlink-target" "$RV/.claude/logs/dream-agent.run.log" 2>/dev/null; then
   new_case_state runlog-hardlink
   expect_rc "dream-pass: journal written with a run log hard-linked to another file -> OK" 0 "$(runner dream-pass.sh journal)"
+  ran runlog-hardlink
   if [ "$(cat "$TMP/runlog-hardlink-target")" = 'other file' ] && grep -q 'subtype":"init' "$RV/.claude/logs/dream-agent.run.log" \
      && ! grep -q 'other file' "$RV/.claude/logs/dream-agent.run.log"; then
     ok "a run log hard-linked to another file is replaced, and the other file is untouched"
-    ran runlog-hardlink
   else
     bad "the run output went through a hard link -- other file: [$(tr '\n' '|' < "$TMP/runlog-hardlink-target")]"
   fi
@@ -1312,10 +1312,10 @@ printf '{"line":1}\n' > "$rl/run"
 if ln -s "$rl/elsewhere" "$rl/logs/agent.run.log" 2>/dev/null && [ -L "$rl/logs/agent.run.log" ]; then
   ( . "$RV/.claude/scripts/lib/runner-common.sh"
     append_run_log "$rl/run" "$rl/logs/agent.run.log" "$rl/log" )
+  ran run-log-dirlink
   if [ -z "$(ls -A "$rl/elsewhere")" ] && [ -f "$rl/logs/agent.run.log" ] && [ ! -L "$rl/logs/agent.run.log" ] \
      && grep -q '"line":1' "$rl/logs/agent.run.log"; then
     ok "a run log that is a link to a directory is replaced by a file, and nothing is moved into the directory"
-    ran run-log-dirlink
   else
     bad "the run output went through a link to a directory -- directory: [$(ls -A "$rl/elsewhere" | tr '\n' ' ')] log: [$(tr '\n' '|' < "$rl/log" 2>/dev/null)]"
   fi
@@ -1362,15 +1362,23 @@ else
   bad "a stray run-log temporary file stayed, another file was removed, or the fence names are wrong -- stray: $([ -e "$rl/logs/agent.run.log.runner-tmp.AbC123" ] && echo left || echo removed), backup: $([ -f "$rl/logs/agent.run.log.backup" ] && echo kept || echo removed), steering: [$(printf '%s' "$rl_steer" | tr '\n' '|')]"
 fi
 # The fence's file listing leaves out the same names the steering filter does.
+# A name whose fixed part differs only in case is nobody's temporary file, so
+# both sides keep it, where the listing was once stricter than the filter.
 mkdir -p "$rl/vault/.claude/logs"
 printf 'x\n' > "$rl/vault/.claude/logs/dream-agent.run.log.runner-tmp.AbC123"
 printf 'x\n' > "$rl/vault/.claude/logs/dream-agent.run.log.runner-tmp.-_.~x!"
+printf 'x\n' > "$rl/vault/.claude/logs/Dream-Agent.Run.Log.Runner-Tmp.zz9999"
 ( . "$RV/.claude/scripts/lib/runner-common.sh"
   snapshot_tree "$rl/vault" "$rl/vault.snap" )
-if grep -q 'runner-tmp\.-_\.~x!' "$rl/vault.snap" 2>/dev/null && ! grep -q 'runner-tmp\.AbC123' "$rl/vault.snap"; then
-  ok "the fence lists a run-log name that is not a runner temporary file, and leaves out one that is"
+rl_case="$( . "$RV/.claude/scripts/lib/runner-common.sh"
+  printf '.claude/logs/Dream-Agent.Run.Log.Runner-Tmp.zz9999\n.claude/logs/dream-agent.run.log.runner-tmp.AbC123\n' | steering_filter )"
+ran runlog-tmp-case
+if grep -q 'runner-tmp\.-_\.~x!' "$rl/vault.snap" 2>/dev/null && ! grep -q 'runner-tmp\.AbC123' "$rl/vault.snap" \
+   && grep -q 'Runner-Tmp\.zz9999' "$rl/vault.snap" \
+   && [ "$rl_case" = '.claude/logs/Dream-Agent.Run.Log.Runner-Tmp.zz9999' ]; then
+  ok "the fence lists a run-log name that is not a runner temporary file, including one that differs only in case, and leaves out one that is"
 else
-  bad "the fence listing and the steering filter disagree on run-log temporary names -- [$(grep 'runner-tmp' "$rl/vault.snap" 2>/dev/null | tr '\n' '|')]"
+  bad "the fence listing and the steering filter disagree on run-log temporary names -- listed: [$(grep -i 'runner-tmp' "$rl/vault.snap" 2>/dev/null | tr '\n' '|')], steering: [$(printf '%s' "$rl_case" | tr '\n' '|')]"
 fi
 # The run log keeps the mode it had, and a new one gets the umask's mode.
 rm -rf "$rl/logs" "$rl/log"
@@ -1382,9 +1390,9 @@ if [ "$(ls -ln "$rl/logs/mode.run.log" | cut -c2-10)" = 'rw-r-----' ]; then
     umask 022
     append_run_log "$rl/run" "$rl/logs/mode.run.log" "$rl/log"
     append_run_log "$rl/run" "$rl/logs/new.run.log" "$rl/log" )
+  ran runlog-mode
   if [ "$(ls -ln "$rl/logs/mode.run.log" | cut -c2-10)" = 'rw-r-----' ] && [ "$(ls -ln "$rl/logs/new.run.log" | cut -c2-10)" = 'rw-r--r--' ]; then
     ok "the run log keeps its mode, and a new run log gets the umask's mode"
-    ran runlog-mode
   else
     bad "the run log's mode changed -- old log $(ls -ln "$rl/logs/mode.run.log" | cut -c1-10), new log $(ls -ln "$rl/logs/new.run.log" | cut -c1-10)"
   fi
@@ -1400,16 +1408,102 @@ if ! cat "$rl/logs/hist.run.log" > /dev/null 2>&1; then
     append_run_log "$rl/run" "$rl/logs/hist.run.log" "$rl/log" )
   rl_rc=$?
   chmod 600 "$rl/logs/hist.run.log"
+  ran runlog-unreadable
   if [ "$rl_rc" -ne 0 ] && grep -q 'history line' "$rl/logs/hist.run.log" && ! grep -q '"line"' "$rl/logs/hist.run.log" \
      && grep -q 'could not be read' "$rl/log" 2>/dev/null; then
     ok "an unreadable run log keeps its history, and the failed append is logged and reported"
-    ran runlog-unreadable
   else
     bad "an unreadable run log lost its history or failed silently -- rc $rl_rc, log: [$(tr '\n' '|' < "$rl/log" 2>/dev/null)]"
   fi
 else
   chmod 600 "$rl/logs/hist.run.log" 2>/dev/null
   skip runlog-unreadable 'an unreadable run log: this user can read a mode 0200 file'
+fi
+# keep_run_output, called directly. A folder at the destination would swallow the
+# output under a name nobody would look for while the rename still succeeded, so
+# it is refused and said so. A link there is replaced by a file.
+ko="$TMP/keep-run-output"
+mkdir -p "$ko/state/dream-pass.interrupted.run" "$ko/elsewhere"
+printf '{"line":1}\n' > "$ko/run"
+( . "$RV/.claude/scripts/lib/runner-common.sh"
+  keep_run_output "$ko/run" "$ko/state" dream-pass "$ko/log" )
+ko_rc=$?
+if [ "$ko_rc" -ne 0 ] && [ -d "$ko/state/dream-pass.interrupted.run" ] \
+   && [ -z "$(ls -A "$ko/state/dream-pass.interrupted.run")" ] \
+   && grep -q 'not a file' "$ko/log" 2>/dev/null && ! grep -q 'is kept at' "$ko/log" 2>/dev/null; then
+  ok "a folder at the kept-output path is refused, and nothing is moved into it"
+else
+  bad "the kept output went into a folder or was reported as kept -- rc $ko_rc, folder: [$(ls -A "$ko/state/dream-pass.interrupted.run" 2>/dev/null | tr '\n' ' ')], log: [$(tr '\n' '|' < "$ko/log" 2>/dev/null)]"
+fi
+rmdir "$ko/state/dream-pass.interrupted.run" 2>/dev/null
+if ln -s "$ko/elsewhere" "$ko/state/dream-pass.interrupted.run" 2>/dev/null && [ -L "$ko/state/dream-pass.interrupted.run" ]; then
+  ( . "$RV/.claude/scripts/lib/runner-common.sh"
+    keep_run_output "$ko/run" "$ko/state" dream-pass "$ko/log2" )
+  ran keep-output-dirlink
+  if [ -z "$(ls -A "$ko/elsewhere")" ] && [ -f "$ko/state/dream-pass.interrupted.run" ] \
+     && [ ! -L "$ko/state/dream-pass.interrupted.run" ] \
+     && grep -q '"line":1' "$ko/state/dream-pass.interrupted.run"; then
+    ok "a link at the kept-output path is replaced by a file, and nothing is moved into the directory"
+  else
+    bad "the kept output went through a link to a directory -- directory: [$(ls -A "$ko/elsewhere" | tr '\n' ' ')], log: [$(tr '\n' '|' < "$ko/log2" 2>/dev/null)]"
+  fi
+else
+  skip keep-output-dirlink 'a kept output path that is a link to a directory: ln -s does not create symlinks here'
+fi
+# The run lock's liveness probe runs under a watchdog of its own. Its result is
+# cleared, so a later signal cannot read it as a pass that left a process
+# running and mark the run lock for good.
+wp="$TMP/winprobe"
+mkdir -p "$wp/bin"
+printf '#!/bin/sh\nexit 0\n' > "$wp/bin/powershell.exe"
+chmod +x "$wp/bin/powershell.exe"
+wp_out="$( PATH="$wp/bin:$PATH"
+  . "$RV/.claude/scripts/lib/runner-common.sh"
+  run_with_watchdog() { RUN_KILL_FAILED=1; RUN_KILL_REPORT='unknown 999999999 stand-in'; : > "$2"; return 0; }
+  windows_runner_alive 4242 ''
+  printf '%s %s\n' "${RUN_KILL_FAILED:-unset}" "${RUN_KILL_REPORT:-empty}" )"
+if [ "$wp_out" = '0 empty' ]; then
+  ok "the run lock's liveness probe leaves no stop result behind"
+else
+  bad "the liveness probe left a stop result for a later signal to read -- [$wp_out]"
+fi
+# Both runners read the watchdog's result in the signal handler only while the
+# agent's own run owns it, which is what keeps another watchdog's result out.
+sp_bad=''
+for sp_f in dream-pass promotion-pass; do
+  sp_set="$(awk '/^  AGENT_RUNNING=1$/ { print NR; exit }' "$RV/.claude/scripts/$sp_f.sh")"
+  sp_run="$(awk '/^  run_agent "\$TIMEOUT"/ { print NR; exit }' "$RV/.claude/scripts/$sp_f.sh")"
+  sp_pend="$(awk '/^  STOP_REPORT_PENDING="\$\{RUN_KILL_FAILED/ { print NR; exit }' "$RV/.claude/scripts/$sp_f.sh")"
+  sp_clear="$(awk '/^  AGENT_RUNNING=0$/ { print NR; exit }' "$RV/.claude/scripts/$sp_f.sh")"
+  grep -q 'elif \[ "\$AGENT_RUNNING" -eq 1 \]' "$RV/.claude/scripts/$sp_f.sh" || sp_bad="$sp_bad $sp_f:unscoped-elif"
+  if [ -n "$sp_set" ] && [ -n "$sp_run" ] && [ -n "$sp_pend" ] && [ -n "$sp_clear" ]; then
+    { [ "$sp_set" -lt "$sp_run" ] && [ "$sp_run" -lt "$sp_pend" ] && [ "$sp_pend" -lt "$sp_clear" ]; } \
+      || sp_bad="$sp_bad $sp_f:order($sp_set,$sp_run,$sp_pend,$sp_clear)"
+  else
+    sp_bad="$sp_bad $sp_f:missing($sp_set,$sp_run,$sp_pend,$sp_clear)"
+  fi
+done
+ran signal-scope
+if [ -z "$sp_bad" ]; then
+  ok "both runners scope the watchdog's result to the agent's own run around run_agent"
+else
+  bad "the signal handler's scope is wrong --$sp_bad"
+fi
+# The tripwire refusal names a copy that is there, never a path holding nothing.
+tc="$TMP/tripwire-name"
+mkdir -p "$tc/vault/.claude/logs" "$tc/state" "$tc/elsewhere"
+if ln -s "$tc/elsewhere" "$tc/state/runner-tripwire" 2>/dev/null && [ -L "$tc/state/runner-tripwire" ]; then
+  ( . "$RV/.claude/scripts/lib/runner-common.sh"
+    tripwire_check "$tc/vault" "$tc/state" dream-pass "$tc/log" )
+  ran tripwire-name
+  if grep -q "$tc/state/runner-tripwire" "$tc/log" 2>/dev/null \
+     && ! grep -q "$tc/vault/.claude/logs/runner-tripwire" "$tc/log" 2>/dev/null; then
+    ok "the tripwire refusal names the state directory copy when the vault has none"
+  else
+    bad "the tripwire refusal named a path that holds nothing -- log: [$(tr '\n' '|' < "$tc/log" 2>/dev/null)]"
+  fi
+else
+  skip tripwire-name 'the tripwire refusal name: ln -s does not create symlinks here'
 fi
 # A runner whose run log cannot be written keeps the output in the state
 # directory and says so.
@@ -1764,11 +1858,11 @@ if ! is_windows_host; then
     RUN_REAPED=1 stop_tree "$rg_pid" 1 "$TMP/reaped.record" "" 1 )
   rg_pid="$(cat "$TMP/reaped-leader" 2>/dev/null)"
   rg_member="$(cat "$TMP/reaped-member" 2>/dev/null)"
+  ran reaped-group
   if [ -n "$rg_pid" ] && [ -n "$rg_member" ] && ! kill -0 "$rg_member" 2>/dev/null \
      && grep -qx -- "-TERM $rg_member" "$TMP/reaped-calls" \
      && ! grep -qE -- "(^| )-?$rg_pid\$" "$TMP/reaped-calls"; then
     ok "a stop of a reaped command signals the members left in its group, not its pid"
-    ran reaped-group
   else
     bad "a stop of a reaped command signalled its pid, or missed its group -- leader $rg_pid member $rg_member calls: $(tr '\n' '|' < "$TMP/reaped-calls")"
   fi
@@ -1872,9 +1966,9 @@ if is_windows_host; then
     win_tree_stop() { printf 'none\n' >> "$3"; }
     kill() { [ "$1" = -KILL ] && return 0; builtin kill "$@"; }
     stop_tree "$wv_wrapper" 2 "$TMP/win-survivor.record" "" 0 )
+  ran win-survivor
   if [ -n "$wv_child" ] && grep -qx "alive $wv_child" "$TMP/win-survivor.record"; then
     ok "a Windows stop records a child it could not stop as alive"
-    ran win-survivor
   else
     bad "a Windows stop did not record a surviving child -- child ${wv_child:-not found}, record: [$(tr '\n' '|' < "$TMP/win-survivor.record")]"
   fi
@@ -1893,10 +1987,10 @@ if is_windows_host; then
   ( . "$RV/.claude/scripts/lib/runner-common.sh"
     win_tree_stop 0 "" "$TMP/win-late.record" "$wl_win" "$(( $(date +%s) - 120 ))"
     win_tree_stop "$wl_win" "" "$TMP/win-late-root.record" "" "$(( $(date +%s) - 120 ))" )
+  ran win-late
   if [ -n "$wl_win" ] && [ "$wl_win" -gt 0 ] 2>/dev/null && kill -0 "$wl_pid" 2>/dev/null \
      && [ "$(cat "$TMP/win-late.record")" = none ] && [ "$(cat "$TMP/win-late-root.record")" = none ]; then
     ok "a Windows stop leaves a process that started after the tree was listed, handed over as a listed id or as the root"
-    ran win-late
   else
     bad "a Windows stop reached a process that started after the listing -- winpid [$wl_win] record: [$(tr '\n' '|' < "$TMP/win-late.record")] root record: [$(tr '\n' '|' < "$TMP/win-late-root.record")]"
   fi
@@ -1932,9 +2026,9 @@ if is_windows_host; then
   : > "$TMP/win-reaped.record"
   ( . "$RV/.claude/scripts/lib/runner-common.sh"
     RUN_REAPED=1 stop_tree "$wr_pid" 1 "$TMP/win-reaped.record" "$( . "$RV/.claude/scripts/lib/runner-common.sh" && new_uuid)" 0 )
+  ran win-reaped
   if kill -0 "$wr_pid" 2>/dev/null && [ "$(cat "$TMP/win-reaped.record")" = none ]; then
     ok "a Windows stop of a reaped command leaves the process that now has its pid"
-    ran win-reaped
   else
     bad "a Windows stop of a reaped command reached the process that now has its pid -- record: [$(tr '\n' '|' < "$TMP/win-reaped.record")]"
   fi
@@ -1953,9 +2047,9 @@ if is_windows_host; then
     win_msys_tree() { printf '%s %s\n%s 1\n' "$wk_root" "$(cat "/proc/$wk_root/winpid")" "$wk_other"; }
     win_tree_stop() { printf 'none\n' >> "$3"; }
     stop_tree "$wk_root" 1 "$TMP/win-kill-check.record" "" 0 )
+  ran win-kill-check
   if kill -0 "$wk_other" 2>/dev/null && ! kill -0 "$wk_root" 2>/dev/null && [ "$(cat "$TMP/win-kill-check.record")" = none ]; then
     ok "Git Bash's KILL leaves a listed pid that now names another Windows process"
-    ran win-kill-check
   else
     bad "Git Bash's KILL reached a pid that names another Windows process -- other alive: $(kill -0 "$wk_other" 2>/dev/null && echo yes || echo no) record: [$(tr '\n' '|' < "$TMP/win-kill-check.record")]"
   fi
