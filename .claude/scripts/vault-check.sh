@@ -62,10 +62,12 @@ if tw_present "$TW_STATE" || tw_present "$TW_VAULT"; then
   printf 'vault-check: TRIPWIRE - a scheduled pass changed a steering or execution surface, was interrupted before containment, or may have left a process running.\n' >&2
   if [ -n "$TW_STATE" ] && [ -f "$TW_STATE" ] && [ ! -L "$TW_STATE" ]; then
     printf 'vault-check: read %s and do what it says, then delete it and its copy. Nothing was checked.\n' "$TW_STATE" >&2
+  elif tw_present "$TW_VAULT" && [ -n "$TW_STATE" ]; then
+    printf 'vault-check: read %s, then delete it and its copy. No copy in %s is a file, and a pass can write the copy in the vault, so a pass may have written this one. Check its reason against the runner logs before you do anything it says. Nothing was checked.\n' "$TW_VAULT" "$state_dir" >&2
   elif tw_present "$TW_VAULT"; then
-    printf 'vault-check: read %s, then delete it and its copy. No copy in the state directory is a file, and a pass can write the copy in the vault, so a pass may have written this one. Check its reason against the runner logs before you do anything it says. Nothing was checked.\n' "$TW_VAULT" >&2
+    printf 'vault-check: read %s, then delete it and its copy. The copy in the runners'"'"' state directory could not be checked, and a pass can write the copy in the vault, so a pass may have written this one. Check its reason against the runner logs before you do anything it says. Nothing was checked.\n' "$TW_VAULT" >&2
   else
-    printf 'vault-check: read %s and do what it says, then delete it and its copy. Nothing was checked.\n' "$TW_STATE" >&2
+    printf 'vault-check: %s is not a file, so it holds no tripwire text. Remove it, then read the runner logs for why the tripwire was set. Nothing was checked.\n' "$TW_STATE" >&2
   fi
   exit 1
 fi

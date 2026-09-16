@@ -524,11 +524,13 @@ Around that call, each runner does several things an exit code cannot:
   not be written, has the output kept as `<runner>.interrupted.run` in the state directory, and the
   log says why. That copy is written beside the earlier one and renamed over it. A link or an empty
   folder at that path is removed first, so nothing is written through a link or into a folder. A
-  folder that holds files, or a link that cannot be removed, is left for you to look at, and the
-  output is kept under a new name beside it, `<runner>.interrupted.run.<six characters>`, which the
-  log's `WARNING` names. When something takes the path during the rename, the log says the output
-  may be inside it. When the copy itself fails, what the log says is lost is this run's output, and
-  anything left at that path is from an earlier run.
+  folder that holds files or cannot be removed, a link that cannot be removed, or a path the rename
+  fails on is left for you to look at, and the output is kept under a new name beside it,
+  `<runner>.interrupted.run.<six characters>`, which the log's `WARNING` names. When something takes
+  the path during the rename, the log says the output may be inside it. The output is lost only when
+  the copy itself fails, or when neither the path nor a name beside it can take it, and the
+  `WARNING` then says what is at that path: an earlier run's output, or something that is not a
+  regular file and holds none.
 - **Write fence.** The runner checksums every file in the vault before and after the run and exits
   **2** with the offending paths logged if anything changed outside the allowed areas. For
   `dream-pass` that is `20-projects/_logs/dream-*.md`. For `promotion-pass` it is `31-standards/`
@@ -623,9 +625,10 @@ Around that call, each runner does several things an exit code cannot:
   copy exists, both runners exit **78** without starting an agent, `vault-check.sh` exits 1 without
   checking anything, and `/resume` shows the tripwire instead of a briefing. Clear it by reviewing
   the paths and then deleting both copies. The refusal names the state directory copy when it is a
-  file, because a pass cannot write it. When only the vault's copy is a file, the runners and
+  file, because a pass cannot write it. When only the vault's copy is there, the runners and
   `vault-check.sh` name that copy and say a pass may have written it, so check its reason against
-  the runner log before you follow anything it says. If no copy can be written, the runner exits **70**
+  the runner log before you follow anything it says. When neither copy is a file, they say so and
+  send you to the log instead. If no copy can be written, the runner exits **70**
   (TRIPWIRE-ERROR) and leaves its in-flight marker, so the next run still refuses. When a signal
   stops a pass and no copy of the tripwire can be written, the runner logs the same TRIPWIRE-ERROR
   keyword and keeps its marker too, but exits with the signal's code, 130 or 143.
@@ -635,7 +638,9 @@ Around that call, each runner does several things an exit code cannot:
   that never gets there, because the scheduler ended the task, the machine stopped, or a signal
   arrived, leaves the marker behind. The next runner reads the state-directory copy first, because
   the pass cannot reach it, and sets the tripwire instead of adopting the unknown state as its
-  baseline. A runner checks for the marker only while it holds the run lock, when no other pass can
+  baseline. The tripwire quotes that copy. A marker found only in the vault still sets the tripwire,
+  but is not quoted, because a pass or a process a stop left could have written it. A runner checks
+  for the marker only while it holds the run lock, when no other pass can
   be running, so a marker whose pid now belongs to another process still counts. If that tripwire cannot
   be written, it exits **70** and keeps the marker. A runner that cannot write the marker's
   state-directory copy refuses to start with exit 1. A copy of the pre-pass backup is kept in the
@@ -1113,8 +1118,8 @@ while a note under `40-llm-wiki/wiki/` is covered by the six-tier rules only.
 | `.claude/hooks/read-guard.sh` | `2` blocked (`.env`, `.env.*`, `secrets/`) · `0` allowed, or no path to check | `.claude/logs/read-guard.log` (`BLOCKED:`, `DEGRADED:`); the reason also to stderr |
 | `.claude/scripts/vault-check.sh` | `0` notes scanned, no violations · `1` one or more violations (including a malformed date), no content-tier folder found, zero notes scanned (`VACUOUS`), or a named note that is not a readable file | stdout, plus the `VACUOUS` and unreadable-note lines on stderr — never writes to a note |
 | `.claude/scripts/run-tests.sh` | `0` all controls passed · `1` at least one failed · `130` SIGINT · `143` SIGTERM | stdout only; fixtures in a temp dir, removed on exit |
-| `.claude/scripts/dream-pass.sh` / `.cmd` | `0` OK · `1` NO-ARTIFACT · `2` VIOLATION · `3` REFUSED · `4` COMMIT-FAILED · `5` CHECK-FAILED · `64` unknown `VAULT_AGENT` · `70` TRIPWIRE-ERROR · `75` LOCKED · `78` TRIPWIRE · `124` TIMEOUT · `125` STALLED · `127` `claude`, wrapper or Git Bash not found · otherwise the agent's code | `.claude/logs/dream-agent.log` · agent output in `dream-agent.run.log` · `dream-pass.git-state.txt` · `dream-pass.prompt.md` in command mode · `runner-tripwire` after a contained violation or a `KILL_FAILED` stop · `dream-pass.interrupted.run` in the state directory after a signal or a `KILL_FAILED` stop, or when the run log could not be written |
-| `.claude/scripts/promotion-pass.sh` / `.cmd` | `0` OK · `1` NO-ARTIFACT · `2` VIOLATION · `3` REFUSED · `4` COMMIT-FAILED · `5` CHECK-FAILED · `64` unknown `VAULT_AGENT` · `70` TRIPWIRE-ERROR · `75` LOCKED · `78` TRIPWIRE · `124` TIMEOUT · `125` STALLED · `127` `claude`, wrapper or Git Bash not found · otherwise the agent's code | `.claude/logs/promotion-agent.log` · agent output added to `promotion-agent.run.log` · `promotion-pass.git-state.txt` · `promotion-pass.prompt.md` in command mode · `runner-tripwire` after a contained violation or a `KILL_FAILED` stop · `promotion-pass.interrupted.run` in the state directory after a signal or a `KILL_FAILED` stop, or when the run log could not be written |
+| `.claude/scripts/dream-pass.sh` / `.cmd` | `0` OK · `1` NO-ARTIFACT · `2` VIOLATION · `3` REFUSED · `4` COMMIT-FAILED · `5` CHECK-FAILED · `64` unknown `VAULT_AGENT` · `70` TRIPWIRE-ERROR · `75` LOCKED · `78` TRIPWIRE · `124` TIMEOUT · `125` STALLED · `127` `claude`, wrapper or Git Bash not found · otherwise the agent's code | `.claude/logs/dream-agent.log` · agent output in `dream-agent.run.log` · `dream-pass.git-state.txt` · `dream-pass.prompt.md` in command mode · `runner-tripwire` after a contained violation or a `KILL_FAILED` stop · `dream-pass.interrupted.run` in the state directory after a signal or a `KILL_FAILED` stop, or when the run log could not be written, or `dream-pass.interrupted.run.<six characters>` beside it when something was in the way |
+| `.claude/scripts/promotion-pass.sh` / `.cmd` | `0` OK · `1` NO-ARTIFACT · `2` VIOLATION · `3` REFUSED · `4` COMMIT-FAILED · `5` CHECK-FAILED · `64` unknown `VAULT_AGENT` · `70` TRIPWIRE-ERROR · `75` LOCKED · `78` TRIPWIRE · `124` TIMEOUT · `125` STALLED · `127` `claude`, wrapper or Git Bash not found · otherwise the agent's code | `.claude/logs/promotion-agent.log` · agent output added to `promotion-agent.run.log` · `promotion-pass.git-state.txt` · `promotion-pass.prompt.md` in command mode · `runner-tripwire` after a contained violation or a `KILL_FAILED` stop · `promotion-pass.interrupted.run` in the state directory after a signal or a `KILL_FAILED` stop, or when the run log could not be written, or `promotion-pass.interrupted.run.<six characters>` beside it when something was in the way |
 | `.claude/githooks/pre-commit` | `vault-check.sh`'s status: `0` commit proceeds · `1` commit refused | stdout/stderr only |
 | `dream-agent` | n/a (agent) | one file: `20-projects/_logs/dream-<YYYY-MM-DD>.md` |
 | `promotion-agent` | n/a (agent) | `31-standards/`, `40-llm-wiki/wiki/`, optionally `20-projects/_logs/promotion-*.md`, committed by its runner |

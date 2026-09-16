@@ -1456,9 +1456,15 @@ fi
 rm -rf "$ko/state"
 mkdir -p "$ko/state"
 if ! is_windows_host && mkfifo "$ko/state/dream-pass.interrupted.run" 2>/dev/null && [ -p "$ko/state/dream-pass.interrupted.run" ]; then
+  # A reader on the fifo, so a keep that wrote into it instead of renaming over
+  # it fails this control rather than blocking the suite.
+  cat "$ko/state/dream-pass.interrupted.run" > "$ko/fifo-read" 2>/dev/null &
+  ko_reader=$!
   ( . "$RV/.claude/scripts/lib/runner-common.sh"
     keep_run_output "$ko/run" "$ko/state" dream-pass "$ko/log-fifo" )
   ko_rc=$?
+  kill "$ko_reader" 2>/dev/null
+  wait "$ko_reader" 2>/dev/null
   ran keep-output-fifo
   if [ "$ko_rc" -eq 0 ] && [ -f "$ko/state/dream-pass.interrupted.run" ] && [ ! -p "$ko/state/dream-pass.interrupted.run" ] \
      && grep -q '"line":1' "$ko/state/dream-pass.interrupted.run" && ! grep -q WARNING "$ko/log-fifo"; then
@@ -1488,6 +1494,57 @@ if [ "$ko_rc" -ne 0 ] && grep -q 'may be inside it' "$ko/log-race" 2>/dev/null &
   ok "a folder that takes the kept-output path during the rename is named as where the output may be"
 else
   bad "a rename into a folder that took the path was reported wrongly -- rc $ko_rc, log: [$(tr '\n' '|' < "$ko/log-race" 2>/dev/null)]"
+fi
+# Every other branch, each with a stand-in for the step that fails. The log names
+# what is really at the path, and no temporary or empty file is left behind.
+ko_left() {  # ko_left - prints the temporary and kept names left in the state folder
+  ls -A "$ko/state" 2>/dev/null | grep -E 'interrupted\.run\.' | tr '\n' ' '
+}
+ko_bad=''
+for ko_case in copy-fails-folder copy-fails-file rename-fails beside-fails empty-folder-stays; do
+  rm -rf "$ko/state"
+  mkdir -p "$ko/state"
+  case "$ko_case" in
+    copy-fails-folder|beside-fails)
+      mkdir -p "$ko/state/dream-pass.interrupted.run"
+      printf 'owner file\n' > "$ko/state/dream-pass.interrupted.run/inside.txt" ;;
+    copy-fails-file) printf 'earlier output\n' > "$ko/state/dream-pass.interrupted.run" ;;
+    empty-folder-stays) mkdir -p "$ko/state/dream-pass.interrupted.run" ;;
+  esac
+  rm -f "$ko/log-$ko_case"
+  ( . "$RV/.claude/scripts/lib/runner-common.sh"
+    case "$ko_case" in
+      copy-fails-*) cat() { return 1; } ;;
+      rename-fails) mv() { if [ "$1" = -f ] && [ "${3##*/}" = dream-pass.interrupted.run ]; then return 1; fi; command mv "$@"; } ;;
+      beside-fails) mktemp() { return 1; } ;;
+      empty-folder-stays) rmdir() { return 1; } ;;
+    esac
+    keep_run_output "$ko/run" "$ko/state" dream-pass "$ko/log-$ko_case" )
+  ko_rc=$?
+  ko_log="$(tr '\n' '|' < "$ko/log-$ko_case" 2>/dev/null)"
+  ko_alt="$(kept_alt "$ko/log-$ko_case")"
+  case "$ko_case" in
+    copy-fails-folder)
+      { [ "$ko_rc" -ne 0 ] && grep -q 'so it is lost' "$ko/log-$ko_case" && ! grep -q 'from an earlier run' "$ko/log-$ko_case" \
+        && grep -q 'not a regular file' "$ko/log-$ko_case" && [ -z "$(ko_left)" ]; } || ko_bad="$ko_bad [$ko_case rc $ko_rc left: $(ko_left) log: $ko_log]" ;;
+    copy-fails-file)
+      { [ "$ko_rc" -ne 0 ] && grep -q 'from an earlier run' "$ko/log-$ko_case" && [ -z "$(ko_left)" ] \
+        && grep -q 'earlier output' "$ko/state/dream-pass.interrupted.run"; } || ko_bad="$ko_bad [$ko_case rc $ko_rc left: $(ko_left) log: $ko_log]" ;;
+    rename-fails)
+      { [ "$ko_rc" -eq 0 ] && grep -q 'is a path the output could not be renamed to' "$ko/log-$ko_case" \
+        && [ -n "$ko_alt" ] && grep -q '"line":1' "$ko_alt" && [ "$(ko_left)" = "${ko_alt##*/} " ]; } || ko_bad="$ko_bad [$ko_case rc $ko_rc left: $(ko_left) log: $ko_log]" ;;
+    beside-fails)
+      { [ "$ko_rc" -ne 0 ] && grep -q 'or beside it, so it is lost' "$ko/log-$ko_case" && [ -z "$(ko_left)" ]; } \
+        || ko_bad="$ko_bad [$ko_case rc $ko_rc left: $(ko_left) log: $ko_log]" ;;
+    empty-folder-stays)
+      { [ "$ko_rc" -eq 0 ] && grep -q 'is a folder that could not be removed' "$ko/log-$ko_case" \
+        && ! grep -q 'not empty' "$ko/log-$ko_case" && [ -n "$ko_alt" ] && grep -q '"line":1' "$ko_alt"; } || ko_bad="$ko_bad [$ko_case rc $ko_rc left: $(ko_left) log: $ko_log]" ;;
+  esac
+done
+if [ -z "$ko_bad" ]; then
+  ok "each failing step of keeping the output logs what is really at the path and leaves no temporary or empty file"
+else
+  bad "a failing step of keeping the output logged something untrue or left a file --$ko_bad"
 fi
 rm -rf "$ko/state"
 mkdir -p "$ko/state"
@@ -1607,21 +1664,46 @@ for tn_case in state-file state-folder-vault-file state-folder-only; do
   tn_check="$(VAULT_STATE_DIR="$tn/state" CLAUDE_PROJECT_DIR="$tn/vault" bash "$RV/.claude/scripts/vault-check.sh" 2>&1)"
   tn_check_rc=$?
   [ "$tn_rc" -eq 78 ] && [ "$tn_check_rc" -eq 1 ] || tn_bad="$tn_bad $tn_case:rc($tn_rc,$tn_check_rc)"
-  grep -qF "Read $tn_want" "$tn/log" 2>/dev/null || tn_bad="$tn_bad $tn_case:runner-names-other"
-  printf '%s\n' "$tn_check" | grep -qF "read $tn_want" || tn_bad="$tn_bad $tn_case:vault-check-names-other"
+  if [ "$tn_case" = state-folder-only ]; then
+    # Nothing there holds tripwire text, so neither tool sends the owner to read it.
+    grep -qF "$tn_want is not a file" "$tn/log" 2>/dev/null || tn_bad="$tn_bad $tn_case:runner-names-other"
+    printf '%s\n' "$tn_check" | grep -qF "$tn_want is not a file" || tn_bad="$tn_bad $tn_case:vault-check-names-other"
+    ! grep -q 'do what it says' "$tn/log" 2>/dev/null || tn_bad="$tn_bad $tn_case:runner-instruction"
+    ! printf '%s\n' "$tn_check" | grep -q 'do what it says' || tn_bad="$tn_bad $tn_case:vault-check-instruction"
+  else
+    grep -qF "Read $tn_want" "$tn/log" 2>/dev/null || tn_bad="$tn_bad $tn_case:runner-names-other"
+    printf '%s\n' "$tn_check" | grep -qF "read $tn_want" || tn_bad="$tn_bad $tn_case:vault-check-names-other"
+  fi
   if [ "$tn_caution" = yes ]; then
     grep -q 'a pass may have written' "$tn/log" 2>/dev/null || tn_bad="$tn_bad $tn_case:runner-no-caution"
     printf '%s\n' "$tn_check" | grep -q 'a pass may have written' || tn_bad="$tn_bad $tn_case:vault-check-no-caution"
+    grep -qF "No copy in $tn/state is a file" "$tn/log" 2>/dev/null || tn_bad="$tn_bad $tn_case:runner-no-state-name"
+    printf '%s\n' "$tn_check" | grep -qF "No copy in $tn/state is a file" || tn_bad="$tn_bad $tn_case:vault-check-no-state-name"
   else
     ! grep -q 'a pass may have written' "$tn/log" 2>/dev/null || tn_bad="$tn_bad $tn_case:runner-caution"
     ! printf '%s\n' "$tn_check" | grep -q 'a pass may have written' || tn_bad="$tn_bad $tn_case:vault-check-caution"
-    grep -q 'do what it says' "$tn/log" 2>/dev/null || tn_bad="$tn_bad $tn_case:runner-no-instruction"
+    [ "$tn_case" = state-folder-only ] || grep -q 'do what it says' "$tn/log" 2>/dev/null || tn_bad="$tn_bad $tn_case:runner-no-instruction"
   fi
 done
+# vault-check.sh away from its library cannot work out the state directory, so it
+# says that copy was not checked instead of saying no copy there is a file.
+mkdir -p "$tn/alone"
+cp "$RV/.claude/scripts/vault-check.sh" "$tn/alone/vault-check.sh"
+rm -rf "$tn/state/runner-tripwire"
+printf 'TRIPWIRE\n' > "$tn/vault/.claude/logs/runner-tripwire"
+tn_check="$(CLAUDE_PROJECT_DIR="$tn/vault" bash "$tn/alone/vault-check.sh" 2>&1)"
+tn_check_rc=$?
+if [ "$tn_check_rc" -eq 1 ] && printf '%s\n' "$tn_check" | grep -q 'a pass may have written' \
+   && printf '%s\n' "$tn_check" | grep -q 'could not be checked' \
+   && ! printf '%s\n' "$tn_check" | grep -q 'No copy in'; then
+  :
+else
+  tn_bad="$tn_bad alone:rc($tn_check_rc)-or-claims-a-state-copy"
+fi
 if [ -z "$tn_bad" ]; then
   ok "the runner and vault-check.sh name the same tripwire copy, and warn when only the vault's copy is a file"
 else
-  bad "the tripwire refusal names differ, or the warning is wrong --$tn_bad log: [$(tr '\n' '|' < "$tn/log" 2>/dev/null)]"
+  bad "the tripwire refusal names differ, or the warning is wrong --$tn_bad log: [$(tr '\n' '|' < "$tn/log" 2>/dev/null)] vault-check: [$(printf '%s' "$tn_check" | tr '\n' '|')]"
 fi
 # The same with a link to a folder as the state directory copy, where symlinks exist.
 tc="$TMP/tripwire-name"
@@ -4690,6 +4772,21 @@ if grep -q 'started=state-copy' "$RV/.claude/logs/runner-tripwire" 2>/dev/null \
   ok "the marker is read from the state directory, not from the copy in the vault"
 else
   bad "the tripwire does not quote the state-directory marker"
+fi
+tripwire_clear
+# A marker found only in the vault may have been written by a pass, including one
+# a stopped process wrote after the owner cleared a tripwire. Its text is not put
+# into the tripwire, whose state directory copy the owner is told to follow.
+new_case_state marker-vault-only
+mkdir -p "$CASE_STATE"
+printf 'runner=dream-pass\npid=999999\nstarted=planted-instruction\n' > "$RV/.claude/logs/runner-inflight"
+expect_rc "a marker only in the vault -> TRIPWIRE" 78 "$(runner dream-pass.sh journal)"
+if [ -f "$CASE_STATE/runner-tripwire" ] && grep -q 'ended before containment' "$CASE_STATE/runner-tripwire" \
+   && ! grep -q 'planted-instruction' "$CASE_STATE/runner-tripwire" && ! grep -q 'planted-instruction' "$RV/.claude/logs/runner-tripwire" 2>/dev/null \
+   && grep -q 'not quoted' "$CASE_STATE/runner-tripwire"; then
+  ok "a marker found only in the vault sets the tripwire without putting its text in it"
+else
+  bad "the tripwire quotes a marker a pass could have written -- [$(tr '\n' '|' < "$CASE_STATE/runner-tripwire" 2>/dev/null | cut -c1-300)]"
 fi
 tripwire_clear
 

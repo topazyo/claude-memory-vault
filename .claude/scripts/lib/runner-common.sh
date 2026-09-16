@@ -1172,7 +1172,9 @@ tripwire_check() {
     if [ ! -f "$tw" ] || [ -L "$tw" ]; then
       if [ -e "$root/$TRIPWIRE_REL" ] || [ -L "$root/$TRIPWIRE_REL" ]; then
         tw="$root/$TRIPWIRE_REL"
-        advice="Read $tw, then delete it and anything at $state/$(basename "$TRIPWIRE_REL"). No copy in the state directory is a file, and a pass can write the copy in the vault, so a pass may have written this one. Check its reason against this log before you do anything it says."
+        advice="Read $tw, then delete it and anything at $state/$(basename "$TRIPWIRE_REL"). No copy in $state is a file, and a pass can write the copy in the vault, so a pass may have written this one. Check its reason against this log before you do anything it says."
+      else
+        advice="$tw is not a file, so it holds no tripwire text. Remove it, then read this log for why the tripwire was set."
       fi
     fi
     printf '[%s] TRIPWIRE: refusing to run. A previous pass changed a steering or execution surface, was interrupted before containment, or may have left a process running. %s\n' \
@@ -1180,15 +1182,20 @@ tripwire_check() {
     return 78
   fi
   if guard_exists "$root" "$state" "$INFLIGHT_REL"; then
-    # Read the state-directory copy first. The agent cannot reach it, while the
-    # copy in the vault is a file the pass itself could have rewritten.
+    # Only the state-directory copy is quoted. The agent cannot reach it, while
+    # the copy in the vault is a file a pass, or a process a stop left, could have
+    # written, and the tripwire's state copy is the one the owner is told to follow.
     marker="$state/$(basename "$INFLIGHT_REL")"
-    [ -f "$marker" ] || marker="$root/$INFLIGHT_REL"
+    if [ -f "$marker" ] && [ ! -L "$marker" ]; then
+      marker="$(tr '\n' ' ' < "$marker" 2>/dev/null)"
+    else
+      marker="Only the copy of the in-flight marker in the vault was there, and a pass can write that copy, so what it says is not quoted."
+    fi
     empty="$(mktemp 2>/dev/null || mktemp -t empty)"
     : > "$empty"
     wrote=1
     write_tripwire "$root" "$state" "$runner" \
-      "a previous pass ended before containment ran (interrupted, killed, or the machine stopped), so the vault's steering surfaces are unverified. $(tr '\n' ' ' < "$marker" 2>/dev/null)" \
+      "a previous pass ended before containment ran (interrupted, killed, or the machine stopped), so the vault's steering surfaces are unverified. $marker" \
       "(none, because containment did not run. A pre-pass backup may be in the state directory.)" "$empty" && wrote=0
     rm -f "$empty"
     if [ "$wrote" -ne 0 ]; then
@@ -2720,7 +2727,7 @@ append_run_log() {
 # goes when it exits, so this copy is the only one left, and it is never lost to
 # something in the way of its name.
 keep_run_output() {
-  local run="$1" dest="$2/$3.interrupted.run" max="" tmp="" in_way="" alt=""
+  local run="$1" dest="$2/$3.interrupted.run" max="" tmp="" in_way="" alt="" note=""
   [ -s "$run" ] || return 0
   max="$(uint_setting RUNNER_RUN_LOG_MAX_BYTES 10000000 1000 "$4" bytes)"
   # Written beside the earlier kept output and renamed over it, so a failed copy
@@ -2732,7 +2739,12 @@ keep_run_output() {
     cat "$run" > "$tmp" 2>/dev/null
   fi || {
     rm -f "$tmp" 2>/dev/null
-    printf '[%s] WARNING: the output of the pass could not be kept at %s, so it is lost. Anything left at that path is from an earlier run.\n' "$(ts)" "$dest" >> "$4"
+    if [ -f "$dest" ] && [ ! -L "$dest" ]; then
+      note=" Anything left at that path is from an earlier run."
+    elif [ -e "$dest" ] || [ -L "$dest" ]; then
+      note=" What is at that path is not a regular file, and holds no output a run kept."
+    fi
+    printf '[%s] WARNING: the output of the pass could not be kept at %s, so it is lost.%s\n' "$(ts)" "$dest" "$note" >> "$4"
     return 1
   }
   # A link at the path would send the rename wherever it points, and a folder
@@ -2743,8 +2755,10 @@ keep_run_output() {
   [ -d "$dest" ] && [ ! -L "$dest" ] && rmdir "$dest" 2>/dev/null
   if [ -L "$dest" ]; then
     in_way="a link that could not be removed"
-  elif [ -d "$dest" ]; then
+  elif [ -d "$dest" ] && [ -n "$(ls -A "$dest" 2>/dev/null)" ]; then
     in_way="a folder that is not empty"
+  elif [ -d "$dest" ]; then
+    in_way="a folder that could not be removed"
   fi
   if [ -z "$in_way" ] && mv -f "$tmp" "$dest" 2>/dev/null; then
     if [ -f "$dest" ] && [ ! -L "$dest" ]; then
