@@ -31,18 +31,25 @@ jobs:
     # roughly fifteen more git repositories, so the limit was 45 to leave the
     # margin a hung step still needs to be caught in.
     #
-    # Raised to 90 because the controls that blind ps, so that a stop is
-    # recorded as unknown, cost almost nothing on Linux and a great deal on
-    # Windows. Measured on this branch rather than guessed. The commit before
-    # the first of them ran Windows in 33m04s and ubuntu in 5m27s. The commit
-    # that added it ran ubuntu in 5m04s, no change at all, and Windows passed 55
-    # minutes and was cancelled against the 45 limit. The cause is that a blind
-    # ps sends the Windows stop down its PowerShell fallback, which this
-    # repository already records as sometimes taking over a minute per call.
-    # The margin for catching a genuinely hung step is now wider than it was,
-    # which is the cost of covering that branch on the platform where it is
-    # slowest to exercise.
-    timeout-minutes: 90
+    # 60 rather than 45, for one unexplained overrun rather than for a cost
+    # anybody has measured. The reasoning is written out because the first
+    # attempt at it was wrong and a later reader should not repeat it.
+    #
+    # One Windows run was cancelled against the 45 limit after 55 minutes. The
+    # commit it ran on had just added a control that blinds ps so a stop is
+    # recorded as unknown, and on Git Bash that sends the stop down a PowerShell
+    # fallback this repository records as sometimes taking over a minute, so the
+    # control looked like the cause. It is not. The next run carried that
+    # control and a second pair doing the same thing, and Windows finished in
+    # 33m01s, against 33m04s on the commit before any of them existed. Linux was
+    # 5m27s and 5m04s across the same two, which is no change either. So the
+    # controls cost almost nothing on any platform and the 55 minute run remains
+    # unexplained, most likely a slow runner.
+    #
+    # 60 covers that observed outlier and still catches a genuinely hung step in
+    # an hour rather than the six hour default. Raising it further would buy
+    # nothing, since nothing measured comes close.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -81,8 +88,11 @@ jobs:
           RUN_TESTS_REQUIRED: ${{ matrix.os == 'windows-latest' && 'win-native-tree noncesweep win-sweep-report win-orphan-stop win-fork-stop signal-scope runlog-tmp-case retention-junction' || 'groupkill symlink run-log-link run-log-dirlink reaped-group line-break-name signal-scope runlog-tmp-case keep-output-dirlink tripwire-name keep-output-fifo retention-symlink' }}
         run: bash .claude/scripts/run-tests.sh
 
-      # vault-check.sh exits 1 when it scans zero notes, so a path-resolution
-      # regression fails this step on its own - no separate vacuity check needed.
+      # vault-check.sh exits 2 when it scans zero notes, so a path-resolution
+      # regression fails this step on its own and no separate vacuity check is
+      # needed. The 2 rather than a 1 is the point of the code, since it says
+      # the checker could not run rather than that a note in this repository is
+      # wrong, and those two would want different things done about them.
       - name: Frontmatter invariants
         shell: bash
         run: bash .claude/scripts/vault-check.sh
