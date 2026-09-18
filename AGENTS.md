@@ -142,7 +142,14 @@ A passing run looks like this, with a **non-zero** file count (on the vault as s
 
 ```
 vault-check: 0 violation(s) across 9 file(s) checked (as of 2026-01-15).
+vault-check: 99-archive/ holds 0 note(s) on disk.
+vault-check: No retention pass is in this repository's history.
 ```
+
+The two archive lines come after the count on a full scan, and they report rather than judge. The
+second one names the last retention pass and how many notes it moved once one has run, and says
+the last pass is unknown when git cannot answer. Neither line changes the exit code. A scan
+narrowed with `--` prints only the count.
 
 `0 violations across 0 files` is not a pass, and the script exits 1 with a `VACUOUS` message when
 it happens. It means the scan matched nothing — wrong working directory, a wrong
@@ -158,13 +165,20 @@ you believe the violation count; an absence claim needs a positive control.
 | `bash .claude/scripts/run-tests.sh` | Control suite for the hooks and runners — known-bad inputs that must be flagged, known-good inputs that must stay silent — in a temp dir | `=== N passed, 0 failed ===`; exit 0 |
 | `bash .claude/scripts/dream-pass.sh` | Nightly consolidation pass (`.cmd` wrapper for Task Scheduler) | One dated journal in `20-projects/_logs/`, committed with a `Vault-Pass: dream` trailer in a git vault; exit 0 |
 | `bash .claude/scripts/promotion-pass.sh` | Weekly medium → long promotion (`.cmd` wrapper) | A `PROMOTION-SUMMARY:` line or long-tier notes, committed with a `Vault-Pass: promotion` trailer in a git vault; exit 0 |
+| `bash .claude/scripts/vault-retention.sh` | Weekly archiving of aged dream journals and compaction stubs from `20-projects/_logs/` to `99-archive/20-projects/_logs/`, `--dry-run` to see the judgement first (`.cmd` wrapper) | The moved files committed with a `Vault-Pass: retention` trailer in a git vault, or a log line saying nothing was eligible, exit 0 |
 | `bash .claude/hooks/vault-lint.sh <file>...` | Advisory lint of the named notes: frontmatter and invisible characters | Silence for a clean note; always exit 0 |
 | `git config core.hooksPath .claude/githooks` | Opt-in pre-commit gate that runs `vault-check.sh` | A commit with a violating note is refused |
 
-The two scheduled passes run the `dream-agent` and `promotion-agent` definitions in
+The dream and promotion passes run the `dream-agent` and `promotion-agent` definitions in
 `.claude/agents/`. The dream agent **proposes only**: its single write is one dated journal, and it
-mutates no existing note. Keep it that way. Both runners also fail a pass that writes outside its
-allowed folders (exit 2) and kill one that hangs (exit 124) or stops streaming (exit 125). See
+mutates no existing note. Keep it that way. Those two runners also fail a pass that writes outside
+its allowed folders (exit 2) and kill one that hangs (exit 124) or stops streaming (exit 125).
+
+The retention pass is the third scheduled thing and it is not an agent, so `VAULT_AGENT` does not
+reach it and it has no stall detection. Its own refusals are 2 REPORT-REFUSED, 3 PARTIAL,
+4 COMMIT-FAILED, 6 PATH-BLOCKED and 71 RECOVERY-NEEDED, which means 2 and 3 do not mean there what
+they mean for the other two runners. It reads the same tripwire and the same run lock, and when one
+of its own git steps could not be stopped it marks that lock so no later pass starts. See
 `docs/reference.md` §4.3. When a pass changes a steering or execution surface (Obsidian plugins,
 `.claude/`, harness configs, instruction files, memory, git config or hooks), the runner restores
 it, quarantines what the pass wrote outside the vault, and sets `.claude/logs/runner-tripwire`. It
@@ -207,6 +221,7 @@ there. The table below is the summary.
 | Read deny for `.env`, `.env.*`, `secrets/` | Enforced by `.claude/settings.json` for its file-read tool | Blocked by Windsurf's read hook and OpenCode's opt-in plugin; hidden from Cursor's agent and Gemini CLI's search by ignore files; **guidance only** everywhere else. No harness stops a shell command from reading them |
 | Skills | Slash commands | Read natively from `.agents/skills/` by Codex, Gemini CLI, Cursor, Copilot, OpenCode and Hermes; elsewhere follow `SKILL.md` as a checklist |
 | Scheduled passes | `VAULT_AGENT=claude` (default); the agents' `tools:` allowlists are enforced | `VAULT_AGENT=command` with your own wrapper. **Refused** (exit 3) until `VAULT_ALLOW_UNENFORCED_TOOLS=1`, which you set only after sandboxing the wrapper so that neither pass has a shell or network access. The runner does the git work itself |
+| Retention pass | No agent and no `VAULT_AGENT`, so nothing to select or sandbox. Plain git and shell | The same in every harness |
 
 The runners' snapshot fence works the same under every harness, but it only sees files that change
 inside the vault. It cannot see a shell command, network traffic, or a write outside the vault.

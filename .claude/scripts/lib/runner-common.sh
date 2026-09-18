@@ -610,7 +610,8 @@ snapshot_tree() {
         -o -name 'dream-agent.run.log.runner-tmp.[A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9]' \
         -o -name 'promotion-agent.run.log.runner-tmp.[A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9]' \
         -o -name dream-pass.launchd.out -o -name dream-pass.launchd.err \
-        -o -name promotion-pass.launchd.out -o -name promotion-pass.launchd.err \) \) -prune -o
+        -o -name promotion-pass.launchd.out -o -name promotion-pass.launchd.err \
+        -o -name vault-retention.launchd.out -o -name vault-retention.launchd.err \) \) -prune -o
     fi
     # Every path with a line break, .claude/logs included, summed by name and
     # content into one line under a name no file has. A change to any of them
@@ -831,7 +832,8 @@ steering_filter() {
             || obase ~ /^dream-agent\.run\.log\.runner-tmp\.[A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9]$/ \
             || obase ~ /^promotion-agent\.run\.log\.runner-tmp\.[A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9]$/ \
             || base == "dream-pass.launchd.out" || base == "dream-pass.launchd.err" \
-            || base == "promotion-pass.launchd.out" || base == "promotion-pass.launchd.err") next
+            || base == "promotion-pass.launchd.out" || base == "promotion-pass.launchd.err" \
+            || base == "vault-retention.launchd.out" || base == "vault-retention.launchd.err") next
         print $0
         next
       }

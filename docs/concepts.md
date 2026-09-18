@@ -300,6 +300,21 @@ rename it. Obsidian resolves wikilinks by filename, so inbound links keep workin
 drop out of the dashboards and out of `vault-check.sh`, neither of which scans `99-archive/`; a
 lower file count after an archiving session is the move working, not a fault.
 
+**One part of archiving is automatic, and its boundary is narrow on purpose.**
+`vault-retention.sh` moves aged dream journals and compaction stubs out of `20-projects/_logs/`
+unattended. Those are the two things in the vault nobody authored. A journal is the dream pass's
+own output and a stub is the compaction hook's, and git says so, because the runner moves a file
+only when one machine commit added it, its trailers match what that commit stored, and nothing has
+touched it since. A note you wrote fails that test at the first step, so the automatic move can
+never reach one. It also never renames a file or alters its frontmatter, which is what keeps the
+human rule above and the automatic one the same move rather than two.
+
+Because that now happens without anyone present, the falling file count above happens without
+anyone present too. That is why `vault-check.sh` prints the archive count and names the last
+retention pass after its own count. Without those lines an archived note would simply be gone from
+every number the checker prints, and an archived vault would be indistinguishable from one that
+had lost notes.
+
 ---
 
 ## 5. `superseded` versus `contradicts`
@@ -441,6 +456,16 @@ trust. The runner fences where it may write (the long tier and a promotion repor
 only catches a write in the wrong place. Undoing a bad write in the right place takes the commit
 before it, which is why `git` is a hard requirement.
 
+There is a third shape, and naming it keeps the argument above honest. `vault-retention.sh` runs
+unattended and is neither a proposer nor a writer. It authors nothing, so the echo problem cannot
+reach it, and it decides nothing about meaning, so there is no judgement to disagree with later.
+What it does is mechanical and checkable from outside — it moves a file only when git can prove a
+machine wrote it and nobody has edited it since. The safety argument for it is therefore a
+different one from the dream agent's. The dream agent is safe because the only thing it can write
+is one new file at a predictable path. The retention pass is safe because it cannot change what a
+file says at all, only where it sits, and one `git revert` puts every move back. That the three
+passes need three different arguments is the point. "Unattended" is not one risk with one answer.
+
 ---
 
 ## 8. Why checks report and never repair
@@ -450,7 +475,10 @@ before it, which is why `git` is a hard requirement.
 folder and the auto-written `compaction-*.md` stubs. `90-auto-memory/` is machine-managed and
 deliberately out of scope, as are `99-archive/`, `.claude/` and the repo root. It prints what it
 finds, prints how many files it checked, and exits non-zero when something is wrong. It changes
-nothing. Given a note with a missing `tier:`, it will not add one.
+nothing. Given a note with a missing `tier:`, it will not add one. On a full scan it also reports
+how many notes sit in `99-archive/` and what the last retention pass moved, which is reporting in
+the same spirit — it judges neither, and changes no count and no exit code, but without it a note
+the retention pass archived would leave no trace in anything this script prints.
 
 Five checks, and that is the entire list:
 
@@ -503,11 +531,17 @@ instead of falling through to silence. `jq` gets a related treatment for a diffe
 parses the hook's JSON input, it is not bundled with Git for Windows, and when it is missing the
 hook falls back to a cruder path parse and prints a degraded-mode warning rather than silently
 extracting an empty path and exiting 0. The scheduled passes carry the same idea in a different
-place: both runners assert that an artifact was produced, and exit 1 when a pass exits 0 having
-written nothing, so a silent no-op cannot masquerade as a green run; a pass that hangs is killed
-and exits 124 rather than holding the scheduler slot indefinitely, and one whose output stops for
-longer than it normally goes quiet is killed sooner, with exit 125. (`docs/setup.md` covers
-installing `jq`, `perl` and the Dataview plugin.)
+place: the dream and promotion runners assert that an artifact was produced, and exit 1 when a pass
+exits 0 having written nothing, so a silent no-op cannot masquerade as a green run. A pass that
+hangs is killed and exits 124 rather than holding the scheduler slot indefinitely, and one whose
+output stops for longer than it normally goes quiet is killed sooner, with exit 125. The retention
+runner is the exception that shows what the rule is really for. It has no artifact to assert,
+because having nothing to move is its ordinary outcome and writing nothing is a correct exit 0.
+What stands in place of the assertion is that every run logs the judgement it made about every
+candidate, with a reason for each, and `--dry-run` produces exactly that log and nothing else. The
+demand is not that a pass must always produce something. It is that a pass must never leave you
+unable to tell whether it did. (`docs/setup.md` covers installing `jq`, `perl` and the Dataview
+plugin.)
 
 The shipped test suite in `.claude/scripts/run-tests.sh` applies the rule to itself with **both**
 positive and negative controls: a positive control is known-bad input the hook must flag, and a
@@ -542,7 +576,7 @@ that means before adopting it.
   `AGENTS.md`, `.claude/hooks/vault-lint.sh`, `.claude/scripts/vault-check.sh` (its `TIERS=`
   line), `.claude/hooks/postcompact-wrap-up.sh`, both agents, all four files in
   `.claude/rules/`, all five skills, `30-knowledge/moc/VAULT-INDEX.md` (every Dataview query
-  names folders), `dream-pass.sh` and `promotion-pass.sh`, the `run-tests.sh` fixtures,
+  names folders), `dream-pass.sh`, `promotion-pass.sh` and `vault-retention.sh`, the `run-tests.sh` fixtures,
   `.obsidian/daily-notes.json`, and `.gitignore`. Treat that list as a floor, not an inventory,
   and grep for the old folder name before you declare the rename done. It is the template's
   largest customization cost, and it is worth deciding on the folder names before you have a

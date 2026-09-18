@@ -111,6 +111,10 @@ list of weaknesses, and a decision rule for picking the right tool.
   agent* that does the weekly medium → long pass, each with a shipped `.sh`/`.cmd` runner that
   kills a hung pass, fails a pass that writes outside its allowed folders, and fails loudly when a
   pass produces no artifact.
+- **A retention runner**: moves dream journals and compaction stubs that git proves a machine
+  wrote, and nobody has touched since, out of the medium tier and into `99-archive/`, as one
+  `git mv` and one revertible commit per run. It writes no content of its own, and `--dry-run`
+  shows you its judgement before it moves anything.
 - **Three hooks**: an advisory frontmatter + invisible-character lint, a post-compaction stub
   writer so a compacted session leaves a trace, and an audit log of which instruction files loaded
   at session start. Claude Code runs all three after the matching event. The lint also takes file
@@ -171,7 +175,8 @@ claude-memory-vault/
 │   │   ├── run-tests.sh             # control suite for the hooks; positive AND negative controls
 │   │   ├── dream-pass.sh / .cmd     # scheduled runner (cron/launchd; .cmd wraps it for Task Scheduler)
 │   │   ├── promotion-pass.sh / .cmd # ditto, for the weekly promotion pass
-│   │   └── lib/runner-common.sh     # watchdog, write fence and harness selection shared by both runners
+│   │   ├── vault-retention.sh / .cmd # moves aged machine-written logs to 99-archive/, no agent
+│   │   └── lib/runner-common.sh     # watchdog, write fence and harness selection shared by the runners
 │   └── skills/
 │       ├── obsidian-save/SKILL.md   # session → medium-term log
 │       ├── wrap-up/SKILL.md         # structured end-of-session summary
@@ -197,7 +202,7 @@ claude-memory-vault/
 │       ├── EXAMPLE-idempotency-key.md
 │       └── templates/llm-wiki-entity.md
 ├── 90-auto-memory/                  # a harness's own auto-memory (e.g. Claude Code's), machine-managed
-├── 99-archive/                      # retired notes; prefer archiving over deleting
+├── 99-archive/                      # retired notes; prefer archiving over deleting. The retention runner writes here too
 └── docs/                            # setup, concepts, reference, customizing, agent-onboarding
     └── harnesses/                   # one guide per harness, each with an onboarding prompt
 ```
@@ -251,6 +256,7 @@ stays small.
 | consolidation | `dream-agent` (scheduled) | Reads broadly, writes exactly **one** dated journal file of proposals |
 | compaction → medium | `postcompact-wrap-up.sh` hook | Drops a stub log so a compacted session's material is recoverable |
 | medium → session | `/resume` | Reads the recent logs back into a fresh session |
+| medium → archive | `vault-retention.sh` (scheduled) | The only hop that takes something *out* of a tier. Moves aged journals and stubs git proves a machine wrote into `99-archive/`, one commit per run |
 
 ---
 
@@ -335,6 +341,9 @@ Code gets the most automation), and (strongly recommended) `jq`. See [Requiremen
    another harness, set `VAULT_AGENT=command` and point `VAULT_AGENT_CMD` at a wrapper you write.
    The runner refuses that mode (exit 3) until you sandbox the wrapper and set
    `VAULT_ALLOW_UNENFORCED_TOOLS=1`, because no wrapper can enforce the agents' tool allowlists.
+   `vault-retention.sh`/`.cmd` schedules the same way and is the odd one out here, because it runs
+   no agent at all. None of `VAULT_AGENT`, `VAULT_AGENT_CMD` or `VAULT_ALLOW_UNENFORCED_TOOLS`
+   applies to it, and there is no retention agent to sandbox.
    Read [`docs/setup.md`](docs/setup.md) first. The Windows traps below are real, and they fail
    silently.
 
@@ -514,7 +523,7 @@ the template's biggest customization cost:
 > `.claude/hooks/vault-lint.sh`, `.claude/scripts/vault-check.sh` (its `TIERS=` line),
 > `.claude/hooks/postcompact-wrap-up.sh`, both files in `.claude/agents/`, all four
 > `.claude/rules/*.md`, all five skills, `30-knowledge/moc/VAULT-INDEX.md` (every Dataview query
-> names folders), `dream-pass.sh` and `promotion-pass.sh`, the fixtures in `.claude/scripts/run-tests.sh`,
+> names folders), `dream-pass.sh`, `promotion-pass.sh` and `vault-retention.sh`, the fixtures in `.claude/scripts/run-tests.sh`,
 > `.obsidian/daily-notes.json`, and `.gitignore`. Treat that list as a floor, not an inventory:
 > grep for the old name across the whole repo and fix every hit. A missed one turns into a hook
 > that silently stops matching, which looks like a hook that found nothing wrong. And
