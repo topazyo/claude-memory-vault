@@ -6030,6 +6030,23 @@ esac
 exec "$RET_REAL_GIT" "$@"
 GIT_EOF
 chmod +x "$RET/fake-git/git"
+# Stands in for ps beside the fake git. With RET_PS_BLIND set it gives no
+# process list at all, which is a machine where the watchdog cannot see what it
+# is about to stop. That is the one way to reach the kill-state branch without
+# needing a process to survive being killed, and it is the same on all five
+# jobs. A stop that goes cleanly sets RUN_TIMED_OUT and leaves RUN_KILL_FAILED
+# at 0, which is why hanging a command does not reach that branch and why it had
+# no control until now.
+RET_REAL_PS="$(command -v ps 2>/dev/null)"
+export RET_REAL_PS
+if [ -n "$RET_REAL_PS" ]; then
+  cat > "$RET/fake-git/ps" <<'PS_EOF'
+#!/usr/bin/env bash
+[ -n "${RET_PS_BLIND:-}" ] && exit 1
+exec "$RET_REAL_PS" "$@"
+PS_EOF
+  chmod +x "$RET/fake-git/ps"
+fi
 ret_case() {  # ret_case <name> <mode> [NAME=value...] - copies the moves base, runs with the failing git, prints rc
   local name="$1" mode="$2" v a
   shift 2
@@ -6190,6 +6207,44 @@ if [ -z "$re_bad" ]; then
   ok "a move somebody else committed while the run was working is left alone rather than undone"
 else
   bad "moves committed by another tool were not left alone --$re_bad rc $re_rc log: [$(tr '\n' '|' < "$(ret_log "$re_v")" 2>/dev/null | cut -c1-500)]"
+fi
+# The kill-state gate. RUN_KILL_FAILED means a git command that was stopped may
+# still be running, so a second writer must not be started on top of it and
+# nothing is put back. Deleting the whole gate used to leave the suite green.
+#
+# A hang does not reach it. The watchdog stops a hung command cleanly, which
+# sets RUN_TIMED_OUT and leaves RUN_KILL_FAILED at 0, so a hanging fake git
+# exercises the branch beside the one that matters. What does reach it is a
+# watchdog that cannot see the tree it is about to stop, because the stop is
+# then recorded as unknown rather than as done, and unknown counts as a stop
+# that may have failed. A ps that gives no list is the whole of it, and it
+# behaves the same on every job.
+#
+# The pair is what makes this mean anything. The same fake git without the blind
+# ps has to reach the ordinary path, which is what shows the shim moved the
+# branch rather than the slow move.
+if [ -n "$RET_REAL_PS" ]; then
+  re_bad=''
+  re_rc="$(ret_case moves-killfail mv-slow RET_GIT_TIMEOUT=3 RET_PS_BLIND=1 RET_GIT_MARK=$RET/moves-killfail.mark)"
+  re_v="$RET/moves-killfail"
+  [ "$re_rc" = 71 ] || re_bad="$re_bad rc:$re_rc"
+  ret_says "$re_v" "the move was stopped and a git process of it may still be running" \
+    || re_bad="$re_bad no-reason"
+  ret_says "$re_v" "the vault is being put back to what HEAD holds" && re_bad="$re_bad put-back-anyway"
+  grep -qx 'state kill-failed' "$re_v.state/retention-inflight" 2>/dev/null || re_bad="$re_bad no-record"
+  re_rc2="$(ret_case moves-killfail-seen mv-slow RET_GIT_TIMEOUT=3 RET_GIT_MARK=$RET/moves-killfail-seen.mark)"
+  ret_says "$RET/moves-killfail-seen" "the move was stopped and a git process of it may still be running" \
+    && re_bad="$re_bad blind-ps-was-not-the-cause"
+  # The lock is marked so no later pass starts, which is the point of it, so
+  # both copies are cleared here the way the hanging case beside them is.
+  rm -rf "$re_v.state/run.lock" "$RET/moves-killfail-seen.state/run.lock"
+  if [ -z "$re_bad" ]; then
+    ok "a move whose stop could not be confirmed is reported and left alone, and the same move with a stop that was confirmed is not"
+  else
+    bad "the kill-state gate was not reached or not honoured --$re_bad rc $re_rc then $re_rc2 log: [$(tr '\n' '|' < "$(ret_log "$re_v")" 2>/dev/null | cut -c1-500)]"
+  fi
+else
+  skip "kill-state-gate" "a stop that could not be confirmed: no ps on this machine to stand in for"
 fi
 # TERM while the moves run puts them back, and the next run is not refused.
 re_v="$RET/moves-term"
