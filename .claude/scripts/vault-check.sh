@@ -120,17 +120,21 @@ count_key() {
 }
 
 # First value for a key, stripped of a trailing CR, trailing spaces, and one
-# surrounding quote pair. \047 is the apostrophe — written escaped so this awk
-# program stays inside single quotes.
+# surrounding quote pair. The apostrophe is built with sprintf rather than
+# written as \047, because it cannot be written literally inside this single
+# quoted program and the awk macOS ships does not read an octal escape in a
+# string the way gawk and mawk do. That difference has already cost this
+# repository two silent wrong answers, both of which took a CI run to see.
 value_of() {
   printf '%s\n' "$2" | awk -v k="^$1:" '
+    BEGIN { q = sprintf("%c", 39) }
     $0 ~ k {
       sub(/^[^:]*:[ \t]*/, "")
       gsub(/\r/, "")
       sub(/[ \t\r]+$/, "")
       if (length($0) >= 2) {
         a = substr($0, 1, 1); b = substr($0, length($0), 1)
-        if (a == b && (a == "\"" || a == "\047")) $0 = substr($0, 2, length($0) - 2)
+        if (a == b && (a == "\"" || a == q)) $0 = substr($0, 2, length($0) - 2)
       }
       print; exit
     }'

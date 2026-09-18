@@ -5622,9 +5622,16 @@ else
   bad "the retention commit or the tree after it is wrong -- message: [$(printf '%s' "$ra_msg" | tr '\n' '|')] status: [$(git -C "$RA" status --porcelain -- 20-projects 99-archive | tr '\n' '|')]"
 fi
 ra_report="$(ls "$RA.state"/retention-legacy-*.txt 2>/dev/null | head -n 1)"
+# The runner resolves its state directory to the physical path before it writes
+# anything, which is the whole point of the fence, so the path it logs is that
+# one. On Git Bash /tmp is not where it appears to be, so the spelling this
+# suite globbed with is not the spelling the log holds, while on Linux the two
+# are the same string and the difference never shows.
+ra_report_real=""
+[ -n "$ra_report" ] && ra_report_real="$(cd "$(dirname "$ra_report")" 2>/dev/null && pwd -P)/$(basename "$ra_report")"
 ra_blob="$(git -C "$RA" rev-parse "HEAD:20-projects/_logs/dream-${RET_DATE[100]}.md" 2>/dev/null)"
 if [ -n "$ra_report" ] && grep -q "^20-projects/_logs/dream-${RET_DATE[100]}.md	$ra_blob\$" "$ra_report" \
-   && [ "$(grep -vc '^#' "$ra_report")" = 1 ] && ret_says "$RA" "$ra_report"; then
+   && [ "$(grep -vc '^#' "$ra_report")" = 1 ] && ret_says "$RA" "$ra_report_real"; then
   ok "a journal from before the runner trailers is listed with its blob in a report in the state directory, and the log names it"
 else
   bad "the legacy report is missing or wrong -- report: [$ra_report] [$(tr '\n' '|' < "$ra_report" 2>/dev/null)]"
@@ -5634,7 +5641,7 @@ rm -f "$(ret_log "$RA")"
 ra_head="$(git -C "$RA" rev-parse HEAD)"
 expect_rc "vault-retention run again with nothing new -> OK" 0 "$(ret_run "$RA")"
 if [ "$(git -C "$RA" rev-parse HEAD)" = "$ra_head" ] && [ "$(ls "$RA.state"/retention-legacy-*.txt 2>/dev/null | wc -l | tr -d ' ')" = 1 ] \
-   && ret_says "$RA" "$ra_report"; then
+   && ret_says "$RA" "$ra_report_real"; then
   ok "a second run moves nothing, commits nothing, and names the existing legacy report instead of writing another"
 else
   bad "a second run changed HEAD or wrote another report"

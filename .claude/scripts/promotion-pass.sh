@@ -321,7 +321,10 @@ main() {
     if [ "$VAULT_GIT" -eq 1 ]; then
       printf '## git log --oneline -10\n'
       safe_git "$SNAP_DIR/nohooks" -C "$ROOT" log --oneline -10 2>&1
-      last_pass="$(safe_git "$SNAP_DIR/nohooks" -C "$ROOT" log -1 --format=%H --grep='^Vault-Pass: promotion$' 2>/dev/null)"
+      # grep.patternType is pinned because --grep honours it from the user
+      # config and the anchors in this pattern are load bearing. Someone
+      # carrying grep.patternType=fixed would otherwise match nothing here.
+      last_pass="$(safe_git "$SNAP_DIR/nohooks" -C "$ROOT" -c grep.patternType=basic log -1 --format=%H --grep='^Vault-Pass: promotion$' 2>/dev/null)"
       if [ -n "$last_pass" ]; then
         printf '\n## Long-tier changes committed since the last promotion pass (%s), first 400 lines\n' "$last_pass"
         safe_git "$SNAP_DIR/nohooks" -C "$ROOT" diff --stat "$last_pass" HEAD -- 31-standards 40-llm-wiki/wiki 2>&1

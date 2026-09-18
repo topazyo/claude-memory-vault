@@ -933,7 +933,11 @@ point. Appending is what the hook does, so anything else in the history means so
 the hook wrote it.
 
 Everything else is refused with its own reason on one log line, and every run ends with the line
-`evaluated N candidate(s): E eligible, L legacy, K kept, R refused, M moved`.
+`evaluated N candidate(s): E eligible, L legacy, K kept, Q left alone, R refused, M moved`. `Q`
+counts the stubs a run passes over without judging them, an untracked one or one whose name the
+archive already holds, each of which is also counted on its own line just above. They are not
+refusals, and counting them as refusals sent the reader looking for a reason that was never
+written.
 
 **Journals older than the trailers.** A journal committed before any runner wrote trailers cannot
 be proved machine-written, and refusing it for good would leave it in the live tier forever. Those
@@ -993,6 +997,26 @@ Known limits, each failing in the quiet direction:
 - `99-archive/` is not scanned by `vault-check.sh`, so a note's frontmatter stops being checked the
   moment it is archived. The runner never rewrites frontmatter, so what is there is what was last
   checked in the live tier.
+- **A file whose stored bytes do not survive a round trip through the repository's own
+  end-of-line setting cannot be archived, and the run that tries ends at 71.** The commit is made
+  with `git commit --only`, which takes its content from the work tree rather than from the index,
+  so git runs the conversion `core.autocrlf` asks for. A blob committed with that conversion
+  switched off, by another tool or on another machine, therefore hashes to something else on the
+  way back in, and the file would be committed with different bytes under a trailer saying it had
+  only moved. The runner asks HEAD what it actually holds after the commit, does not recognise it,
+  keeps the commit, writes the recovery file and exits 71, so nothing is lost and nothing is
+  silently rewritten. Every later run then refuses with 78 until the vault is settled by hand.
+  `git status` calls such a file clean, because the index stat information matches it, which is
+  why nothing earlier in the run notices. It is most likely on Windows, where `core.autocrlf` is
+  on by default. The fix is for the commit to be built from the index this run has already
+  verified rather than from the work tree, which would also close the case below where a source
+  recreated between the check and the commit is committed back alongside its destination. Until
+  then, renormalise the file by hand, or set the line endings for that path in `.gitattributes`,
+  and the next run will archive it.
+- A source path recreated between the index check and the commit is committed back alongside its
+  destination, under a trailer saying it moved away. `head_holds_moves` catches it, the commit is
+  kept and the run exits 71, so the mismatch is reported rather than hidden, but the commit stays
+  in the history.
 
 | Exit | Meaning (`vault-retention.sh`) |
 | --- | --- |
