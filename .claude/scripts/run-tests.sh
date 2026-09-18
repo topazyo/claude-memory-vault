@@ -5417,6 +5417,14 @@ ret_moved() {  # ret_moved <vault> <name> - true when HEAD and the work tree hol
     && git -C "$1" cat-file -e "HEAD:99-archive/20-projects/_logs/$2" 2>/dev/null \
     && ! git -C "$1" cat-file -e "HEAD:20-projects/_logs/$2" 2>/dev/null
 }
+ret_at_archive() {  # ret_at_archive <vault> <name> - on disk at the archive path, whoever put it there
+  # Deliberately not ret_moved. ret_moved also asks HEAD, which is right for a
+  # run that committed, and wrong for the put-back cases, where the rename was
+  # only ever staged and no commit was made. Those cases need to know whether a
+  # file the run staged has been moved back underneath git, which is a question
+  # about the work tree alone.
+  [ -f "$1/99-archive/20-projects/_logs/$2" ] && [ ! -e "$1/20-projects/_logs/$2" ]
+}
 ret_stayed() {  # ret_stayed <vault> <name> - true when the journal is still in _logs and not archived
   [ -e "$1/20-projects/_logs/$2" ] && [ ! -e "$1/99-archive/20-projects/_logs/$2" ]
 }
@@ -5620,8 +5628,16 @@ ret_stayed "$RA" "dream-${RET_LATER[30]}.md" && ret_says "$RA" "REFUSED: 20-proj
   || ra_bad="$ra_bad future"
 ret_stayed "$RA" "dream-${RET_DATE[100]}.md" && ret_says "$RA" "LEGACY: 20-projects/_logs/dream-${RET_DATE[100]}.md" \
   || ra_bad="$ra_bad legacy"
+# This assertion used to appear and disappear with the fixture and say nothing
+# either way, which is the worst shape a control can have. A skip that prints
+# nothing is indistinguishable from a control that ran and passed, and it can
+# never be named in RUN_TESTS_REQUIRED, so no job can insist on it. The name is
+# a single token because the summary word-splits the required list.
 if [ "$ra_link" -eq 1 ]; then
+  ran "retention-symlink-candidate"
   ret_says "$RA" "REFUSED: 20-projects/_logs/dream-${RET_DATE[105]}.md (not a regular file" || ra_bad="$ra_bad link"
+else
+  skip "retention-symlink-candidate" "a symlinked candidate refused as not a regular file: this filesystem or account would not make a symlink"
 fi
 ret_says "$RA" "evaluated " || ra_bad="$ra_bad no-sentinel"
 if [ -z "$ra_bad" ]; then
@@ -5776,6 +5792,29 @@ if [ -n "$rc_report" ]; then
   ret_stayed "$RC" "dream-${RET_DATE[81]}.md" || rc_bad="$rc_bad edited-moved"
   ret_says "$RC" "REFUSED: 20-projects/_logs/dream-${RET_DATE[81]}.md" || rc_bad="$rc_bad edited-no-reason"
   ret_stayed "$RC" "dream-${RET_DATE[2]}.md" || rc_bad="$rc_bad unlisted-moved"
+  # A report carrying carriage returns is still the list this runner wrote. The
+  # strip used to be sed -e 's/\r$//', where \r is a GNU extension and nothing
+  # else, so BSD sed read it as the letter r and left the carriage returns in
+  # place. The body then hashed differently from what was recorded and the owner
+  # was told they had changed a file they had only saved.
+  #
+  # Two variants, because the realistic one cannot fail on a GNU box. crlf.txt
+  # is one carriage return per line, which is what a Windows editor writes and
+  # what a vault synced between two machines carries, and it separates the two
+  # seds only on macOS. crlf2.txt doubles them, which the old code leaves one
+  # of behind under either sed, so that variant fails on every platform and is
+  # what makes this control mutation testable anywhere. Both are accepted now,
+  # and the NOT FOUND line is the positive half, because it can only be printed
+  # by a run that got past the hash and read the list.
+  awk '{ printf "%s\r\n", $0 }' "$rc_report" > "$RC.state/crlf.txt"
+  awk '{ printf "%s\r\r\n", $0 }' "$rc_report" > "$RC.state/crlf2.txt"
+  for rc_crlf in crlf crlf2; do
+    : > "$(ret_log "$RC")"
+    rc_rc2="$(ret_run "$RC" --adopt-legacy "$RC.state/$rc_crlf.txt")"
+    [ "$rc_rc2" = 0 ] || rc_bad="$rc_bad $rc_crlf-rc:$rc_rc2"
+    ret_says "$RC" "NOT FOUND: 20-projects/_logs/dream-${RET_DATE[80]}.md" || rc_bad="$rc_bad $rc_crlf-not-read"
+    ret_says "$RC" "REPORT-REFUSED" && rc_bad="$rc_bad $rc_crlf-refused"
+  done
 fi
 if [ -z "$rc_bad" ]; then
   ok "legacy journals move only with --adopt-legacy and the report the runner wrote, and one edited since is refused"
@@ -5845,9 +5884,18 @@ done
 # hook's work. Saying somebody has written in it accuses a person of an edit the
 # hook made, and the control used to assert only that the file stayed, which
 # that wrong reason satisfied just as well as the right one.
+# Registered either way. This pair of assertions used to appear and disappear
+# with the fixture in silence, which reads exactly like a control that ran and
+# passed. It goes quiet if the date shim ever stops failing, if the compaction
+# hook gains a guard against writing a stub it cannot timestamp, or if the stub
+# is ever named anything but compaction-unknown, and none of those would be
+# noticed. A single token, so a job can require it.
 if [ -n "$rd_unknown" ]; then
+  ran "stub-unknown-timestamp"
   ret_says "$RD" "REFUSED: 20-projects/_logs/$rd_unknown (the compaction hook could not read the clock" \
     || rd_bad="$rd_bad reason:unknown"
+else
+  skip "stub-unknown-timestamp" "a stub the hook could not timestamp: no compaction-unknown stub was produced by the fixture"
 fi
 ret_says "$RD" "REFUSED: 20-projects/_logs/compaction-prose.md (not the hook's stub" || rd_bad="$rd_bad reason:prose"
 ret_says "$RD" "REFUSED: 20-projects/_logs/compaction-rewritten.md (stub rewritten" || rd_bad="$rd_bad reason:rewritten"
@@ -5964,7 +6012,7 @@ cat > "$RET/fake-git/git" <<'GIT_EOF'
 # counts of each subcommand are kept beside RET_GIT_COUNT.
 sub=""
 for a in "$@"; do
-  case "$a" in mv|commit|cat-file) sub="$a"; break ;; esac
+  case "$a" in mv|commit|cat-file|ls-files) sub="$a"; break ;; esac
 done
 n=0
 if [ -n "$sub" ]; then
@@ -5976,6 +6024,23 @@ case "${RET_GIT_MODE:-}:$sub:$n" in
   mv-fail:mv:*) exit 1 ;;
   mv-then-fail:mv:1|putback-fail:mv:1) "$RET_REAL_GIT" "$@"; exit 1 ;;
   putback-fail:mv:*) exit 1 ;;
+  # Stages the moves for real and then reports failure, the same opening as
+  # putback-fail, but every rename the put-back then makes is slow instead of
+  # failing at once. Only a command the watchdog actually stops can leave a kill
+  # state behind, so a rename that fails in milliseconds can never reach the
+  # put-back's own gate however often it fails.
+  putback-slow:mv:1) "$RET_REAL_GIT" "$@"; exit 1 ;;
+  putback-slow:mv:*) : > "$RET_GIT_MARK"; sleep 20; exec "$RET_REAL_GIT" "$@" ;;
+  # Stages the moves for real, reports failure, and then every question about
+  # the index fails. Keyed on a move having happened, so the classification
+  # phase still gets its answers and the run reaches the mover at all, which is
+  # the same shape catfile-after-commit uses. This is the one way to reach a
+  # put-back that cannot read the index, which used to be indistinguishable
+  # from an index holding nothing.
+  putback-noindex:mv:1) "$RET_REAL_GIT" "$@"; exit 1 ;;
+  putback-noindex:ls-files:*)
+    if [ -s "$RET_GIT_COUNT.mv" ]; then exit 1; fi
+    exec "$RET_REAL_GIT" "$@" ;;
   lock-first-mv:mv:1)
     : > "$RET_GIT_VAULT/.git/index.lock"
     ( sleep 2; rm -f "$RET_GIT_VAULT/.git/index.lock" ) </dev/null >/dev/null 2>&1 &
@@ -6203,10 +6268,26 @@ ret_moved "$re_v" "$RE_J1" || re_bad="$re_bad j1-reverted"
 ret_moved "$re_v" "$RE_J2" || re_bad="$re_bad j2-reverted"
 ret_says "$re_v" "HEAD is not where this run started, so nothing is put back" || re_bad="$re_bad no-reason"
 ret_says "$re_v" "the vault could not be put back" && re_bad="$re_bad wrong-reason"
+# And a second pass clears the record the first one left. That record is the one
+# no later run could resolve. The run never committed, so its nonce is in no
+# message and the branch that clears a landed record cannot fire, while HEAD
+# holds the destinations rather than the sources, so the branch that clears an
+# undone one cannot fire either. Every neighbouring case that cares about a
+# record being clearable runs this second pass and asserts the record is gone,
+# and this one stopped at the first, which is how a permanent tripwire over a
+# correctly archived vault got in behind a green suite. The log is truncated so
+# the words below are the second run's rather than the first's.
+: > "$(ret_log "$re_v")"
+re_rc2="$(RET_STATE="$re_v.state" ret_run "$re_v")"
+[ "$re_rc2" = 0 ] || re_bad="$re_bad second-rc:$re_rc2"
+[ ! -e "$re_v.state/retention-inflight" ] || re_bad="$re_bad record-left"
+ret_says "$re_v" "another tool committed, and HEAD holds them" || re_bad="$re_bad second-no-reason"
+ret_says "$re_v" "does not yet show either outcome" && re_bad="$re_bad second-tripwire"
+ret_moved "$re_v" "$RE_J1" || re_bad="$re_bad second-j1-moved-back"
 if [ -z "$re_bad" ]; then
-  ok "a move somebody else committed while the run was working is left alone rather than undone"
+  ok "a move somebody else committed while the run was working is left alone rather than undone, and the record it leaves is cleared by the next run"
 else
-  bad "moves committed by another tool were not left alone --$re_bad rc $re_rc log: [$(tr '\n' '|' < "$(ret_log "$re_v")" 2>/dev/null | cut -c1-500)]"
+  bad "moves committed by another tool were not left alone or the record they left could not be cleared --$re_bad rc $re_rc then $re_rc2 log: [$(tr '\n' '|' < "$(ret_log "$re_v")" 2>/dev/null | cut -c1-500)]"
 fi
 # The kill-state gate. RUN_KILL_FAILED means a git command that was stopped may
 # still be running, so a second writer must not be started on top of it and
@@ -6224,6 +6305,11 @@ fi
 # ps has to reach the ordinary path, which is what shows the shim moved the
 # branch rather than the slow move.
 if [ -n "$RET_REAL_PS" ]; then
+  # Registered outside the pass branch, and under the same single token the skip
+  # uses. A control that records nothing cannot be named in RUN_TESTS_REQUIRED,
+  # because the summary matches required names against the ones that ran, so a
+  # control the project believes is gating would silently gate nothing.
+  ran "kill-state-gate"
   re_bad=''
   re_rc="$(ret_case moves-killfail mv-slow RET_GIT_TIMEOUT=3 RET_PS_BLIND=1 RET_GIT_MARK=$RET/moves-killfail.mark)"
   re_v="$RET/moves-killfail"
@@ -6235,6 +6321,13 @@ if [ -n "$RET_REAL_PS" ]; then
   re_rc2="$(ret_case moves-killfail-seen mv-slow RET_GIT_TIMEOUT=3 RET_GIT_MARK=$RET/moves-killfail-seen.mark)"
   ret_says "$RET/moves-killfail-seen" "the move was stopped and a git process of it may still be running" \
     && re_bad="$re_bad blind-ps-was-not-the-cause"
+  # The positive half. Without it the paired case asserts only that something
+  # did not happen, which a run that died before writing anything at all also
+  # satisfies. The stop lands before the real git runs, so nothing is staged and
+  # the put-back succeeds over a vault that never moved, which is exit 3.
+  [ "$re_rc2" = 3 ] || re_bad="$re_bad seen-rc:$re_rc2"
+  ret_says "$RET/moves-killfail-seen" "the move did not finish within" \
+    || re_bad="$re_bad seen-no-reason"
   # The lock is marked so no later pass starts, which is the point of it, so
   # both copies are cleared here the way the hanging case beside them is.
   rm -rf "$re_v.state/run.lock" "$RET/moves-killfail-seen.state/run.lock"
@@ -6245,6 +6338,77 @@ if [ -n "$RET_REAL_PS" ]; then
   fi
 else
   skip "kill-state-gate" "a stop that could not be confirmed: no ps on this machine to stand in for"
+fi
+# The put-back has a kill gate of its own, and it is reached by a different
+# route from the one in do_moves. The first rename has to stage for real and
+# then report failure, so that the put-back finds destinations in the index and
+# makes a git mv of its own, and it is that second rename the watchdog has to
+# stop. putback-fail cannot drive it, because its later renames fail in
+# milliseconds and a command that was never stopped leaves the kill state at 0,
+# which is why this half had no control while the do_moves half gained one.
+if [ -n "$RET_REAL_PS" ]; then
+  ran "putback-kill-state-gate"
+  re_bad=''
+  re_rc="$(ret_case putback-killfail putback-slow RET_GIT_TIMEOUT=3 RET_PS_BLIND=1 RET_GIT_MARK=$RET/putback-killfail.mark)"
+  re_v="$RET/putback-killfail"
+  [ "$re_rc" = 71 ] || re_bad="$re_bad rc:$re_rc"
+  [ -e "$RET/putback-killfail.mark" ] || re_bad="$re_bad shim-never-ran"
+  ret_says "$re_v" "a git command of the put-back was stopped and may still be running" \
+    || re_bad="$re_bad no-reason"
+  ret_says "$re_v" "the vault could not be put back" && re_bad="$re_bad wrong-reason"
+  ret_says "$re_v" "The vault is back at HEAD" && re_bad="$re_bad claimed-restored"
+  grep -qx 'state kill-failed' "$re_v.state/retention-inflight" 2>/dev/null || re_bad="$re_bad no-record"
+  # The first rename stages both journals, and the loop breaks on the pair after
+  # the one whose stop could not be confirmed. The second journal still sitting
+  # at its archive path is what "nothing further was touched" means here, and
+  # without this the case cannot tell the gate from a loop that ran on.
+  ret_at_archive "$re_v" "$RE_J2" || re_bad="$re_bad second-journal-touched"
+  # The pair. The same mode with a stop that could be confirmed has to reach the
+  # ordinary put-back failure instead, which is what shows the blind ps rather
+  # than the slowness moved the branch. Both arms exit 71, so the exit code
+  # tells them apart not at all and the reason is the whole of the evidence.
+  re_rc2="$(ret_case putback-killfail-seen putback-slow RET_GIT_TIMEOUT=3 RET_GIT_MARK=$RET/putback-killfail-seen.mark)"
+  [ "$re_rc2" = 71 ] || re_bad="$re_bad seen-rc:$re_rc2"
+  ret_says "$RET/putback-killfail-seen" "the vault could not be put back" \
+    || re_bad="$re_bad seen-no-reason"
+  ret_says "$RET/putback-killfail-seen" "a git command of the put-back was stopped" \
+    && re_bad="$re_bad blind-ps-was-not-the-cause"
+  rm -rf "$re_v.state/run.lock" "$RET/putback-killfail-seen.state/run.lock"
+  if [ -z "$re_bad" ]; then
+    ok "a put-back rename whose stop could not be confirmed is reported and nothing further is touched, and the same rename with a stop that was confirmed is not"
+  else
+    bad "the put-back kill-state gate was not reached or not honoured --$re_bad rc $re_rc then $re_rc2 log: [$(tr '\n' '|' < "$(ret_log "$re_v")" 2>/dev/null | cut -c1-500)]"
+  fi
+else
+  skip "putback-kill-state-gate" "a put-back stop that could not be confirmed: no ps on this machine to stand in for"
+fi
+# A put-back that cannot read the index. index_of_moves used to end in an
+# unconditional return 0 with the error swallowed, so a read that failed was
+# indistinguishable from an index holding nothing. Every destination then looked
+# unstaged, and the undo loop answered that by moving each file back with a
+# plain filesystem mv while git was never told. The work tree ended up right,
+# the index wrong, and the run reported that the vault could not be put back
+# when the files were in fact back. No later run could clear it either, because
+# recovery_check asks the same question of the same index and gets the same
+# answer, so the vault stopped until somebody ran git reset by hand.
+#
+# The assertion that matters is that both journals are still at their archive
+# paths. With the read reporting nothing rather than failing, the raw mv branch
+# moves them back on disk, so that is what separates the two.
+re_bad=''
+re_rc="$(ret_case putback-noindex putback-noindex)"
+re_v="$RET/putback-noindex"
+[ "$re_rc" = 71 ] || re_bad="$re_bad rc:$re_rc"
+ret_says "$re_v" "the index could not be read, so nothing is put back" || re_bad="$re_bad no-reason"
+ret_says "$re_v" "the vault could not be put back" && re_bad="$re_bad wrong-reason"
+ret_says "$re_v" "The vault is back at HEAD" && re_bad="$re_bad claimed-restored"
+grep -qx 'state putback-unreadable-index' "$re_v.state/retention-inflight" 2>/dev/null || re_bad="$re_bad no-record"
+ret_at_archive "$re_v" "$RE_J1" || re_bad="$re_bad j1-moved-by-raw-mv"
+ret_at_archive "$re_v" "$RE_J2" || re_bad="$re_bad j2-moved-by-raw-mv"
+if [ -z "$re_bad" ]; then
+  ok "a put-back that cannot read the index refuses rather than moving files where git would not see them"
+else
+  bad "an unreadable index was taken for an index holding nothing --$re_bad rc $re_rc log: [$(tr '\n' '|' < "$(ret_log "$re_v")" 2>/dev/null | cut -c1-500)]"
 fi
 # TERM while the moves run puts them back, and the next run is not refused.
 re_v="$RET/moves-term"
@@ -6296,21 +6460,36 @@ ret_says "$RP" "1 journal(s) kept by the newest eight dates" || rp_bad="$rp_bad 
 RP="$(ret_copy parse-message-marker)"
 ret_journal "$RP" "dream-${RET_DATE[70]}.md" "tier: medium"
 ret_marker_commit "$RP" "$(printf 'subject\037tail')" "20-projects/_logs/dream-${RET_DATE[70]}.md"
+rp_sha="$(git -C "$RP" rev-parse HEAD 2>/dev/null)"
+# The refusal names the commit, and says that the whole folder is stopped rather
+# than one note. One byte anywhere in this folder's history takes retention out
+# of service for good, so a reader who is given only the offending line and no
+# commit has been sent to a folder rather than to the thing to change.
 [ "$(ret_run "$RP" --dry-run)" = 1 ] \
   && ret_says "$RP" "holds something after the byte that ends its message" \
   && ret_says "$RP" "A commit message or a file name holds one of the two bytes" \
+  && ret_says "$RP" "The commit is $rp_sha." \
+  && ret_says "$RP" "retention is stopped for the whole folder" \
   || rp_bad="$rp_bad message-marker"
 RP="$(ret_copy parse-record-marker)"
 ret_journal "$RP" "dream-${RET_DATE[70]}.md" "tier: medium"
 ret_marker_commit "$RP" "$(printf 'subject\036tail')" "20-projects/_logs/dream-${RET_DATE[70]}.md"
+rp_sha="$(git -C "$RP" rev-parse HEAD 2>/dev/null)"
 [ "$(ret_run "$RP" --dry-run)" = 1 ] \
   && ret_says "$RP" "holds the record marker in the middle of a line" \
+  && ret_says "$RP" "The commit is $rp_sha." \
   || rp_bad="$rp_bad record-marker-mid-line"
 RP="$(ret_copy parse-record-line)"
 ret_journal "$RP" "dream-${RET_DATE[70]}.md" "tier: medium"
 ret_marker_commit "$RP" "$(printf 'line one\n\036still the message')" "20-projects/_logs/dream-${RET_DATE[70]}.md"
+# This one names no commit, on purpose, and the assertion pins the omission. A
+# line that opens with the record marker but carries no identity may be a
+# message line of the record already open or a boundary git meant to write, and
+# those two belong to different commits. Naming either would be a guess, and a
+# refusal that guesses at the commit is worse than one that names none.
 [ "$(ret_run "$RP" --dry-run)" = 1 ] \
   && ret_says "$RP" "does not carry a date and an object name" \
+  && ! ret_says "$RP" "The commit is" \
   || rp_bad="$rp_bad record-marker-opening-a-line"
 # A message that ends its own record and then opens another. The first line
 # carries the byte that ends a message, so the real record closes early, and the
@@ -6372,6 +6551,56 @@ if [ -z "$rf_bad" ]; then
   ok "a planted file or a case variant on the archive path exits 6, a shallow or nested repository exits 1, a tripwire 78, and a missing _logs is logged"
 else
   bad "a path or repository problem was not refused as it should be --$rf_bad"
+fi
+# A candidate name holding a newline. The refusal for a control character IS the
+# log write, so the name reaches the log before any name rule has looked at it,
+# and an unescaped one writes whole lines of the author's choosing into the only
+# account an unattended scheduled pass leaves of what it did. NTFS forbids such
+# a name while ext4 and APFS allow it, so the fixture is attempted and the case
+# says plainly when the filesystem refused to make it, rather than passing over
+# a file that was never there. This is also the first control of any kind over
+# the control-character refusal.
+rf_bad=''
+RF="$(ret_copy cntrl-name)"
+rf_inj="$(printf 'dream-2020-01-01.md\nINJECTEDLINE')"
+if : > "$RF/20-projects/_logs/$rf_inj" 2>/dev/null && [ -e "$RF/20-projects/_logs/$rf_inj" ]; then
+  ran "cntrl-name-log"
+  [ "$(ret_run "$RF")" = 0 ] || rf_bad="$rf_bad rc"
+  ret_says "$RF" 'dream-2020-01-01.md<LF>INJECTEDLINE' || rf_bad="$rf_bad not-escaped"
+  ret_says "$RF" "the name holds a control character" || rf_bad="$rf_bad no-reason"
+  grep -q '^INJECTEDLINE' "$(ret_log "$RF")" 2>/dev/null && rf_bad="$rf_bad line-injected"
+  if [ -z "$rf_bad" ]; then
+    ok "a candidate name holding a newline is refused with its invisible bytes spelled out, and writes no line of its own into the log"
+  else
+    bad "a name holding a newline reached the log unescaped --$rf_bad log: [$(tr '\n' '|' < "$(ret_log "$RF")" 2>/dev/null | cut -c1-500)]"
+  fi
+else
+  skip "cntrl-name-log" "a candidate name holding a newline: this filesystem would not create one"
+fi
+# The second site, and a different byte. U+0085 is a C1 control, and the two
+# bytes it is written as in UTF-8 are not in the [[:cntrl:]] class once the
+# runner pins LC_ALL=C, because that class is then only ASCII 0x00 to 0x1f and
+# 0x7f. Measured, not reasoned about: the same name matches the filter under
+# C.UTF-8 and under en_US.UTF-8 and survives it under C. So the pin added for
+# the collation defects also let this name past the early refusal and down to
+# the name validators, whose refusal is printed from a different line that had
+# no escaping at all. A denylist of control bytes would not have caught it
+# either, which is why safe_name keeps a spelled-out set and escapes the rest.
+rf_bad=''
+RF="$(ret_copy c1-name)"
+rf_nel="$(printf 'dream-2020-01-02\302\205X.md')"
+if : > "$RF/20-projects/_logs/$rf_nel" 2>/dev/null && [ -e "$RF/20-projects/_logs/$rf_nel" ]; then
+  ran "c1-name-log"
+  [ "$(ret_run "$RF")" = 0 ] || rf_bad="$rf_bad rc"
+  ret_says "$RF" 'dream-2020-01-02<C2><85>X.md' || rf_bad="$rf_bad not-escaped"
+  ret_stayed "$RF" "$rf_nel" || rf_bad="$rf_bad moved"
+  if [ -z "$rf_bad" ]; then
+    ok "a candidate name holding a C1 control is refused with the bytes spelled out, though the class the early filter uses no longer covers it"
+  else
+    bad "a C1 control in a candidate name reached the log unescaped --$rf_bad log: [$(tr '\n' '|' < "$(ret_log "$RF")" 2>/dev/null | cut -c1-500)]"
+  fi
+else
+  skip "c1-name-log" "a candidate name holding a C1 control: this filesystem would not create one"
 fi
 RF="$(ret_copy linked-logs)"
 ret_journal "$RF" "dream-${RET_DATE[70]}.md" "tier: medium"
@@ -6442,6 +6671,90 @@ else
   bad "vault-check.sh archive line is wrong outside a retention history -- [$(printf '%s' "$rg_check" | tail -n 1)] [$(printf '%s' "$rn_check" | tail -n 1)]"
 fi
 
+fi
+
+# ------------------------------------ source: collating ranges in patterns --
+
+printf '\n=== source: no collating range in a shell case pattern ===\n'
+
+# A range such as [a-z] or [A-Za-z] inside a shell pattern is resolved in the
+# locale's collating order. A UTF-8 collation interleaves the cases, so a
+# [!a-z0-9] meant to exclude everything but lower case and digits stops
+# excluding upper case, and it also sorts an accented letter beside the letter
+# it is built from, so that letter falls inside both halves of [A-Za-z]. Four
+# defects of this family reached main during this change. One of them archived a
+# journal on macOS that Linux correctly refused, from identical code and an
+# identical vault, and it is the only member so far that failed towards
+# archiving rather than towards refusing.
+#
+# The fix was to spell every such set out one character at a time. That second
+# defence cannot be pinned by running the code, because the runners now also pin
+# LC_ALL=C and the pin answers the question before the pattern is ever reached,
+# so a revert to ranges passes every behavioural control the suite has. Reading
+# the source is the only way to keep it honest, which is why this check is here
+# rather than in a fixture.
+#
+# Scope, stated rather than left to be discovered. Only shell case arms are
+# read, which is a bracket expression followed by a closing parenthesis with no
+# parenthesis in between. That is where all six instances found so far have
+# lived. A range inside an awk or a grep regular expression follows different
+# rules and is not flagged, nor is one inside a find -name glob, nor a [[ ]]
+# test. Digit-only ranges are safe under every collation and are not flagged. A
+# line considered and deliberately kept carries a trailing collation-ok comment
+# with its reason, and none does today.
+#
+# The bracket contents must hold no parenthesis either. Without that the scan
+# flagged a line whose closing parenthesis belonged to a command substitution
+# opened inside the test brackets rather than to a case arm, which is the shape
+# of every ordinary [ -n "$(git ...)" ] line in the library. That false positive
+# was found by running the scan rather than by reading it.
+#
+# Lines that run sed, awk, grep or find are skipped whole, for the same reason.
+# A range in one of those is a regular expression or an fnmatch glob rather than
+# a shell pattern, the escaped parenthesis of a sed group reads as a case arm's,
+# and the second false positive found by running this was exactly that. The cost
+# of the exclusion is that a case arm which also runs one of those four on the
+# same line would not be read, which no line in this repository does.
+collation_hits() {  # collation_hits <file> - prints file:line for each range
+  LC_ALL=C awk '
+    /^[[:space:]]*#/ { next }
+    /collation-ok/ { next }
+    /(^|[[:space:]])(sed|awk|grep|find)[[:space:]]/ { next }
+    /\[[^]()]*[A-Za-z]-[A-Za-z][^]()]*\][^()]*\)/ { print FILENAME ":" FNR }
+  ' "$1" 2>/dev/null
+}
+# The positive control runs first, because an absence is evidence only once the
+# instrument has been shown able to find a presence. Without it a scan that read
+# nothing at all would report every shipped file clean, which is the exact shape
+# of the grep -P defect this whole suite was built around.
+cr_probe="$TMP/collation-probe.sh"
+printf 'case "$n" in\n  *[!a-z0-9]*) return 1 ;;\nesac\n' > "$cr_probe"
+if [ -n "$(collation_hits "$cr_probe")" ]; then
+  ok "the collating-range scan finds a known-bad shell case pattern"
+else
+  bad "the collating-range scan read a known-bad pattern and said nothing, so its silence about the shipped scripts means nothing"
+fi
+cr_files=".claude/scripts/vault-retention.sh .claude/scripts/vault-check.sh .claude/scripts/dream-pass.sh .claude/scripts/promotion-pass.sh .claude/scripts/lib/runner-common.sh .claude/hooks/vault-lint.sh .claude/hooks/read-guard.sh .claude/hooks/postcompact-wrap-up.sh .claude/hooks/instructions-loaded-log.sh"
+cr_found=''
+cr_missing=''
+cr_seen=0
+for cr_f in $cr_files; do
+  if [ -f "$ROOT/$cr_f" ]; then
+    cr_seen=$((cr_seen + 1))
+    cr_hit="$(collation_hits "$ROOT/$cr_f")"
+    [ -n "$cr_hit" ] && cr_found="$cr_found $cr_hit"
+  else
+    cr_missing="$cr_missing $cr_f"
+  fi
+done
+if [ -n "$cr_missing" ]; then
+  bad "the collating-range scan could not read --$cr_missing"
+elif [ "$cr_seen" -eq 0 ]; then
+  bad "the collating-range scan read no files at all, so a clean result here would be vacuous"
+elif [ -n "$cr_found" ]; then
+  bad "a letter range is back in a shell case pattern, which a UTF-8 collation reads differently --$cr_found"
+else
+  ok "none of the $cr_seen shipped scripts and hooks has a letter range in a shell case pattern"
 fi
 
 # ---------------------------------------------- githooks/pre-commit ---------
