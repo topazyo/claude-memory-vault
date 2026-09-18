@@ -357,6 +357,11 @@ quiet() {
   C_VERDICT[$1]=QUIET
   case "$2" in
     untracked) QUIET_UNTRACKED=$((QUIET_UNTRACKED + 1)) ;;
+    # The taken arm has no caller. destination_rule counts that group itself,
+    # because by the time it runs the verdict is already set and the guard on
+    # the first line here would send the call straight back. Kept rather than
+    # dropped so the two groups read as the pair they are, and so the next
+    # reader does not take the asymmetry for an oversight.
     taken) QUIET_TAKEN=$((QUIET_TAKEN + 1)) ;;
   esac
   return 0
@@ -1167,6 +1172,12 @@ ends_with_newline() {
 # True when every line of the earlier file is the start of the later one, in
 # order. Both files end in a newline, which is checked first, so a whole-line
 # prefix and a byte prefix are the same thing here.
+#
+# Do not add an exit to the END rule. The verdict is carried by the exit 1 in
+# the main rule, and every awk keeps that status through an END that does not
+# itself exit. An exit 0 there would clear it, and a stub whose versions are not
+# a prefix chain would then read as clean and be archived, which is the wrong
+# direction to fail in.
 is_line_prefix() {
   LC_ALL=C awk -v a="$1" '
     BEGIN { n = 0; while ((getline l < a) > 0) { n++; A[n] = l } close(a) }
@@ -1789,7 +1800,10 @@ adopt_legacy() {
       i=$((i + 1))
     done
     if [ "$idx" -lt 0 ]; then
-      say "REFUSED: $path (listed in the report but no longer in $LOGS_REL)"
+      # Not called a refusal, because it is counted apart from the refusals and
+      # a reader tallying the REFUSED lines against the summary would come out
+      # one over for each of these.
+      say "NOT FOUND: $path (listed in the report but no longer in $LOGS_REL, so there is nothing here to move)"
       REFUSED_GONE=$((REFUSED_GONE + 1))
       continue
     fi
@@ -2161,6 +2175,9 @@ verify_moves() {
 # source at all. Asked fresh rather than from the batch taken before the move.
 head_holds_moves() {
   local k=0 ok=1
+  # Both files are truncated, the way head_of_sources does it. Leaving the
+  # answer map from a previous call is the asymmetry the next edit trips on.
+  : > "$SNAP_DIR/after"
   : > "$SNAP_DIR/after.in"
   while [ "$k" -lt "${#SRCS[@]}" ]; do
     printf 'HEAD:%s\n' "${DSTS[$k]}" >> "$SNAP_DIR/after.in"

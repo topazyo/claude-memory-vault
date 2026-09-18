@@ -44,6 +44,14 @@ jobs:
         run: |
           echo "bash:  $BASH_VERSION"
           echo "uname: $(uname -s)"
+          # The locale is reported because a range in a shell pattern is read in
+          # the collating order of whichever one the job happens to have, and two
+          # defects of exactly that shape reached main without anyone being able
+          # to see which locale had produced them.
+          echo "locale:"
+          locale 2>&1 | sed 's/^/  /' || echo "  locale: MISSING"
+          echo "awk version:"
+          awk --version 2>&1 | head -n 1 | sed 's/^/  /' || awk -W version 2>&1 | head -n 1 | sed 's/^/  /' || echo "  unknown"
           for t in jq perl awk sed find date; do
             printf '%-6s %s\n' "$t" "$(command -v "$t" || echo MISSING)"
           done

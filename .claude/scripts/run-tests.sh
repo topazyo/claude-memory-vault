@@ -5629,8 +5629,18 @@ ra_report="$(ls "$RA.state"/retention-legacy-*.txt 2>/dev/null | head -n 1)"
 # are the same string and the difference never shows.
 ra_report_real=""
 [ -n "$ra_report" ] && ra_report_real="$(cd "$(dirname "$ra_report")" 2>/dev/null && pwd -P)/$(basename "$ra_report")"
+# The resolution has to have produced a real path with a directory in it. A cd
+# that failed leaves a leading slash and a bare file name, which is a substring
+# of the correct logged path, so grep would still say yes with the directory
+# half never compared. Empty is worse still, because grep -qF with an empty
+# pattern matches any line at all.
+ra_report_ok=0
+case "$ra_report_real" in
+  /*/*) ra_report_ok=1 ;;
+esac
 ra_blob="$(git -C "$RA" rev-parse "HEAD:20-projects/_logs/dream-${RET_DATE[100]}.md" 2>/dev/null)"
-if [ -n "$ra_report" ] && grep -q "^20-projects/_logs/dream-${RET_DATE[100]}.md	$ra_blob\$" "$ra_report" \
+if [ -n "$ra_report" ] && [ "$ra_report_ok" = 1 ] \
+   && grep -q "^20-projects/_logs/dream-${RET_DATE[100]}.md	$ra_blob\$" "$ra_report" \
    && [ "$(grep -vc '^#' "$ra_report")" = 1 ] && ret_says "$RA" "$ra_report_real"; then
   ok "a journal from before the runner trailers is listed with its blob in a report in the state directory, and the log names it"
 else
@@ -5641,7 +5651,7 @@ rm -f "$(ret_log "$RA")"
 ra_head="$(git -C "$RA" rev-parse HEAD)"
 expect_rc "vault-retention run again with nothing new -> OK" 0 "$(ret_run "$RA")"
 if [ "$(git -C "$RA" rev-parse HEAD)" = "$ra_head" ] && [ "$(ls "$RA.state"/retention-legacy-*.txt 2>/dev/null | wc -l | tr -d ' ')" = 1 ] \
-   && ret_says "$RA" "$ra_report_real"; then
+   && [ "$ra_report_ok" = 1 ] && ret_says "$RA" "$ra_report_real"; then
   ok "a second run moves nothing, commits nothing, and names the existing legacy report instead of writing another"
 else
   bad "a second run changed HEAD or wrote another report"
@@ -5878,6 +5888,17 @@ case "${RET_GIT_MODE:-}:$sub:$n" in
   commit-sync-first:commit:1)
     "$RET_REAL_GIT" -C "$RET_GIT_VAULT" -c user.name=sync -c user.email=sync@example.invalid -c commit.gpgsign=false commit -q -m "vault backup" >/dev/null 2>&1
     exec "$RET_REAL_GIT" "$@" ;;
+  commit-other-first:commit:1)
+    # Commits something of its own, naming a path, so the runner's staged moves
+    # are left for the runner to commit itself. commit-sync-first above names no
+    # path and therefore takes the moves with it, which leaves the runner's own
+    # commit nothing to do, so that mode reaches the branch where another tool
+    # really did commit the moves. This one reaches the same branch with the
+    # runner's own commit at HEAD, which is the case the nonce has to tell apart.
+    printf 'sync\n' > "$RET_GIT_VAULT/10-daily/other.md"
+    "$RET_REAL_GIT" -C "$RET_GIT_VAULT" -c user.name=sync -c user.email=sync@example.invalid -c commit.gpgsign=false add -- 10-daily/other.md >/dev/null 2>&1
+    "$RET_REAL_GIT" -C "$RET_GIT_VAULT" -c user.name=sync -c user.email=sync@example.invalid -c commit.gpgsign=false commit -q -m "unrelated" -- 10-daily/other.md >/dev/null 2>&1
+    exec "$RET_REAL_GIT" "$@" ;;
 esac
 exec "$RET_REAL_GIT" "$@"
 GIT_EOF
@@ -5916,6 +5937,19 @@ if [ -z "$re_bad" ]; then
 else
   bad "a failure while moving or committing left the vault wrong --$re_bad"
 fi
+# This run's own commit is credited to this run even when something else
+# committed first. Without the nonce test the log hands the work to a stranger,
+# and every other assertion here passes either way, because both branches move
+# the files, clear the record and return 0.
+re_rc="$(ret_case moves-other-first commit-other-first)"
+if [ "$re_rc" = 0 ] && ret_moved "$RET/moves-other-first" "$RE_J1" && ret_moved "$RET/moves-other-first" "$RE_J2" \
+   && ret_says "$RET/moves-other-first" "Something else committed while this run was judging" \
+   && ! ret_says "$RET/moves-other-first" "another tool committed the moves"; then
+  ok "a commit this run made is credited to this run even when something else committed first, told apart by the nonce"
+else
+  bad "the nonce did not tell this run's own commit from another tool's -- rc $re_rc log: [$(tr '\n' '|' < "$(ret_log "$RET/moves-other-first")" 2>/dev/null | cut -c1-500)]"
+fi
+
 # A commit that lands and then hangs is stopped, and never put back.
 re_rc="$(ret_case moves-hang commit-then-hang RET_GIT_TIMEOUT=3)"
 if { [ "$re_rc" = 0 ] || [ "$re_rc" = 71 ]; } && ret_moved "$RET/moves-hang" "$RE_J1" && ret_clean "$RET/moves-hang"; then
