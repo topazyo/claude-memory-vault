@@ -64,6 +64,21 @@
 
 set -u
 
+# Every pattern, glob, sort and range in this file is meant in byte order, and a
+# range in a shell pattern otherwise follows the locale's collating order. Three
+# defects of this change were decided by that, and one of them archived a file on
+# macOS that Linux correctly refused, from identical code and an identical vault.
+# The character sets below are spelled out one character at a time for the same
+# reason, so neither is the only defence.
+#
+# LC_ALL rather than LC_COLLATE, because LC_ALL in the environment overrides
+# LC_COLLATE and this runner is started by cron, launchd or Task Scheduler under
+# whatever locale that user's session carries, which no CI job models. Nothing
+# here reads a translated message. What is parsed is object names, paths and
+# commit messages, and those are the author's bytes in any locale.
+LC_ALL=C
+export LC_ALL
+
 RUNNER=vault-retention
 SNAP_DIR=""
 LOG=""
@@ -453,8 +468,13 @@ stub_name_ok() {
   esac
   id="${n#compaction-}"
   id="${id%.md}"
+  # Spelled out rather than written as ranges. A range follows the locale's
+  # collating order, where a letter carrying an accent sorts beside the letter
+  # it is built from and so falls inside A-Z and a-z, which admits names this
+  # was written to keep out and admits them on one platform and not another.
+  # The file pins the collation as well, and this is the second of the two.
   case "$id" in
-    ''|.*|*[!A-Za-z0-9._-]*) return 1 ;;
+    ''|.*|*[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-]*) return 1 ;;
   esac
   SN_ID="$id"
   return 0

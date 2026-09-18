@@ -165,7 +165,11 @@ win_tree_stop() {
   local winpid="$1" nonce="$2" record="$3" more="${4:-}" listed="${5:-}" script limit out ps_pid ps_win waited=0
   is_uint "$winpid" || winpid=0
   is_uint "$listed" || listed=0
-  case "$nonce" in *[!A-Za-z0-9-]*) nonce="" ;; esac
+  # Spelled out rather than a range. This value is interpolated into a
+  # PowerShell script, so what it may hold is a security question, and a range
+  # follows the locale's collating order, where a letter carrying an accent
+  # sorts beside the letter it is built from and falls inside A-Z and a-z.
+  case "$nonce" in *[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-]*) nonce="" ;; esac
   case "$more" in *[!0-9\ ]*) more="" ;; esac
   limit="${WINDOWS_STOP_LIMIT:-60}"
   is_uint "$limit" && [ "$limit" -gt 0 ] || limit=60
@@ -1339,7 +1343,8 @@ is_uint() {
 # is_nonce <value>
 # True for a lock nonce as run_lock_acquire writes it.
 is_nonce() {
-  case "$1" in ''|*[!A-Za-z0-9._-]*) return 1 ;; *) return 0 ;; esac
+  # Spelled out rather than a range, for the reason win_tree_stop gives.
+  case "$1" in ''|*[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-]*) return 1 ;; *) return 0 ;; esac
 }
 
 # uint_setting <variable-name> <default> <minimum> <log> [<unit>]

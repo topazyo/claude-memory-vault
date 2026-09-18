@@ -210,7 +210,12 @@ check_note() {
 missing=0
 if [ "${#NAMED[@]}" -gt 0 ]; then
   for file in "${NAMED[@]}"; do
-    case "$file" in /*|[A-Za-z]:[\\/]*) ;; *) file="$ROOT/$file" ;; esac
+    # The drive letter is spelled out rather than written as a range. A range
+    # follows the locale's collating order, where a letter carrying an accent
+    # sorts beside the letter it is built from and so falls inside A-Z, which
+    # would read a relative name beginning with such a letter and a colon as an
+    # absolute path on one platform and not on another.
+    case "$file" in /*|[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]:[\\/]*) ;; *) file="$ROOT/$file" ;; esac
     if [ -f "$file" ] && [ -r "$file" ]; then
       check_note "$file"
     else

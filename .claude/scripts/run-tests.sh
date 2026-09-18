@@ -5402,6 +5402,7 @@ ret_run() {  # ret_run <vault> [args...] - runs the retention mover and prints i
   env VAULT_STATE_DIR="${RET_STATE:-$v.state}" RUN_LOCK_WAIT="${RET_LOCK_WAIT:-0}" RUN_LOCK_POLL=1 \
     WATCHDOG_POLL=1 WATCHDOG_GRACE=2 RETENTION_DAYS="${RET_DAYS:-}" RETENTION_MAX_MOVES="${RET_MAX:-}" \
     RUNNER_GIT_TIMEOUT="${RET_GIT_TIMEOUT:-}" PATH="${RET_PATH:+$RET_PATH:}$PATH" \
+    ${RET_LC:+LC_ALL=$RET_LC LANG=$RET_LC} \
     bash "$v/.claude/scripts/vault-retention.sh" "$@" >/dev/null 2>&1
   echo "$?"
 }
@@ -5854,6 +5855,38 @@ if [ -z "$rd_bad" ]; then
   ok "stubs the hook wrote and nobody changed are archived by their last entry, and edited, rewritten, recent or untracked ones stay"
 else
   bad "the stub rules are wrong --$rd_bad log: [$(tr '\n' '|' < "$(ret_log "$RD")" 2>/dev/null | cut -c1-900)]"
+fi
+
+# --- the same verdicts under a locale that does not collate in byte order ---
+# Two defects of this change were decided by a range in a shell pattern
+# following the locale's collating order, and one of them archived a file on
+# macOS that Linux correctly refused, from identical code and an identical
+# vault. The runner now pins its own collation and spells every character set
+# out, and this asks for the contract both defences exist for rather than for
+# either of them, because the locale a scheduler hands the runner is not
+# something any of these jobs models.
+if locale -a 2>/dev/null | LC_ALL=C grep -qi '^c\.utf-*8$'; then
+  RL="$(ret_copy locale-ranges)"
+  ret_journal "$RL" "dream-${RET_DATE[90]}.md" "tier: medium"
+  ret_journal "$RL" "dream-${RET_DATE[99]}-PM.md" "tier: medium"
+  ret_dream_commit "$RL" "dream-${RET_DATE[90]}.md" "dream-${RET_DATE[99]}-PM.md"
+  rl_bad=''
+  rl_rc="$(RET_LC=C.UTF-8 ret_run "$RL" --dry-run)"
+  [ "$rl_rc" = 0 ] || rl_bad="$rl_bad rc:$rl_rc"
+  # The suffix test, which fails towards archiving when a range picks up the
+  # upper case.
+  ret_says "$RL" "REFUSED: 20-projects/_logs/dream-${RET_DATE[99]}-PM.md (not a journal name" \
+    || rl_bad="$rl_bad suffix-accepted"
+  # The index flag test, where the same cause refuses every candidate instead.
+  ret_says "$RL" "index flag" && rl_bad="$rl_bad everything-index-flagged"
+  if [ -z "$rl_bad" ]; then
+    ran "retention verdicts under a UTF-8 locale"
+    ok "the runner reaches the same verdicts under a locale whose collating order is not byte order"
+  else
+    bad "a UTF-8 locale changed the runner's verdicts --$rl_bad rc $rl_rc log: [$(tr '\n' '|' < "$(ret_log "$RL")" 2>/dev/null | cut -c1-500)]"
+  fi
+else
+  skip "C.UTF-8" "retention verdicts under a UTF-8 locale"
 fi
 
 # --- a stub the runner archived, then written again by the hook ---
