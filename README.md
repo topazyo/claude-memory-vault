@@ -171,7 +171,7 @@ claude-memory-vault/
 │   │   ├── untrusted-captures.md    # prompt-injection boundary for captures (path-scoped)
 │   │   └── security.md              # global safety rules; no paths:, always loads
 │   ├── scripts/
-│   │   ├── vault-check.sh           # report-only invariant checker (C1–C5); exit 1 on violation
+│   │   ├── vault-check.sh           # report-only invariant checker (C1–C5); 1 = a note is wrong, 2 = it could not run
 │   │   ├── run-tests.sh             # control suite for the hooks; positive AND negative controls
 │   │   ├── dream-pass.sh / .cmd     # scheduled runner (cron/launchd; .cmd wraps it for Task Scheduler)
 │   │   ├── promotion-pass.sh / .cmd # ditto, for the weekly promotion pass

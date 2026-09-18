@@ -17,10 +17,27 @@
 #   C5  if `last_verified:` exists, it is not later than today
 #       (a non-empty `last_verified:` that is not a YYYY-MM-DD date is also a C5 violation)
 #
-# Exit:   0 = at least one note scanned and no violations
-#         1 = any violation, OR no notes scanned at all. "0 violations across
-#             0 files" is a vacuous result, not a pass, so it fails like one.
-#             A named note that is not a file also fails.
+# Exit:   0  at least one note scanned and no violations
+#         1  the vault has a problem. A note violates an invariant.
+#         2  this checker could not run, so it is saying nothing about the
+#            vault. No notes were scanned at all, or there are no content-tier
+#            folders under the root, or a named note is not a readable file.
+#         64 the command line was wrong.
+#         78 a scheduled pass set the tripwire, so nothing was checked and a
+#            human has to look first. The three runners use 78 for the same
+#            thing, so one number means one thing across all four.
+#
+# These used to be a single 1, which meant a caller could not tell "the vault
+# has a problem" from "the checker could not run", and those want opposite
+# responses. A violation is a fact about the notes that a person should fix. A
+# 2 is a fact about the invocation, most often a wrong root or a wrong working
+# directory, and a vault that has not been looked at. "0 violations across 0
+# files" is still a vacuous result rather than a pass, and it now says which
+# kind of not-a-pass it is.
+#
+# Every caller was read before this changed. The commit gate reports whatever
+# code it got and refuses, and the runners test for success with `if !` or with
+# `&&`. Nothing matched on the number 1, so no caller changes meaning.
 #
 # Usage:  bash .claude/scripts/vault-check.sh   # do not pipe: a pipe would report
 #                                               # the pager's status, not ours
@@ -69,7 +86,9 @@ if tw_present "$TW_STATE" || tw_present "$TW_VAULT"; then
   else
     printf 'vault-check: %s is not a file, so it holds no tripwire text. Remove it, then read the runner logs for why the tripwire was set. Nothing was checked.\n' "$TW_STATE" >&2
   fi
-  exit 1
+  # 78, the same number the three runners use for a tripwire, so a caller
+  # reading an exit code does not have to know which of the four it called.
+  exit 78
 fi
 
 # Content tiers only. 90-auto-memory/ is machine-managed under Claude Code's own
@@ -80,7 +99,10 @@ case "${1:-}" in
   --) shift ;;
   -*)
     printf 'vault-check: unknown option %s. Name notes after --, for example vault-check.sh -- 10-daily/2026-01-15.md\n' "$1" >&2
-    exit 1
+    # 64 for a wrong command line, the number the retention runner already uses
+    # for the same thing. A caller that cannot spell the arguments has learned
+    # nothing about the vault.
+    exit 64
     ;;
 esac
 NAMED=("$@")
@@ -96,7 +118,9 @@ for d in $TIERS; do
 done
 if [ "${#NAMED[@]}" -eq 0 ] && [ "${#DIRS[@]}" -eq 0 ]; then
   printf 'vault-check: no content-tier folders found under %s\n' "$ROOT"
-  exit 1
+  # 2, because this says nothing about the notes. The usual cause is a wrong
+  # root or a wrong working directory, not a vault with a problem in it.
+  exit 2
 fi
 
 # Frontmatter extraction matches .claude/hooks/vault-lint.sh line for line, so the
@@ -238,7 +262,7 @@ printf 'vault-check: %s violation(s) across %s file(s) checked (as of %s).\n' \
 # a path or folder-name problem for a clean vault.
 if [ "$files" -eq 0 ]; then
   printf 'vault-check: VACUOUS - no notes were scanned, so this is not a pass. Check CLAUDE_PROJECT_DIR and the TIERS list.\n' >&2
-  exit 1
+  exit 2
 fi
 
 # What the retention pass has taken out of the live tiers. 99-archive is not a
@@ -288,5 +312,10 @@ if [ "${#NAMED[@]}" -eq 0 ]; then
 fi
 
 [ "$violations" -gt 0 ] && exit 1
-[ "$missing" -gt 0 ] && exit 1
+# A named note that could not be read is the checker failing to run over that
+# note, not the note being wrong, so it is a 2 and not a 1. The distinction
+# matters most to the runners, which name exactly the files a pass is about to
+# commit. A 1 tells them a note they wrote is bad. A 2 tells them a path is
+# wrong, and those want different answers from whoever reads the log.
+[ "$missing" -gt 0 ] && exit 2
 exit 0

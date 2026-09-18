@@ -44,6 +44,19 @@ expect_rc() {  # expect_rc <label> <expected> <actual>
   if [ "$3" -eq "$2" ]; then ok "$1 (exit $3)"; else bad "$1 -- expected exit $2, got $3"; fi
 }
 
+# The two numbers out of vault-check's own summary line, which is the sentinel a
+# caller is meant to be able to trust. Read as numbers rather than matched as a
+# phrase, because a control that greps for a prefix passes whatever the counts
+# say, and a control that greps for a whole hardcoded line goes stale the next
+# time somebody adds a fixture. Both print nothing when there is no summary line
+# at all, which every caller below distinguishes from a zero.
+sentinel_files() {  # sentinel_files <output>
+  printf '%s\n' "$1" | LC_ALL=C sed -n 's/^vault-check: [0-9][0-9]* violation(s) across \([0-9][0-9]*\) file(s) checked .*/\1/p' | head -n 1
+}
+sentinel_violations() {  # sentinel_violations <output>
+  printf '%s\n' "$1" | LC_ALL=C sed -n 's/^vault-check: \([0-9][0-9]*\) violation(s) across [0-9][0-9]* file(s) checked .*/\1/p' | head -n 1
+}
+
 # A temp dir with a SPACE in its name, on purpose: a vault living under
 # "C:/Users/Some One/" or macOS iCloud's "~/Library/Mobile Documents/" is the
 # case that word-splitting bugs break on, while still printing "0 violations".
@@ -332,19 +345,33 @@ else
   absent  "templates/ pruned"                    "tpl.md"
   absent  "compaction-*.md pruned"               "compaction-abc"
 
-  # The vacuity guard. "0 violations across 0 files" is not a pass - it means the
-  # checker scanned nothing, which is precisely what a path-handling bug produces.
-  if printf '%s' "$out" | grep -qE 'across 0 file'; then
+  # The vacuity guard, read out of the summary line rather than grepped for as a
+  # phrase. "0 violations across 0 files" is not a pass, it means the checker
+  # scanned nothing, which is precisely what a path-handling bug produces. The
+  # line is the sentinel a caller is meant to be able to trust, so the suite
+  # reads its numbers rather than its wording, and every negative control below
+  # asserts it with a file count above zero.
+  sc_files="$(sentinel_files "$out")"
+  sc_viol="$(sentinel_violations "$out")"
+  if [ -z "$sc_files" ]; then
+    bad "no summary line at all, so there is no sentinel to trust -- got: [$(printf '%s' "$out" | tail -n 3 | tr '\n' '|')]"
+  elif [ "$sc_files" -eq 0 ]; then
     bad "VACUOUS RESULT: scanned zero files (path handling is broken)"
   else
-    ok "scanned a non-zero number of files"
+    ok "the summary line reports a non-zero file count"
+  fi
+  if [ -n "$sc_viol" ] && [ "$sc_viol" -gt 0 ]; then
+    ok "the summary line reports the violations it found"
+  else
+    bad "the summary line reported no violations over a vault full of them -- [${sc_viol:-none}]"
   fi
 
-  if [ "$rc" -ne 0 ]; then
-    ok "exits non-zero when violations exist"
-  else
-    bad "exited 0 despite violations"
-  fi
+  # Exactly 1, not merely non-zero. 1 now means the vault has a problem, and it
+  # is the only code that does. A 2 here would mean the checker could not run,
+  # which over a vault built to violate every invariant would be the instrument
+  # failing rather than the vault, and the old assertion could not tell them
+  # apart.
+  expect_rc "a vault full of violations exits 1, the code that means the vault has a problem" 1 "$rc"
 
   # Two more ways a checker can report clean while establishing nothing.
   DC="$TMP/datecheck"
@@ -361,10 +388,65 @@ else
   mkdir -p "$EMPTY/31-standards" "$EMPTY/10-daily"
   out_empty=$(CLAUDE_PROJECT_DIR="$EMPTY" bash "$CHECK" 2>&1)
   rc_empty=$?
-  if [ "$rc_empty" -ne 0 ] && printf '%s' "$out_empty" | grep -q 'VACUOUS'; then
-    ok "a scan of zero notes exits non-zero and says VACUOUS"
+  if [ "$rc_empty" -eq 2 ] && printf '%s' "$out_empty" | grep -q 'VACUOUS'; then
+    ok "a scan of zero notes exits 2, the code that means this checker could not run, and says VACUOUS"
   else
-    bad "a scan of zero notes exited $rc_empty -- a vacuous result read as a pass"
+    bad "a scan of zero notes exited $rc_empty -- expected 2, and a vacuous result must never read as a pass"
+  fi
+
+  # The rest of the exit vocabulary, one control each. Before this the checker
+  # answered 1 to all of these, so a caller could not tell a vault with a bad
+  # note from a checker pointed at the wrong place, and those want opposite
+  # responses. Each asserts the message as well as the number, because the
+  # number alone cannot say which of the three ways of not running happened.
+  vs_root="$TMP/sentinel"
+  mkdir -p "$vs_root/31-standards"
+
+  vs_out="$(CLAUDE_PROJECT_DIR="$vs_root" bash "$CHECK" --bogus 2>&1)"
+  vs_rc=$?
+  if [ "$vs_rc" -eq 64 ] && printf '%s' "$vs_out" | grep -q 'unknown option'; then
+    ok "an unknown option exits 64 and names itself, rather than reading as a vault with a problem"
+  else
+    bad "an unknown option exited $vs_rc -- expected 64 -- [$(printf '%s' "$vs_out" | tr '\n' '|')]"
+  fi
+
+  vs_out="$(CLAUDE_PROJECT_DIR="$TMP/no-such-root-at-all" bash "$CHECK" 2>&1)"
+  vs_rc=$?
+  if [ "$vs_rc" -eq 2 ] && printf '%s' "$vs_out" | grep -q 'no content-tier folders'; then
+    ok "a root with no content-tier folders exits 2 and says so, which is the wrong-directory case"
+  else
+    bad "a root with no tier folders exited $vs_rc -- expected 2 -- [$(printf '%s' "$vs_out" | tr '\n' '|')]"
+  fi
+
+  vs_out="$(CLAUDE_PROJECT_DIR="$vs_root" bash "$CHECK" -- 31-standards/not-here.md 2>&1)"
+  vs_rc=$?
+  if [ "$vs_rc" -eq 2 ] && printf '%s' "$vs_out" | grep -q 'is not a readable file'; then
+    ok "a named note that is not readable exits 2, because that is a path this run could not check and not a note that is wrong"
+  else
+    bad "an unreadable named note exited $vs_rc -- expected 2 -- [$(printf '%s' "$vs_out" | tr '\n' '|')]"
+  fi
+
+  # And the pair that gives the vocabulary its meaning. The same invocation over
+  # one good note and over one bad note has to answer 0 and 1, so that 1 is
+  # earned by the note rather than shared with everything else that can go wrong.
+  printf -- '---\ntier: long\ntype: standard\n---\n\nfine\n' > "$vs_root/31-standards/good.md"
+  vs_out="$(CLAUDE_PROJECT_DIR="$vs_root" bash "$CHECK" -- 31-standards/good.md 2>&1)"
+  vs_rc=$?
+  vs_n="$(sentinel_files "$vs_out")"
+  if [ "$vs_rc" -eq 0 ] && [ "${vs_n:-0}" -gt 0 ]; then
+    ok "one conformant note exits 0 with a summary line reporting a non-zero file count"
+  else
+    bad "one conformant note exited $vs_rc with file count [${vs_n:-none}] -- expected 0 and above zero"
+  fi
+  printf -- 'no fence here\n' > "$vs_root/31-standards/bad-one.md"
+  vs_out="$(CLAUDE_PROJECT_DIR="$vs_root" bash "$CHECK" -- 31-standards/bad-one.md 2>&1)"
+  vs_rc=$?
+  vs_n="$(sentinel_files "$vs_out")"
+  vs_k="$(sentinel_violations "$vs_out")"
+  if [ "$vs_rc" -eq 1 ] && [ "${vs_n:-0}" -gt 0 ] && [ "${vs_k:-0}" -gt 0 ]; then
+    ok "one violating note exits 1 with a summary line whose file count and violation count are both above zero"
+  else
+    bad "one violating note exited $vs_rc with counts [${vs_n:-none}/${vs_k:-none}] -- expected 1 with both above zero"
   fi
 fi
 
@@ -1664,7 +1746,10 @@ for tn_case in state-file state-folder-vault-file state-folder-only; do
   tn_rc=$?
   tn_check="$(VAULT_STATE_DIR="$tn/state" CLAUDE_PROJECT_DIR="$tn/vault" bash "$RV/.claude/scripts/vault-check.sh" 2>&1)"
   tn_check_rc=$?
-  [ "$tn_rc" -eq 78 ] && [ "$tn_check_rc" -eq 1 ] || tn_bad="$tn_bad $tn_case:rc($tn_rc,$tn_check_rc)"
+  # Both 78 now, which is the point. The runner and the checker are refusing for
+  # the same reason over the same tripwire, so a caller reading an exit code
+  # should not have to know which of the two it called to understand it.
+  [ "$tn_rc" -eq 78 ] && [ "$tn_check_rc" -eq 78 ] || tn_bad="$tn_bad $tn_case:rc($tn_rc,$tn_check_rc)"
   if [ "$tn_case" = state-folder-only ]; then
     # Nothing there holds tripwire text, so neither tool sends the owner to read it.
     grep -qF "$tn_want is not a file" "$tn/log" 2>/dev/null || tn_bad="$tn_bad $tn_case:runner-names-other"
@@ -1694,7 +1779,7 @@ rm -rf "$tn/state/runner-tripwire"
 printf 'TRIPWIRE\n' > "$tn/vault/.claude/logs/runner-tripwire"
 tn_check="$(CLAUDE_PROJECT_DIR="$tn/vault" bash "$tn/alone/vault-check.sh" 2>&1)"
 tn_check_rc=$?
-if [ "$tn_check_rc" -eq 1 ] && printf '%s\n' "$tn_check" | grep -q 'a pass may have written' \
+if [ "$tn_check_rc" -eq 78 ] && printf '%s\n' "$tn_check" | grep -q 'a pass may have written' \
    && printf '%s\n' "$tn_check" | grep -q 'could not be checked' \
    && ! printf '%s\n' "$tn_check" | grep -q 'No copy in'; then
   :
@@ -3115,8 +3200,8 @@ fi
 # vault-check refuses an option it does not know, rather than reading it as a note.
 vco="$(bash "$ROOT/.claude/scripts/vault-check.sh" --stale 2>&1)"
 vco_rc=$?
-if [ "$vco_rc" -eq 1 ] && printf '%s\n' "$vco" | grep -q 'unknown option --stale'; then
-  ok "vault-check refuses an unknown option"
+if [ "$vco_rc" -eq 64 ] && printf '%s\n' "$vco" | grep -q 'unknown option --stale'; then
+  ok "vault-check refuses an unknown option with the usage code, not the one that means a note is wrong"
 else
   bad "vault-check accepted an unknown option (rc $vco_rc)"
 fi
@@ -3145,8 +3230,8 @@ vca_gone="$(CLAUDE_PROJECT_DIR="$VCA" bash "$ROOT/.claude/scripts/vault-check.sh
 vca_gone_rc=$?
 if [ "$vca_one_rc" -eq 0 ] && printf '%s\n' "$vca_one" | grep -q '0 violation(s) across 1 file(s)' \
    && [ "$vca_three_rc" -eq 1 ] && printf '%s\n' "$vca_three" | grep -q '1 violation(s) across 3 file(s)' \
-   && [ "$vca_gone_rc" -eq 1 ] && printf '%s\n' "$vca_gone" | grep -q 'missing.md is not a readable file'; then
-  ok "vault-check checks only the named notes, relative or absolute, and fails a name that is not a file"
+   && [ "$vca_gone_rc" -eq 2 ] && printf '%s\n' "$vca_gone" | grep -q 'missing.md is not a readable file'; then
+  ok "vault-check checks only the named notes, relative or absolute, and a name that is not a file is a 2 rather than the 1 that means a note is wrong"
 else
   bad "vault-check on named notes -- one: rc $vca_one_rc, three: rc $vca_three_rc, missing: rc $vca_gone_rc $(printf '%s' "$vca_gone" | tr '\n' '|')"
 fi
@@ -5241,16 +5326,27 @@ fi
 printf 'TRIPWIRE set by test\n' > "$TWV/.claude/logs/runner-tripwire"
 tw_out="$(bash "$TWV/.claude/scripts/vault-check.sh" 2>&1)"
 tw_rc=$?
-expect_rc "vault-check while the tripwire is set refuses" 1 "$tw_rc"
+# 78, the same number the three runners use for a tripwire, and deliberately not
+# 1. A 1 means a note is wrong and a person should fix it. A tripwire means a
+# pass changed a steering or execution surface and nothing was looked at, which
+# is a different thing to do about it. The summary line must be absent too,
+# because there is no scan behind it, and a caller that saw one would have a
+# count it could trust for a scan that never happened.
+expect_rc "vault-check while the tripwire is set refuses with the runners' own tripwire code" 78 "$tw_rc"
 if printf '%s' "$tw_out" | grep -q 'TRIPWIRE'; then ok "vault-check says why it refused"
 else bad "vault-check refused without naming the tripwire"; fi
+if [ -z "$(sentinel_files "$tw_out")" ]; then
+  ok "a refusal for the tripwire prints no summary line, so no caller reads a count for a scan that did not happen"
+else
+  bad "a tripwire refusal printed a summary line, which a caller could take for a scan"
+fi
 # The runners keep a second copy outside the vault. Deleting the one in the vault
 # must not make the report read clean.
 rm -f "$TWV/.claude/logs/runner-tripwire"
 mkdir -p "$TWV/.claude/scripts/lib" "$TMP/tw-state"
 cp "$ROOT/.claude/scripts/lib/runner-common.sh" "$TWV/.claude/scripts/lib/"
 printf 'TRIPWIRE set by test\n' > "$TMP/tw-state/runner-tripwire"
-expect_rc "vault-check refuses while only the state-directory copy of the tripwire exists" 1 \
+expect_rc "vault-check refuses while only the state-directory copy of the tripwire exists" 78 \
   "$(VAULT_STATE_DIR="$TMP/tw-state" bash "$TWV/.claude/scripts/vault-check.sh" >/dev/null 2>&1; echo $?)"
 rm -f "$TMP/tw-state/runner-tripwire"
 expect_rc "vault-check with the runner library present and no tripwire anywhere" 0 \
@@ -5411,6 +5507,14 @@ ret_log() {  # ret_log <vault> - the retention log
 }
 ret_says() {  # ret_says <vault> <text> - true when the retention log holds the text
   grep -qF -- "$2" "$(ret_log "$1")" 2>/dev/null
+}
+# The candidate count out of the retention runner's own summary line, read as a
+# number. Prints nothing when there is no summary line at all, which every
+# caller below tells apart from a zero. Grepping for the words "evaluated " is
+# what this replaces, because seven characters are satisfied by whatever the
+# six counters after them happen to say.
+ret_evaluated() {  # ret_evaluated <vault>
+  LC_ALL=C sed -n 's/.*evaluated \([0-9][0-9]*\) candidate(s): .*/\1/p' "$(ret_log "$1")" 2>/dev/null | head -n 1
 }
 ret_moved() {  # ret_moved <vault> <name> - true when HEAD and the work tree hold the journal in the archive only
   [ -f "$1/99-archive/20-projects/_logs/$2" ] && [ ! -e "$1/20-projects/_logs/$2" ] \
@@ -5639,7 +5743,29 @@ if [ "$ra_link" -eq 1 ]; then
 else
   skip "retention-symlink-candidate" "a symlinked candidate refused as not a regular file: this filesystem or account would not make a symlink"
 fi
-ret_says "$RA" "evaluated " || ra_bad="$ra_bad no-sentinel"
+# The summary line, checked against the body of the report that produced it
+# rather than matched as a prefix. "evaluated " is seven characters that every
+# value those six counters can take satisfies, so it pinned nothing. A hardcoded
+# total would pin it and then go stale the next time anybody adds a fixture to
+# this vault, so the assertion is the invariant the counters exist to preserve,
+# that the refusals the log names and the refusals the summary counts are the
+# same number. REFUSED_EARLY is folded into that count and prints a REFUSED line
+# of its own, so it stays balanced, while REFUSED_GONE is deliberately outside
+# both and prints NOT FOUND instead.
+#
+# Counted with awk rather than grep -c, because grep -c prints 0 and also exits
+# 1 when nothing matches, which would put two lines into the variable and break
+# the comparison in the passing direction.
+ra_log="$(ret_log "$RA")"
+ra_refused_lines="$(LC_ALL=C awk '/REFUSED: 20-projects\/_logs\//{n++} END{print n+0}' "$ra_log" 2>/dev/null)"
+ra_refused_said="$(LC_ALL=C sed -n 's/.*evaluated [0-9][0-9]* candidate(s): .*, \([0-9][0-9]*\) refused,.*/\1/p' "$ra_log" 2>/dev/null | head -n 1)"
+ra_evaluated="$(LC_ALL=C sed -n 's/.*evaluated \([0-9][0-9]*\) candidate(s): .*/\1/p' "$ra_log" 2>/dev/null | head -n 1)"
+# The non-vacuity guard, and it matters. Without it a run that printed no
+# summary and refused nothing gives zero against zero and passes.
+[ "${ra_evaluated:-0}" -gt 0 ] || ra_bad="$ra_bad evaluated-none(${ra_evaluated:-no-line})"
+[ "${ra_refused_lines:-0}" -gt 0 ] || ra_bad="$ra_bad no-refusals-at-all"
+{ [ -n "$ra_refused_said" ] && [ "$ra_refused_lines" = "$ra_refused_said" ]; } \
+  || ra_bad="$ra_bad refused-tally($ra_refused_lines vs ${ra_refused_said:-none})"
 if [ -z "$ra_bad" ]; then
   ok "only journals one dream commit wrote are archived, and every other candidate is kept or refused with its reason"
 else
@@ -5750,6 +5876,10 @@ for rb_i in 30 31 32 33 34 35 36 37; do
 done
 ret_stayed "$RB" "dream-${RET_DATE[30]}-h.md" || rb_bad="$rb_bad same-day"
 ret_says "$RB" "REFUSED: 20-projects/_logs/dream-${RET_LATER[10]}.md (date in the future" || rb_bad="$rb_bad future"
+# The sentinel, with a count above zero. A negative control that asserts a
+# refusal over a vault the runner never actually read would pass on the refusal
+# alone, which is the same vacuity the checker's file count guards against.
+[ "$(ret_evaluated "$RB")" -gt 0 ] 2>/dev/null || rb_bad="$rb_bad evaluated-none($(ret_evaluated "$RB"))"
 if [ -z "$rb_bad" ]; then
   ok "the newest eight dates are kept whatever same-day or future names exist, and the cap moves the oldest first and says how many wait"
 else
@@ -5899,6 +6029,7 @@ else
 fi
 ret_says "$RD" "REFUSED: 20-projects/_logs/compaction-prose.md (not the hook's stub" || rd_bad="$rd_bad reason:prose"
 ret_says "$RD" "REFUSED: 20-projects/_logs/compaction-rewritten.md (stub rewritten" || rd_bad="$rd_bad reason:rewritten"
+[ "$(ret_evaluated "$RD")" -gt 0 ] 2>/dev/null || rd_bad="$rd_bad evaluated-none($(ret_evaluated "$RD"))"
 if [ -z "$rd_bad" ]; then
   ok "stubs the hook wrote and nobody changed are archived by their last entry, and edited, rewritten, recent or untracked ones stay"
 else
@@ -6778,9 +6909,30 @@ else
   expect_rc "pre-commit on a conformant vault allows the commit" 0 "$rc_gate"
 
   printf 'no frontmatter\n' > "$GV/31-standards/broken.md"
-  bash "$GV/.claude/githooks/pre-commit" >/dev/null 2>&1
+  out_gate="$(bash "$GV/.claude/githooks/pre-commit" 2>&1)"
   rc_gate=$?
   expect_rc "pre-commit on a vault with a violation refuses the commit" 1 "$rc_gate"
+  if printf '%s' "$out_gate" | grep -q 'A note violates an invariant'; then
+    ok "the gate says a note is wrong when that is what happened"
+  else
+    bad "the gate refused for a violation without saying a note is wrong -- [$(printf '%s' "$out_gate" | tr '\n' '|')]"
+  fi
+
+  # And the gate over a checker that could not run. The code and the sentence
+  # both have to change, because the old gate said "fix the notes it names
+  # above" whatever came back, and over an empty vault it names none. The
+  # violating note is removed first, so the only thing left to refuse for is the
+  # empty scan rather than the note.
+  rm -f "$GV/31-standards/broken.md" "$GV/31-standards/fine.md"
+  out_gate="$(bash "$GV/.claude/githooks/pre-commit" 2>&1)"
+  rc_gate=$?
+  expect_rc "pre-commit over a vault the checker could not scan refuses with 2, not 1" 2 "$rc_gate"
+  if printf '%s' "$out_gate" | grep -q 'nothing was established about the vault' \
+     && ! printf '%s' "$out_gate" | grep -q 'Fix the notes it names above'; then
+    ok "the gate says nothing was established, rather than sending the reader after a note that was never named"
+  else
+    bad "the gate gave the violation sentence for a checker that could not run -- [$(printf '%s' "$out_gate" | tr '\n' '|')]"
+  fi
 fi
 
 # ------------------------------------------------------------ dependencies --

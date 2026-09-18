@@ -520,9 +520,15 @@ The place a violation can stop something is the opt-in commit gate, which refuse
 A related discipline governs the checks themselves: **a check that cannot run must say so rather
 than report clean.** A "0 findings" result from a scanner that never scanned anything is
 indistinguishable, in the output, from a clean vault. That is why `vault-check.sh`
-prints its file count, and why a scan of zero notes exits 1 with a `VACUOUS` message instead of
+prints its file count, and why a scan of zero notes exits 2 with a `VACUOUS` message instead of
 reporting a pass. Against the shipped example notes the correct output is
 `0 violation(s) across 9 file(s) checked`.
+
+The exit code carries the same distinction. `1` means a note violates an invariant and `2` means
+the checker could not run at all, because a caller that reads only the code should not have to
+guess which of those it is looking at. The count line is the sentinel behind that promise, so read
+its numbers rather than matching its wording — a check that greps for a prefix passes whatever the
+counts say, which is the same vacuity one level up.
 
 The optional dependencies degrade loudly for the same reason. The lint hook's
 invisible-character scan prefers `perl`; `grep -P` is a GNU extension, absent from the BSD grep
@@ -564,8 +570,8 @@ that means before adopting it.
 - **Nothing stops you writing a bad note.** A standard with a fabricated `Sources /
   Verification` section passes every check in this repo. The checks read structure; they cannot
   read truth.
-- **`vault-check.sh` is report-only.** It exits 1 on violations, which is useful in a pre-commit
-  hook or in CI. The shipped `.github/workflows/ci.yml` runs it against the template's own
+- **`vault-check.sh` is report-only.** It exits 1 on violations and 2 when it could not run, both
+  of which are useful in a pre-commit hook or in CI. The shipped `.github/workflows/ci.yml` runs it against the template's own
   example notes on Linux, macOS and Windows, and `.claude/githooks/pre-commit` runs it before
   each commit of *your* notes, but only once you enable it with
   `git config core.hooksPath .claude/githooks`.

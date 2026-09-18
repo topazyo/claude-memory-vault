@@ -116,7 +116,7 @@ Do not trust the absence of errors. Run both checkers, but know what each one ca
 
 ```bash
 bash .claude/scripts/run-tests.sh      # hook and runner logic: positive AND negative controls
-bash .claude/scripts/vault-check.sh    # frontmatter invariants over your real notes; exits 1 on violation
+bash .claude/scripts/vault-check.sh    # frontmatter invariants over your real notes; 1 = a note is wrong, 2 = it could not run
 ```
 
 **`run-tests.sh` cannot verify a rename.** It builds synthetic fixtures in a temp directory with
