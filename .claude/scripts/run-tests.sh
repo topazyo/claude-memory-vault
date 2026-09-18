@@ -5850,27 +5850,36 @@ fi
 # was unreadable and a commit had simply deleted it. The delete row never leaves
 # the history, so the refusal was permanent and its reason was false.
 #
-# Reading only the versions since that delete also settles what the second run
-# should say. The archive already holds the name, so the stub stays, and it
-# stays for the reason the collision branch gives rather than for an invented
+# Reading only the versions since that delete also settles what the run should
+# say about the fresh stub. The archive already holds the name, so it stays, and
+# it stays for the reason the collision branch gives rather than for an invented
 # one. That branch was argued to be unreachable in the round before this, and it
 # is reachable exactly here.
 #
-# The log is truncated between the two runs because the runner appends to one
-# file, and the first run archiving this very stub puts the words the second run
-# is judged on into it.
+# The archiving move is made by the fixture rather than by a first retention
+# run. All this case needs is the delete row, and who wrote it changes nothing
+# the runner reads. Having the runner make it would mean a commit of its own,
+# which on Windows meets the deferred defect where the commit step re-applies
+# core.autocrlf and stores a blob other than the judged one, and this case would
+# then fail there for a reason it is not about. autocrlf is off for the fixture
+# commits for the same reason the stub fixtures above turn it off, so the bytes
+# on disk are the bytes in the history on every platform.
 RE_S="$(ret_copy restub)"
-ret_hook "$RE_S" resumed "${RET_DATE[90]}"
-ret_human_commit "$RE_S" "a stub of a session that compacted" "20-projects/_logs/compaction-resumed.md" >/dev/null 2>&1
 res_bad=''
-res_rc="$(ret_run "$RE_S")"
-[ "$res_rc" = 0 ] || res_bad="$res_bad first-rc:$res_rc"
-ret_moved "$RE_S" "compaction-resumed.md" || res_bad="$res_bad first-not-archived"
-: > "$(ret_log "$RE_S")"
 ret_hook "$RE_S" resumed "${RET_DATE[90]}"
-ret_human_commit "$RE_S" "the session came back and compacted again" "20-projects/_logs/compaction-resumed.md" >/dev/null 2>&1
+ret_git "$RE_S" -c core.autocrlf=false add -- "20-projects/_logs/compaction-resumed.md" >/dev/null 2>&1
+ret_git "$RE_S" -c core.autocrlf=false commit -q -m "a stub of a session that compacted" >/dev/null 2>&1
+mkdir -p "$RE_S/99-archive/20-projects/_logs"
+ret_git "$RE_S" mv -- "20-projects/_logs/compaction-resumed.md" "99-archive/20-projects/_logs/compaction-resumed.md" >/dev/null 2>&1
+ret_git "$RE_S" -c core.autocrlf=false commit -q -m "an earlier run archived it" >/dev/null 2>&1
+[ -f "$RE_S/99-archive/20-projects/_logs/compaction-resumed.md" ] || res_bad="$res_bad fixture-not-archived"
+# The session comes back and compacts again, so the hook builds the stub afresh
+# at the live path from its template.
+ret_hook "$RE_S" resumed "${RET_DATE[90]}"
+ret_git "$RE_S" -c core.autocrlf=false add -- "20-projects/_logs/compaction-resumed.md" >/dev/null 2>&1
+ret_git "$RE_S" -c core.autocrlf=false commit -q -m "the session came back and compacted again" >/dev/null 2>&1
 res_rc="$(ret_run "$RE_S")"
-[ "$res_rc" = 0 ] || res_bad="$res_bad second-rc:$res_rc"
+[ "$res_rc" = 0 ] || res_bad="$res_bad rc:$res_rc"
 [ -f "$RE_S/20-projects/_logs/compaction-resumed.md" ] || res_bad="$res_bad fresh-stub-gone"
 [ -f "$RE_S/99-archive/20-projects/_logs/compaction-resumed.md" ] || res_bad="$res_bad archived-copy-gone"
 ret_says "$RE_S" "one of its committed versions could not be read" && res_bad="$res_bad false-reason"
