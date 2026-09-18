@@ -1414,7 +1414,7 @@ windows_runner_alive() {
 # on Windows, when the recorded Windows process is still that runner.
 runner_alive() {
   local pid="$1" name="$2" cmd
-  case "$name" in dream-pass|promotion-pass) ;; *) return 1 ;; esac
+  case "$name" in dream-pass|promotion-pass|vault-retention) ;; *) return 1 ;; esac
   if ! is_uint "$pid" || [ "$pid" = "$$" ] || ! pid_exists "$pid"; then
     [ "${3:-}" != "$(cat "/proc/$$/winpid" 2>/dev/null)" ] && windows_runner_alive "${3:-}" "${4:-}" && return 0
     return 1
@@ -1612,7 +1612,7 @@ run_lock_acquire() {
       o_started="$(owner_field "$owner" started)"
       o_longest="$(owner_field "$owner" longest)"
       o_nonce="$(owner_field "$owner" nonce)"
-      case "$o_runner" in dream-pass|promotion-pass) ;; *) o_runner="" ;; esac
+      case "$o_runner" in dream-pass|promotion-pass|vault-retention) ;; *) o_runner="" ;; esac
       # A number longer than any real value is malformed, so no sum can wrap.
       is_uint "$o_pid" && [ "${#o_pid}" -le 10 ] || o_pid=""
       is_uint "$o_winpid" && [ "${#o_winpid}" -le 10 ] || o_winpid=""

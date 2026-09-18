@@ -5318,6 +5318,700 @@ else
   bad "a runner wrote into the decoy vault: $(find "$DECOY" -type f | tr '\n' ' ')"
 fi
 
+# ------------------------------------------------------- vault-retention.sh --
+#
+# The retention mover archives old dream journals and compaction stubs into
+# 99-archive/ with one commit. Every vault here is a throwaway git repository.
+# A base vault is built once and copied for each case, and journals that share a
+# commit are committed together, because git and runner calls are slow on
+# Windows. Journals are committed by the real commit_owned, so the trailers are
+# the ones the dream runner writes.
+
+printf '\n=== vault-retention.sh (archiving old journals and stubs) ===\n'
+
+RET="$TMP/retention"
+mkdir -p "$RET"
+RET_REAL_GIT="$(command -v git 2>/dev/null)"
+
+# Local dates relative to today, as the runner computes them. RET_DATE[n] is n
+# days ago, RET_LATER[n] n days from now.
+RET_DATE=()
+RET_LATER=()
+while read -r ret_kind ret_n ret_d; do
+  if [ "$ret_kind" = ago ]; then RET_DATE[$ret_n]="$ret_d"; else RET_LATER[$ret_n]="$ret_d"; fi
+done <<EOF
+$(date +%Y-%m-%d | awk -F- '
+  function dfc(y, m, d,   era, yoe, doy, doe) {
+    y -= (m <= 2); era = int(y / 400); yoe = y - era * 400
+    doy = int((153 * (m > 2 ? m - 3 : m + 9) + 2) / 5) + d - 1
+    doe = yoe * 365 + int(yoe / 4) - int(yoe / 100) + doy
+    return era * 146097 + doe
+  }
+  function cfd(z,   era, doe, yoe, y, doy, mp, d, m) {
+    era = int(z / 146097); doe = z - era * 146097
+    yoe = int((doe - int(doe / 1460) + int(doe / 36524) - int(doe / 146096)) / 365)
+    y = yoe + era * 400; doy = doe - (365 * yoe + int(yoe / 4) - int(yoe / 100))
+    mp = int((5 * doy + 2) / 153); d = doy - int((153 * mp + 2) / 5) + 1
+    m = mp < 10 ? mp + 3 : mp - 9
+    return sprintf("%04d-%02d-%02d", y + (m <= 2), m, d)
+  }
+  { t = dfc($1 + 0, $2 + 0, $3 + 0); for (i = 0; i <= 130; i++) print "ago", i, cfd(t - i); for (i = 1; i <= 40; i++) print "later", i, cfd(t + i) }')
+EOF
+
+ret_git() {  # ret_git <vault> <git args...> - git with the suite's identity and no signing
+  git -C "$1" -c user.name=suite -c user.email=suite@example.invalid -c commit.gpgsign=false "${@:2}"
+}
+ret_journal() {  # ret_journal <vault> <name> <tier line or ""> [<frontmatter line>...] - writes a journal
+  local v="$1" n="$2" t="$3" l
+  shift 3
+  {
+    printf -- '---\ntitle: "Dream Pass"\n'
+    [ -n "$t" ] && printf '%s\n' "$t"
+    for l in "$@"; do printf '%s\n' "$l"; done
+    printf 'type: project-log\n---\n\n# Scan coverage\n\n%s\n' "$n"
+  } > "$v/20-projects/_logs/$n"
+}
+ret_dream_commit() {  # ret_dream_commit <vault> <name>... - commits journals the way the dream runner does
+  local v="$1" s n rc
+  shift
+  s="$(mktemp -d "$RET/dream-commit.XXXXXX")"
+  mkdir -p "$s/nohooks"
+  : > "$s/owned"
+  : > "$s/predirty"
+  for n in "$@"; do printf '20-projects/_logs/%s\n' "$n" >> "$s/owned"; done
+  ( cd "$v" || exit 1
+    export VAULT_STATE_DIR="$RET/dream-commit-state" WATCHDOG_POLL=1 WATCHDOG_GRACE=2
+    . "$v/.claude/scripts/lib/runner-common.sh"
+    VAULT_GIT=1
+    commit_owned "$v" dream "$s/owned" "$s/predirty" "$s" "$s/log" ) >/dev/null 2>&1
+  rc=$?
+  [ "$rc" -eq 0 ] || printf 'run-tests: a fixture dream commit failed (%s): %s\n' "$rc" "$(tr '\n' '|' < "$s/log" 2>/dev/null)" >&2
+  rm -rf "$s"
+  return "$rc"
+}
+ret_human_commit() {  # ret_human_commit <vault> <message> <relative path>... - a plain commit
+  local v="$1" m="$2"
+  shift 2
+  ret_git "$v" add -- "$@" && ret_git "$v" commit -q -m "$m" -- "$@"
+}
+ret_run() {  # ret_run <vault> [args...] - runs the retention mover and prints its exit code
+  local v="$1"
+  shift
+  env VAULT_STATE_DIR="${RET_STATE:-$v.state}" RUN_LOCK_WAIT="${RET_LOCK_WAIT:-0}" RUN_LOCK_POLL=1 \
+    WATCHDOG_POLL=1 WATCHDOG_GRACE=2 RETENTION_DAYS="${RET_DAYS:-}" RETENTION_MAX_MOVES="${RET_MAX:-}" \
+    RUNNER_GIT_TIMEOUT="${RET_GIT_TIMEOUT:-}" PATH="${RET_PATH:+$RET_PATH:}$PATH" \
+    bash "$v/.claude/scripts/vault-retention.sh" "$@" >/dev/null 2>&1
+  echo "$?"
+}
+ret_log() {  # ret_log <vault> - the retention log
+  printf '%s\n' "$1/.claude/logs/vault-retention.log"
+}
+ret_says() {  # ret_says <vault> <text> - true when the retention log holds the text
+  grep -qF -- "$2" "$(ret_log "$1")" 2>/dev/null
+}
+ret_moved() {  # ret_moved <vault> <name> - true when HEAD and the work tree hold the journal in the archive only
+  [ -f "$1/99-archive/20-projects/_logs/$2" ] && [ ! -e "$1/20-projects/_logs/$2" ] \
+    && git -C "$1" cat-file -e "HEAD:99-archive/20-projects/_logs/$2" 2>/dev/null \
+    && ! git -C "$1" cat-file -e "HEAD:20-projects/_logs/$2" 2>/dev/null
+}
+ret_stayed() {  # ret_stayed <vault> <name> - true when the journal is still in _logs and not archived
+  [ -e "$1/20-projects/_logs/$2" ] && [ ! -e "$1/99-archive/20-projects/_logs/$2" ]
+}
+ret_clean() {  # ret_clean <vault> - true when the index and tracked files match HEAD in both folders
+  git -C "$1" diff --cached --quiet HEAD -- 20-projects 99-archive 2>/dev/null \
+    && git -C "$1" diff --quiet -- 20-projects 99-archive 2>/dev/null
+}
+
+# The base vault: the runner, its library, the checker, the archive folder and
+# one daily note, committed.
+RETB="$RET/base vault"
+mkdir -p "$RETB/.claude/scripts/lib" "$RETB/20-projects/_logs" "$RETB/99-archive" "$RETB/10-daily"
+cp "$ROOT/.claude/scripts/vault-retention.sh" "$ROOT/.claude/scripts/vault-check.sh" "$RETB/.claude/scripts/" 2>/dev/null
+cp "$ROOT/.claude/scripts/lib/runner-common.sh" "$RETB/.claude/scripts/lib/" 2>/dev/null
+: > "$RETB/99-archive/.gitkeep"
+printf -- '---\ntier: short\ntype: daily\n---\n\nday\n' > "$RETB/10-daily/day.md"
+printf '.claude/logs/\n' > "$RETB/.gitignore"
+RET_OK=0
+if [ -n "$RET_REAL_GIT" ] && git init -q "$RETB" >/dev/null 2>&1 && ret_git "$RETB" add -A >/dev/null 2>&1 \
+   && ret_git "$RETB" commit -q -m init >/dev/null 2>&1; then
+  RET_OK=1
+fi
+ret_copy() {  # ret_copy <name> - prints the path of a fresh copy of the base vault
+  rm -rf "$RET/$1" "$RET/$1.state"
+  cp -R "$RETB" "$RET/$1"
+  printf '%s\n' "$RET/$1"
+}
+
+if [ "$RET_OK" -ne 1 ]; then
+  bad "the retention base vault could not be built, so no retention control ran"
+else
+
+# --- classification: one vault holding every kind of candidate ---
+RA="$(ret_copy classify)"
+# A journal committed before any runner trailer existed.
+ret_journal "$RA" "dream-${RET_DATE[100]}.md" "tier: medium"
+ret_human_commit "$RA" "notes from before the runners" "20-projects/_logs/dream-${RET_DATE[100]}.md" >/dev/null 2>&1
+# Eight recent journals hold the newest eight dates, so the old ones are judged
+# on their own.
+ra_batch=""
+for ra_i in 1 2 3 4 5 6 7 8; do
+  ret_journal "$RA" "dream-${RET_DATE[$ra_i]}.md" "tier: medium"
+  ra_batch="$ra_batch dream-${RET_DATE[$ra_i]}.md"
+done
+ret_journal "$RA" "dream-${RET_DATE[90]}.md" "tier: medium"
+ret_journal "$RA" "dream-${RET_DATE[90]}-pm.md" "tier: medium"
+ret_journal "$RA" "dream-${RET_DATE[20]}.md" "tier: medium"
+ret_journal "$RA" "dream-${RET_DATE[91]}.md" "tier: medium"
+ret_journal "$RA" "dream-${RET_DATE[92]}.md" "tier: medium"
+ret_journal "$RA" "dream-${RET_DATE[98]}-a.md" "tier: long"
+ret_journal "$RA" "dream-${RET_DATE[98]}-b.md" 'tier: "Long"'
+ret_journal "$RA" "dream-${RET_DATE[98]}-c.md" "tier: long # promoted"
+ret_journal "$RA" "dream-${RET_DATE[98]}-d.md" "tier: medium" "tier: long"
+ret_journal "$RA" "dream-${RET_DATE[98]}-e.md" "tier: medium" 'contradicts: "[[other]]"'
+ret_journal "$RA" "dream-${RET_DATE[98]}-f.md" "tier: medium" 'superseded_by: ""'
+ret_journal "$RA" "dream-${RET_DATE[99]}-PM.md" "tier: medium"
+ret_journal "$RA" "dream-2026-02-30.md" "tier: medium"
+ret_journal "$RA" "dream-${RET_DATE[102]}.md" "tier: medium"
+ret_journal "$RA" "dream-${RET_DATE[103]}.md" "tier: medium"
+ret_journal "$RA" "dream-${RET_DATE[104]}.md" "tier: medium"
+ret_journal "$RA" "dream-${RET_LATER[30]}.md" "tier: medium"
+# shellcheck disable=SC2086
+ret_dream_commit "$RA" $ra_batch "dream-${RET_DATE[90]}.md" "dream-${RET_DATE[90]}-pm.md" "dream-${RET_DATE[20]}.md" \
+  "dream-${RET_DATE[91]}.md" "dream-${RET_DATE[92]}.md" \
+  "dream-${RET_DATE[98]}-a.md" "dream-${RET_DATE[98]}-b.md" "dream-${RET_DATE[98]}-c.md" "dream-${RET_DATE[98]}-d.md" \
+  "dream-${RET_DATE[98]}-e.md" "dream-${RET_DATE[98]}-f.md" "dream-${RET_DATE[99]}-PM.md" "dream-2026-02-30.md" \
+  "dream-${RET_DATE[102]}.md" "dream-${RET_DATE[103]}.md" "dream-${RET_DATE[104]}.md" "dream-${RET_LATER[30]}.md"
+# A person edits a journal the pass wrote.
+printf 'my note\n' >> "$RA/20-projects/_logs/dream-${RET_DATE[91]}.md"
+ret_human_commit "$RA" "annotate a journal" "20-projects/_logs/dream-${RET_DATE[91]}.md" >/dev/null 2>&1
+# A second dream commit changes a journal the pass already wrote.
+printf 'again\n' >> "$RA/20-projects/_logs/dream-${RET_DATE[92]}.md"
+ret_dream_commit "$RA" "dream-${RET_DATE[92]}.md"
+# A dream commit amended with other content keeps its trailers.
+ret_journal "$RA" "dream-${RET_DATE[93]}.md" "tier: medium"
+ret_dream_commit "$RA" "dream-${RET_DATE[93]}.md"
+printf 'amended\n' >> "$RA/20-projects/_logs/dream-${RET_DATE[93]}.md"
+ret_git "$RA" add -- "20-projects/_logs/dream-${RET_DATE[93]}.md" >/dev/null 2>&1
+ret_git "$RA" commit -q --amend --no-edit -- "20-projects/_logs/dream-${RET_DATE[93]}.md" >/dev/null 2>&1
+# A dream commit, a human edit and another dream commit squashed into one.
+ret_journal "$RA" "dream-${RET_DATE[94]}.md" "tier: medium"
+ret_dream_commit "$RA" "dream-${RET_DATE[94]}.md"
+printf 'human\n' >> "$RA/20-projects/_logs/dream-${RET_DATE[94]}.md"
+ret_human_commit "$RA" "human edit" "20-projects/_logs/dream-${RET_DATE[94]}.md" >/dev/null 2>&1
+printf 'dream again\n' >> "$RA/20-projects/_logs/dream-${RET_DATE[94]}.md"
+ret_dream_commit "$RA" "dream-${RET_DATE[94]}.md"
+ra_msg="$(git -C "$RA" log -3 --reverse --format=%B)"
+ret_git "$RA" reset -q --soft HEAD~3 >/dev/null 2>&1
+ret_git "$RA" commit -q --cleanup=verbatim -m "$ra_msg" >/dev/null 2>&1
+# A journal that reached the branch through a merge, and one a merge changed.
+ra_main="$(git -C "$RA" symbolic-ref --short HEAD)"
+ret_git "$RA" checkout -q -b side >/dev/null 2>&1
+ret_journal "$RA" "dream-${RET_DATE[95]}.md" "tier: medium"
+ret_dream_commit "$RA" "dream-${RET_DATE[95]}.md"
+ret_git "$RA" checkout -q "$ra_main" >/dev/null 2>&1
+printf 'a\n' >> "$RA/10-daily/day.md"
+ret_human_commit "$RA" "daily" "10-daily/day.md" >/dev/null 2>&1
+ret_git "$RA" merge -q --no-ff -m "merge side" side >/dev/null 2>&1
+ret_git "$RA" checkout -q -b side2 >/dev/null 2>&1
+ret_journal "$RA" "dream-${RET_DATE[96]}.md" "tier: medium"
+ret_dream_commit "$RA" "dream-${RET_DATE[96]}.md"
+ret_git "$RA" checkout -q "$ra_main" >/dev/null 2>&1
+printf 'b\n' >> "$RA/10-daily/day.md"
+ret_human_commit "$RA" "daily again" "10-daily/day.md" >/dev/null 2>&1
+ret_git "$RA" merge -q --no-ff --no-commit side2 >/dev/null 2>&1
+printf 'changed in the merge\n' >> "$RA/20-projects/_logs/dream-${RET_DATE[96]}.md"
+ret_git "$RA" add -- "20-projects/_logs/dream-${RET_DATE[96]}.md" >/dev/null 2>&1
+ret_git "$RA" commit -q -m "merge side2" >/dev/null 2>&1
+# A journal a sync plugin committed without the runner's trailers.
+ret_journal "$RA" "dream-${RET_DATE[97]}.md" "tier: medium"
+ret_human_commit "$RA" "vault backup" "20-projects/_logs/dream-${RET_DATE[97]}.md" >/dev/null 2>&1
+# A journal whose name is already taken in the archive.
+mkdir -p "$RA/99-archive/20-projects/_logs"
+cp"$RA/20-projects/_logs/dream-${RET_DATE[104]}.md" "$RA/99-archive/20-projects/_logs/dream-${RET_DATE[104]}.md"
+ret_human_commit "$RA" "archived by hand" "99-archive/20-projects/_logs/dream-${RET_DATE[104]}.md" >/dev/null 2>&1
+# Uncommitted, edited and flagged journals, and an untracked stub.
+ret_journal "$RA" "dream-${RET_DATE[101]}.md" "tier: medium"
+printf 'editing\n' >> "$RA/20-projects/_logs/dream-${RET_DATE[102]}.md"
+ret_git "$RA" update-index --assume-unchanged -- "20-projects/_logs/dream-${RET_DATE[103]}.md" >/dev/null 2>&1
+printf 'stub\n' > "$RA/20-projects/_logs/compaction-untracked.md"
+ra_link=0
+if ln -s ../../10-daily/day.md "$RA/20-projects/_logs/dream-${RET_DATE[105]}.md" 2>/dev/null \
+   && [ -L "$RA/20-projects/_logs/dream-${RET_DATE[105]}.md" ]; then
+  ra_link=1
+fi
+
+# A dry run judges every candidate and changes nothing.
+ra_head="$(git -C "$RA" rev-parse HEAD)"
+expect_rc "vault-retention --dry-run on a vault with every kind of candidate -> OK" 0 "$(ret_run "$RA" --dry-run)"
+if [ "$(git -C "$RA" rev-parse HEAD)" = "$ra_head" ] && ret_stayed "$RA" "dream-${RET_DATE[90]}.md" \
+   && ret_says "$RA" "ELIGIBLE: 20-projects/_logs/dream-${RET_DATE[90]}.md" \
+   && [ -z "$(ls -A "$RA.state" 2>/dev/null | grep -E '^retention-')" ]; then
+  ok "a dry run lists what would move, moves nothing and writes no report or recovery file"
+else
+  bad "a dry run moved something, wrote state, or did not list the eligible journal -- state: [$(ls -A "$RA.state" 2>/dev/null | tr '\n' ' ')]"
+fi
+rm -f "$(ret_log "$RA")"
+expect_rc "vault-retention on a vault with every kind of candidate -> OK" 0 "$(ret_run "$RA")"
+ra_bad=''
+for ra_n in "dream-${RET_DATE[90]}.md" "dream-${RET_DATE[90]}-pm.md" "dream-${RET_DATE[95]}.md"; do
+  ret_moved "$RA" "$ra_n" || ra_bad="$ra_bad not-moved:$ra_n"
+done
+for ra_case in \
+    "20:too new" \
+    "1:the newest" \
+    "91:changed after the dream pass wrote it" \
+    "92:changed after the dream pass wrote it" \
+    "93:trailers do not match the commit" \
+    "94:trailers do not match the commit" \
+    "96:a merge changed it" \
+    "97:committed without a dream trailer" \
+    "98-a:tier is not medium" "98-b:tier is not medium" "98-c:tier is not medium" "98-d:tier is not medium" \
+    "98-e:contradicts or superseded_by" "98-f:contradicts or superseded_by" \
+    "99-PM:not a journal name" \
+    "101:not tracked by git" "102:uncommitted changes" "103:index flag" "104:destination exists"; do
+  ra_key="${ra_case%%:*}"
+  ra_why="${ra_case#*:}"
+  ra_num="${ra_key%%-*}"
+  ra_suffix=""
+  [ "$ra_num" = "$ra_key" ] || ra_suffix="-${ra_key#*-}"
+  ra_n="dream-${RET_DATE[$ra_num]}$ra_suffix.md"
+  ret_stayed "$RA" "$ra_n" || { [ "$ra_num" = 104 ] && [ -e "$RA/20-projects/_logs/$ra_n" ]; } || ra_bad="$ra_bad moved:$ra_n"
+  case "$ra_why" in
+    "too new"|"the newest") ;;
+    *) ret_says "$RA" "REFUSED: 20-projects/_logs/$ra_n ($ra_why" || ra_bad="$ra_bad reason:$ra_n" ;;
+  esac
+done
+ret_stayed "$RA" "dream-2026-02-30.md" && ret_says "$RA" "REFUSED: 20-projects/_logs/dream-2026-02-30.md (not a journal name" \
+  || ra_bad="$ra_bad impossible-date"
+ret_stayed "$RA" "dream-${RET_LATER[30]}.md" && ret_says "$RA" "REFUSED: 20-projects/_logs/dream-${RET_LATER[30]}.md (date in the future" \
+  || ra_bad="$ra_bad future"
+ret_stayed "$RA" "dream-${RET_DATE[100]}.md" && ret_says "$RA" "LEGACY: 20-projects/_logs/dream-${RET_DATE[100]}.md" \
+  || ra_bad="$ra_bad legacy"
+if [ "$ra_link" -eq 1 ]; then
+  ret_says "$RA" "REFUSED: 20-projects/_logs/dream-${RET_DATE[105]}.md (not a regular file" || ra_bad="$ra_bad link"
+fi
+ret_says "$RA" "evaluated " || ra_bad="$ra_bad no-sentinel"
+if [ -z "$ra_bad" ]; then
+  ok "only journals one dream commit wrote are archived, and every other candidate is kept or refused with its reason"
+else
+  bad "the retention mover judged a candidate wrongly --$ra_bad log: [$(tr '\n' '|' < "$(ret_log "$RA")" 2>/dev/null | cut -c1-1500)]"
+fi
+ra_msg="$(git -C "$RA" log -1 --format=%B)"
+if printf '%s\n' "$ra_msg" | grep -qx 'Vault-Pass: retention' \
+   && [ "$(printf '%s\n' "$ra_msg" | grep -c '^Vault-Retention-Move: 20-projects/_logs/dream-.* -> 99-archive/20-projects/_logs/dream-')" = 3 ] \
+   && printf '%s\n' "$ra_msg" | grep -q '^Vault-Retention-Run: ' && ret_clean "$RA" \
+   && [ ! -e "$RA.state/retention-inflight" ]; then
+  ok "the moves are one commit with the retention trailers, the tree matches it, and no recovery file is left"
+else
+  bad "the retention commit or the tree after it is wrong -- message: [$(printf '%s' "$ra_msg" | tr '\n' '|')] status: [$(git -C "$RA" status --porcelain -- 20-projects 99-archive | tr '\n' '|')]"
+fi
+ra_report="$(ls "$RA.state"/retention-legacy-*.txt 2>/dev/null | head -n 1)"
+ra_blob="$(git -C "$RA" rev-parse "HEAD:20-projects/_logs/dream-${RET_DATE[100]}.md" 2>/dev/null)"
+if [ -n "$ra_report" ] && grep -q "^20-projects/_logs/dream-${RET_DATE[100]}.md	$ra_blob\$" "$ra_report" \
+   && [ "$(grep -vc '^#' "$ra_report")" = 1 ] && ret_says "$RA" "$ra_report"; then
+  ok "a journal from before the runner trailers is listed with its blob in a report in the state directory, and the log names it"
+else
+  bad "the legacy report is missing or wrong -- report: [$ra_report] [$(tr '\n' '|' < "$ra_report" 2>/dev/null)]"
+fi
+# The run is idempotent, and the report is not written again.
+rm -f "$(ret_log "$RA")"
+ra_head="$(git -C "$RA" rev-parse HEAD)"
+expect_rc "vault-retention run again with nothing new -> OK" 0 "$(ret_run "$RA")"
+if [ "$(git -C "$RA" rev-parse HEAD)" = "$ra_head" ] && [ "$(ls "$RA.state"/retention-legacy-*.txt 2>/dev/null | wc -l | tr -d ' ')" = 1 ] \
+   && ret_says "$RA" "$ra_report"; then
+  ok "a second run moves nothing, commits nothing, and names the existing legacy report instead of writing another"
+else
+  bad "a second run changed HEAD or wrote another report"
+fi
+# vault-check shows the archive and what the last retention pass moved.
+ra_check="$(VAULT_STATE_DIR="$RA.state" CLAUDE_PROJECT_DIR="$RA" bash "$RA/.claude/scripts/vault-check.sh" 2>&1)"
+if printf '%s\n' "$ra_check" | grep -q '99-archive/ holds 4 note(s)' \
+   && printf '%s\n' "$ra_check" | grep -q 'The last retention pass (.* on .*) moved 3 note(s)'; then
+  ok "vault-check.sh shows the archive count and what the last retention pass moved"
+else
+  bad "vault-check.sh does not show the archive line -- [$(printf '%s' "$ra_check" | tail -n 3 | tr '\n' '|')]"
+fi
+# The dream agent reads archived journals at the path a real run produces.
+ra_glob="$(grep -o '99-archive/20-projects/_logs/dream-\*\.md' "$ROOT/.claude/agents/dream-agent.md" 2>/dev/null | head -n 1)"
+case "99-archive/20-projects/_logs/dream-${RET_DATE[90]}.md" in
+  99-archive/20-projects/_logs/dream-*.md) ra_match=1 ;;
+  *) ra_match=0 ;;
+esac
+if [ -n "$ra_glob" ] && [ "$ra_match" -eq 1 ]; then
+  ok "the archive path the dream agent reads matches where a retention run puts a journal"
+else
+  bad "the dream agent does not name the archive path a retention run uses -- [$ra_glob]"
+fi
+# Reverting the retention commit brings the journals back, and they stay.
+ret_git "$RA" revert --no-edit HEAD >/dev/null 2>&1
+rm -f "$(ret_log "$RA")"
+expect_rc "vault-retention after its commit was reverted -> OK" 0 "$(ret_run "$RA")"
+if ret_stayed "$RA" "dream-${RET_DATE[90]}.md" \
+   && ret_says "$RA" "REFUSED: 20-projects/_logs/dream-${RET_DATE[90]}.md (restored after an earlier retention move"; then
+  ok "a journal restored by reverting a retention commit is refused with that reason"
+else
+  bad "a reverted journal was moved again or refused for another reason -- log: [$(tr '\n' '|' < "$(ret_log "$RA")" 2>/dev/null | cut -c1-600)]"
+fi
+
+# --- the newest eight dates, future names and the cap ---
+RB="$(ret_copy keep)"
+rb_batch=""
+for rb_i in 30 31 32 33 34 35 36 37 38 39 40; do
+  ret_journal "$RB" "dream-${RET_DATE[$rb_i]}.md" "tier: medium"
+  rb_batch="$rb_batch dream-${RET_DATE[$rb_i]}.md"
+done
+for rb_s in a b c d e f g h; do
+  ret_journal "$RB" "dream-${RET_DATE[30]}-$rb_s.md" "tier: medium"
+  rb_batch="$rb_batch dream-${RET_DATE[30]}-$rb_s.md"
+done
+ret_journal "$RB" "dream-${RET_LATER[10]}.md" "tier: medium"
+ret_journal "$RB" "dream-${RET_LATER[11]}.md" "tier: medium"
+# shellcheck disable=SC2086
+ret_dream_commit "$RB" $rb_batch "dream-${RET_LATER[10]}.md" "dream-${RET_LATER[11]}.md"
+rb_rc1="$(RET_DAYS=10 RET_MAX=2 ret_run "$RB")"
+rb_first="$(ret_moved "$RB" "dream-${RET_DATE[40]}.md" && ret_moved "$RB" "dream-${RET_DATE[39]}.md" \
+  && ret_stayed "$RB" "dream-${RET_DATE[38]}.md" && ret_says "$RB" "1 more" && echo yes)"
+rb_rc2="$(RET_DAYS=10 RET_MAX=2 ret_run "$RB")"
+rb_head="$(git -C "$RB" rev-parse HEAD)"
+rb_rc3="$(RET_DAYS=10 RET_MAX=2 ret_run "$RB")"
+rb_bad=''
+[ "$rb_rc1:$rb_rc2:$rb_rc3" = 0:0:0 ] || rb_bad="$rb_bad rc($rb_rc1,$rb_rc2,$rb_rc3)"
+[ "$rb_first" = yes ] || rb_bad="$rb_bad first-run"
+ret_moved "$RB" "dream-${RET_DATE[38]}.md" || rb_bad="$rb_bad second-run"
+[ "$(git -C "$RB" rev-parse HEAD)" = "$rb_head" ] || rb_bad="$rb_bad third-run-committed"
+for rb_i in 30 31 32 33 34 35 36 37; do
+  ret_stayed "$RB" "dream-${RET_DATE[$rb_i]}.md" || rb_bad="$rb_bad kept:$rb_i"
+done
+ret_stayed "$RB" "dream-${RET_DATE[30]}-h.md" || rb_bad="$rb_bad same-day"
+ret_says "$RB" "REFUSED: 20-projects/_logs/dream-${RET_LATER[10]}.md (date in the future" || rb_bad="$rb_bad future"
+if [ -z "$rb_bad" ]; then
+  ok "the newest eight dates are kept whatever same-day or future names exist, and the cap moves the oldest first and says how many wait"
+else
+  bad "the keep rule or the cap is wrong --$rb_bad log: [$(tr '\n' '|' < "$(ret_log "$RB")" 2>/dev/null | cut -c1-900)]"
+fi
+
+# --- adopting journals from before the runner trailers ---
+RC="$(ret_copy legacy)"
+ret_journal "$RC" "dream-${RET_DATE[80]}.md" "tier: medium"
+ret_journal "$RC" "dream-${RET_DATE[81]}.md" "tier: medium"
+ret_human_commit "$RC" "old journals" "20-projects/_logs/dream-${RET_DATE[80]}.md" "20-projects/_logs/dream-${RET_DATE[81]}.md" >/dev/null 2>&1
+ret_journal "$RC" "dream-${RET_DATE[2]}.md" "tier: medium"
+ret_dream_commit "$RC" "dream-${RET_DATE[2]}.md"
+rc_rc="$(ret_run "$RC")"
+rc_report="$(ls "$RC.state"/retention-legacy-*.txt 2>/dev/null | head -n 1)"
+rc_bad=''
+[ "$rc_rc" = 0 ] || rc_bad="$rc_bad rc:$rc_rc"
+[ -n "$rc_report" ] || rc_bad="$rc_bad no-report"
+ret_stayed "$RC" "dream-${RET_DATE[80]}.md" || rc_bad="$rc_bad moved-without-adoption"
+expect_rc "vault-retention --adopt-legacy with no report file -> usage error" 64 "$(ret_run "$RC" --adopt-legacy "$RC.state/no-such-report.txt")"
+if [ -n "$rc_report" ]; then
+  cp "$rc_report" "$RC.state/tampered.txt"
+  printf '20-projects/_logs/dream-%s.md\t%s\n' "${RET_DATE[2]}" "$(git -C "$RC" rev-parse "HEAD:20-projects/_logs/dream-${RET_DATE[2]}.md")" >> "$RC.state/tampered.txt"
+  expect_rc "vault-retention --adopt-legacy with a report whose list was changed -> REPORT-REFUSED" 2 "$(ret_run "$RC" --adopt-legacy "$RC.state/tampered.txt")"
+  ret_stayed "$RC" "dream-${RET_DATE[80]}.md" || rc_bad="$rc_bad tampered-moved"
+  # One listed journal is edited after the report was written.
+  printf 'edited later\n' >> "$RC/20-projects/_logs/dream-${RET_DATE[81]}.md"
+  ret_human_commit "$RC" "edit" "20-projects/_logs/dream-${RET_DATE[81]}.md" >/dev/null 2>&1
+  rm -f "$(ret_log "$RC")"
+  expect_rc "vault-retention --adopt-legacy with the report it wrote -> OK" 0 "$(ret_run "$RC" --adopt-legacy "$rc_report")"
+  ret_moved "$RC" "dream-${RET_DATE[80]}.md" || rc_bad="$rc_bad listed-not-moved"
+  ret_stayed "$RC" "dream-${RET_DATE[81]}.md" || rc_bad="$rc_bad edited-moved"
+  ret_says "$RC" "REFUSED: 20-projects/_logs/dream-${RET_DATE[81]}.md" || rc_bad="$rc_bad edited-no-reason"
+  ret_stayed "$RC" "dream-${RET_DATE[2]}.md" || rc_bad="$rc_bad unlisted-moved"
+fi
+if [ -z "$rc_bad" ]; then
+  ok "legacy journals move only with --adopt-legacy and the report the runner wrote, and one edited since is refused"
+else
+  bad "legacy adoption is wrong --$rc_bad log: [$(tr '\n' '|' < "$(ret_log "$RC")" 2>/dev/null | cut -c1-900)]"
+fi
+
+# --- compaction stubs, written by the real hook on chosen days ---
+RD="$(ret_copy stubs)"
+mkdir -p "$RET/date-shim"
+cat > "$RET/date-shim/date" <<'SHIM_EOF'
+#!/usr/bin/env bash
+# Answers the two formats the compaction hook asks for, on RET_SHIM_DAY.
+[ -n "${RET_SHIM_FAIL:-}" ] && exit 1
+case "${1:-}" in
+  '+%Y-%m-%d %H:%M:%S') printf '%s 10:00:00\n' "$RET_SHIM_DAY" ;;
+  '+%Y-%m-%d') printf '%s\n' "$RET_SHIM_DAY" ;;
+  *) exec "$RET_REAL_DATE" "$@" ;;
+esac
+SHIM_EOF
+chmod +x "$RET/date-shim/date"
+RET_REAL_DATE="$(command -v date)"
+ret_hook() {  # ret_hook <vault> <session> <day> [fail] - one compaction, as the hook writes it
+  printf '{"session_id":"%s","trigger":"auto","transcript_path":"/t/%s.jsonl"}' "$2" "$2" \
+    | env PATH="$RET/date-shim:$PATH" RET_SHIM_DAY="$3" RET_SHIM_FAIL="${4:-}" RET_REAL_DATE="$RET_REAL_DATE" \
+      CLAUDE_PROJECT_DIR="$1" bash "$ROOT/.claude/hooks/postcompact-wrap-up.sh" >/dev/null 2>&1
+}
+rd_stub="$RD/20-projects/_logs/compaction"
+ret_hook "$RD" old "${RET_DATE[90]}"
+ret_hook "$RD" old "${RET_DATE[90]}"
+ret_hook "$RD" active "${RET_DATE[90]}"
+ret_human_commit "$RD" "stubs" "20-projects/_logs/compaction-old.md" "20-projects/_logs/compaction-active.md" >/dev/null 2>&1
+ret_hook "$RD" active "${RET_DATE[10]}"
+ret_human_commit "$RD" "stub grew" "20-projects/_logs/compaction-active.md" >/dev/null 2>&1
+ret_hook "$RD" capped "${RET_DATE[90]}"
+rd_line="$(grep '^- ' "$rd_stub-capped.md")"
+rd_i=1
+while [ "$rd_i" -le 49 ]; do printf '%s\n' "$rd_line" >> "$rd_stub-capped.md"; rd_i=$((rd_i + 1)); done
+ret_hook "$RD" capped "${RET_DATE[90]}"
+ret_hook "$RD" unknown "${RET_DATE[90]}" fail
+ret_hook "$RD" crlf "${RET_DATE[90]}"
+awk '{ printf "%s\r\n", $0 }' "$rd_stub-crlf.md" > "$rd_stub-crlf.tmp" && mv -f "$rd_stub-crlf.tmp" "$rd_stub-crlf.md"
+ret_hook "$RD" prose "${RET_DATE[90]}"
+printf 'my own notes about this session\n' >> "$rd_stub-prose.md"
+ret_hook "$RD" rewritten "${RET_DATE[90]}"
+printf 'kept this\n' >> "$rd_stub-rewritten.md"
+ret_git "$RD" -c core.autocrlf=false add -- "20-projects/_logs/compaction-capped.md" "20-projects/_logs/compaction-crlf.md" \
+  "20-projects/_logs/compaction-prose.md" "20-projects/_logs/compaction-rewritten.md" >/dev/null 2>&1
+rd_unknown="$(ls "$RD/20-projects/_logs/" | grep '^compaction-unknown' | head -n 1)"
+[ -n "$rd_unknown" ] && ret_git "$RD" add -- "20-projects/_logs/$rd_unknown" >/dev/null 2>&1
+ret_git "$RD" -c core.autocrlf=false commit -q -m "more stubs" >/dev/null 2>&1
+grep -v '^kept this$' "$rd_stub-rewritten.md" > "$rd_stub-rewritten.tmp" && mv -f "$rd_stub-rewritten.tmp" "$rd_stub-rewritten.md"
+ret_human_commit "$RD" "strip" "20-projects/_logs/compaction-rewritten.md" >/dev/null 2>&1
+ret_hook "$RD" untracked "${RET_DATE[90]}"
+rd_rc="$(ret_run "$RD")"
+rd_bad=''
+[ "$rd_rc" = 0 ] || rd_bad="$rd_bad rc:$rd_rc"
+for rd_n in old capped crlf; do
+  ret_moved "$RD" "compaction-$rd_n.md" || rd_bad="$rd_bad not-moved:$rd_n"
+done
+for rd_n in active prose rewritten untracked; do
+  ret_stayed "$RD" "compaction-$rd_n.md" || rd_bad="$rd_bad moved:$rd_n"
+done
+[ -z "$rd_unknown" ] || ret_stayed "$RD" "$rd_unknown" || rd_bad="$rd_bad moved:unknown"
+ret_says "$RD" "REFUSED: 20-projects/_logs/compaction-prose.md (not the hook's stub" || rd_bad="$rd_bad reason:prose"
+ret_says "$RD" "REFUSED: 20-projects/_logs/compaction-rewritten.md (stub rewritten" || rd_bad="$rd_bad reason:rewritten"
+if [ -z "$rd_bad" ]; then
+  ok "stubs the hook wrote and nobody changed are archived by their last entry, and edited, rewritten, recent or untracked ones stay"
+else
+  bad "the stub rules are wrong --$rd_bad log: [$(tr '\n' '|' < "$(ret_log "$RD")" 2>/dev/null | cut -c1-900)]"
+fi
+
+# --- failures while moving and committing ---
+# A base with one journal ready to move. Each case copies it and runs with a git
+# that fails in one chosen way.
+RE0="$(ret_copy moves-base)"
+ret_journal "$RE0" "dream-${RET_DATE[70]}.md" "tier: medium"
+ret_journal "$RE0" "dream-${RET_DATE[71]}.md" "tier: medium"
+ret_dream_commit "$RE0" "dream-${RET_DATE[70]}.md" "dream-${RET_DATE[71]}.md"
+mkdir -p "$RET/fake-git"
+cat > "$RET/fake-git/git" <<'GIT_EOF'
+#!/usr/bin/env bash
+# Stands in for git in the retention cases. RET_GIT_MODE picks the failure, and
+# counts of each subcommand are kept beside RET_GIT_COUNT.
+sub=""
+for a in "$@"; do
+  case "$a" in mv|commit) sub="$a"; break ;; esac
+done
+n=0
+if [ -n "$sub" ]; then
+  n="$(cat "$RET_GIT_COUNT.$sub" 2>/dev/null)"
+  n=$(( ${n:-0} + 1 ))
+  printf '%s\n' "$n" > "$RET_GIT_COUNT.$sub"
+fi
+case "${RET_GIT_MODE:-}:$sub:$n" in
+  mv-fail:mv:*) exit 1 ;;
+  mv-then-fail:mv:1|putback-fail:mv:1) "$RET_REAL_GIT" "$@"; exit 1 ;;
+  putback-fail:mv:*) exit 1 ;;
+  lock-first-mv:mv:1)
+    : > "$RET_GIT_VAULT/.git/index.lock"
+    ( sleep 2; rm -f "$RET_GIT_VAULT/.git/index.lock" ) </dev/null >/dev/null 2>&1 &
+    echo "fatal: Unable to create '.git/index.lock': File exists." >&2
+    exit 128 ;;
+  mv-slow:mv:1) : > "$RET_GIT_MARK"; sleep 20; exec "$RET_REAL_GIT" "$@" ;;
+  commit-fail:commit:*) exit 1 ;;
+  commit-then-fail:commit:1) "$RET_REAL_GIT" "$@"; exit 1 ;;
+  commit-then-hang:commit:1) "$RET_REAL_GIT" "$@"; sleep 30; exit 0 ;;
+  commit-sync-first:commit:1)
+    "$RET_REAL_GIT" -C "$RET_GIT_VAULT" -c user.name=sync -c user.email=sync@example.invalid -c commit.gpgsign=false commit -q -m "vault backup" >/dev/null 2>&1
+    exec "$RET_REAL_GIT" "$@" ;;
+esac
+exec "$RET_REAL_GIT" "$@"
+GIT_EOF
+chmod +x "$RET/fake-git/git"
+ret_case() {  # ret_case <name> <mode> [NAME=value...] - copies the moves base, runs with the failing git, prints rc
+  local name="$1" mode="$2" v a
+  shift 2
+  v="$RET/$name"
+  rm -rf "$v" "$v.state" "$RET/$name.count".*
+  cp -R "$RE0" "$v"
+  ( export RET_GIT_MODE="$mode" RET_GIT_COUNT="$RET/$name.count" RET_GIT_VAULT="$v" RET_REAL_GIT="$RET_REAL_GIT"
+    for a in "$@"; do export "$a"; done
+    RET_PATH="$RET/fake-git" ret_run "$v" )
+}
+RE_J1="dream-${RET_DATE[70]}.md"
+RE_J2="dream-${RET_DATE[71]}.md"
+ret_case_check() {  # ret_case_check <vault> moved|stayed - both journals where expected, tree at HEAD, no recovery file
+  local v="$1" f=ret_stayed
+  [ "$2" = moved ] && f=ret_moved
+  "$f" "$v" "$RE_J1" && "$f" "$v" "$RE_J2" && ret_clean "$v" && [ ! -e "$v.state/retention-inflight" ] \
+    && [ -z "$(git -C "$v" status --porcelain --untracked-files=all -- 20-projects 99-archive)" ]
+}
+re_bad=''
+for re_case in "mv-fail:3:stayed" "mv-then-fail:3:stayed" "lock-first-mv:0:moved" "commit-fail:4:stayed" \
+               "commit-then-fail:0:moved" "commit-sync-first:0:moved"; do
+  re_mode="${re_case%%:*}"
+  re_rest="${re_case#*:}"
+  re_want="${re_rest%%:*}"
+  re_where="${re_rest#*:}"
+  re_rc="$(ret_case "moves-$re_mode" "$re_mode")"
+  { [ "$re_rc" = "$re_want" ] && ret_case_check "$RET/moves-$re_mode" "$re_where"; } \
+    || re_bad="$re_bad [$re_mode rc $re_rc want $re_want $re_where, log: $(tr '\n' '|' < "$(ret_log "$RET/moves-$re_mode")" 2>/dev/null | cut -c1-400)]"
+done
+if [ -z "$re_bad" ]; then
+  ok "a failed move or commit is put back only while HEAD is unchanged, and a commit that landed is kept"
+else
+  bad "a failure while moving or committing left the vault wrong --$re_bad"
+fi
+# A commit that lands and then hangs is stopped, and never put back.
+re_rc="$(ret_case moves-hang commit-then-hang RET_GIT_TIMEOUT=3)"
+if { [ "$re_rc" = 0 ] || [ "$re_rc" = 71 ]; } && ret_moved "$RET/moves-hang" "$RE_J1" && ret_clean "$RET/moves-hang"; then
+  ok "a commit that landed and then hung is stopped and kept, not put back (exit $re_rc)"
+else
+  bad "a commit that landed and then hung was put back or lost -- rc $re_rc log: [$(tr '\n' '|' < "$(ret_log "$RET/moves-hang")" 2>/dev/null | cut -c1-500)]"
+fi
+rm -rf "$RET/moves-hang.state/run.lock"
+# A put-back that fails leaves a recovery file, and later runs refuse until the
+# vault checks out again.
+re_rc="$(ret_case moves-putback putback-fail)"
+re_v="$RET/moves-putback"
+re_rc2="$(RET_STATE="$re_v.state" ret_run "$re_v")"
+ret_git "$re_v" mv -- "99-archive/20-projects/_logs/$RE_J1" "99-archive/20-projects/_logs/$RE_J2" 20-projects/_logs/ >/dev/null 2>&1
+re_rc3="$(RET_STATE="$re_v.state" ret_run "$re_v")"
+if [ "$re_rc:$re_rc2:$re_rc3" = 71:78:0 ] && ret_moved "$re_v" "$RE_J1" && [ ! -e "$re_v.state/retention-inflight" ]; then
+  ok "a put-back that fails exits 71 with a recovery file, the next run refuses with 78, and a run after the owner put it back proceeds"
+else
+  bad "a failed put-back was not held back and released as it should be -- rc $re_rc then $re_rc2 then $re_rc3 recovery: $([ -e "$re_v.state/retention-inflight" ] && echo yes || echo no)"
+fi
+# TERM while the moves run puts them back, and the next run is not refused.
+re_v="$RET/moves-term"
+rm -rf "$re_v" "$re_v.state" "$RET/moves-term.count".* "$RET/moves-term.mark"
+cp -R "$RE0" "$re_v"
+env RET_GIT_MODE=mv-slow RET_GIT_COUNT="$RET/moves-term.count" RET_GIT_MARK="$RET/moves-term.mark" RET_REAL_GIT="$RET_REAL_GIT" \
+  VAULT_STATE_DIR="$re_v.state" RUN_LOCK_WAIT=0 RUN_LOCK_POLL=1 WATCHDOG_POLL=1 WATCHDOG_GRACE=2 PATH="$RET/fake-git:$PATH" \
+  bash "$re_v/.claude/scripts/vault-retention.sh" >/dev/null 2>&1 &
+re_pid=$!
+re_wait=0
+while [ ! -f "$RET/moves-term.mark" ] && [ "$re_wait" -lt 120 ]; do sleep 1; re_wait=$((re_wait + 1)); done
+kill -TERM "$re_pid" 2>/dev/null
+wait "$re_pid"
+re_rc=$?
+re_rc2="$(ret_run "$re_v")"
+if [ "$re_rc" = 143 ] && [ "$re_rc2" = 0 ] && ret_moved "$re_v" "$RE_J1"; then
+  ok "TERM during the moves puts them back, and the next run is not refused and moves them"
+else
+  bad "TERM during the moves left the vault held back or half moved -- rc $re_rc then $re_rc2"
+fi
+
+# --- paths that must stop the run before anything is judged ---
+rf_bad=''
+RF="$(ret_copy blocked-file)"
+mkdir -p "$RF/99-archive"
+printf 'planted\n' > "$RF/99-archive/20-projects"
+[ "$(ret_run "$RF")" = 6 ] && ret_says "$RF" "99-archive/20-projects" || rf_bad="$rf_bad planted-file"
+RF="$(ret_copy blocked-case)"
+rm -rf "$RF/99-archive"
+mkdir -p "$RF/99-Archive"
+: > "$RF/99-Archive/.gitkeep"
+ret_git "$RF" add -A >/dev/null 2>&1
+ret_git "$RF" commit -q -m "rename archive" >/dev/null 2>&1
+[ "$(ret_run "$RF")" = 6 ] || rf_bad="$rf_bad case-variant"
+RF="$(ret_copy shallow)"
+git -C "$RF" rev-parse HEAD > "$RF/.git/shallow"
+[ "$(ret_run "$RF")" = 1 ] || rf_bad="$rf_bad shallow"
+RF="$RET/nested"
+rm -rf "$RF" "$RF.state"
+mkdir -p "$RF"
+cp -R "$RETB" "$RF/vault"
+rm -rf "$RF/vault/.git"
+git init -q "$RF" >/dev/null 2>&1
+[ "$(ret_run "$RF/vault")" = 1 ] || rf_bad="$rf_bad nested"
+RF="$(ret_copy tripwire)"
+mkdir -p "$RF.state"
+printf 'TRIPWIRE\n' > "$RF.state/runner-tripwire"
+[ "$(ret_run "$RF")" = 78 ] || rf_bad="$rf_bad tripwire"
+RF="$(ret_copy missing-logs)"
+rm -rf "$RF/20-projects"
+[ "$(ret_run "$RF")" = 0 ] && ret_says "$RF" "20-projects/_logs" || rf_bad="$rf_bad missing-logs"
+if [ -z "$rf_bad" ]; then
+  ok "a planted file or a case variant on the archive path exits 6, a shallow or nested repository exits 1, a tripwire 78, and a missing _logs is logged"
+else
+  bad "a path or repository problem was not refused as it should be --$rf_bad"
+fi
+RF="$(ret_copy linked-logs)"
+ret_journal "$RF" "dream-${RET_DATE[70]}.md" "tier: medium"
+mv "$RF/20-projects/_logs" "$RET/linked-logs-target"
+if ln -s "$RET/linked-logs-target" "$RF/20-projects/_logs" 2>/dev/null && [ -L "$RF/20-projects/_logs" ] \
+   && [ "$(cd "$RF/20-projects/_logs" && pwd -P)" != "$RF/20-projects/_logs" ]; then
+  rf_rc="$(ret_run "$RF")"
+  ran retention-symlink
+  mkdir -p "$RET/linked-archive-target"
+  RF2="$(ret_copy linked-archive)"
+  rm -rf "$RF2/99-archive/20-projects"
+  ln -s "$RET/linked-archive-target" "$RF2/99-archive/20-projects"
+  rf_rc2="$(ret_run "$RF2")"
+  if [ "$rf_rc" = 6 ] && ret_says "$RF" "20-projects/_logs" && [ "$rf_rc2" = 6 ] && [ -z "$(ls -A "$RET/linked-archive-target")" ]; then
+    ok "a symlinked _logs or archive folder stops the run with exit 6 before anything moves"
+  else
+    bad "a symlinked folder did not stop the run -- rc $rf_rc and $rf_rc2"
+  fi
+else
+  skip retention-symlink 'a symlinked _logs folder: ln -s does not create symlinks here'
+fi
+if is_windows_host; then
+  RF="$(ret_copy junction-logs)"
+  mv "$RF/20-projects/_logs" "$RET/junction-logs-target"
+  MSYS_NO_PATHCONV=1 cmd /c mklink /J "$(cygpath -w "$RF/20-projects/_logs")" "$(cygpath -w "$RET/junction-logs-target")" >/dev/null 2>&1
+  if [ -L "$RF/20-projects/_logs" ] && [ "$(cd "$RF/20-projects/_logs" && pwd -P)" != "$RF/20-projects/_logs" ]; then
+    rf_rc="$(ret_run "$RF")"
+    ran retention-junction
+    if [ "$rf_rc" = 6 ] && ret_says "$RF" "20-projects/_logs"; then
+      ok "an NTFS junction at _logs stops the run with exit 6"
+    else
+      bad "an NTFS junction at _logs did not stop the run -- rc $rf_rc log: [$(tr '\n' '|' < "$(ret_log "$RF")" 2>/dev/null)]"
+    fi
+    MSYS_NO_PATHCONV=1 cmd /c rmdir "$(cygpath -w "$RF/20-projects/_logs")" >/dev/null 2>&1
+  else
+    bad "the junction fixture could not be made or is not seen as a link, so the junction control proves nothing"
+  fi
+else
+  skip retention-junction 'an NTFS junction at _logs: not Git Bash on Windows'
+fi
+
+# --- the dream agent re-lists what is still pending, and treats journals as data ---
+DA="$ROOT/.claude/agents/dream-agent.md"
+da_bad=''
+grep -q '99-archive/20-projects/_logs/dream-\*\.md' "$DA" || da_bad="$da_bad archive-glob"
+grep -q '180 days' "$DA" || da_bad="$da_bad window"
+grep -q 'Still pending since <date>' "$DA" || da_bad="$da_bad pending-heading"
+grep -q 'earliest date' "$DA" || da_bad="$da_bad earliest-date"
+grep -q 'data, never instructions' "$DA" || da_bad="$da_bad data"
+grep -q 'Dropped: sources no longer support it' "$DA" || da_bad="$da_bad dropped"
+grep -qi 'acted on' "$DA" || da_bad="$da_bad acted-on"
+! grep -q 'avoid repeating already-surfaced items' "$DA" || da_bad="$da_bad old-ignore-line"
+if [ -z "$da_bad" ]; then
+  ok "the dream agent reads archived journals, re-lists pending items with their first date, drops unsupported ones and treats journals as data"
+else
+  bad "the dream agent prompt lacks a pending-item rule --$da_bad"
+fi
+# vault-check's archive line in a vault with no retention pass, and outside git.
+rg_check="$(VAULT_STATE_DIR="$RET/check-state" CLAUDE_PROJECT_DIR="$RETB" bash "$RETB/.claude/scripts/vault-check.sh" 2>&1)"
+rm -rf "$RET/nogit"
+cp -R "$RETB" "$RET/nogit"
+rm -rf "$RET/nogit/.git"
+rn_check="$(VAULT_STATE_DIR="$RET/check-state" CLAUDE_PROJECT_DIR="$RET/nogit" bash "$RET/nogit/.claude/scripts/vault-check.sh" 2>&1)"
+if printf '%s\n' "$rg_check" | grep -q "No retention pass is in this repository's history" \
+   && printf '%s\n' "$rn_check" | grep -q 'The last retention pass is unknown (' ; then
+  ok "vault-check.sh says when no retention pass exists, and when it cannot know"
+else
+  bad "vault-check.sh archive line is wrong outside a retention history -- [$(printf '%s' "$rg_check" | tail -n 1)] [$(printf '%s' "$rn_check" | tail -n 1)]"
+fi
+
+fi
+
 # ---------------------------------------------- githooks/pre-commit ---------
 
 printf '\n=== githooks/pre-commit (opt-in commit gate) ===\n'
