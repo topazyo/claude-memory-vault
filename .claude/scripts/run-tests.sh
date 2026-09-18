@@ -5580,7 +5580,7 @@ for ra_case in \
     "93:trailers do not match the commit" \
     "94:trailers do not match the commit" \
     "96:a merge changed it" \
-    "97:committed without a dream trailer" \
+    "97:added after the runners began writing trailers but carrying none" \
     "98-a:tier is not medium" "98-b:tier is not medium" "98-c:tier is not medium" "98-d:tier is not medium" \
     "98-e:contradicts or superseded_by" "98-f:contradicts or superseded_by" \
     "99-PM:not a journal name" \
@@ -5813,6 +5813,15 @@ for rd_n in active prose rewritten untracked; do
   ret_stayed "$RD" "compaction-$rd_n.md" || rd_bad="$rd_bad moved:$rd_n"
 done
 [ -z "$rd_unknown" ] || ret_stayed "$RD" "$rd_unknown" || rd_bad="$rd_bad moved:unknown"
+# The reason matters as much as the outcome here. The hook writes the word
+# unknown where the time goes when its own date call fails, so this stub is the
+# hook's work. Saying somebody has written in it accuses a person of an edit the
+# hook made, and the control used to assert only that the file stayed, which
+# that wrong reason satisfied just as well as the right one.
+if [ -n "$rd_unknown" ]; then
+  ret_says "$RD" "REFUSED: 20-projects/_logs/$rd_unknown (the compaction hook could not read the clock" \
+    || rd_bad="$rd_bad reason:unknown"
+fi
 ret_says "$RD" "REFUSED: 20-projects/_logs/compaction-prose.md (not the hook's stub" || rd_bad="$rd_bad reason:prose"
 ret_says "$RD" "REFUSED: 20-projects/_logs/compaction-rewritten.md (stub rewritten" || rd_bad="$rd_bad reason:rewritten"
 if [ -z "$rd_bad" ]; then
@@ -5963,7 +5972,17 @@ ret_marker_commit() {  # ret_marker_commit <vault> <message> <relative path> - a
 RP="$(ret_copy parse-clean)"
 ret_journal "$RP" "dream-${RET_DATE[70]}.md" "tier: medium"
 ret_marker_commit "$RP" "an ordinary message" "20-projects/_logs/dream-${RET_DATE[70]}.md"
-[ "$(ret_run "$RP" --dry-run)" = 0 ] || rp_bad="$rp_bad clean-control"
+# Exit 0 on its own would once have proved nothing, because a parse that read no
+# record at all also exited 0. It means something now, since a walk that reads a
+# different number of records from the count git reports for the folder is
+# refused. On top of that the candidate has to be counted and judged, which only
+# happens after the history table has been built and every rule has run over it.
+# The journal itself is not named, because one journal falls inside the newest
+# eight dates and the kept arm prints a total rather than a line for each file.
+rp_rc="$(ret_run "$RP" --dry-run)"
+[ "$rp_rc" = 0 ] || rp_bad="$rp_bad clean-rc:$rp_rc"
+ret_says "$RP" "evaluated 1 candidate(s)" || rp_bad="$rp_bad clean-not-evaluated"
+ret_says "$RP" "1 journal(s) kept by the newest eight dates" || rp_bad="$rp_bad clean-not-judged"
 RP="$(ret_copy parse-message-marker)"
 ret_journal "$RP" "dream-${RET_DATE[70]}.md" "tier: medium"
 ret_marker_commit "$RP" "$(printf 'subject\037tail')" "20-projects/_logs/dream-${RET_DATE[70]}.md"
@@ -5983,10 +6002,30 @@ ret_marker_commit "$RP" "$(printf 'line one\n\036still the message')" "20-projec
 [ "$(ret_run "$RP" --dry-run)" = 1 ] \
   && ret_says "$RP" "does not carry a date and an object name" \
   || rp_bad="$rp_bad record-marker-opening-a-line"
+# A message that ends its own record and then opens another. The first line
+# carries the byte that ends a message, so the real record closes early, and the
+# next line begins with the record marker and carries a date and an object name
+# the message chose. Every test inside the walk is blind to it, because that
+# line sits exactly where a real boundary may sit, and in a real walk a message
+# end is often followed straight by the next record marker. What catches it is
+# the count git reports for the folder, which no commit message can reach. Left
+# unrefused, the fabricated record took the real commit's changed files under a
+# commit name the author picked.
+RP="$(ret_copy parse-injected-record)"
+ret_journal "$RP" "dream-${RET_DATE[70]}.md" "tier: medium"
+rp_hex=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+# The line break matters. The byte that ends a message has to close the record
+# at the end of its own line, and the record marker has to open the next line,
+# which is where a real boundary sits. Putting the two next to each other only
+# reaches the mid-line refusal and proves nothing about the count.
+ret_marker_commit "$RP" "$(printf 'foo\037\n\0362026-01-01 %s %s\nbar' "$rp_hex" "$rp_hex")" "20-projects/_logs/dream-${RET_DATE[70]}.md"
+[ "$(ret_run "$RP" --dry-run)" = 1 ] \
+  && ret_says "$RP" "while git counts" \
+  || rp_bad="$rp_bad injected-record"
 if [ -z "$rp_bad" ]; then
   ok "a commit message holding either marker byte refuses the history walk, each shape with its own reason, while the same fixture with an ordinary message still reads"
 else
-  bad "the history walk did not refuse a marker byte as it should --$rp_bad"
+  bad "the history walk did not refuse a marker byte as it should --$rp_bad log: [$(tr '\n' '|' < "$(ret_log "$RP")" 2>/dev/null | cut -c1-700)]"
 fi
 
 # --- paths that must stop the run before anything is judged ---

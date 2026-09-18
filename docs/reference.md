@@ -1023,12 +1023,12 @@ Known limits, each failing in the quiet direction:
 | `0` | OK: the moves were committed, nothing was eligible, this was a dry run, or there is no `20-projects/_logs` folder. The log says which |
 | `1` | setup failure, git cannot read the vault, the vault is not the top of its own repository, a shallow clone, `info/grafts`, or a sparse checkout |
 | `2` | REPORT-REFUSED: the `--adopt-legacy` report was not written by this runner, or its list has changed since. Nothing moved |
-| `3` | PARTIAL: a move failed while HEAD was unchanged, and every file was put back. Nothing is committed |
+| `3` | PARTIAL: a move failed while HEAD was unchanged, and every file was put back. Nothing is committed. Also when the archive folders could not be made, where nothing had moved to put back |
 | `4` | COMMIT-FAILED: the commit failed with HEAD unchanged, and the moves were put back |
 | `6` | PATH-BLOCKED: `20-projects`, `20-projects/_logs` or one of the archive folders is a link, a junction, not a folder, or another entry differs from it only in case. Checked before anything is judged, so nothing moved |
 | `64` | usage error: an unknown option, or a report file that is missing or unreadable |
 | `70` | TRIPWIRE-ERROR, the same meaning as for the other runners |
-| `71` | RECOVERY-NEEDED: a put-back failed, or what a commit did cannot be determined. `retention-inflight` in the state directory says what should be where, and later runs refuse until it checks out |
+| `71` | RECOVERY-NEEDED: a put-back failed, or what a commit did cannot be determined, or a `git mv` was stopped and may still be running, in which case nothing is put back at all because whatever that git does next would land on top of the put-back. Also when HEAD could not be read to check a put-back, where the run says only that it cannot tell either way. `retention-inflight` in the state directory says what should be where, and later runs refuse until it checks out |
 | `75` | LOCKED: another runner's lock, git's `index.lock`, a git operation in progress, a detached HEAD, or unmerged index entries |
 | `78` | TRIPWIRE, or a recovery file from an earlier run that does not check out |
 

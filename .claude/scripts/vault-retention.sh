@@ -11,7 +11,9 @@
 #                     by exactly one commit that carries the dream runner's
 #                     Vault-Pass and Vault-Pass-Blob trailers for it, never
 #                     changed after, older than RETENTION_DAYS by its file name,
-#                     and not among the journals of the newest eight dates
+#                     and not among the newest eight dates of the journals this
+#                     run did not refuse, which is a smaller set than everything
+#                     in the folder
 #   a compaction stub compaction-<session>.md, every committed version exactly
 #                     the hook's template plus entry lines, each version a
 #                     prefix of the next, its last entry older than
@@ -413,8 +415,16 @@ journal_name_ok() {
     -*.md)
       sfx="${rest%.md}"
       sfx="${sfx#-}"
+      # Spelled out rather than written as a range, for the reason given at the
+      # index flag test. A range in a shell pattern follows the collating order
+      # of the locale, and in a UTF-8 locale that order interleaves the cases,
+      # so [!a-z0-9] excluded upper case letters as well and a name like
+      # dream-2026-06-11-PM.md was accepted as a journal this runner had
+      # written. It was then archived on macOS and refused on Linux, from the
+      # same code and the same vault. Ranges made of digits alone are left as
+      # they are, because digits collate together everywhere.
       case "$sfx" in
-        ''|*[!a-z0-9]*) return 1 ;;
+        ''|*[!abcdefghijklmnopqrstuvwxyz0123456789]*) return 1 ;;
       esac
       [ "${#sfx}" -le 16 ] || return 1
       ;;
@@ -508,7 +518,7 @@ frontmatter_reason() {
 # held one and the parse cannot be trusted. Refusing beats guessing, because
 # every later judgement rests on this table.
 read_history() {
-  local hist_rc=0 hist_why="" hist_code="" line=""
+  local hist_rc=0 hist_why="" hist_code="" hist_want="" hist_got="" line=""
   : > "$SNAP_DIR/commits"
   : > "$SNAP_DIR/touch"
   : > "$SNAP_DIR/trailers"
@@ -554,7 +564,7 @@ read_history() {
   # walk rather than guessing at the boundary. Every later judgement rests on
   # this table, so refusing beats guessing.
   LC_ALL=C awk -v commits="$SNAP_DIR/commits" -v touch="$SNAP_DIR/touch" -v trailers="$SNAP_DIR/trailers" \
-      -v perr="$SNAP_DIR/parse.err" '
+      -v perr="$SNAP_DIR/parse.err" -v nrec="$SNAP_DIR/nrec" '
     # What the offending line looked like, with the bytes that would otherwise
     # be invisible in a log spelled out. Without this a refusal names a cause it
     # has not established, which sends the reader to the wrong place. Written as
@@ -619,7 +629,12 @@ read_history() {
       nb = split(body, bl, "\n")
       for (i = 1; i <= nb; i++) {
         ln = bl[i]
-        if (substr(ln, length(ln), 1) == "\r") ln = substr(ln, 1, length(ln) - 1)
+        # The emptiness test is not decoration. body ends with a newline, so the
+        # split leaves a final empty element and this runs with ln empty, where
+        # the substr start is 0. The three awks are believed to agree there, and
+        # this file has lost three answers to constructs where they were believed
+        # to agree.
+        if (ln != "" && substr(ln, length(ln), 1) == "\r") ln = substr(ln, 1, length(ln) - 1)
         if (ln == "Vault-Pass: dream") dreamn++
         if (ln == "Vault-Pass: retention") retn++
         if (index(ln, "Vault-Pass: ") == 1) anyvp++
@@ -651,6 +666,13 @@ read_history() {
         if (t == 0) { err = 2; bad = "commit " sha " has a changed-file line with no tab. The line was: " esc(ln); return }
         st = substr(ln, 1, t - 1)
         if (!status_ok(st)) { err = 2; bad = "commit " sha " has a changed-file line whose status field is not a letter and digits. The line was: " esc(ln); return }
+        # A rename or a copy status carries two paths on the line, and storing
+        # both as one path would put a tab inside a field of a tab separated
+        # table, where the reader would silently keep the old path and drop the
+        # new one. The walk asks for --no-renames so this should not arrive, and
+        # the refusal is here so that a change to the walk cannot make it arrive
+        # quietly.
+        if (index(substr(ln, t + 1), "\t") > 0) { err = 2; bad = "commit " sha " names two paths on one changed-file line, which the walk should never produce. The line was: " esc(ln); return }
         printf "%s\t%s\t%s\t%s\n", seq, sha, st, substr(ln, t + 1) >> touch
       }
     }
@@ -729,6 +751,11 @@ read_history() {
         bad = "the last record of the walk ended without the byte that ends its message"
       }
       if (!err && inrec) flush()
+      # How many records this parse believes it read, for the count check the
+      # shell makes below. Written whatever happened, so a refusal can still be
+      # told apart from a parse that silently read the wrong number.
+      printf "%s\n", seq > nrec
+      close(nrec)
       if (err) { printf "%s\t%s\n", err, bad > perr; close(perr); exit 1 }
     }' \
     "$SNAP_DIR/walk" 2> "$SNAP_DIR/parse.stderr"
@@ -764,6 +791,44 @@ read_history() {
       say "ERROR: the history of $LOGS_REL could not be parsed, and the parser itself failed rather than refusing the data (awk exited $hist_rc). This is not a commit message problem."
       while IFS= read -r line; do say "    awk: $line"; done < "$SNAP_DIR/parse.stderr"
     fi
+    return 1
+  fi
+  # How many commits git says touched the folder, asked separately and without
+  # the message or the file list, so nothing a commit message holds can reach
+  # this answer. It has to agree with how many records the parse believes it
+  # read.
+  #
+  # This is the only check that closes an injected record. A message may hold
+  # the byte that ends a message, which closes its own record early, and a later
+  # line of the same message may then begin with the record marker and carry a
+  # date and an object name of the author's choosing. Every in-stream test is
+  # blind to it, because that line sits exactly where a real boundary is allowed
+  # to sit. It was measured rather than assumed. In this repository 11 of 58
+  # real records are followed straight by the next record marker with no blank
+  # line between, so the shape after a message end proves nothing.
+  #
+  # What the injection produced was a fabricated record carrying the file
+  # changes of the real one, under a commit name the message chose, while the
+  # real commit was left looking as though it had changed nothing. A count that
+  # cannot be reached from inside a commit message is what makes that visible.
+  #
+  # An empty parse is caught by the same comparison, which matters because zero
+  # records makes every candidate look older than the trailers and so LEGACY,
+  # the one verdict that moves in bulk.
+  #
+  # rev-list is not used, because it does not take --full-history and a different
+  # history simplification would count a different set.
+  if ! watched_git "$SNAP_DIR/count.out" /dev/null \
+      log --full-history --no-renames --format=%H -- "$LOGS_REL/"; then
+    say "ERROR: the number of commits touching $LOGS_REL could not be read, so the history table cannot be checked against it. Refusing to run."
+    return 1
+  fi
+  hist_want="$(LC_ALL=C awk 'END { print NR + 0 }' "$SNAP_DIR/count.out")"
+  hist_got="$(LC_ALL=C awk 'NR == 1 { print $0 + 0; f = 1 } END { if (!f) print -1 }' "$SNAP_DIR/nrec" 2>/dev/null)"
+  [ -n "$hist_got" ] || hist_got=-1
+  if [ "$hist_want" != "$hist_got" ]; then
+    say "ERROR: the history of $LOGS_REL read as $hist_got record(s) while git counts $hist_want commit(s) touching it, so nothing was judged."
+    say "    A commit message holding the byte that ends a message can close its own record and open another, which is what a count higher than git's means. A lower one means the walk was cut short. Either way the table cannot be trusted, and refusing beats guessing."
     return 1
   fi
   # The oldest commit carrying any Vault-Pass trailer. The walk is newest first,
@@ -1060,6 +1125,22 @@ stub_first_date() {
   return 1
 }
 
+# stub_unknown_ts <file>
+# True when the file holds an entry line the hook wrote with the word unknown
+# where the time goes. postcompact-wrap-up.sh writes that when its own date call
+# fails, so such a stub is the hook's work rather than a person's, and saying
+# somebody has written in it accuses a person of an edit the hook made.
+stub_unknown_ts() {
+  local line
+  while IFS= read -r line; do
+    line="${line%$'\r'}"
+    case "$line" in
+      "- unknown  trigger="*"  transcript="*) return 0 ;;
+    esac
+  done < "$1"
+  return 1
+}
+
 # stub_versions <path>
 # Every version of the stub that was ever committed, oldest first, written one
 # per file so the bytes can be compared without going through a parser.
@@ -1148,11 +1229,23 @@ classify_journals() {
     # moves only when the owner has reviewed the report and asked for it.
     if [ "$hasvp" = 0 ]; then
       # Nothing in its history claims to be a pass. Either it predates the
-      # runners, or something else committed it.
-      if [ -z "$FIRST_VP" ] || rgit merge-base --is-ancestor "$new" "$FIRST_VP" >/dev/null 2>&1; then
+      # runners, or something committed it after they began without writing
+      # their trailers.
+      #
+      # The question is put to the commit that added it rather than to the
+      # newest one to touch it. Asking the newest meant a journal written before
+      # the runners existed and edited by hand afterwards was refused as though
+      # a sync plugin had raced the runner, and refusing took it out of LEGACY
+      # and so beyond --adopt-legacy for good. That is the same permanent
+      # exclusion this branch was moved earlier to prevent, one step further on.
+      # Sending it to LEGACY loosens nothing, because a legacy journal moves only
+      # after the owner has read the report and asked for it by name and blob.
+      if [ "$add" = - ]; then
+        refuse "$i" "no commit in the history is recorded as having added it, so nothing says where it came from"
+      elif [ -z "$FIRST_VP" ] || rgit merge-base --is-ancestor "$add" "$FIRST_VP" >/dev/null 2>&1; then
         C_VERDICT[$i]=LEGACY
       else
-        refuse "$i" "committed without a dream trailer, for example by a sync plugin that reached it before the runner did"
+        refuse "$i" "added after the runners began writing trailers but carrying none, for example by a sync plugin that reached it before the runner did"
       fi
       i=$((i + 1))
       continue
@@ -1177,7 +1270,19 @@ classify_journals() {
     # A name may be one day ahead of the commit that added it, because a pass
     # that starts before midnight and commits after it dates the journal by the
     # day it began. More than that means the name was chosen, not computed.
-    if date_day "$(fact "$path" 9)" && [ "${C_DAY[$i]}" -gt "$((DATE_DAY + 1))" ]; then
+    #
+    # A date that cannot be read refuses rather than skipping the comparison.
+    # The check used to sit inside the same condition as the comparison, so a
+    # missing committer date turned the test off and let the candidate through
+    # to ELIGIBLE with its name never checked against its commit. That is the
+    # same shape as the frontmatter gate that was closed this round, where
+    # silence was read as permission.
+    if ! date_day "$(fact "$path" 9)"; then
+      refuse "$i" "the history holds no committer date for the commit that added it, so its name cannot be checked against it"
+      i=$((i + 1))
+      continue
+    fi
+    if [ "${C_DAY[$i]}" -gt "$((DATE_DAY + 1))" ]; then
       refuse "$i" "date in the future, so it is not a journal of a pass that has run"
       i=$((i + 1))
       continue
@@ -1228,7 +1333,11 @@ classify_stubs() {
     v=1
     while [ "$v" -le "$nv" ]; do
       if ! stub_first_date "$SNAP_DIR/ver.$v" || ! stub_template_ok "$SNAP_DIR/ver.$v" "$SN_ID"; then
-        reason="not the hook's stub, so somebody has written in it"
+        if stub_unknown_ts "$SNAP_DIR/ver.$v"; then
+          reason="the compaction hook could not read the clock when it wrote an entry, so the word unknown stands where a time belongs and there is no last entry to date it by"
+        else
+          reason="not the hook's stub, so somebody has written in it"
+        fi
         break
       fi
       v=$((v + 1))
@@ -1324,8 +1433,16 @@ destination_rule() {
   # moves in one git mv, a single name in that state put every eligible journal
   # of the run back and ended it at exit 3 with a git line naming a file nobody
   # was archiving.
+  # The status is captured rather than discarded. An ls-files that fails leaves
+  # an empty list, every name then looks free, and the run falls back to the two
+  # tests this one was added to cover, which is the under-blocking direction. A
+  # check that cannot run says so rather than reporting nothing to find.
   : > "$SNAP_DIR/archidx"
-  rgit ls-files -z -- "$ARCH_REL/" 2>/dev/null | tr '\0' '\n' > "$SNAP_DIR/archidx"
+  if ! rgit ls-files -z -- "$ARCH_REL/" > "$SNAP_DIR/archidx.raw" 2>/dev/null; then
+    say "WARNING: the index could not be read for $ARCH_REL, so a destination staged there but on neither disk nor HEAD would not be seen. Any move that hits one is refused by git rather than by name."
+    : > "$SNAP_DIR/archidx.raw"
+  fi
+  tr '\0' '\n' < "$SNAP_DIR/archidx.raw" > "$SNAP_DIR/archidx"
   while [ "$i" -lt "$C_N" ]; do
     case "${C_VERDICT[$i]}" in
       ELIGIBLE|LEGACY)
@@ -1342,11 +1459,17 @@ destination_rule() {
           else
             C_VERDICT[$i]=QUIET
             QUIET_TAKEN=$((QUIET_TAKEN + 1))
-            # Named rather than only counted. A stub reaching here is already
-            # old enough to move, and it never will, because the archive will
-            # hold its name on every future run. Folded into a bare count it
-            # looked like an ordinary skip that a later run would resolve.
-            say "LEFT ALONE: $LOGS_REL/$name (the archive already holds this name, so the session resumed after an earlier run archived its stub. No run can archive this one under that name, so rename it by hand if it should leave the live tier.)"
+            # Named rather than only counted, but only once it is past
+            # RETENTION_DAYS. Nothing has asked this stub's age by the time this
+            # runs, so the line used to be printed for a session still being
+            # written to, every run, telling the owner to rename a file the hook
+            # was still appending to. Past the retention age it is worth one
+            # named line, because the archive will hold the name on every future
+            # run and a bare count reads like an ordinary skip a later run would
+            # resolve.
+            if [ "$((TODAY_DAY - ${C_DAY[$i]}))" -gt "$RETENTION_DAYS" ]; then
+              say "LEFT ALONE: $LOGS_REL/$name (the archive already holds this name, so no run can archive this one under it. Rename it by hand if it should leave the live tier.)"
+            fi
           fi
         fi
         ;;
@@ -1918,31 +2041,48 @@ head_src_blob() {
 # is needed. True when every source is back where HEAD has it and no destination
 # is left.
 put_back() {
-  local k=0 src dst ok=1 lock want
+  local k=0 src dst ok=1 lock want pb_kill=0 line=""
   index_lock_wait
   index_of_moves
   while [ "$k" -lt "${#SRCS[@]}" ]; do
     src="${SRCS[$k]}"
     dst="${DSTS[$k]}"
+    if [ "$pb_kill" -eq 1 ]; then
+      ok=0
+      break
+    fi
     if [ "$(idx_blob "$dst")" != - ]; then
       if [ -e "$ROOT/$src" ]; then
         # Never write over bytes at a path this run did not put there. A sync
         # client restoring the source from a copy edited on another machine is
         # exactly the case where -f would destroy work git has never seen, and
         # so could never give back.
-        say "PUT-BACK-BLOCKED: $src is on disk again, so $dst is left where it is rather than written over it."
+        say "PUT-BACK-BLOCKED: $src is on disk again, so $dst is left where it is rather than written over it. Both files are there. Compare them and keep the one you want at $src, then remove the other and run again."
         ok=0
       elif ! watched_git "$SNAP_DIR/mv.out" /dev/null mv -f -- "$dst" "$src"; then
-        # A sync client or an editor takes the index lock for a moment all the
-        # time, and one failure here costs a run that was a single retry away
-        # from clean, so the same wait and one more try the move itself gets.
-        lock="$(git_index_lock_path "$ROOT")"
-        if [ -n "$lock" ] && [ -e "$lock" ]; then
-          say "The index was locked by another git process, so the put-back waits for it."
-          index_lock_wait
-          watched_git "$SNAP_DIR/mv.out" /dev/null mv -f -- "$dst" "$src" || ok=0
-        else
+        # The stop result of this attempt is read before anything else runs, for
+        # the reason do_moves gives. A retry here would clear it, and retrying at
+        # all while that git may still be running would make this a second writer
+        # rather than a retry. do_moves was hardened against exactly this, and
+        # the guard has to be repeated here because the retry is repeated here.
+        if [ "${RUN_KILL_FAILED:-0}" -eq 1 ]; then
+          pb_kill=1
           ok=0
+        else
+          # A sync client or an editor takes the index lock for a moment all the
+          # time, and one failure here costs a run that was a single retry away
+          # from clean, so the same wait and one more try the move itself gets.
+          lock="$(git_index_lock_path "$ROOT")"
+          if [ -n "$lock" ] && [ -e "$lock" ]; then
+            say "The index was locked by another git process, so the put-back waits for it."
+            index_lock_wait
+            if ! watched_git "$SNAP_DIR/mv.out" /dev/null mv -f -- "$dst" "$src"; then
+              ok=0
+              [ "${RUN_KILL_FAILED:-0}" -eq 1 ] && pb_kill=1
+            fi
+          else
+            ok=0
+          fi
         fi
       fi
     elif [ -e "$ROOT/$dst" ] && [ ! -e "$ROOT/$src" ]; then
@@ -1957,7 +2097,21 @@ put_back() {
   # this run worked, and asking for the old blob would turn that ordinary commit
   # into a refusal no later run could ever clear, while telling the owner to
   # restore a journal they had deliberately deleted.
-  head_of_sources || ok=0
+  # A kill that may have left a git running settles the outcome on its own, and
+  # the tests below would be asking about a vault something else is still
+  # changing.
+  if [ "$pb_kill" -eq 1 ]; then
+    mark_kill_failed "$LOG" "${RUN_KILL_REPORT:-}"
+    write_recovery kill-failed
+    say "RECOVERY-NEEDED: a git command of the put-back was stopped and may still be running, so nothing further was touched. $STATE/retention-inflight says where each file belongs."
+    while IFS= read -r line; do say "    git: $line"; done < "$SNAP_DIR/git.err"
+    return 1
+  fi
+  if ! head_of_sources; then
+    write_recovery putback-unverified
+    say "RECOVERY-NEEDED: the files may be back, but HEAD could not be read to check them, so this run does not claim either way. $STATE/retention-inflight says where each file belongs."
+    return 1
+  fi
   k=0
   while [ "$k" -lt "${#SRCS[@]}" ]; do
     want="$(head_src_blob "${SRCS[$k]}")"
@@ -1981,6 +2135,7 @@ put_back() {
   fi
   write_recovery putback-failed
   say "RECOVERY-NEEDED: the vault could not be put back. $STATE/retention-inflight says where each file should be. Put them back, then run again."
+  while IFS= read -r line; do say "    git: $line"; done < "$SNAP_DIR/git.err"
   return 1
 }
 
