@@ -47,7 +47,13 @@ file_size() {
 new_uuid() {
   local hex i
   hex="$(od -An -tx1 -N16 /dev/urandom 2>/dev/null | tr -d ' \n')"
-  case "$hex" in *[!0-9a-f]*) hex="" ;; esac
+  # Spelled out rather than 0-9a-f. The digits are safe under any collation but
+  # a-f is a letter range, so a UTF-8 collation would let an upper case or an
+  # accented letter through the test that is meant to reject anything that is
+  # not hex. This library is sourced by vault-check.sh as well as by the three
+  # runners, and vault-check carries no locale pin, so the pattern has to stand
+  # on its own here.
+  case "$hex" in *[!0123456789abcdef]*) hex="" ;; esac
   if [ "${#hex}" -ne 32 ]; then
     hex=""
     for i in 1 2 3 4; do
