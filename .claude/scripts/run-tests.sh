@@ -5421,6 +5421,12 @@ ret_clean() {  # ret_clean <vault> - true when the index and tracked files match
   git -C "$1" diff --cached --quiet HEAD -- 20-projects 99-archive 2>/dev/null \
     && git -C "$1" diff --quiet -- 20-projects 99-archive 2>/dev/null
 }
+ret_settled() {  # ret_settled <vault> - the runner left nothing staged, and the archive matches HEAD
+  # For vaults that deliberately hold an edited or untracked file, where
+  # ret_clean would fail on the fixture rather than on anything the runner did.
+  git -C "$1" diff --cached --quiet HEAD -- 20-projects 99-archive 2>/dev/null \
+    && git -C "$1" diff --quiet -- 99-archive 2>/dev/null
+}
 
 # The base vault: the runner, its library, the checker, the archive folder and
 # one daily note, committed.
@@ -5432,7 +5438,15 @@ cp "$ROOT/.claude/scripts/lib/runner-common.sh" "$RETB/.claude/scripts/lib/" 2>/
 printf -- '---\ntier: short\ntype: daily\n---\n\nday\n' > "$RETB/10-daily/day.md"
 printf '.claude/logs/\n' > "$RETB/.gitignore"
 RET_OK=0
-if [ -n "$RET_REAL_GIT" ] && git init -q "$RETB" >/dev/null 2>&1 && ret_git "$RETB" add -A >/dev/null 2>&1 \
+# The identity goes in the repository itself, not only on the command line,
+# because the fixtures call the real commit_owned and that runs a plain git. A
+# machine with no global identity, or with signing switched on, would otherwise
+# fail every dream commit here and take the whole section with it.
+if [ -n "$RET_REAL_GIT" ] && git init -q "$RETB" >/dev/null 2>&1 \
+   && git -C "$RETB" config user.name suite >/dev/null 2>&1 \
+   && git -C "$RETB" config user.email suite@example.invalid >/dev/null 2>&1 \
+   && git -C "$RETB" config commit.gpgsign false >/dev/null 2>&1 \
+   && ret_git "$RETB" add -A >/dev/null 2>&1 \
    && ret_git "$RETB" commit -q -m init >/dev/null 2>&1; then
   RET_OK=1
 fi
@@ -5527,7 +5541,7 @@ ret_journal "$RA" "dream-${RET_DATE[97]}.md" "tier: medium"
 ret_human_commit "$RA" "vault backup" "20-projects/_logs/dream-${RET_DATE[97]}.md" >/dev/null 2>&1
 # A journal whose name is already taken in the archive.
 mkdir -p "$RA/99-archive/20-projects/_logs"
-cp"$RA/20-projects/_logs/dream-${RET_DATE[104]}.md" "$RA/99-archive/20-projects/_logs/dream-${RET_DATE[104]}.md"
+cp "$RA/20-projects/_logs/dream-${RET_DATE[104]}.md" "$RA/99-archive/20-projects/_logs/dream-${RET_DATE[104]}.md"
 ret_human_commit "$RA" "archived by hand" "99-archive/20-projects/_logs/dream-${RET_DATE[104]}.md" >/dev/null 2>&1
 # Uncommitted, edited and flagged journals, and an untracked stub.
 ret_journal "$RA" "dream-${RET_DATE[101]}.md" "tier: medium"
@@ -5599,7 +5613,7 @@ fi
 ra_msg="$(git -C "$RA" log -1 --format=%B)"
 if printf '%s\n' "$ra_msg" | grep -qx 'Vault-Pass: retention' \
    && [ "$(printf '%s\n' "$ra_msg" | grep -c '^Vault-Retention-Move: 20-projects/_logs/dream-.* -> 99-archive/20-projects/_logs/dream-')" = 3 ] \
-   && printf '%s\n' "$ra_msg" | grep -q '^Vault-Retention-Run: ' && ret_clean "$RA" \
+   && printf '%s\n' "$ra_msg" | grep -q '^Vault-Retention-Run: ' && ret_settled "$RA" \
    && [ ! -e "$RA.state/retention-inflight" ]; then
   ok "the moves are one commit with the retention trailers, the tree matches it, and no recovery file is left"
 else
@@ -5695,8 +5709,16 @@ RC="$(ret_copy legacy)"
 ret_journal "$RC" "dream-${RET_DATE[80]}.md" "tier: medium"
 ret_journal "$RC" "dream-${RET_DATE[81]}.md" "tier: medium"
 ret_human_commit "$RC" "old journals" "20-projects/_logs/dream-${RET_DATE[80]}.md" "20-projects/_logs/dream-${RET_DATE[81]}.md" >/dev/null 2>&1
-ret_journal "$RC" "dream-${RET_DATE[2]}.md" "tier: medium"
-ret_dream_commit "$RC" "dream-${RET_DATE[2]}.md"
+# Eight recent dates, so the newest-eight rule is not what holds the two old
+# journals back. Without them every date in the vault fits inside that rule,
+# nothing is ever legacy, and this case would prove nothing about adoption.
+rc_batch=""
+for rc_i in 2 3 4 5 6 7 8 9; do
+  ret_journal "$RC" "dream-${RET_DATE[$rc_i]}.md" "tier: medium"
+  rc_batch="$rc_batch dream-${RET_DATE[$rc_i]}.md"
+done
+# shellcheck disable=SC2086
+ret_dream_commit "$RC" $rc_batch
 rc_rc="$(ret_run "$RC")"
 rc_report="$(ls "$RC.state"/retention-legacy-*.txt 2>/dev/null | head -n 1)"
 rc_bad=''
@@ -5796,7 +5818,17 @@ fi
 RE0="$(ret_copy moves-base)"
 ret_journal "$RE0" "dream-${RET_DATE[70]}.md" "tier: medium"
 ret_journal "$RE0" "dream-${RET_DATE[71]}.md" "tier: medium"
-ret_dream_commit "$RE0" "dream-${RET_DATE[70]}.md" "dream-${RET_DATE[71]}.md"
+# Eight recent dates as well, so the two old journals are outside the newest
+# eight and are actually eligible. With only their own two dates in the vault
+# the keep rule holds both of them back, every case below moves nothing, and
+# each one passes for the wrong reason.
+re_batch=""
+for re_i in 2 3 4 5 6 7 8 9; do
+  ret_journal "$RE0" "dream-${RET_DATE[$re_i]}.md" "tier: medium"
+  re_batch="$re_batch dream-${RET_DATE[$re_i]}.md"
+done
+# shellcheck disable=SC2086
+ret_dream_commit "$RE0" "dream-${RET_DATE[70]}.md" "dream-${RET_DATE[71]}.md" $re_batch
 mkdir -p "$RET/fake-git"
 cat > "$RET/fake-git/git" <<'GIT_EOF'
 #!/usr/bin/env bash

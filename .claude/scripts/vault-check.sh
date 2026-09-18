@@ -232,6 +232,47 @@ if [ "$files" -eq 0 ]; then
   exit 1
 fi
 
+# What the retention pass has taken out of the live tiers. 99-archive is not a
+# content tier and nothing above scans it, so without this line a note that has
+# been archived simply disappears from every count this script prints, and there
+# is no way to tell an archived vault from one that lost notes. Reported on a
+# full scan only, because a scan of named notes is answering a different
+# question. It changes no count and no exit code.
+if [ "${#NAMED[@]}" -eq 0 ]; then
+  archived=0
+  if [ -d "$ROOT/99-archive" ]; then
+    archived="$(find "$ROOT/99-archive" -type f -name '*.md' 2>/dev/null | awk 'END { print NR + 0 }')"
+  fi
+  printf 'vault-check: 99-archive/ holds %s note(s) on disk.\n' "$archived"
+  # Replace refs off and hooks and fsmonitor out of the way, for the same reason
+  # the runners do it. The vault has to be the top of its own repository, or the
+  # history being read belongs to something else.
+  pass_line=""
+  if ! command -v git >/dev/null 2>&1; then
+    pass_line="The last retention pass is unknown (git is not installed)."
+  elif ! git_top="$(GIT_TERMINAL_PROMPT=0 git -C "$ROOT" rev-parse --show-toplevel 2>/dev/null)" || [ -z "$git_top" ]; then
+    pass_line="The last retention pass is unknown (this vault is not in a git repository)."
+  elif [ "$(cd "$git_top" 2>/dev/null && pwd -P)" != "$(cd "$ROOT" 2>/dev/null && pwd -P)" ]; then
+    pass_line="The last retention pass is unknown (this vault is not the top of its own repository)."
+  elif [ "$(GIT_TERMINAL_PROMPT=0 git -C "$ROOT" rev-parse --is-shallow-repository 2>/dev/null)" = true ]; then
+    pass_line="The last retention pass is unknown (this is a shallow clone, so the history is incomplete)."
+  else
+    last_pass="$(GIT_TERMINAL_PROMPT=0 GIT_NO_REPLACE_OBJECTS=1 git -C "$ROOT" \
+      -c core.fsmonitor=false -c log.showSignature=false \
+      log -1 --grep='^Vault-Pass: retention$' --format='%h%x09%cs' 2>/dev/null)"
+    if [ -z "$last_pass" ]; then
+      pass_line="No retention pass is in this repository's history."
+    else
+      moved="$(GIT_TERMINAL_PROMPT=0 GIT_NO_REPLACE_OBJECTS=1 git -C "$ROOT" \
+        -c core.fsmonitor=false -c log.showSignature=false \
+        log -1 --grep='^Vault-Pass: retention$' --format=%B 2>/dev/null \
+        | awk '/^Vault-Retention-Move: / { n++ } END { print n + 0 }')"
+      pass_line="The last retention pass ($(printf '%s' "$last_pass" | cut -f1) on $(printf '%s' "$last_pass" | cut -f2)) moved $moved note(s)."
+    fi
+  fi
+  printf 'vault-check: %s\n' "$pass_line"
+fi
+
 [ "$violations" -gt 0 ] && exit 1
 [ "$missing" -gt 0 ] && exit 1
 exit 0
