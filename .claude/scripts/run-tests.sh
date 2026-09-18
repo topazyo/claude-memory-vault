@@ -5840,6 +5840,48 @@ else
   bad "the stub rules are wrong --$rd_bad log: [$(tr '\n' '|' < "$(ret_log "$RD")" 2>/dev/null | cut -c1-900)]"
 fi
 
+# --- a stub the runner archived, then written again by the hook ---
+# The compaction hook rebuilds its stub from the template whenever the file is
+# gone, so a session that compacts again after a run archived its stub leaves a
+# second, shorter file at the same path. That path now carries a delete row in
+# the history, and reading every committed version of it asked git for a blob at
+# the commit that removed the file. The ask failed and the candidate was refused
+# with the words "one of its committed versions could not be read" when nothing
+# was unreadable and a commit had simply deleted it. The delete row never leaves
+# the history, so the refusal was permanent and its reason was false.
+#
+# Reading only the versions since that delete also settles what the second run
+# should say. The archive already holds the name, so the stub stays, and it
+# stays for the reason the collision branch gives rather than for an invented
+# one. That branch was argued to be unreachable in the round before this, and it
+# is reachable exactly here.
+#
+# The log is truncated between the two runs because the runner appends to one
+# file, and the first run archiving this very stub puts the words the second run
+# is judged on into it.
+RE_S="$(ret_copy restub)"
+ret_hook "$RE_S" resumed "${RET_DATE[90]}"
+ret_human_commit "$RE_S" "a stub of a session that compacted" "20-projects/_logs/compaction-resumed.md" >/dev/null 2>&1
+res_bad=''
+res_rc="$(ret_run "$RE_S")"
+[ "$res_rc" = 0 ] || res_bad="$res_bad first-rc:$res_rc"
+ret_moved "$RE_S" "compaction-resumed.md" || res_bad="$res_bad first-not-archived"
+: > "$(ret_log "$RE_S")"
+ret_hook "$RE_S" resumed "${RET_DATE[90]}"
+ret_human_commit "$RE_S" "the session came back and compacted again" "20-projects/_logs/compaction-resumed.md" >/dev/null 2>&1
+res_rc="$(ret_run "$RE_S")"
+[ "$res_rc" = 0 ] || res_bad="$res_bad second-rc:$res_rc"
+[ -f "$RE_S/20-projects/_logs/compaction-resumed.md" ] || res_bad="$res_bad fresh-stub-gone"
+[ -f "$RE_S/99-archive/20-projects/_logs/compaction-resumed.md" ] || res_bad="$res_bad archived-copy-gone"
+ret_says "$RE_S" "one of its committed versions could not be read" && res_bad="$res_bad false-reason"
+ret_says "$RE_S" "LEFT ALONE: 20-projects/_logs/compaction-resumed.md (the archive already holds this name" \
+  || res_bad="$res_bad no-collision-line"
+if [ -z "$res_bad" ]; then
+  ok "a stub written again after a run archived it is judged on the versions since that delete, not refused for one it could never read"
+else
+  bad "the re-created stub was misjudged --$res_bad log: [$(tr '\n' '|' < "$(ret_log "$RE_S")" 2>/dev/null | cut -c1-900)]"
+fi
+
 # --- failures while moving and committing ---
 # A base with one journal ready to move. Each case copies it and runs with a git
 # that fails in one chosen way.
@@ -5969,6 +6011,29 @@ if [ "$re_rc:$re_rc2:$re_rc3" = 71:78:0 ] && ret_moved "$re_v" "$RE_J1" && [ ! -
   ok "a put-back that fails exits 71 with a recovery file, the next run refuses with 78, and a run after the owner put it back proceeds"
 else
   bad "a failed put-back was not held back and released as it should be -- rc $re_rc then $re_rc2 then $re_rc3 recovery: $([ -e "$re_v.state/retention-inflight" ] && echo yes || echo no)"
+fi
+# The same again, except the owner commits something of their own while the
+# record is open. The put-back asks HEAD what a source should hold, and the
+# check that clears the record has to ask the same question or the two disagree
+# exactly when a run has died and the answer matters. It used to require HEAD to
+# be the commit the record named, so any commit at all during that window left a
+# record no later run could ever clear, and every retention pass stopped at a
+# tripwire until somebody deleted the file by hand. The unrelated commit touches
+# 10-daily, which this runner never reads, so nothing but HEAD has changed.
+re_rc="$(ret_case moves-putback-owner putback-fail)"
+re_v="$RET/moves-putback-owner"
+ret_git "$re_v" mv -- "99-archive/20-projects/_logs/$RE_J1" "99-archive/20-projects/_logs/$RE_J2" 20-projects/_logs/ >/dev/null 2>&1
+printf -- '---\ntier: short\ntype: daily\n---\n\nthe owner writes while the record is open\n' > "$re_v/10-daily/day.md"
+ret_human_commit "$re_v" "a note of the owner's own" "10-daily/day.md" >/dev/null 2>&1
+# Truncated so the words below are the second run's, not the first's.
+: > "$(ret_log "$re_v")"
+re_rc2="$(RET_STATE="$re_v.state" ret_run "$re_v")"
+if [ "$re_rc:$re_rc2" = 71:0 ] && [ ! -e "$re_v.state/retention-inflight" ] \
+   && ret_says "$re_v" "record of moves that did not happen" \
+   && ! ret_says "$re_v" "the vault does not yet show either outcome"; then
+  ok "a record of moves that did not happen is cleared against HEAD, so a commit of the owner's own during the window does not wedge it"
+else
+  bad "an owner commit during the recovery window was not handled -- rc $re_rc then $re_rc2 recovery: $([ -e "$re_v.state/retention-inflight" ] && echo yes || echo no) log: [$(tr '\n' '|' < "$(ret_log "$re_v")" 2>/dev/null | cut -c1-500)]"
 fi
 # TERM while the moves run puts them back, and the next run is not refused.
 re_v="$RET/moves-term"

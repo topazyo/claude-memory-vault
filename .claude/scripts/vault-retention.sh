@@ -1147,16 +1147,39 @@ stub_unknown_ts() {
 }
 
 # stub_versions <path>
-# Every version of the stub that was ever committed, oldest first, written one
-# per file so the bytes can be compared without going through a parser.
-# Prints how many there are.
+# Every version of the stub now at this path that was ever committed, oldest
+# first, written one per file so the bytes can be compared without going through
+# a parser. Prints how many there are.
+#
+# Only the versions since the last commit that deleted the path count. A stub
+# this runner has already archived leaves a delete row for its live path, and
+# the compaction hook writes a whole new stub there the next time that session
+# compacts, because it rebuilds the file from its template whenever the file is
+# gone. Reading across that delete asked git for a blob at a commit where the
+# path does not exist, which failed and refused the candidate with the words
+# "one of its committed versions could not be read" when nothing was unreadable
+# and a commit had simply deleted it. That refusal was permanent, because the
+# delete row stays in the history for good. Reading across it also chained a
+# fresh stub onto the archived one, where the prefix test could only ever say
+# the stub had been rewritten.
+#
+# Lower sequence numbers are newer, because the walk numbers commits in git log
+# order and that is newest first. So the most recent delete is the one with the
+# smallest sequence number, and the versions that belong to the file now on disk
+# are the ones below it.
 stub_versions() {
   local path="$1" n=0 sha
   rm -f "$SNAP_DIR"/ver.* 2>/dev/null
   while IFS= read -r sha; do
     n=$((n + 1))
     rgit cat-file blob "$sha:$path" > "$SNAP_DIR/ver.$n" 2>/dev/null || return 1
-  done < <(LC_ALL=C VER_P="$path" awk -F '\t' 'BEGIN { p = ENVIRON["VER_P"] } $4 == p { print $1 "\t" $2 }' "$SNAP_DIR/touch" \
+  done < <(LC_ALL=C VER_P="$path" awk -F '\t' '
+             BEGIN { p = ENVIRON["VER_P"]; dmin = 0; n = 0 }
+             $4 == p {
+               n++; s[n] = $1 + 0; h[n] = $2
+               if (substr($3, 1, 1) == "D" && (dmin == 0 || $1 + 0 < dmin)) dmin = $1 + 0
+             }
+             END { for (i = 1; i <= n; i++) if (dmin == 0 || s[i] < dmin) print s[i] "\t" h[i] }' "$SNAP_DIR/touch" \
              | LC_ALL=C sort -rn | cut -f2)
   printf '%s\n' "$n"
   return 0
@@ -2337,19 +2360,35 @@ recovery_check() {
     say "An earlier run left a record of moves that did land, in $headnow. The record is cleared and this run goes on."
     return 0
   fi
-  # Or nothing moved, everything is back at HEAD, and HEAD is where it was.
+  # Or nothing moved and every source is back where HEAD holds it.
+  #
+  # HEAD is asked rather than compared against the blob the record carries, and
+  # the branch no longer requires HEAD to be where it was. The put-back was
+  # moved onto HEAD in the round before this one and this is the same question
+  # asked by a later run, so the two have to agree or they disagree exactly when
+  # a run has died and the answer matters. Requiring HEAD to be unmoved meant an
+  # owner who committed anything at all while a run was dying left a record that
+  # no later run could clear, and the vault stops for a tripwire until somebody
+  # deletes it by hand. Nothing is loosened, because every question that branch
+  # asked is still asked, against HEAD now instead of against a remembered HEAD.
   index_of_moves
-  if [ "$headnow" = "$rhead" ]; then
-    local k=0
+  if head_of_sources; then
+    local k=0 want
     while [ "$k" -lt "${#SRCS[@]}" ]; do
-      [ "$(idx_blob "${SRCS[$k]}")" = "${MBLOBS[$k]}" ] || undone=0
-      # The source has to be on disk as well as in the index. A journal at
-      # neither path satisfied the other three tests, so the record was cleared
-      # and the run went on saying the vault was back where it started. HEAD is
-      # asked for here rather than a fresh lookup because this branch has
-      # already established that HEAD has not moved since the record was
-      # written, which makes the recorded blob HEAD's blob.
-      [ -e "$ROOT/${SRCS[$k]}" ] || undone=0
+      want="$(head_src_blob "${SRCS[$k]}")"
+      case "$want" in
+        -|'?')
+          # HEAD has to hold the source at its own path as a blob. A source HEAD
+          # does not have is a note at neither path, which is a loss and not a
+          # restoration, and clearing the record for it would let the next run
+          # move on over a missing note.
+          undone=0
+          ;;
+        *)
+          [ "$(idx_blob "${SRCS[$k]}")" = "$want" ] || undone=0
+          [ -e "$ROOT/${SRCS[$k]}" ] || undone=0
+          ;;
+      esac
       [ "$(idx_blob "${DSTS[$k]}")" = - ] || undone=0
       [ -e "$ROOT/${DSTS[$k]}" ] && undone=0
       k=$((k + 1))
