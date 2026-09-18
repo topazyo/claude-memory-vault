@@ -5940,6 +5940,48 @@ else
   bad "TERM during the moves left the vault held back or half moved -- rc $re_rc then $re_rc2"
 fi
 
+# --- the history walk refuses a marker byte rather than guessing at a boundary ---
+# A commit message may hold either of the two bytes that mark where a record and
+# where a message end. The walk is read a line at a time, so a message line
+# opening with the record marker is the shape that could be taken for the start
+# of the next commit, and a parse that guessed would judge every later candidate
+# from a table it had misread. Each shape refuses with its own reason, and the
+# first case here is the same fixture with an ordinary message, so a refusal
+# below cannot be the parser failing on everything.
+rp_bad=''
+ret_marker_commit() {  # ret_marker_commit <vault> <message> <relative path> - a commit whose message is kept byte for byte
+  ret_git "$1" add -- "$3" >/dev/null 2>&1 \
+    && ret_git "$1" commit -q --cleanup=verbatim -m "$2" -- "$3" >/dev/null 2>&1
+}
+RP="$(ret_copy parse-clean)"
+ret_journal "$RP" "dream-${RET_DATE[70]}.md" "tier: medium"
+ret_marker_commit "$RP" "an ordinary message" "20-projects/_logs/dream-${RET_DATE[70]}.md"
+[ "$(ret_run "$RP" --dry-run)" = 0 ] || rp_bad="$rp_bad clean-control"
+RP="$(ret_copy parse-message-marker)"
+ret_journal "$RP" "dream-${RET_DATE[70]}.md" "tier: medium"
+ret_marker_commit "$RP" "$(printf 'subject\037tail')" "20-projects/_logs/dream-${RET_DATE[70]}.md"
+[ "$(ret_run "$RP" --dry-run)" = 1 ] \
+  && ret_says "$RP" "holds something after the byte that ends its message" \
+  && ret_says "$RP" "A commit message or a file name holds one of the two bytes" \
+  || rp_bad="$rp_bad message-marker"
+RP="$(ret_copy parse-record-marker)"
+ret_journal "$RP" "dream-${RET_DATE[70]}.md" "tier: medium"
+ret_marker_commit "$RP" "$(printf 'subject\036tail')" "20-projects/_logs/dream-${RET_DATE[70]}.md"
+[ "$(ret_run "$RP" --dry-run)" = 1 ] \
+  && ret_says "$RP" "holds the record marker in the middle of a line" \
+  || rp_bad="$rp_bad record-marker-mid-line"
+RP="$(ret_copy parse-record-line)"
+ret_journal "$RP" "dream-${RET_DATE[70]}.md" "tier: medium"
+ret_marker_commit "$RP" "$(printf 'line one\n\036still the message')" "20-projects/_logs/dream-${RET_DATE[70]}.md"
+[ "$(ret_run "$RP" --dry-run)" = 1 ] \
+  && ret_says "$RP" "does not carry a date and an object name" \
+  || rp_bad="$rp_bad record-marker-opening-a-line"
+if [ -z "$rp_bad" ]; then
+  ok "a commit message holding either marker byte refuses the history walk, each shape with its own reason, while the same fixture with an ordinary message still reads"
+else
+  bad "the history walk did not refuse a marker byte as it should --$rp_bad"
+fi
+
 # --- paths that must stop the run before anything is judged ---
 rf_bad=''
 RF="$(ret_copy blocked-file)"

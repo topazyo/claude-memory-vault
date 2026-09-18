@@ -482,7 +482,7 @@ frontmatter_reason() {
 # held one and the parse cannot be trusted. Refusing beats guessing, because
 # every later judgement rests on this table.
 read_history() {
-  local hist_rc=0 hist_why="" line=""
+  local hist_rc=0 hist_why="" hist_code="" line=""
   : > "$SNAP_DIR/commits"
   : > "$SNAP_DIR/touch"
   : > "$SNAP_DIR/trailers"
@@ -496,53 +496,92 @@ read_history() {
       return 75
     fi
     say "ERROR: the history of $LOGS_REL could not be read. Refusing to run."
-    sed 4>/dev/null 1q /dev/null 2>/dev/null
     while IFS= read -r line; do say "    git: $line"; done < "$SNAP_DIR/git.err"
     return 1
   fi
-  # The two separator bytes are built by the shell and handed to awk as bytes,
-  # never written as \036 and \037 inside the program. The awk that macOS ships
-  # does not read an octal escape in a string the way gawk and mawk do, so
-  # RS = "\036" there left RS matching nothing, the whole history arrived as one
-  # record, and the run refused every candidate on a vault that was perfectly
-  # fine. It failed in the direction that archives nothing rather than the one
-  # that archives too much, which is why it took a CI run on macOS to see it.
-  # A value passed with -v is still read for escapes, so these hold no
-  # backslash, only the byte itself.
+  # The walk is read a line at a time, on the default record separator, and the
+  # two marker bytes are built inside awk with sprintf. Nothing here asks an awk
+  # to agree about an escape, about a record separator that is not a newline, or
+  # about a regular expression built from a control character.
   #
-  # This is the second time that interpreter has cost this repository a silent
-  # wrong answer. vault-check.sh says it reads [[:space:]] as the literal
-  # characters in the brackets, which would report every note as missing tier
-  # and type. Treat a construct only gawk and mawk are known to agree on as a
-  # defect waiting for a macOS run.
-  local rs us
-  rs="$(printf '\036')"
-  us="$(printf '\037')"
+  # That is not tidiness. Two runs of this parser have already been lost to the
+  # awk macOS ships. The first wrote RS = "\036" and that awk read the octal
+  # escape differently, so RS matched nothing and the whole history arrived as
+  # one record. The second built both bytes with printf in the shell and handed
+  # them over with -v, and that awk still reported a record holding one marker
+  # as holding six, while the same byte passed to gsub in the same program
+  # matched exactly once. The two cannot both be true of one string, so the
+  # mechanism was never established, only the failure. The answer was to stop
+  # depending on the answer.
+  #
+  # This is the third time that interpreter has cost this repository a wrong
+  # answer, and every one of them was silent. vault-check.sh records that it
+  # reads [[:space:]] as the literal characters in the brackets, which would
+  # report every note as missing tier and type. Treat any construct only gawk
+  # and mawk are known to agree on as a defect waiting for a macOS run, and
+  # prefer index, substr and a plain string compare to a regular expression
+  # wherever the choice exists.
+  #
+  # Each commit begins at a line whose first byte is the record marker. A
+  # message line may hold that byte too, so the line that opens a record must
+  # also carry a date and an object name, and a marker anywhere else refuses the
+  # walk rather than guessing at the boundary. Every later judgement rests on
+  # this table, so refusing beats guessing.
   LC_ALL=C awk -v commits="$SNAP_DIR/commits" -v touch="$SNAP_DIR/touch" -v trailers="$SNAP_DIR/trailers" \
-      -v perr="$SNAP_DIR/parse.err" -v rs="$rs" -v us="$us" '
-    # What the failing record looked like, with the bytes that would otherwise
-    # be invisible in a log spelled out. Without this the refusal below names a
-    # cause it has not established, which sends the reader to the wrong place.
-    function esc(s,   t) {
+      -v perr="$SNAP_DIR/parse.err" '
+    # What the offending line looked like, with the bytes that would otherwise
+    # be invisible in a log spelled out. Without this a refusal names a cause it
+    # has not established, which sends the reader to the wrong place. Written as
+    # a character walk so that no control byte reaches a regular expression.
+    function esc(s,   t, o, c, i, n) {
       t = substr(s, 1, 300)
-      gsub(rs, "<RS>", t)
-      gsub(us, "<US>", t)
-      gsub(/\n/, "<NL>", t)
-      gsub(/\r/, "<CR>", t)
-      gsub(/\t/, "<TAB>", t)
-      return t
+      n = length(t)
+      o = ""
+      for (i = 1; i <= n; i++) {
+        c = substr(t, i, 1)
+        if (c == RSB) o = o "<RS>"
+        else if (c == USB) o = o "<US>"
+        else if (c == "\t") o = o "<TAB>"
+        else if (c == "\r") o = o "<CR>"
+        else o = o c
+      }
+      return o
     }
-    BEGIN { RS = rs; err = 0; seq = 0; bad = "" }
-    {
-      if ($0 == "") next
-      nsep = split($0, part, us)
-      if (nsep != 2) { err = 1; bad = "record " (seq + 1) " split into " nsep " part(s) on the field separator, so it holds " (nsep - 1) " of them instead of one. Record starts: " esc($0); exit }
-      head = part[1]
-      names = part[2]
-      p = index(head, "\n")
-      if (p == 0) { err = 1; bad = "record " (seq + 1) " has no line break after the identity line. Record starts: " esc($0); exit }
-      nid = split(substr(head, 1, p - 1), idv, " ")
-      body = substr(head, p + 1)
+    # A git status field, one capital letter and then any digits.
+    function status_ok(s,   i, n, c) {
+      n = length(s)
+      if (n < 1) return 0
+      if (index("ABCDEFGHIJKLMNOPQRSTUVWXYZ", substr(s, 1, 1)) == 0) return 0
+      for (i = 2; i <= n; i++) {
+        c = substr(s, i, 1)
+        if (index("0123456789", c) == 0) return 0
+      }
+      return 1
+    }
+    # A line that opens a record, a short date and then one object name per
+    # commit and parent. A root commit has no parent, so two fields is the
+    # smallest shape that counts.
+    function identity_ok(s,   a, n, i, j, c, m) {
+      n = split(s, a, " ")
+      if (n < 2) return 0
+      if (length(a[1]) != 10) return 0
+      for (i = 1; i <= 10; i++) {
+        c = substr(a[1], i, 1)
+        if (i == 5 || i == 8) { if (c != "-") return 0 }
+        else if (index("0123456789", c) == 0) return 0
+      }
+      for (j = 2; j <= n; j++) {
+        m = length(a[j])
+        if (m != 40 && m != 64) return 0
+        for (i = 1; i <= m; i++) {
+          if (index("0123456789abcdef", substr(a[j], i, 1)) == 0) return 0
+        }
+      }
+      return 1
+    }
+    # One finished record into the three tables.
+    function flush(   i, nb, bl, ln, rest, sp, nid, idv, parents, cdate, sha, dreamn, anyvp, retn, nn, nl, t, st, ismerge) {
+      nid = split(head, idv, " ")
       # The committer date comes first, so the parents can be any number of
       # trailing fields without the parse having to count them.
       cdate = idv[1]
@@ -553,36 +592,119 @@ read_history() {
       retn = 0
       nb = split(body, bl, "\n")
       for (i = 1; i <= nb; i++) {
-        line = bl[i]
-        sub(/\r$/, "", line)
-        if (line == "Vault-Pass: dream") dreamn++
-        if (line == "Vault-Pass: retention") retn++
-        if (index(line, "Vault-Pass: ") == 1) anyvp++
-        if (index(line, "Vault-Pass-Blob: ") == 1) {
-          rest = substr(line, 18)
+        ln = bl[i]
+        if (substr(ln, length(ln), 1) == "\r") ln = substr(ln, 1, length(ln) - 1)
+        if (ln == "Vault-Pass: dream") dreamn++
+        if (ln == "Vault-Pass: retention") retn++
+        if (index(ln, "Vault-Pass: ") == 1) anyvp++
+        if (index(ln, "Vault-Pass-Blob: ") == 1) {
+          rest = substr(ln, 18)
           sp = index(rest, " ")
           if (sp > 1) printf "%s\t%s\t%s\n", sha, substr(rest, 1, sp - 1), substr(rest, sp + 1) >> trailers
         }
       }
       parents = ""
-      for (i = 3; i <= nid; i++) parents = parents (parents == "" ? "" : " ") idv[i]
+      for (i = 3; i <= nid; i++) {
+        if (parents == "") parents = idv[i]
+        else parents = parents " " idv[i]
+      }
       # The identity line is the date, the commit and then one field per parent,
       # so two parents make four fields. Counting from the wrong field here is
-      # silent: no commit is ever taken for a merge, and every merge check
-      # passes because it runs over an empty list.
-      printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", seq, sha, (nid > 3 ? 1 : 0), dreamn, anyvp, retn, cdate, parents >> commits
+      # silent, because no commit is ever taken for a merge and every merge
+      # check then passes over an empty list. Held in its own variable because a
+      # greater-than sign among the arguments of a print is a redirection to
+      # some awks, whatever the parentheses around it say.
+      ismerge = 0
+      if (nid > 3) ismerge = 1
+      printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", seq, sha, ismerge, dreamn, anyvp, retn, cdate, parents >> commits
       nn = split(names, nl, "\n")
       for (i = 1; i <= nn; i++) {
-        line = nl[i]
-        if (line == "") continue
-        t = index(line, "\t")
-        if (t == 0) { err = 2; bad = "commit " sha " has a name-status line with no tab: " esc(line); exit }
-        st = substr(line, 1, t - 1)
-        if (st !~ /^[A-Z][0-9]*$/) { err = 2; bad = "commit " sha " has a name-status line whose status field is not a letter and digits: " esc(line); exit }
-        printf "%s\t%s\t%s\t%s\n", seq, sha, st, substr(line, t + 1) >> touch
+        ln = nl[i]
+        if (ln == "") continue
+        t = index(ln, "\t")
+        if (t == 0) { err = 2; bad = "commit " sha " has a changed-file line with no tab. The line was: " esc(ln); return }
+        st = substr(ln, 1, t - 1)
+        if (!status_ok(st)) { err = 2; bad = "commit " sha " has a changed-file line whose status field is not a letter and digits. The line was: " esc(ln); return }
+        printf "%s\t%s\t%s\t%s\n", seq, sha, st, substr(ln, t + 1) >> touch
       }
     }
-    END { if (err) { printf "%s\t%s\n", err, bad > perr; close(perr); exit 1 } }' \
+    BEGIN {
+      RSB = sprintf("%c", 30)
+      USB = sprintf("%c", 31)
+      err = 0; seq = 0; bad = ""
+      inrec = 0; inmsg = 0
+      head = ""; body = ""; names = ""
+    }
+    {
+      line = $0
+      if (substr(line, 1, 1) == RSB) {
+        rest = substr(line, 2)
+        if (index(rest, RSB) > 0 || index(rest, USB) > 0) {
+          err = 1
+          bad = "a line beginning with the record marker holds a second marker byte. The line was: " esc(line)
+          exit
+        }
+        # A commit message line and a file name may begin with the record marker
+        # too, so a line opens a record only when it also carries a date and an
+        # object name. Without this the walk would take a message line for the
+        # start of the next commit and read the rest of the table from the wrong
+        # boundaries, which is the one failure here that would be silent.
+        if (!identity_ok(rest)) {
+          err = 3
+          bad = "a line begins with the record marker but does not carry a date and an object name. The line was: " esc(line)
+          exit
+        }
+        # A record whose message never ended would take its own changed-file
+        # lines for more message, and the commit would then look as though it
+        # touched nothing. git always writes the byte, so reaching this means the
+        # walk was cut short or the shape of what git writes has changed.
+        if (inrec && inmsg) {
+          err = 5
+          bad = "record " (seq + 1) " ended without the byte that ends its message. The line was: " esc(line)
+          exit
+        }
+        if (inrec) { flush(); if (err) exit }
+        inrec = 1; inmsg = 1; head = rest; body = ""; names = ""
+        next
+      }
+      if (!inrec) {
+        if (line == "") next
+        err = 4
+        bad = "the walk begins with a line that is not a record marker, so no record was ever opened. The line was: " esc(line)
+        exit
+      }
+      if (index(line, RSB) > 0) {
+        err = 1
+        bad = "record " (seq + 1) " holds the record marker in the middle of a line. The line was: " esc(line)
+        exit
+      }
+      p = index(line, USB)
+      if (p > 0) {
+        if (!inmsg) {
+          err = 1
+          bad = "record " (seq + 1) " holds the message marker after its message had already ended. The line was: " esc(line)
+          exit
+        }
+        if (substr(line, p + 1) != "") {
+          err = 1
+          bad = "record " (seq + 1) " holds something after the byte that ends its message. The line was: " esc(line)
+          exit
+        }
+        body = body substr(line, 1, p - 1)
+        inmsg = 0
+        next
+      }
+      if (inmsg) body = body line "\n"
+      else if (line != "") names = names line "\n"
+    }
+    END {
+      if (!err && inrec && inmsg) {
+        err = 5
+        bad = "the last record of the walk ended without the byte that ends its message"
+      }
+      if (!err && inrec) flush()
+      if (err) { printf "%s\t%s\n", err, bad > perr; close(perr); exit 1 }
+    }' \
     "$SNAP_DIR/walk" 2> "$SNAP_DIR/parse.stderr"
   hist_rc=$?
   if [ "$hist_rc" -ne 0 ]; then
@@ -593,10 +715,25 @@ read_history() {
     # standard error, which used to be discarded. Blaming the data for that was
     # telling the reader to go and look at commit messages that are fine.
     hist_why=""
-    [ -s "$SNAP_DIR/parse.err" ] && hist_why="$(LC_ALL=C cut -f2- < "$SNAP_DIR/parse.err")"
+    hist_code=""
+    if [ -s "$SNAP_DIR/parse.err" ]; then
+      hist_code="$(LC_ALL=C cut -f1 < "$SNAP_DIR/parse.err")"
+      hist_why="$(LC_ALL=C cut -f2- < "$SNAP_DIR/parse.err")"
+    fi
     if [ -n "$hist_why" ]; then
       say "ERROR: the history of $LOGS_REL could not be read unambiguously, so nothing was judged. $hist_why"
-      say "    A commit message or a file name holding one of the bytes that separate the records is the usual cause. Refusing beats guessing, because every later judgement rests on this table."
+      # The refusals are told apart here rather than sharing one line, because a
+      # message written for the wrong one sends the reader after bytes that are
+      # not there.
+      case "$hist_code" in
+        1) say "    A commit message or a file name holds one of the two bytes that mark where a record and its message end." ;;
+        2) say "    git named a changed file in a shape this parser does not recognise, which is not a commit message problem." ;;
+        3) say "    A line that opens a commit record does not carry a date and an object name, so a message line holding the record marker cannot be told from a real boundary." ;;
+        4) say "    The walk did not begin at a record marker at all. The awk running this parser may not be building the marker byte the way the walk was written with it." ;;
+        5) say "    A commit record ended before its message did, so the walk was cut short or git has changed the shape of what it writes." ;;
+        *) say "    The parser did not say which of its refusals this was, which is itself worth reporting." ;;
+      esac
+      say "    Refusing beats guessing, because every later judgement rests on this table."
     else
       say "ERROR: the history of $LOGS_REL could not be parsed, and the parser itself failed rather than refusing the data (awk exited $hist_rc). This is not a commit message problem."
       while IFS= read -r line; do say "    awk: $line"; done < "$SNAP_DIR/parse.stderr"
@@ -1604,24 +1741,53 @@ idx_blob() {
 # One git mv for the whole set. Returns 0 when every file is where it should be,
 # 3 when nothing moved in the end, and 71 when the way back could not be walked.
 do_moves() {
+  local line mv1_kf=0 kill_failed=0 timed_out=0
   make_dirs || return 3
   index_lock_wait
   if watched_git "$SNAP_DIR/mv.out" /dev/null mv -- "${SRCS[@]}" "$ARCH_REL/"; then
     printf 'done\n' >> "$STATE/retention-inflight" 2>/dev/null
     return 0
   fi
+  # run_with_watchdog clears its stop result at the top of every call, so what
+  # the first attempt did has to be taken here. A retry erases it, and a second
+  # git mv that fails in milliseconds against the lock a half stopped first one
+  # left behind would then report a clean stop that never happened.
+  mv1_kf="${RUN_KILL_FAILED:-0}"
+  kill_failed="$mv1_kf"
+  timed_out="${RUN_TIMED_OUT:-0}"
   # git will not touch the index while another process holds its lock, and a
   # sync client or an editor takes it for a moment all the time. That is worth
-  # one wait and one more try before anything is undone.
-  if [ -n "$(git_index_lock_path "$ROOT")" ] && [ -e "$(git_index_lock_path "$ROOT")" ]; then
+  # one wait and one more try before anything is undone. Not while the first
+  # attempt may still be running, though, because a second git mv over the top
+  # of it is a second writer rather than a retry.
+  if [ "$mv1_kf" -eq 0 ] \
+     && [ -n "$(git_index_lock_path "$ROOT")" ] && [ -e "$(git_index_lock_path "$ROOT")" ]; then
     say "The index was locked by another git process, so the move waits for it."
     index_lock_wait
     if watched_git "$SNAP_DIR/mv.out" /dev/null mv -- "${SRCS[@]}" "$ARCH_REL/"; then
       printf 'done\n' >> "$STATE/retention-inflight" 2>/dev/null
       return 0
     fi
+    [ "${RUN_KILL_FAILED:-0}" -eq 1 ] && kill_failed=1
+    [ "${RUN_TIMED_OUT:-0}" -eq 1 ] && timed_out=1
   fi
-  say "PARTIAL: the move failed, so the vault is being put back to what HEAD holds."
+  # A git mv that was stopped and may still be running is the one failure where
+  # putting back is the wrong answer. Whatever it goes on to do would land on
+  # top of the put-back, and the record saying where each file belongs would
+  # already have been deleted, so the vault would be left moved and staged with
+  # nothing to say so. settle_outcome refuses for the same reason.
+  if [ "$kill_failed" -eq 1 ]; then
+    mark_kill_failed "$LOG" "${RUN_KILL_REPORT:-}"
+    write_recovery kill-failed
+    say "RECOVERY-NEEDED: the move was stopped and a git process of it may still be running, so nothing is put back. $STATE/retention-inflight says what was being moved."
+    MOVING=0
+    return 71
+  fi
+  if [ "$timed_out" -eq 1 ]; then
+    say "PARTIAL: the move did not finish within ${GIT_TIMEOUT}s and was stopped, so the vault is being put back to what HEAD holds."
+  else
+    say "PARTIAL: the move failed, so the vault is being put back to what HEAD holds."
+  fi
   while IFS= read -r line; do say "    git: $line"; done < "$SNAP_DIR/git.err"
   put_back && return 3
   return 71

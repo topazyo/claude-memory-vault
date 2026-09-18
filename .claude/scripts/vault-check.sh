@@ -257,14 +257,19 @@ if [ "${#NAMED[@]}" -eq 0 ]; then
   elif [ "$(GIT_TERMINAL_PROMPT=0 git -C "$ROOT" rev-parse --is-shallow-repository 2>/dev/null)" = true ]; then
     pass_line="The last retention pass is unknown (this is a shallow clone, so the history is incomplete)."
   else
+    # grep.patternType is pinned because --grep honours it from the user config,
+    # and the anchors in the pattern are load bearing. Somebody carrying
+    # grep.patternType=fixed in their own git config would otherwise be told
+    # that no retention pass is in the history straight after a pass ran, which
+    # is a wrong answer in the reassuring direction.
     last_pass="$(GIT_TERMINAL_PROMPT=0 GIT_NO_REPLACE_OBJECTS=1 git -C "$ROOT" \
-      -c core.fsmonitor=false -c log.showSignature=false \
+      -c core.fsmonitor=false -c log.showSignature=false -c grep.patternType=basic \
       log -1 --grep='^Vault-Pass: retention$' --format='%h%x09%cs' 2>/dev/null)"
     if [ -z "$last_pass" ]; then
       pass_line="No retention pass is in this repository's history."
     else
       moved="$(GIT_TERMINAL_PROMPT=0 GIT_NO_REPLACE_OBJECTS=1 git -C "$ROOT" \
-        -c core.fsmonitor=false -c log.showSignature=false \
+        -c core.fsmonitor=false -c log.showSignature=false -c grep.patternType=basic \
         log -1 --grep='^Vault-Pass: retention$' --format=%B 2>/dev/null \
         | awk '/^Vault-Retention-Move: / { n++ } END { print n + 0 }')"
       pass_line="The last retention pass ($(printf '%s' "$last_pass" | cut -f1) on $(printf '%s' "$last_pass" | cut -f2)) moved $moved note(s)."
