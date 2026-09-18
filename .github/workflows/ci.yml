@@ -28,9 +28,21 @@ jobs:
     # six-hour GitHub default. The suite takes a minute on Linux and macOS and
     # several on Windows, where process start-up is slow. Windows was already
     # using 18.5 of 30 minutes before the retention controls, and those build
-    # roughly fifteen more git repositories, so the limit is 45 to leave the
+    # roughly fifteen more git repositories, so the limit was 45 to leave the
     # margin a hung step still needs to be caught in.
-    timeout-minutes: 45
+    #
+    # Raised to 90 because the controls that blind ps, so that a stop is
+    # recorded as unknown, cost almost nothing on Linux and a great deal on
+    # Windows. Measured on this branch rather than guessed. The commit before
+    # the first of them ran Windows in 33m04s and ubuntu in 5m27s. The commit
+    # that added it ran ubuntu in 5m04s, no change at all, and Windows passed 55
+    # minutes and was cancelled against the 45 limit. The cause is that a blind
+    # ps sends the Windows stop down its PowerShell fallback, which this
+    # repository already records as sometimes taking over a minute per call.
+    # The margin for catching a genuinely hung step is now wider than it was,
+    # which is the cost of covering that branch on the platform where it is
+    # slowest to exercise.
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
