@@ -475,9 +475,12 @@ frontmatter_reason() {
 # held one and the parse cannot be trusted. Refusing beats guessing, because
 # every later judgement rests on this table.
 read_history() {
+  local hist_rc=0 hist_why="" line=""
   : > "$SNAP_DIR/commits"
   : > "$SNAP_DIR/touch"
   : > "$SNAP_DIR/trailers"
+  : > "$SNAP_DIR/parse.err"
+  : > "$SNAP_DIR/parse.stderr"
   if ! watched_git "$SNAP_DIR/walk" /dev/null \
       log --full-history --no-renames --parents --encoding=UTF-8 --date=short \
       --format='%x1e%cd %H %P%n%B%x1f' --name-status -- "$LOGS_REL/"; then
@@ -490,15 +493,29 @@ read_history() {
     while IFS= read -r line; do say "    git: $line"; done < "$SNAP_DIR/git.err"
     return 1
   fi
-  LC_ALL=C awk -v commits="$SNAP_DIR/commits" -v touch="$SNAP_DIR/touch" -v trailers="$SNAP_DIR/trailers" '
-    BEGIN { RS = "\036"; err = 0; seq = 0 }
+  LC_ALL=C awk -v commits="$SNAP_DIR/commits" -v touch="$SNAP_DIR/touch" -v trailers="$SNAP_DIR/trailers" \
+      -v perr="$SNAP_DIR/parse.err" '
+    # What the failing record looked like, with the bytes that would otherwise
+    # be invisible in a log spelled out. Without this the refusal below names a
+    # cause it has not established, which sends the reader to the wrong place.
+    function esc(s,   t) {
+      t = substr(s, 1, 300)
+      gsub("\036", "<RS>", t)
+      gsub("\037", "<US>", t)
+      gsub("\n", "<NL>", t)
+      gsub("\r", "<CR>", t)
+      gsub("\t", "<TAB>", t)
+      return t
+    }
+    BEGIN { RS = "\036"; err = 0; seq = 0; bad = "" }
     {
       if ($0 == "") next
-      if (split($0, part, "\037") != 2) { err = 1; exit }
+      nsep = split($0, part, "\037")
+      if (nsep != 2) { err = 1; bad = "record " (seq + 1) " split into " nsep " part(s) on the field separator, so it holds " (nsep - 1) " of them instead of one. Record starts: " esc($0); exit }
       head = part[1]
       names = part[2]
       p = index(head, "\n")
-      if (p == 0) { err = 1; exit }
+      if (p == 0) { err = 1; bad = "record " (seq + 1) " has no line break after the identity line. Record starts: " esc($0); exit }
       nid = split(substr(head, 1, p - 1), idv, " ")
       body = substr(head, p + 1)
       # The committer date comes first, so the parents can be any number of
@@ -534,16 +551,33 @@ read_history() {
         line = nl[i]
         if (line == "") continue
         t = index(line, "\t")
-        if (t == 0) { err = 2; exit }
+        if (t == 0) { err = 2; bad = "commit " sha " has a name-status line with no tab: " esc(line); exit }
         st = substr(line, 1, t - 1)
-        if (st !~ /^[A-Z][0-9]*$/) { err = 2; exit }
+        if (st !~ /^[A-Z][0-9]*$/) { err = 2; bad = "commit " sha " has a name-status line whose status field is not a letter and digits: " esc(line); exit }
         printf "%s\t%s\t%s\t%s\n", seq, sha, st, substr(line, t + 1) >> touch
       }
     }
-    END { if (err) exit 1 }' "$SNAP_DIR/walk" || {
-      say "ERROR: the history of $LOGS_REL could not be read unambiguously, because a commit message or a file name holds one of the characters that separate the records. Refusing to run."
-      return 1
-    }
+    END { if (err) { printf "%s\t%s\n", err, bad > perr; close(perr); exit 1 } }' \
+    "$SNAP_DIR/walk" 2> "$SNAP_DIR/parse.stderr"
+  hist_rc=$?
+  if [ "$hist_rc" -ne 0 ]; then
+    # Two different failures reach here and they need different answers, so the
+    # log says which one it was. An awk that refused the data writes the record
+    # it stopped on. An awk that could not run at all, or could not open one of
+    # its output files, writes nothing there and leaves its own message on
+    # standard error, which used to be discarded. Blaming the data for that was
+    # telling the reader to go and look at commit messages that are fine.
+    hist_why=""
+    [ -s "$SNAP_DIR/parse.err" ] && hist_why="$(LC_ALL=C cut -f2- < "$SNAP_DIR/parse.err")"
+    if [ -n "$hist_why" ]; then
+      say "ERROR: the history of $LOGS_REL could not be read unambiguously, so nothing was judged. $hist_why"
+      say "    A commit message or a file name holding one of the bytes that separate the records is the usual cause. Refusing beats guessing, because every later judgement rests on this table."
+    else
+      say "ERROR: the history of $LOGS_REL could not be parsed, and the parser itself failed rather than refusing the data (awk exited $hist_rc). This is not a commit message problem."
+      while IFS= read -r line; do say "    awk: $line"; done < "$SNAP_DIR/parse.stderr"
+    fi
+    return 1
+  fi
   # The oldest commit carrying any Vault-Pass trailer. The walk is newest first,
   # so the last such line is the oldest one.
   FIRST_VP="$(LC_ALL=C awk -F '\t' '$5 > 0 { s = $2 } END { if (s != "") print s }' "$SNAP_DIR/commits")"
