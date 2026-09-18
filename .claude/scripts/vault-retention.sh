@@ -1176,10 +1176,14 @@ stub_versions() {
   done < <(LC_ALL=C VER_P="$path" awk -F '\t' '
              BEGIN { p = ENVIRON["VER_P"]; dmin = 0; n = 0 }
              $4 == p {
-               n++; s[n] = $1 + 0; h[n] = $2
+               # The sequence number is kept as the field it came in as well as
+               # as a number. Printing the number would put it through CONVFMT
+               # on its way into the string, and the six significant digits that
+               # spells would render a seventh-digit sequence in exponent form.
+               n++; s[n] = $1; v[n] = $1 + 0; h[n] = $2
                if (substr($3, 1, 1) == "D" && (dmin == 0 || $1 + 0 < dmin)) dmin = $1 + 0
              }
-             END { for (i = 1; i <= n; i++) if (dmin == 0 || s[i] < dmin) print s[i] "\t" h[i] }' "$SNAP_DIR/touch" \
+             END { for (i = 1; i <= n; i++) if (dmin == 0 || v[i] < dmin) print s[i] "\t" h[i] }' "$SNAP_DIR/touch" \
              | LC_ALL=C sort -rn | cut -f2)
   printf '%s\n' "$n"
   return 0
