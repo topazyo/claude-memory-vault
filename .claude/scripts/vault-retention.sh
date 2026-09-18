@@ -102,6 +102,53 @@ say() {  # say <text> - one timestamped line in the log
   printf '[%s] %s\n' "$(ts)" "$1" >> "$LOG"
 }
 
+# safe_name <name> - a name with its invisible bytes spelled out, for a log line
+# One line of this log is written about a string already known to hold a control
+# character, and say is a bare printf. A file called dream-2020-01-01.md
+# followed by a newline and then a line of the author's choosing therefore wrote
+# that line into the log whole, in the shape this runner writes an OK line, and
+# the log is the only account an unattended scheduled pass leaves of what it
+# did. A carriage return or an escape sequence in the same place erases or
+# rewrites what came before when the file is read with cat. ext4 and APFS both
+# allow such names and the vault is explicitly cross-platform, so the answer is
+# to spell the bytes out rather than to assume the name cannot exist.
+#
+# The rendering follows the parser's own esc, which turns the bytes it meets
+# into <TAB> and <CR> and the two record markers, with <LF> added here because a
+# name can hold one where a parsed line never can. It is a character walk with
+# the control bytes built by sprintf, so no control byte crosses the shell
+# boundary or reaches a regular expression, which is the rule the rest of this
+# file follows after three wrong answers from that interpreter.
+# It keeps a spelled-out set and escapes everything else, rather than escaping a
+# list of control bytes and keeping everything else. A denylist here would have
+# exactly the hole the [[:cntrl:]] filter above has. Under the LC_ALL=C this
+# file now pins, that class is only ASCII 0x00 to 0x1f and 0x7f, so the two
+# bytes of U+0085 are neither refused by the filter nor escaped by a denylist,
+# and a C1 control reaches a terminal that acts on it. Measured rather than
+# reasoned about, the same name matches [[:cntrl:]] under C.UTF-8 and under
+# en_US.UTF-8 and survives it under C.
+#
+# The less-than sign is left out of the kept set on purpose, so that a name
+# holding one cannot be mistaken for one of these escapes.
+safe_name() {
+  SAFE_N="$1" LC_ALL=C awk 'BEGIN {
+    for (i = 32; i < 127; i++) if (i != 60) keep = keep sprintf("%c", i)
+    for (i = 1; i < 256; i++) hex[sprintf("%c", i)] = sprintf("%02X", i)
+    s = substr(ENVIRON["SAFE_N"], 1, 300)
+    n = length(s)
+    o = ""
+    for (i = 1; i <= n; i++) {
+      c = substr(s, i, 1)
+      if (c == "\n") o = o "<LF>"
+      else if (c == "\r") o = o "<CR>"
+      else if (c == "\t") o = o "<TAB>"
+      else if (index(keep, c) > 0) o = o c
+      else o = o "<" hex[c] ">"
+    }
+    print o
+  }'
+}
+
 on_exit() {
   [ -n "$SNAP_DIR" ] && rm -rf "$SNAP_DIR"
   run_lock_release
@@ -401,7 +448,7 @@ enumerate_candidates() {
     # the run, so it is judged here and left out.
     case "$n" in
       *[[:cntrl:]]*)
-        say "REFUSED: $LOGS_REL/$n (the name holds a control character, so it is neither a journal name nor a stub name)"
+        say "REFUSED: $LOGS_REL/$(safe_name "$n") (the name holds a control character, so it is neither a journal name nor a stub name)"
         REFUSED_EARLY=$((REFUSED_EARLY + 1))
         continue
         ;;
@@ -608,6 +655,22 @@ read_history() {
       }
       return o
     }
+    # The commit an open record belongs to, for a refusal that can name it.
+    # head is the identity line of the record being read, a short date and then
+    # one object name per commit and parent, so the second field is the commit
+    # itself. A refusal that names only the offending line sends the reader to a
+    # folder and a byte rather than to the commit that carries it, and this
+    # refusal stops the whole folder until the history changes, so the commit is
+    # the one thing the reader needs. It is spoken only where the answer is not
+    # ambiguous. A line that begins with the record marker but carries no
+    # identity might be a message line of the open record or a boundary git
+    # meant to write, and those two belong to different commits, so that refusal
+    # names none.
+    function at_commit(   idv) {
+      if (!inrec || head == "") return ""
+      split(head, idv, " ")
+      return (idv[2] == "" ? "" : " The commit is " idv[2] ".")
+    }
     # A git status field, one capital letter and then any digits.
     function status_ok(s,   i, n, c) {
       n = length(s)
@@ -733,7 +796,7 @@ read_history() {
         # walk was cut short or the shape of what git writes has changed.
         if (inrec && inmsg) {
           err = 5
-          bad = "record " (seq + 1) " ended without the byte that ends its message. The line was: " esc(line)
+          bad = "record " (seq + 1) " ended without the byte that ends its message. The line was: " esc(line) at_commit()
           exit
         }
         if (inrec) { flush(); if (err) exit }
@@ -748,19 +811,19 @@ read_history() {
       }
       if (index(line, RSB) > 0) {
         err = 1
-        bad = "record " (seq + 1) " holds the record marker in the middle of a line. The line was: " esc(line)
+        bad = "record " (seq + 1) " holds the record marker in the middle of a line. The line was: " esc(line) at_commit()
         exit
       }
       p = index(line, USB)
       if (p > 0) {
         if (!inmsg) {
           err = 1
-          bad = "record " (seq + 1) " holds the message marker after its message had already ended. The line was: " esc(line)
+          bad = "record " (seq + 1) " holds the message marker after its message had already ended. The line was: " esc(line) at_commit()
           exit
         }
         if (substr(line, p + 1) != "") {
           err = 1
-          bad = "record " (seq + 1) " holds something after the byte that ends its message. The line was: " esc(line)
+          bad = "record " (seq + 1) " holds something after the byte that ends its message. The line was: " esc(line) at_commit()
           exit
         }
         body = body substr(line, 1, p - 1)
@@ -812,6 +875,13 @@ read_history() {
         *) say "    The parser did not say which of its refusals this was, which is itself worth reporting." ;;
       esac
       say "    Refusing beats guessing, because every later judgement rests on this table."
+      # The blast radius, said plainly, because nothing else says it. This is
+      # not one note held back. Nothing in the folder is judged while it stands,
+      # --adopt-legacy and --dry-run are refused with it, and the byte need only
+      # have been in the history once. Deleting the file whose name carried it
+      # does not help, because the commit that added it still touches the folder
+      # and the walk still reads its changed-file row.
+      say "    Nothing in $LOGS_REL is judged while this stands, so retention is stopped for the whole folder rather than for one note, and --adopt-legacy and --dry-run are refused with it. Deleting a file whose name carried the byte does not clear it, because the commit that added the file is still in the folder's history. Only changing the history clears it."
     else
       say "ERROR: the history of $LOGS_REL could not be parsed, and the parser itself failed rather than refusing the data (awk exited $hist_rc). This is not a commit message problem."
       while IFS= read -r line; do say "    awk: $line"; done < "$SNAP_DIR/parse.stderr"
@@ -918,7 +988,14 @@ blob_run() {
 # blob_of <rev> <path>
 # The blob recorded for one question, or - when the path is not there.
 blob_of() {
-  LC_ALL=C awk -F '\t' -v k="$1:$2" '$1 == k { print $2; found = 1; exit } END { if (!found) print "-" }' "$SNAP_DIR/blobs"
+  # ENVIRON rather than -v, matching the six other call sites that route a path
+  # this way. awk performs escape processing on a -v value, so a path holding a
+  # backslash arrives as something else and the comparison below can never
+  # match, which answers - for a file that is there. Every path that reaches it
+  # today is refused by a name rule first, so this fails closed, but merge_ok
+  # reads a pair of - answers as "no merge decided this content", and that is a
+  # silent pass waiting for the first name rule that admits one more character.
+  LC_ALL=C BLOB_K="$1:$2" awk -F '\t' 'BEGIN { k = ENVIRON["BLOB_K"] } $1 == k { print $2; found = 1; exit } END { if (!found) print "-" }' "$SNAP_DIR/blobs"
 }
 
 # --------------------------------------------------------- journal history --
@@ -974,9 +1051,15 @@ fact() {
 # second half is what a squash or an amend cannot fake, because the trailers it
 # inherits describe a commit that no longer exists.
 trailer_check() {
-  LC_ALL=C awk -F '\t' -v sha="$1" -v path="$2" -v blob="$3" \
+  # sha, path and blob come through ENVIRON for the reason blob_of gives. The
+  # two file names stay on -v, because they are built here out of SNAP_DIR and
+  # hold no candidate-controlled bytes.
+  LC_ALL=C TC_SHA="$1" TC_PATH="$2" TC_BLOB="$3" awk -F '\t' \
     -v tf="$SNAP_DIR/trailers" -v chf="$SNAP_DIR/changed" '
     BEGIN {
+      sha = ENVIRON["TC_SHA"]
+      path = ENVIRON["TC_PATH"]
+      blob = ENVIRON["TC_BLOB"]
       mine = 0
       while ((getline l < tf) > 0) {
         split(l, t, "\t")
@@ -1567,7 +1650,12 @@ log_verdicts() {
       # printed nothing, so one untracked stub was reported twice and the owner
       # was sent to hunt for a refusal that had never been made.
       QUIET)    q=$((q + 1)) ;;
-      *)        r=$((r + 1)); [ "${C_VERDICT[$i]}" = REFUSED ] && say "REFUSED: $p (${C_REASON[$i]})" ;;
+      # The refused arm is the only one a name the validators rejected can
+      # reach, and it is the second place such a name is printed. The arms above
+      # take names that passed journal_name_ok or stub_name_ok, so they hold
+      # nothing to escape, and escaping them would start an awk for every
+      # candidate of every run rather than for a refusal.
+      *)        r=$((r + 1)); [ "${C_VERDICT[$i]}" = REFUSED ] && say "REFUSED: $LOGS_REL/$(safe_name "${C_NAME[$i]}") (${C_REASON[$i]})" ;;
     esac
     i=$((i + 1))
   done
@@ -1839,7 +1927,20 @@ adopt_legacy() {
     say "USAGE: the report $report is not a readable file."
     return 64
   fi
-  LC_ALL=C sed -e 's/\r$//' "$report" 2>/dev/null | LC_ALL=C awk '!/^#/' > "$SNAP_DIR/adopt.body"
+  # tr rather than sed, because \r in a sed expression is a GNU extension and
+  # nothing else. BSD sed, which is what both macOS jobs and every owner on a
+  # Mac run, reads it as the letter r, so s/\r$// strips a trailing r there and
+  # leaves the carriage return in place. A report saved with CRLF line endings,
+  # which is what any Windows editor writes and what a vault synced between two
+  # machines can easily carry, then hashes differently from the list this runner
+  # wrote, and adopt_legacy refuses it with a line accusing the owner of having
+  # changed it. The plain run beside it finds the same hash already known and
+  # points the owner back at the same file, so the two messages loop and no
+  # fresh report is ever written. Deleting every carriage return rather than
+  # only a trailing one is not a widening, because a body line is a path and a
+  # blob, enumerate_candidates refuses any name holding a control character, and
+  # the blob is hex. This is the form the library already uses.
+  LC_ALL=C tr -d '\r' < "$report" 2>/dev/null | LC_ALL=C awk '!/^#/' > "$SNAP_DIR/adopt.body"
   if ! LC_ALL=C sort -c "$SNAP_DIR/adopt.body" 2>/dev/null; then
     say "REPORT-REFUSED: the list in $report is not in the order this runner writes it, so it has been changed since."
     return 2
@@ -2012,8 +2113,22 @@ EOF
 # index holds. Written as <path><TAB><blob>.
 index_of_moves() {
   : > "$SNAP_DIR/idx"
-  rgit ls-files -s -z -- "${SRCS[@]}" "${DSTS[@]}" 2>/dev/null \
-    | tr '\0' '\n' \
+  # The status of the question is kept rather than discarded. This used to end
+  # in an unconditional return 0, with the error swallowed by 2>/dev/null and
+  # the exit status taken from the last stage of a pipeline, so an index that
+  # could not be read was indistinguishable from an index holding nothing.
+  # Every caller reads that as no destination being staged, and the put-back
+  # answers it by moving files with a plain mv and telling git nothing, which
+  # leaves the work tree right and the index wrong and reports that the vault
+  # could not be put back when the files are in fact back. No later run can
+  # clear it either, because recovery_check asks the same unanswerable question
+  # and gets the same answer, so the vault stops until a person runs git reset
+  # by hand. The precedent for keeping the status is destination_rule, which
+  # captures it into its own file and says so when the read fails.
+  if ! rgit ls-files -s -z -- "${SRCS[@]}" "${DSTS[@]}" > "$SNAP_DIR/idx.raw" 2>/dev/null; then
+    return 1
+  fi
+  tr '\0' '\n' < "$SNAP_DIR/idx.raw" \
     | LC_ALL=C awk '{ t = index($0, "\t"); if (t > 0) { split(substr($0, 1, t - 1), f, " "); printf "%s\t%s\n", substr($0, t + 1), f[2] } }' \
     > "$SNAP_DIR/idx"
   return 0
@@ -2146,7 +2261,15 @@ put_back() {
     return 1
   fi
   index_lock_wait
-  index_of_moves
+  # Nothing is undone until the index has been read. An index that could not be
+  # read leaves every destination looking unstaged, which sends each pair down
+  # the branch below that moves the file with a plain mv and never tells git,
+  # and that is the one outcome here no later run can resolve.
+  if ! index_of_moves; then
+    write_recovery putback-unreadable-index
+    say "RECOVERY-NEEDED: the index could not be read, so nothing is put back rather than putting files back where git would not see them. $STATE/retention-inflight says where each file belongs."
+    return 1
+  fi
   while [ "$k" -lt "${#SRCS[@]}" ]; do
     src="${SRCS[$k]}"
     dst="${DSTS[$k]}"
@@ -2193,16 +2316,13 @@ put_back() {
     fi
     k=$((k + 1))
   done
-  drop_made_dirs
-  index_of_moves
-  # Judged against what HEAD holds now, not against the blob read before the
-  # move. The owner may have committed an edit or a deletion of a source while
-  # this run worked, and asking for the old blob would turn that ordinary commit
-  # into a refusal no later run could ever clear, while telling the owner to
-  # restore a journal they had deliberately deleted.
   # A kill that may have left a git running settles the outcome on its own, and
   # the tests below would be asking about a vault something else is still
-  # changing.
+  # changing. This block used to sit underneath the two calls that now follow
+  # it, which made its own words untrue of the folders drop_made_dirs had
+  # already removed and of the index read it had already made. Those folders are
+  # the ones a git that survived a stop is most likely to be writing into, since
+  # the only way to reach here on the first pair is a stop of the first rename.
   if [ "$pb_kill" -eq 1 ]; then
     mark_kill_failed "$LOG" "${RUN_KILL_REPORT:-}"
     write_recovery kill-failed
@@ -2210,6 +2330,16 @@ put_back() {
     while IFS= read -r line; do say "    git: $line"; done < "$SNAP_DIR/git.err"
     return 1
   fi
+  drop_made_dirs
+  # A read that fails here is not the wedge the one above is, because the checks
+  # below then disagree and the run writes a putback-failed record a later run
+  # can clear. It still must not read as an index holding nothing.
+  index_of_moves || ok=0
+  # Judged against what HEAD holds now, not against the blob read before the
+  # move. The owner may have committed an edit or a deletion of a source while
+  # this run worked, and asking for the old blob would turn that ordinary commit
+  # into a refusal no later run could ever clear, while telling the owner to
+  # restore a journal they had deliberately deleted.
   if ! head_of_sources; then
     write_recovery putback-unverified
     say "RECOVERY-NEEDED: the files may be back, but HEAD could not be read to check them, so this run does not claim either way. $STATE/retention-inflight says where each file belongs."
@@ -2247,7 +2377,13 @@ put_back() {
 # not the thing that was read.
 verify_moves() {
   local k=0 ok=1
-  index_of_moves
+  # An index that could not be read is never taken for an index that disagrees.
+  # Both send the run to the put-back, but only one of them is true, and the
+  # line the owner is given is the only account of what happened.
+  if ! index_of_moves; then
+    say "PARTIAL: the index could not be read after the move, so what was moved cannot be checked and the vault is being put back."
+    return 1
+  fi
   while [ "$k" -lt "${#SRCS[@]}" ]; do
     [ "$(idx_blob "${DSTS[$k]}")" = "${MBLOBS[$k]}" ] || ok=0
     [ "$(idx_blob "${SRCS[$k]}")" = - ] || ok=0
@@ -2438,6 +2574,28 @@ recovery_check() {
     say "An earlier run left a record of moves that did land, and HEAD holds them. The record is cleared and this run goes on."
     return 0
   fi
+  # Or somebody else committed the moves, which the run that met them could not
+  # record as its own. settle_outcome already settles that case in the run it
+  # happens to, by asking whether HEAD descends from where the run started and
+  # then whether it holds what was judged, and it leaves the commit alone rather
+  # than putting anything back. A later run had no branch for it at all, so the
+  # record such a run writes could be cleared by nothing and every retention
+  # pass afterwards stopped at a tripwire, over a vault already in the state the
+  # record was written to reach. The nonce cannot rescue it, because a run that
+  # refused to put anything back never committed and so never minted one into
+  # any message. The branch above stays for the run whose own commit landed,
+  # because it names the answer more exactly, and this is the general case
+  # underneath it.
+  #
+  # Asking nothing about who committed loosens nothing. head_holds_moves wants
+  # every destination in HEAD with the blob that was judged and every source
+  # gone, so a half moved vault, a partial commit or a commit of some other
+  # content all fail it and still stop here.
+  if rgit merge-base --is-ancestor "$rhead" "$headnow" >/dev/null 2>&1 && head_holds_moves; then
+    rm -f "$f" 2>/dev/null
+    say "An earlier run left a record of moves that another tool committed, and HEAD holds them. The record is cleared and this run goes on."
+    return 0
+  fi
   # Or nothing moved and every source is back where HEAD holds it.
   #
   # HEAD is asked rather than compared against the blob the record carries, and
@@ -2449,8 +2607,9 @@ recovery_check() {
   # no later run could clear, and the vault stops for a tripwire until somebody
   # deletes it by hand. Nothing is loosened, because every question that branch
   # asked is still asked, against HEAD now instead of against a remembered HEAD.
-  index_of_moves
-  if head_of_sources; then
+  # An unreadable index answers neither question, so the record stays rather
+  # than being cleared on the strength of a read that did not happen.
+  if index_of_moves && head_of_sources; then
     local k=0 want
     while [ "$k" -lt "${#SRCS[@]}" ]; do
       want="$(head_src_blob "${SRCS[$k]}")"
