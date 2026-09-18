@@ -914,9 +914,17 @@ it, that commit added it, and its message carries one `Vault-Pass: dream` line a
 actually stored. HEAD still holds that blob, the file is tracked, clean in the work tree and the
 index, and carries no `assume-unchanged` or `skip-worktree` flag. Its frontmatter has exactly one
 `tier:` key whose value is `medium`, and no `contradicts:` or `superseded_by:` key. Its filename
-date is older than `RETENTION_DAYS` and is not among the newest eight distinct dates still in the
-folder. That last rule is what keeps a recent window readable for the next dream pass, and it wins
-over age, so a folder whose eight newest dates are all old keeps them.
+date is older than `RETENTION_DAYS` and is not among the newest eight distinct dates among the
+journals this run did not refuse. That last rule is what keeps a recent window readable for the
+next dream pass, and it wins over age, so a folder whose eight newest dates are all old keeps them.
+
+The window is worked out over the journals that survived every other rule, not over everything in
+the folder, and that is deliberate. A journal with a date in the future, or a name nobody
+recognises, would otherwise hold one of the eight places open and push a real journal out of the
+window. The consequence worth knowing is the other direction. Eight recent journals that are all
+refused for some other reason, a `contradicts:` key for instance, take themselves out of the
+window and let older journals move. Clearing a recent refusal is therefore what holds the older
+ones back again.
 
 A compaction stub `compaction-<session>.md` moves when every committed version of it is exactly the
 compaction hook's template followed by entry lines, each version is a byte prefix of the next, the

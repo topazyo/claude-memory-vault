@@ -509,6 +509,12 @@ read_history() {
   # that archives too much, which is why it took a CI run on macOS to see it.
   # A value passed with -v is still read for escapes, so these hold no
   # backslash, only the byte itself.
+  #
+  # This is the second time that interpreter has cost this repository a silent
+  # wrong answer. vault-check.sh says it reads [[:space:]] as the literal
+  # characters in the brackets, which would report every note as missing tier
+  # and type. Treat a construct only gawk and mawk are known to agree on as a
+  # defect waiting for a macOS run.
   local rs us
   rs="$(printf '\036')"
   us="$(printf '\037')"
