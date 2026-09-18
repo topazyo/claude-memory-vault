@@ -5931,7 +5931,7 @@ cat > "$RET/fake-git/git" <<'GIT_EOF'
 # counts of each subcommand are kept beside RET_GIT_COUNT.
 sub=""
 for a in "$@"; do
-  case "$a" in mv|commit) sub="$a"; break ;; esac
+  case "$a" in mv|commit|cat-file) sub="$a"; break ;; esac
 done
 n=0
 if [ -n "$sub" ]; then
@@ -5965,6 +5965,26 @@ case "${RET_GIT_MODE:-}:$sub:$n" in
     printf 'sync\n' > "$RET_GIT_VAULT/10-daily/other.md"
     "$RET_REAL_GIT" -C "$RET_GIT_VAULT" -c user.name=sync -c user.email=sync@example.invalid -c commit.gpgsign=false add -- 10-daily/other.md >/dev/null 2>&1
     "$RET_REAL_GIT" -C "$RET_GIT_VAULT" -c user.name=sync -c user.email=sync@example.invalid -c commit.gpgsign=false commit -q -m "unrelated" -- 10-daily/other.md >/dev/null 2>&1
+    exec "$RET_REAL_GIT" "$@" ;;
+  block-archive:cat-file:*)
+    # Puts a regular file where the archive folder belongs, during the
+    # classification phase, which is after the folder checks have looked and
+    # before the mover makes the folders. That is the race the mover is written
+    # for, a folder appearing between two checks, and it is the only way to
+    # reach a failure to make the folders from a vault the early checks pass.
+    if [ ! -e "$RET_GIT_VAULT/99-archive/20-projects/_logs" ]; then
+      mkdir -p "$RET_GIT_VAULT/99-archive/20-projects"
+      printf 'not a folder\n' > "$RET_GIT_VAULT/99-archive/20-projects/_logs"
+    fi
+    exec "$RET_REAL_GIT" "$@" ;;
+  catfile-after-commit:cat-file:*)
+    # Every object question asked after the commit fails, and none before it.
+    # That is the one way to reach the branch where the commit was made and
+    # HEAD could not be confirmed to hold it, without needing the platform
+    # defect that produces it for real. The classification phase asks plenty of
+    # object questions and has to be left alone, which is what keying on the
+    # commit having happened does.
+    if [ -s "$RET_GIT_COUNT.commit" ]; then exit 1; fi
     exec "$RET_REAL_GIT" "$@" ;;
 esac
 exec "$RET_REAL_GIT" "$@"
@@ -6059,6 +6079,57 @@ if [ "$re_rc:$re_rc2" = 71:0 ] && [ ! -e "$re_v.state/retention-inflight" ] \
   ok "a record of moves that did not happen is cleared against HEAD, so a commit of the owner's own during the window does not wedge it"
 else
   bad "an owner commit during the recovery window was not handled -- rc $re_rc then $re_rc2 recovery: $([ -e "$re_v.state/retention-inflight" ] && echo yes || echo no) log: [$(tr '\n' '|' < "$(ret_log "$re_v")" 2>/dev/null | cut -c1-500)]"
+fi
+# The other half of the same question. Here the commit did land, and the run
+# could not confirm it, so the record says so and the moves are in HEAD. The
+# branch that clears such a record used to read HEAD's own message for the
+# nonce, so the first commit to land on top made it unreachable for good, and
+# the branch beside it cannot fire once the moves have landed either. A vault
+# showing the after state exactly was then reported as showing neither. In the
+# arrangement these runners ship with, retention is weekly and the dream pass
+# commits nightly, so the tip had almost always moved on by the time any later
+# run looked, which made this the normal path rather than a corner of it.
+re_rc="$(ret_case moves-landed-later catfile-after-commit)"
+re_v="$RET/moves-landed-later"
+printf -- '---\ntier: short\ntype: daily\n---\n\nthe owner writes after the moves landed\n' > "$re_v/10-daily/day.md"
+ret_human_commit "$re_v" "a note of the owner's own, on top of the moves" "10-daily/day.md" >/dev/null 2>&1
+: > "$(ret_log "$re_v")"
+re_rc2="$(RET_STATE="$re_v.state" ret_run "$re_v")"
+if [ "$re_rc:$re_rc2" = 71:0 ] && [ ! -e "$re_v.state/retention-inflight" ] \
+   && ret_moved "$re_v" "$RE_J1" && ret_moved "$re_v" "$RE_J2" \
+   && ret_says "$re_v" "record of moves that did land" \
+   && ! ret_says "$re_v" "the vault does not yet show either outcome"; then
+  ok "a record of moves that did land is cleared with the nonce behind HEAD, not only when it is HEAD's own message"
+else
+  bad "a landed record was not cleared once something committed on top -- rc $re_rc then $re_rc2 recovery: $([ -e "$re_v.state/retention-inflight" ] && echo yes || echo no) log: [$(tr '\n' '|' < "$(ret_log "$re_v")" 2>/dev/null | cut -c1-500)]"
+fi
+# A run that cannot make the archive folders moves nothing at all, and the
+# record of what it was about to move is written before it tries. Leaving that
+# record behind put every later run down the recovery path over a vault sitting
+# exactly as it was, which is a cost paid for an outcome the code chose. The
+# archive folders are made one level at a time and never with -p on purpose, so
+# arriving here is designed for rather than unusual. The leaf is a regular file
+# here, which is the same refusal a sync client, a full volume or a scanner
+# holding a folder open would produce.
+re_rc="$(ret_case moves-nodirs block-archive)"
+re_v="$RET/moves-nodirs"
+re_bad=''
+# 6 would mean the early folder checks saw it and the mover never ran, which is
+# a different path and would make everything below vacuous.
+[ "$re_rc" = 3 ] || re_bad="$re_bad rc:$re_rc"
+ret_stayed "$re_v" "$RE_J1" || re_bad="$re_bad j1-not-stayed"
+[ -e "$re_v.state/retention-inflight" ] && re_bad="$re_bad record-left"
+# With the folders free again the next run is an ordinary one, not a recovery.
+rm -f "$re_v/99-archive/20-projects/_logs"
+: > "$(ret_log "$re_v")"
+re_rc2="$(RET_STATE="$re_v.state" ret_run "$re_v")"
+[ "$re_rc2" = 0 ] || re_bad="$re_bad second-rc:$re_rc2"
+ret_moved "$re_v" "$RE_J1" || re_bad="$re_bad j1-not-moved"
+ret_says "$re_v" "an earlier run" && re_bad="$re_bad recovery-path"
+if [ -z "$re_bad" ]; then
+  ok "a run that could not make the archive folders leaves no record behind, so the next run is an ordinary one"
+else
+  bad "a run that moved nothing left a record or wedged the next run --$re_bad rc $re_rc then $re_rc2 log: [$(tr '\n' '|' < "$(ret_log "$re_v")" 2>/dev/null | cut -c1-500)]"
 fi
 # TERM while the moves run puts them back, and the next run is not refused.
 re_v="$RET/moves-term"

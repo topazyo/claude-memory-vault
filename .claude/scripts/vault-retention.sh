@@ -2009,7 +2009,17 @@ idx_blob() {
 # 3 when nothing moved in the end, and 71 when the way back could not be walked.
 do_moves() {
   local line mv1_kf=0 kill_failed=0 timed_out=0
-  make_dirs || return 3
+  if ! make_dirs; then
+    # The record of what was about to move is written before this runs, and
+    # nothing has moved, so it is taken back. Leaving it meant a run that
+    # touched no file at all sent every later run down the recovery path,
+    # about a vault sitting exactly as it was before. Making the archive
+    # folders is allowed to fail by design, one level at a time and never with
+    # -p, so a sync client making a folder in the same instant, a full volume
+    # or a scanner holding one open all arrive here rather than being unusual.
+    rm -f "$STATE/retention-inflight" 2>/dev/null
+    return 3
+  fi
   index_lock_wait
   if watched_git "$SNAP_DIR/mv.out" /dev/null mv -- "${SRCS[@]}" "$ARCH_REL/"; then
     printf 'done\n' >> "$STATE/retention-inflight" 2>/dev/null
@@ -2371,11 +2381,23 @@ recovery_check() {
     return 78
   fi
   # The commit landed, and HEAD holds every destination and no source.
+  #
+  # The nonce is looked for anywhere between the commit the record names and the
+  # one HEAD is on, rather than in the tip's own message. Reading only the tip
+  # meant the first commit to land on top of a retention commit made this branch
+  # unreachable for good, and the branch below cannot fire once the moves have
+  # landed either, so a vault showing the after state exactly was reported as
+  # showing neither. In the arrangement these runners ship with, retention runs
+  # weekly and the dream pass commits nightly, so by the time any later run
+  # looked the tip was almost never still the retention commit.
+  #
+  # Widening the search loosens nothing on its own, because the moves still have
+  # to be in HEAD with the blobs that were judged before the record is cleared.
   if [ -n "$rnonce" ] \
-     && rgit log -1 --format=%B "$headnow" 2>/dev/null | LC_ALL=C grep -qxF "Vault-Retention-Run: $rnonce" \
+     && rgit log --format=%B "$rhead..$headnow" 2>/dev/null | LC_ALL=C grep -qxF "Vault-Retention-Run: $rnonce" \
      && head_holds_moves; then
     rm -f "$f" 2>/dev/null
-    say "An earlier run left a record of moves that did land, in $headnow. The record is cleared and this run goes on."
+    say "An earlier run left a record of moves that did land, and HEAD holds them. The record is cleared and this run goes on."
     return 0
   fi
   # Or nothing moved and every source is back where HEAD holds it.
