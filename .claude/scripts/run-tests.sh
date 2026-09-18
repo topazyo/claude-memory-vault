@@ -5538,6 +5538,22 @@ ret_git "$RA" merge -q --no-ff --no-commit side2 >/dev/null 2>&1
 printf 'changed in the merge\n' >> "$RA/20-projects/_logs/dream-${RET_DATE[96]}.md"
 ret_git "$RA" add -- "20-projects/_logs/dream-${RET_DATE[96]}.md" >/dev/null 2>&1
 ret_git "$RA" commit -q -m "merge side2" >/dev/null 2>&1
+# A merge that touches nothing under 20-projects/_logs on either side, which is
+# the ordinary shape for anyone who works on branches. History simplification
+# keeps such a merge only when parents are being rewritten, so the walk saw it
+# and the count that checks the walk did not, and the two disagreed by one for
+# every merge of this shape in the vault. The runner then refused every
+# candidate and reported a rewritten history. The two merges above do not show
+# it, because a merge that brings a journal in from one side counts the same
+# whether parents are rewritten or not.
+ret_git "$RA" checkout -q -b side3 >/dev/null 2>&1
+printf 'c\n' >> "$RA/10-daily/day.md"
+ret_human_commit "$RA" "daily on the side" "10-daily/day.md" >/dev/null 2>&1
+ret_git "$RA" checkout -q "$ra_main" >/dev/null 2>&1
+mkdir -p "$RA/31-standards"
+printf -- '---\ntier: long\ntype: standard\n---\n\na standard\n' > "$RA/31-standards/std.md"
+ret_human_commit "$RA" "a standard of my own" "31-standards/std.md" >/dev/null 2>&1
+ret_git "$RA" merge -q --no-ff -m "merge side3, touching no journal" side3 >/dev/null 2>&1
 # A journal a sync plugin committed without the runner's trailers.
 ret_journal "$RA" "dream-${RET_DATE[97]}.md" "tier: medium"
 ret_human_commit "$RA" "vault backup" "20-projects/_logs/dream-${RET_DATE[97]}.md" >/dev/null 2>&1

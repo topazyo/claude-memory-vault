@@ -823,8 +823,22 @@ read_history() {
   #
   # rev-list is not used, because it does not take --full-history and a different
   # history simplification would count a different set.
+  #
+  # --parents is here to make the two selections the same, and it is not
+  # cosmetic. It asks git to rewrite parents, which is the flag history
+  # simplification tests before it decides whether to drop a merge that is
+  # tree-same to one of its parents for this pathspec. Without it the count
+  # drops such merges and the walk keeps them, so the two disagree by the number
+  # of merges that do not touch this folder. Measured on git 2.53, a merge
+  # touching nothing under the folder counts 1 without the flag and 2 with it,
+  # while a merge bringing a journal in from one side counts the same either
+  # way, which is why the merge already in the controls did not show it. The
+  # effect is that any vault whose history holds an ordinary merge refuses every
+  # candidate and reports a rewritten history, so the count has to ask for the
+  # same set rather than the check be relaxed. Counting is by line and --parents
+  # puts the parents on the commit's own line, so it adds no lines.
   if ! watched_git "$SNAP_DIR/count.out" /dev/null \
-      log --full-history --no-renames --format=%H -- "$LOGS_REL/"; then
+      log --full-history --no-renames --parents --format=%H -- "$LOGS_REL/"; then
     say "ERROR: the number of commits touching $LOGS_REL could not be read, so the history table cannot be checked against it. Refusing to run."
     return 1
   fi
