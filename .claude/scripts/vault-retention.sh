@@ -116,8 +116,15 @@ on_signal() {
 # 127 comes back as an escaped C string, and it would never equal the same path
 # written plainly in a commit trailer, so a journal would be refused for a
 # mismatch that is only a difference of spelling.
+#
+# --no-replace-objects is what watched_git gets from GIT_NO_REPLACE_OBJECTS, and
+# it has to be here too. This runner already refuses a repository carrying
+# info/grafts, because a judgement about who wrote a file is worth nothing when
+# the history can be rewritten under it. A replace ref does the same thing by a
+# different route, and without this flag the walk would read the real history
+# while every question that decides a verdict read the replaced one.
 rgit() {
-  safe_git "$HOOKS" -C "$ROOT" -c log.follow=false -c core.quotePath=false "$@"
+  safe_git "$HOOKS" --no-replace-objects -C "$ROOT" -c log.follow=false -c core.quotePath=false "$@"
 }
 
 # watched_git <stdout-file> <stdin-file> <git args...>
@@ -493,24 +500,36 @@ read_history() {
     while IFS= read -r line; do say "    git: $line"; done < "$SNAP_DIR/git.err"
     return 1
   fi
+  # The two separator bytes are built by the shell and handed to awk as bytes,
+  # never written as \036 and \037 inside the program. The awk that macOS ships
+  # does not read an octal escape in a string the way gawk and mawk do, so
+  # RS = "\036" there left RS matching nothing, the whole history arrived as one
+  # record, and the run refused every candidate on a vault that was perfectly
+  # fine. It failed in the direction that archives nothing rather than the one
+  # that archives too much, which is why it took a CI run on macOS to see it.
+  # A value passed with -v is still read for escapes, so these hold no
+  # backslash, only the byte itself.
+  local rs us
+  rs="$(printf '\036')"
+  us="$(printf '\037')"
   LC_ALL=C awk -v commits="$SNAP_DIR/commits" -v touch="$SNAP_DIR/touch" -v trailers="$SNAP_DIR/trailers" \
-      -v perr="$SNAP_DIR/parse.err" '
+      -v perr="$SNAP_DIR/parse.err" -v rs="$rs" -v us="$us" '
     # What the failing record looked like, with the bytes that would otherwise
     # be invisible in a log spelled out. Without this the refusal below names a
     # cause it has not established, which sends the reader to the wrong place.
     function esc(s,   t) {
       t = substr(s, 1, 300)
-      gsub("\036", "<RS>", t)
-      gsub("\037", "<US>", t)
-      gsub("\n", "<NL>", t)
-      gsub("\r", "<CR>", t)
-      gsub("\t", "<TAB>", t)
+      gsub(rs, "<RS>", t)
+      gsub(us, "<US>", t)
+      gsub(/\n/, "<NL>", t)
+      gsub(/\r/, "<CR>", t)
+      gsub(/\t/, "<TAB>", t)
       return t
     }
-    BEGIN { RS = "\036"; err = 0; seq = 0; bad = "" }
+    BEGIN { RS = rs; err = 0; seq = 0; bad = "" }
     {
       if ($0 == "") next
-      nsep = split($0, part, "\037")
+      nsep = split($0, part, us)
       if (nsep != 2) { err = 1; bad = "record " (seq + 1) " split into " nsep " part(s) on the field separator, so it holds " (nsep - 1) " of them instead of one. Record starts: " esc($0); exit }
       head = part[1]
       names = part[2]
@@ -1038,7 +1057,13 @@ classify_stubs() {
     fi
     # The newest version is the one HEAD holds, and its last entry is when the
     # session was last active.
-    if [ "$(rgit hash-object -- "$SNAP_DIR/ver.$nv" 2>/dev/null)" != "${C_BLOB[$i]}" ]; then
+    # --no-filters because the file holds the raw bytes of a blob that is
+    # already in the repository, so the question is what its object id is, not
+    # what it would become if someone added it. Without the flag git runs the
+    # end-of-line conversion that core.autocrlf asks for, which is on by default
+    # in Git for Windows, and a stub committed with CRLF would hash to something
+    # other than the blob it came from and be refused as rewritten by a person.
+    if [ "$(rgit hash-object --no-filters -- "$SNAP_DIR/ver.$nv" 2>/dev/null)" != "${C_BLOB[$i]}" ]; then
       refuse "$i" "stub rewritten, because the newest committed version is not what HEAD holds"
       i=$((i + 1))
       continue
@@ -1362,7 +1387,7 @@ legacy_report() {
   # The file is named rather than fed on standard input, because safe_git hands
   # every command /dev/null there and the hash would be the hash of nothing,
   # which is the same for every report ever written.
-  hash="$(rgit hash-object -- "$SNAP_DIR/legacy.body" 2>/dev/null)"
+  hash="$(rgit hash-object --no-filters -- "$SNAP_DIR/legacy.body" 2>/dev/null)"
   if [ -z "$hash" ]; then
     say "WARNING: the legacy list could not be hashed, so no report was written this run."
     return 0
@@ -1405,7 +1430,7 @@ adopt_legacy() {
     say "REPORT-REFUSED: the list in $report is not in the order this runner writes it, so it has been changed since."
     return 2
   fi
-  hash="$(rgit hash-object -- "$SNAP_DIR/adopt.body" 2>/dev/null)"
+  hash="$(rgit hash-object --no-filters -- "$SNAP_DIR/adopt.body" 2>/dev/null)"
   found=""
   [ -n "$hash" ] && [ -f "$STATE/retention-legacy.hashes" ] \
     && found="$(LC_ALL=C awk -v h="$hash" '$1 == h { print "yes"; exit }' "$STATE/retention-legacy.hashes")"
