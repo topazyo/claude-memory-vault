@@ -2106,7 +2106,25 @@ head_src_blob() {
 # is needed. True when every source is back where HEAD has it and no destination
 # is left.
 put_back() {
-  local k=0 src dst ok=1 lock want pb_kill=0 line=""
+  local k=0 src dst ok=1 lock want pb_kill=0 line="" pb_head=""
+  # Nothing is undone once HEAD has moved. A commit made while this run was
+  # working may hold the moves, and taking them back would undo whatever else
+  # that commit carried, which is a change of somebody else's that this runner
+  # was never asked to touch.
+  #
+  # The undo loop asks only whether the index still holds a destination, and a
+  # commit does not empty the index, so every staged move survives a commit and
+  # read as still needing undoing. The check that tolerates a commit landing in
+  # this window sat in the verification loop, which runs after every rename has
+  # already been reversed, so it could report the damage and never prevent it.
+  # settle_outcome refuses for this reason before it calls here, and the other
+  # two callers did not, so the refusal belongs here where all three meet it.
+  pb_head="$(rgit rev-parse -q --verify 'HEAD^{commit}' 2>/dev/null)"
+  if [ -z "$pb_head" ] || [ "$pb_head" != "$HEAD_BEFORE" ]; then
+    write_recovery putback-head-moved
+    say "RECOVERY-NEEDED: HEAD is not where this run started, so nothing is put back. A commit made while this run was working may hold the moves, and undoing them would undo whatever else it carried. $STATE/retention-inflight says where each file belongs."
+    return 1
+  fi
   index_lock_wait
   index_of_moves
   while [ "$k" -lt "${#SRCS[@]}" ]; do

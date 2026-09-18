@@ -5966,6 +5966,13 @@ case "${RET_GIT_MODE:-}:$sub:$n" in
     "$RET_REAL_GIT" -C "$RET_GIT_VAULT" -c user.name=sync -c user.email=sync@example.invalid -c commit.gpgsign=false add -- 10-daily/other.md >/dev/null 2>&1
     "$RET_REAL_GIT" -C "$RET_GIT_VAULT" -c user.name=sync -c user.email=sync@example.invalid -c commit.gpgsign=false commit -q -m "unrelated" -- 10-daily/other.md >/dev/null 2>&1
     exec "$RET_REAL_GIT" "$@" ;;
+  mv-then-other-commits:mv:1)
+    # The rename is staged for real, then something else commits it, and only
+    # then is the move reported as failed. That is the window where the run is
+    # about to put back moves that somebody has already committed.
+    "$RET_REAL_GIT" "$@"
+    "$RET_REAL_GIT" -C "$RET_GIT_VAULT" -c user.name=sync -c user.email=sync@example.invalid -c commit.gpgsign=false commit -q -m "a sync client commits the staged moves" >/dev/null 2>&1
+    exit 1 ;;
   block-archive:cat-file:*)
     # Puts a regular file where the archive folder belongs, during the
     # classification phase, which is after the folder checks have looked and
@@ -6130,6 +6137,26 @@ if [ -z "$re_bad" ]; then
   ok "a run that could not make the archive folders leaves no record behind, so the next run is an ordinary one"
 else
   bad "a run that moved nothing left a record or wedged the next run --$re_bad rc $re_rc then $re_rc2 log: [$(tr '\n' '|' < "$(ret_log "$re_v")" 2>/dev/null | cut -c1-500)]"
+fi
+# Moves somebody else has committed are never taken back. The undo loop asks
+# only whether the index still holds a destination, and committing does not
+# empty the index, so a commit landing in this window left every staged move
+# looking as though it still needed undoing. The run would then reverse a
+# commit of somebody else's as an uncommitted change and report that it could
+# not put the vault back, when the vault was in the after state and only HEAD
+# disagreed with what the run expected.
+re_rc="$(ret_case moves-other-commits mv-then-other-commits)"
+re_v="$RET/moves-other-commits"
+re_bad=''
+[ "$re_rc" = 71 ] || re_bad="$re_bad rc:$re_rc"
+ret_moved "$re_v" "$RE_J1" || re_bad="$re_bad j1-reverted"
+ret_moved "$re_v" "$RE_J2" || re_bad="$re_bad j2-reverted"
+ret_says "$re_v" "HEAD is not where this run started, so nothing is put back" || re_bad="$re_bad no-reason"
+ret_says "$re_v" "the vault could not be put back" && re_bad="$re_bad wrong-reason"
+if [ -z "$re_bad" ]; then
+  ok "a move somebody else committed while the run was working is left alone rather than undone"
+else
+  bad "moves committed by another tool were not left alone --$re_bad rc $re_rc log: [$(tr '\n' '|' < "$(ret_log "$re_v")" 2>/dev/null | cut -c1-500)]"
 fi
 # TERM while the moves run puts them back, and the next run is not refused.
 re_v="$RET/moves-term"
