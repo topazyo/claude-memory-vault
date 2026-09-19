@@ -504,8 +504,51 @@ git_dirs_of() {
 RUNNER_NL='
 '
 LINE_BREAK_MARKER=".runner-line-break-names"
+# unescape_cksum
+# Undoes the escaping a checksum line carries when the name in it holds a
+# backslash or a line break: the line is prefixed with a backslash, and in the
+# name a backslash reads \\ and a line break \n.
+#
+# GNU's plain cksum does not escape. uutils coreutils, which Ubuntu ships in
+# place of GNU's from 25.10, does, and has no --no-escape to turn it off. Left
+# alone, the fence records `back\\bslash.md` for a note named `back\bslash.md`,
+# no such file exists, and every later step reads the note as changed by
+# somebody else: the pass is refused, and the note it should have quarantined
+# stays in the vault. The same vault then fences differently on two machines,
+# which is how this hid -- it is green wherever coreutils is GNU's.
+#
+# A name with a line break never reaches here, because fence_find leaves those
+# out, and \n is decoded anyway rather than left half-undone. A line that is
+# not "<checksum> <size> <name>" is passed through rather than guessed at.
+unescape_cksum() {
+  LC_ALL=C awk '
+    substr($0, 1, 1) != "\\" { print; next }
+    {
+      line = substr($0, 2)
+      head = ""
+      for (f = 0; f < 2; f++) {
+        sp = index(line, " ")
+        if (sp == 0) { head = ""; break }
+        head = head substr(line, 1, sp)
+        line = substr(line, sp + 1)
+      }
+      if (head == "") { print; next }
+      out = ""
+      while ((k = index(line, "\\")) > 0) {
+        out = out substr(line, 1, k - 1)
+        c = substr(line, k + 1, 1)
+        if (c == "\\") out = out "\\"
+        else if (c == "n") out = out "\n"
+        else out = out "\\" c
+        line = substr(line, k + 2)
+      }
+      print head out line
+    }
+  '
+}
+
 fence_find() {
-  LC_ALL=C find "$@" ! -path "*$RUNNER_NL*" -type f -exec cksum {} + 2>/dev/null
+  LC_ALL=C find "$@" ! -path "*$RUNNER_NL*" -type f -exec cksum {} + 2>/dev/null | unescape_cksum
   LC_ALL=C find "$@" ! -path "*$RUNNER_NL*" -type l -print 2>/dev/null | while IFS= read -r link; do
     printf 'L%s 0 %s\n' "$(readlink "$link" 2>/dev/null | cksum | cut -d' ' -f1)" "$link"
   done
@@ -2048,7 +2091,10 @@ path_state() {
   if [ -L "$1/$2" ]; then
     ( cd "$1" && fence_find "./$2" ) | cut -d' ' -f1,2
   elif [ -f "$1/$2" ]; then
-    ( cd "$1" && cksum "./$2" 2>/dev/null ) | cut -d' ' -f1,2
+    # Through unescape_cksum for the same reason fence_find is: where cksum
+    # escapes, the leading backslash lands on the checksum field itself, and
+    # this would never equal the snapshot line for the very same file.
+    ( cd "$1" && cksum "./$2" 2>/dev/null ) | unescape_cksum | cut -d' ' -f1,2
   elif [ -e "$1/$2" ]; then
     printf 'other\n'
   fi
