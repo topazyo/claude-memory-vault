@@ -27,21 +27,25 @@
 #   VAULT_ALLOW_UNENFORCED_TOOLS  command mode: set to 1 once the wrapper is
 #                       sandboxed (no shell, no network), or the run is refused
 #   DREAM_PASS_TIMEOUT  seconds before a hung run is killed (default 3600)
-#   VAULT_STATE_DIR     per-vault state outside the vault: quarantine, tripwire
-#                       copy, in-flight marker (default under %LOCALAPPDATA% or
-#                       ~/.local/state)
+#   VAULT_STATE_DIR     per-vault state outside the vault: run lock, quarantine,
+#                       tripwire copy, in-flight marker (default under
+#                       %LOCALAPPDATA% or ~/.local/state)
+#   RUN_LOCK_WAIT       seconds to wait for another pass's run lock (default 1800)
+#   RUN_LOCK_POLL       seconds between checks while waiting (default 30)
 #
 # Exit codes:
 #   0    the pass changed a dream journal and nothing else
 #   1    NO-ARTIFACT: exited 0 but no dream journal was added or changed,
 #        or the runner could not set itself up (temp dir, state directory, backup,
-#        prompt file, in-flight marker)
+#        prompt file, run lock, in-flight marker)
 #   2    VIOLATION: files outside the dream journals changed during the run
 #        (steering surfaces among them are contained and the tripwire is set)
 #   3    REFUSED: command mode without VAULT_ALLOW_UNENFORCED_TOOLS=1
 #   64   VAULT_AGENT is not claude or command
 #   70   TRIPWIRE-ERROR: containment was needed but no tripwire could be written
-#   75   LOCKED: another pass is still running
+#   75   LOCKED: another pass held the run lock, or git's index.lock stayed, for
+#        RUN_LOCK_WAIT seconds, the index.lock is more than 10 minutes old, or
+#        another runner took the lock over before the pass started
 #   78   TRIPWIRE: a tripwire is set, or an earlier pass died before containment
 #   124  TIMEOUT: the watchdog killed a run that exceeded DREAM_PASS_TIMEOUT
 #   127  the claude binary or the VAULT_AGENT_CMD wrapper was not found
@@ -62,6 +66,7 @@ on_exit() {
     rm -f "$STATE/inflight-backup.tar" 2>/dev/null
   fi
   [ -n "$SNAP_DIR" ] && rm -rf "$SNAP_DIR"
+  run_lock_release
 }
 
 # On INT or TERM: stop the agent, and if it had started, containment cannot be
@@ -98,7 +103,12 @@ main() {
   mkdir -p "$LOG_DIR" 2>/dev/null
   LOG="$LOG_DIR/dream-agent.log"
   RUN_OUT="$LOG_DIR/dream-agent.run.log"
-  TIMEOUT="${DREAM_PASS_TIMEOUT:-3600}"
+  # Settings that reach arithmetic are checked first. A value that is not a whole
+  # number would abort the runner with nothing in the log, and bash evaluates a
+  # variable in arithmetic as an expression.
+  TIMEOUT="$(uint_setting DREAM_PASS_TIMEOUT 3600 1 "$LOG")"
+  WATCHDOG_GRACE="$(uint_setting WATCHDOG_GRACE 15 0 "$LOG")"
+  WATCHDOG_POLL="$(uint_setting WATCHDOG_POLL 5 1 "$LOG")"
   STATE="$(vault_state_dir "$ROOT" 2>>"$LOG")"
   # From here on the resolved path that was checked, so pointing a symlink
   # elsewhere after the check changes nothing.
@@ -109,6 +119,16 @@ main() {
     exit 1
   fi
   STATE="$STATE_REAL"
+
+  # One pass at a time per vault. The traps come first, so a signal that lands
+  # while the lock is being taken still releases it. The lock is taken before any
+  # vault state is checked, and on_exit releases it on every exit path.
+  trap on_exit EXIT
+  trap 'on_signal 130' INT
+  trap 'on_signal 143' TERM
+  run_lock_acquire "$STATE" "$ROOT" "$RUNNER" "$LOG" "$((TIMEOUT + WATCHDOG_GRACE + 900))"
+  lock_rc=$?
+  [ "$lock_rc" -eq 0 ] || exit "$lock_rc"
 
   tripwire_check "$ROOT" "$STATE" "$RUNNER" "$LOG"
   guard_rc=$?
@@ -140,9 +160,6 @@ main() {
     printf '[%s] ERROR: could not create a temporary directory\n' "$(ts)" >> "$LOG"
     exit 1
   }
-  trap on_exit EXIT
-  trap 'on_signal 130' INT
-  trap 'on_signal 143' TERM
   mkdir -p "$SNAP_DIR/nohooks"
 
   # The agent is given no shell, so it cannot run git itself. Record the
@@ -165,6 +182,11 @@ main() {
     exit 1
   fi
   HEAD_BEFORE="$(head_state "$ROOT" "$SNAP_DIR/nohooks")"
+  # The last check before anything is written to the shared state directory.
+  if ! run_lock_held; then
+    printf '[%s] LOCKED: another runner replaced or removed this one'"'"'s owner file in the run lock before the pass started. Not starting.\n' "$(ts)" >> "$LOG"
+    exit 75
+  fi
   cp "$SNAP_DIR/steering.tar" "$STATE/inflight-backup.tar" 2>/dev/null
   # Without the marker outside the vault, a pass killed mid-run would leave no
   # trace the next run can trust. Refuse rather than start the agent.

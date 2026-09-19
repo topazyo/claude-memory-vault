@@ -377,8 +377,58 @@ Two details of claude mode are load-bearing:
   scheduler there is no TTY and stdin is empty, so it reads EOF and exits **0** within seconds
   having done nothing. The scheduler records a success.
 
-Around that call, each runner does three things an exit code cannot:
+Around that call, each runner does several things an exit code cannot:
 
+- **Run lock.** Before it checks any vault state, a runner takes one lock per vault, the directory
+  `run.lock` in the state directory, so two passes never race each other's fences or git's index.
+  The lock lives outside the vault because a pass that could rewrite it could stall or unlock
+  every later run. Runners share a lock only when they resolve the same state directory. The
+  spellings of the vault's path described under Containment below resolve to one, but runners
+  given different `VAULT_STATE_DIR` values, runners under two accounts, and a Git Bash runner and
+  a WSL runner on the same vault each take their own lock. Schedule both passes from the same
+  environment and account, and give them the same `VAULT_STATE_DIR` or leave it unset for both.
+  A runner that finds the lock held waits up to `RUN_LOCK_WAIT` seconds and then exits **75**
+  (LOCKED) without starting its agent.
+
+  A lock is reclaimed only when its runner is gone and the lock is older than the longest run that
+  runner declared (its timeout, plus the watchdog grace period, plus 15 minutes). "Gone" means no
+  process has the recorded pid, whichever account owns it, or the process that has it is not that
+  runner's script, which covers a runner killed by Task Scheduler whose pid was reused. On Windows
+  a pid that Git Bash cannot see, as with a runner in another logon session, is also looked up by
+  its Windows process id, and a bash process that started no later than the lock counts as the
+  runner. So does any answer other than a clear "no such bash process", including a PowerShell
+  that is missing, blocked, failing or slower than 30 seconds. A process whose command line is
+  readable but empty, such as a Linux kernel thread that reused the pid, is not the runner. A
+  runner that is still alive is never reclaimed, however old its lock, because the age includes
+  time the machine spent asleep. A lock dated more than two minutes in the future, because the
+  clock was set back, is reclaimed as soon as its runner is gone. A lock directory whose owner
+  file is missing or has no well-formed nonce is reclaimed after two minutes, or at once when it
+  is dated that far in the future, and one whose owner file this account cannot read is treated
+  as held. A lock directory that cannot be created is retried once a second, and after five
+  misses in a row, as with a full disk, the run stops with exit 1. A file or symlink named
+  `run.lock` in the state directory stops it at once, even a symlink to a folder. One reclaim runs
+  at a time. It checks the lock again before moving it aside and once more after, and a lock that
+  changed in between is put back, or kept beside the lock with a `RUN-LOCK-RACE` line in the log,
+  never deleted. The owner file is placed with a hard link, which fails when one is already there,
+  so the first owner file placed holds the lock. A runner that stalls for over two minutes between
+  taking the lock and writing its owner file, and whose lock another runner reclaims meanwhile,
+  either places its owner file first and holds the lock, or finds that runner's owner file and
+  waits. If it resumes in the moment after the other runner's mkdir, it can remove that still
+  empty directory, and both runners then stop with exit 1. It never removes a directory holding
+  a file. On a file system where no hard link can be made, the owner file is renamed into place
+  while none is there, and could still land over one placed a moment earlier. So just before a
+  runner marks its pass in flight, it checks that the lock still carries its own owner file, and
+  exits 75 if another runner's has replaced or removed it. A rename that lands after that check,
+  which takes a second stall, is not caught. The stalled runner then sets a false tripwire (exit
+  78), clears the other pass's in-flight marker and removes the lock while that pass runs. Every
+  owner field is checked before use, and so are the timeout, watchdog and lock settings, which
+  fall back to their defaults with a warning.
+
+  A `.git/index.lock` older than 10 minutes also exits 75, because a crashed git command blocks
+  every commit until it is removed. A younger one is waited on like the run lock, and one that
+  stays for the whole wait exits 75 too. For a linked worktree the index lock in its own git
+  directory is the one checked. As a known limit, a runner in another pid namespace, such as a
+  container, or on a Linux system that hides other users' processes, reads as gone.
 - **Watchdog.** The agent runs with stdin from `/dev/null` under a timer. A run that exceeds its
   timeout gets `TERM`, then `KILL` after a grace period, and the runner exits **124**.
 - **Write fence.** The runner checksums every file in the vault before and after the run and exits
@@ -471,7 +521,8 @@ Around that call, each runner does three things an exit code cannot:
   that never gets there, because the scheduler ended the task, the machine stopped, or a signal
   arrived, leaves the marker behind. The next runner reads the state-directory copy first, because
   the pass cannot reach it, and sets the tripwire instead of adopting the unknown state as its
-  baseline, or exits **75** (LOCKED) when the marker's runner is still alive. If that tripwire cannot
+  baseline. A runner checks for the marker only while it holds the run lock, when no other pass can
+  be running, so a marker whose pid now belongs to another process still counts. If that tripwire cannot
   be written, it exits **70** and keeps the marker. A runner that cannot write the marker's
   state-directory copy refuses to start with exit 1. A copy of the pre-pass backup is kept in the
   state directory while a pass runs.
@@ -572,7 +623,7 @@ harness session cannot point an unattended pass, and its fence, at a different v
 | `3` | REFUSED: `VAULT_AGENT=command` without `VAULT_ALLOW_UNENFORCED_TOOLS=1`; the agent was not started |
 | `64` | `VAULT_AGENT` is neither `claude` nor `command` |
 | `70` | TRIPWIRE-ERROR: containment was needed but neither copy of the tripwire could be written. The in-flight marker is left, so the next run refuses |
-| `75` | LOCKED: an in-flight marker names a runner that is still alive; the agent was not started |
+| `75` | LOCKED: the run lock stayed held, or git's `index.lock` stayed, for `RUN_LOCK_WAIT` seconds, the `index.lock` is older than 10 minutes, or another runner took the lock over before the pass started. The agent was not started |
 | `78` | TRIPWIRE: a tripwire exists, or an earlier pass died before containment and this run turned its marker into one; the agent was not started |
 | `124` | TIMEOUT: the watchdog killed the run |
 | `127` | the `claude` binary, the `VAULT_AGENT_CMD` wrapper, or (from a `.cmd`) Git Bash was not found |
@@ -586,9 +637,11 @@ harness session cannot point an unattended pass, and its fence, at a different v
 | `VAULT_ALLOW_UNENFORCED_TOOLS` | unset | both runners in command mode: `1` confirms the wrapper is sandboxed; anything else refuses the run |
 | `DREAM_PASS_TIMEOUT` | `3600` seconds | `dream-pass.sh` |
 | `PROMOTION_PASS_TIMEOUT` | `5400` seconds | `promotion-pass.sh` |
-| `WATCHDOG_POLL` | `5` seconds | `lib/runner-common.sh`: how often the watchdog checks the clock |
+| `WATCHDOG_POLL` | `5` seconds | `lib/runner-common.sh`: how often the watchdog checks the clock. The runners replace a value that is not a whole number of at least 1 with the default and log a warning, as they do for the timeouts, `WATCHDOG_GRACE` and the `RUN_LOCK_` settings |
 | `WATCHDOG_GRACE` | `15` seconds | `lib/runner-common.sh`: wait between `TERM` and `KILL` |
-| `VAULT_STATE_DIR` | per-vault directory under `%LOCALAPPDATA%` or `~/.local/state` | both runners: the quarantine, the tripwire and in-flight copies, and the pre-pass backup of a running pass, all outside the vault, and `vault-check.sh`, which looks for the tripwire copy there. An absolute path is required, and a Windows path is converted. A relative one, one containing `..`, or one inside the vault is replaced with a directory under the system temp folder, and the runner logs a warning. A state directory the runner's account does not own or cannot write stops the run with exit 1. Give each vault its own value |
+| `RUN_LOCK_WAIT` | `1800` seconds | both runners: how long to wait for the run lock before exiting 75 |
+| `RUN_LOCK_POLL` | `30` seconds | both runners: how often to check the run lock while waiting |
+| `VAULT_STATE_DIR` | per-vault directory under `%LOCALAPPDATA%` or `~/.local/state` | both runners: the run lock, the quarantine, the tripwire and in-flight copies, and the pre-pass backup of a running pass, all outside the vault, and `vault-check.sh`, which looks for the tripwire copy there. An absolute path is required, and a Windows path is converted. A relative one, one containing `..`, or one inside the vault is replaced with a directory under the system temp folder, and the runner logs a warning. A state directory the runner's account does not own or cannot write stops the run with exit 1. Give each vault its own value |
 | `BASH_EXE` | standard Git for Windows paths | the `.cmd` wrappers |
 | `VAULT_FORCE_NO_JQ` | unset | `vault-lint.sh` and `postcompact-wrap-up.sh`: take the no-jq branch even when `jq` is installed |
 
