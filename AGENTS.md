@@ -154,9 +154,9 @@ you believe the violation count; an absence claim needs a positive control.
 
 | Command | What it does | Passing run |
 | --- | --- | --- |
-| `bash .claude/scripts/vault-check.sh` | Frontmatter invariants C1–C5 over six content tiers | `0 violation(s) across N file(s)`, N > 0; exit 0 |
+| `bash .claude/scripts/vault-check.sh` | Frontmatter invariants C1–C5 over six content tiers, or only the notes named after `--` | `0 violation(s) across N file(s)`, N > 0; exit 0 |
 | `bash .claude/scripts/run-tests.sh` | Control suite for the hooks and runners — known-bad inputs that must be flagged, known-good inputs that must stay silent — in a temp dir | `=== N passed, 0 failed ===`; exit 0 |
-| `bash .claude/scripts/dream-pass.sh` | Nightly consolidation pass (`.cmd` wrapper for Task Scheduler) | One dated journal in `20-projects/_logs/`; exit 0 |
+| `bash .claude/scripts/dream-pass.sh` | Nightly consolidation pass (`.cmd` wrapper for Task Scheduler) | One dated journal in `20-projects/_logs/`, committed with a `Vault-Pass: dream` trailer in a git vault; exit 0 |
 | `bash .claude/scripts/promotion-pass.sh` | Weekly medium → long promotion (`.cmd` wrapper) | A `PROMOTION-SUMMARY:` line or long-tier notes; exit 0 |
 | `bash .claude/hooks/vault-lint.sh <file>...` | Advisory lint of the named notes: frontmatter and invisible characters | Silence for a clean note; always exit 0 |
 | `git config core.hooksPath .claude/githooks` | Opt-in pre-commit gate that runs `vault-check.sh` | A commit with a violating note is refused |

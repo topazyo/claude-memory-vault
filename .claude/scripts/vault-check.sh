@@ -20,9 +20,14 @@
 # Exit:   0 = at least one note scanned and no violations
 #         1 = any violation, OR no notes scanned at all. "0 violations across
 #             0 files" is a vacuous result, not a pass, so it fails like one.
+#             A named note that is not a file also fails.
 #
 # Usage:  bash .claude/scripts/vault-check.sh   # do not pipe: a pipe would report
 #                                               # the pager's status, not ours
+#         bash .claude/scripts/vault-check.sh [--] <note>...
+#             checks only the named notes, relative to the vault root or
+#             absolute, wherever they are. The runners use this to check exactly
+#             the files a pass is about to commit.
 
 ROOT="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "$0")/../.." && pwd)}"
 TODAY="$(date +%F)"
@@ -60,6 +65,15 @@ EOF
 # schema and is deliberately out of scope (see the freshness standard § 2).
 TIERS="01-inbox 10-daily 20-projects 30-knowledge 31-standards 40-llm-wiki"
 
+case "${1:-}" in
+  --) shift ;;
+  -*)
+    printf 'vault-check: unknown option %s. Name notes after --, for example vault-check.sh -- 10-daily/2026-01-15.md\n' "$1" >&2
+    exit 1
+    ;;
+esac
+NAMED=("$@")
+
 # A bash ARRAY, not a space-joined string. The string form depends on word
 # splitting at the `find` call, so any vault whose path contains a space -
 # "C:/Users/Some One/...", "My Documents", or macOS iCloud's
@@ -69,7 +83,7 @@ DIRS=()
 for d in $TIERS; do
   [ -d "$ROOT/$d" ] && DIRS+=("$ROOT/$d")
 done
-if [ "${#DIRS[@]}" -eq 0 ]; then
+if [ "${#NAMED[@]}" -eq 0 ] && [ "${#DIRS[@]}" -eq 0 ]; then
   printf 'vault-check: no content-tier folders found under %s\n' "$ROOT"
   exit 1
 fi
@@ -130,8 +144,8 @@ report() {
   violations=$((violations + 1))
 }
 
-# -print0 / read -d '': several vault notes have spaces in their filenames.
-while IFS= read -r -d '' file; do
+check_note() {
+  local file="$1" rel fm created verified created_ok verified_ok
   files=$((files + 1))
   rel="${file#"$ROOT"/}"
 
@@ -139,7 +153,7 @@ while IFS= read -r -d '' file; do
     report "$rel" "C1" "first line is not a bare --- fence"
     # Without an opening fence there is no frontmatter to inspect; C2-C5 would
     # otherwise read the note body and report nonsense.
-    continue
+    return
   fi
 
   fm="$(fm_of "$file")"
@@ -176,7 +190,25 @@ while IFS= read -r -d '' file; do
   if [ "$verified_ok" -eq 1 ] && [ "$verified" \> "$TODAY" ]; then
     report "$rel" "C5" "last_verified $verified is later than today $TODAY"
   fi
-done < <(find "${DIRS[@]}" \( -path '*/templates/*' -o -name 'compaction-*.md' \) -prune -o -type f -name '*.md' -print0)
+}
+
+missing=0
+if [ "${#NAMED[@]}" -gt 0 ]; then
+  for file in "${NAMED[@]}"; do
+    case "$file" in /*|[A-Za-z]:[\\/]*) ;; *) file="$ROOT/$file" ;; esac
+    if [ -f "$file" ] && [ -r "$file" ]; then
+      check_note "$file"
+    else
+      printf 'vault-check: %s is not a readable file, so it was not checked.\n' "$file" >&2
+      missing=$((missing + 1))
+    fi
+  done
+else
+  # -print0 / read -d '': several vault notes have spaces in their filenames.
+  while IFS= read -r -d '' file; do
+    check_note "$file"
+  done < <(find "${DIRS[@]}" \( -path '*/templates/*' -o -name 'compaction-*.md' \) -prune -o -type f -name '*.md' -print0)
+fi
 
 printf 'vault-check: %s violation(s) across %s file(s) checked (as of %s).\n' \
   "$violations" "$files" "$TODAY"
@@ -190,4 +222,5 @@ if [ "$files" -eq 0 ]; then
 fi
 
 [ "$violations" -gt 0 ] && exit 1
+[ "$missing" -gt 0 ] && exit 1
 exit 0
