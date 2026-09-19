@@ -26,8 +26,23 @@ jobs:
     runs-on: ${{ matrix.os }}
     # A hung step must fail the build in minutes, not hold a runner for the
     # six-hour GitHub default. The suite takes a minute on Linux and macOS and
-    # several on Windows, where process start-up is slow.
-    timeout-minutes: 30
+    # several on Windows, where process start-up is slow. Windows was already
+    # using 18.5 of 30 minutes before the retention controls, and those build
+    # roughly fifteen more git repositories, so the limit was 45 to leave the
+    # margin a hung step still needs to be caught in.
+    #
+    # Raised to 90 because the controls that blind ps, so that a stop is
+    # recorded as unknown, cost almost nothing on Linux and a great deal on
+    # Windows. Measured on this branch rather than guessed. The commit before
+    # the first of them ran Windows in 33m04s and ubuntu in 5m27s. The commit
+    # that added it ran ubuntu in 5m04s, no change at all, and Windows passed 55
+    # minutes and was cancelled against the 45 limit. The cause is that a blind
+    # ps sends the Windows stop down its PowerShell fallback, which this
+    # repository already records as sometimes taking over a minute per call.
+    # The margin for catching a genuinely hung step is now wider than it was,
+    # which is the cost of covering that branch on the platform where it is
+    # slowest to exercise.
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -41,6 +56,14 @@ jobs:
         run: |
           echo "bash:  $BASH_VERSION"
           echo "uname: $(uname -s)"
+          # The locale is reported because a range in a shell pattern is read in
+          # the collating order of whichever one the job happens to have, and two
+          # defects of exactly that shape reached main without anyone being able
+          # to see which locale had produced them.
+          echo "locale:"
+          locale 2>&1 | sed 's/^/  /' || echo "  locale: MISSING"
+          echo "awk version:"
+          awk --version 2>&1 | head -n 1 | sed 's/^/  /' || awk -W version 2>&1 | head -n 1 | sed 's/^/  /' || echo "  unknown"
           for t in jq perl awk sed find date; do
             printf '%-6s %s\n' "$t" "$(command -v "$t" || echo MISSING)"
           done
@@ -55,7 +78,7 @@ jobs:
       - name: Control suite
         shell: bash
         env:
-          RUN_TESTS_REQUIRED: ${{ matrix.os == 'windows-latest' && 'win-native-tree noncesweep win-sweep-report win-orphan-stop win-fork-stop signal-scope runlog-tmp-case' || 'groupkill symlink run-log-link run-log-dirlink reaped-group line-break-name signal-scope runlog-tmp-case keep-output-dirlink tripwire-name keep-output-fifo' }}
+          RUN_TESTS_REQUIRED: ${{ matrix.os == 'windows-latest' && 'win-native-tree noncesweep win-sweep-report win-orphan-stop win-fork-stop signal-scope runlog-tmp-case retention-junction' || 'groupkill symlink run-log-link run-log-dirlink reaped-group line-break-name signal-scope runlog-tmp-case keep-output-dirlink tripwire-name keep-output-fifo retention-symlink' }}
         run: bash .claude/scripts/run-tests.sh
 
       # vault-check.sh exits 1 when it scans zero notes, so a path-resolution
@@ -81,7 +104,7 @@ jobs:
 
       - name: Control suite under bash 3.2
         env:
-          RUN_TESTS_REQUIRED: groupkill symlink run-log-link run-log-dirlink reaped-group line-break-name signal-scope runlog-tmp-case keep-output-dirlink tripwire-name keep-output-fifo
+          RUN_TESTS_REQUIRED: groupkill symlink run-log-link run-log-dirlink reaped-group line-break-name signal-scope runlog-tmp-case keep-output-dirlink tripwire-name keep-output-fifo retention-symlink
         run: /bin/bash .claude/scripts/run-tests.sh
 
       - name: Frontmatter invariants under bash 3.2

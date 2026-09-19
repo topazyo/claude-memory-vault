@@ -64,14 +64,14 @@ that names a type.
 | --- | --- | --- | --- | --- |
 | `01-inbox/` | short | Raw captures: clippings, pasted LLM output, anything unprocessed. **Untrusted.** | none | usually `reference` or `daily` |
 | `10-daily/` | short | Daily notes; scratch and decisions of the day. High volume, disposable. | `10-daily/templates/short-term-daily.md` | `daily` |
-| `20-projects/_logs/` | medium | Per-project session logs. Each carries a **Promotion candidates (for long-term)** section, the input to the long tier. Also where the compaction hook writes `compaction-*.md` stubs and the dream-agent writes `dream-<date>.md`. | `20-projects/_logs/templates/medium-term-project-log.md` | `project-log` |
+| `20-projects/_logs/` | medium | Per-project session logs. Each carries a **Promotion candidates (for long-term)** section, the input to the long tier. Also where the compaction hook writes `compaction-*.md` stubs and the dream-agent writes `dream-<date>.md`, and the only folder `vault-retention.sh` takes files out of. | `20-projects/_logs/templates/medium-term-project-log.md` | `project-log` |
 | `30-knowledge/moc/` | long | Maps of content — index notes. `ARCH-INDEX.md` is the hub, `VAULT-INDEX.md` the Dataview dashboard, `PROJECT-INDEX.md` the per-project table. | none | `moc` |
 | `30-knowledge/research/` | long | Durable reference material that is deliberately *not* an enforced standard. Ships empty. | none | `reference` |
 | `31-standards/` | long | Durable standards — the notes that actually steer future sessions. Small, verified, high-value. | `31-standards/templates/long-term-standard.md` | `standard` |
 | `40-llm-wiki/raw/` | short | Ingested raw source material for the wiki. **Untrusted**, same boundary as `01-inbox/`. Ships empty. | none | usually `reference` |
 | `40-llm-wiki/wiki/` | long | Concept entities — one note per concept, with relationships and contradictions. | `40-llm-wiki/wiki/templates/llm-wiki-entity.md` | `wiki-entity` |
 | `90-auto-memory/` | — | A harness's own auto-memory directory (Claude Code's, for example), machine-managed under that harness's schema. **Out of scope** for `vault-check.sh` and for the frontmatter contract. Ships empty. | none | n/a |
-| `99-archive/` | — | Retired notes. Prefer moving here over deleting. Not scanned by the checker. Ships empty. | none | preserved from the original |
+| `99-archive/` | — | Retired notes. Prefer moving here over deleting. Not scanned by the checker. Ships empty. `vault-retention.sh` also writes `99-archive/20-projects/_logs/` unattended, and a note that arrives that way keeps its frontmatter and its name exactly as they were. | none | preserved from the original |
 | `docs/` | — | This documentation set: `setup.md`, `concepts.md`, `customizing.md`, and this file. | n/a | n/a |
 
 **The five example notes.** There is no `examples/` folder. Five notes prefixed `EXAMPLE-` ship
@@ -102,7 +102,8 @@ Templater.
 `TIERS=` line), `.claude/hooks/postcompact-wrap-up.sh`, `.claude/agents/dream-agent.md`,
 `.claude/agents/promotion-agent.md`, all four `.claude/rules/*.md`, all five skills,
 `30-knowledge/moc/VAULT-INDEX.md` (every Dataview query names folders), `dream-pass.sh` and
-`promotion-pass.sh` (their write fences name folders), the fixtures in
+`promotion-pass.sh` (their write fences name folders), `vault-retention.sh` (it names both
+`20-projects/_logs` and `99-archive/20-projects/_logs`), the fixtures in
 `.claude/scripts/run-tests.sh`, `.obsidian/daily-notes.json`, and `.gitignore`. Treat that as a floor, not an inventory. Grep the whole repo for the old name
 before you believe you are done. See [`customizing.md`](customizing.md) § 2 for the procedure.
 
@@ -241,8 +242,9 @@ whose wrong answer looks identical to the right one.
 
 ## 4. Scripts
 
-`.claude/scripts/` holds the two checkers below, the two scheduled runners and their Windows
-wrappers in §4.3, and `lib/runner-common.sh`, the helpers both runners share.
+`.claude/scripts/` holds the two checkers below, the three scheduled runners and their Windows
+wrappers in §4.3, and `lib/runner-common.sh`, the helpers they share. The runners are
+`dream-pass.sh`, `promotion-pass.sh` and `vault-retention.sh`, each with a `.cmd` beside it.
 
 ### 4.1 `vault-check.sh` — frontmatter invariants (C1–C5)
 
@@ -284,14 +286,25 @@ it enforced on your vault, that is your wiring to add.
 **"0 violations across 0 files" is a vacuous result, not a pass**, so the script fails it: it
 prints `VACUOUS - no notes were scanned` to stderr and exits 1. Zero files checked means the
 checker scanned nothing — the signature of a path-handling bug, most often a vault path containing
-a space. The final line always prints the file count as well. Against the vault as shipped, the
+a space. The count line always prints the file count as well. Against the vault as shipped, the
 correct output is:
 
 ```
 vault-check: 0 violation(s) across 9 file(s) checked (as of YYYY-MM-DD).
+vault-check: 99-archive/ holds 0 note(s) on disk.
+vault-check: No retention pass is in this repository's history.
 ```
 
 `run-tests.sh` asserts against `across 0 file` explicitly.
+
+The two archive lines follow on a full scan and report rather than judge, because `99-archive/` is
+out of scope above and a note that has been archived would otherwise simply vanish from every
+count this script prints, leaving no way to tell an archived vault from one that has lost notes.
+The second line names the last `vault-retention.sh` pass and counts its `Vault-Retention-Move:`
+trailers once one has run, says so when none has, and says the last pass is unknown when git
+cannot answer, for instance in a shallow clone or outside a repository. Neither line changes a
+count or the exit code, and `vault-check.sh -- <note>...` prints neither, because a scan of named
+notes is answering a different question.
 
 ### 4.2 `run-tests.sh` — control suite
 
@@ -326,6 +339,19 @@ a lint that does nothing and a lint that found nothing wrong print the same thin
   `claude`: `dream-pass.sh` returns OK, NO-ARTIFACT, VIOLATION and TIMEOUT; `promotion-pass.sh`
   returns OK for a summary line and for a new long-tier note, NO-ARTIFACT for error output only,
   and VIOLATION for a write to `CLAUDE.md`.
+- **Retention mover** — one throwaway git vault holds a candidate of every kind, and one dry run
+  then one real run assert the reason logged for each. A journal with only a dream trailer moves,
+  and one that is too new, one among the newest eight dates, one edited by a human after the pass,
+  one delivered by a conflict-resolved merge, one committed without a trailer, one whose `tier:` is
+  not `medium` and one carrying `contradicts:` all stay, each with its own reason. Journals from
+  before the runner trailers existed are listed in a legacy report rather than moved, a report the
+  runner never wrote exits 2 and a missing one exits 64, and adopting the real report moves what it
+  lists. Compaction stubs move only when every committed version is the hook's template and a byte
+  prefix of the next. With a failing git on `PATH`, a failed `mv` or commit is put back only while
+  HEAD is unchanged, a commit that landed is kept, a failed put-back exits 71 and the next run
+  refuses with 78, and TERM during the moves puts them back. A symlinked or junctioned `_logs`
+  exits 6, a re-run with nothing new changes no commit, and `vault-check.sh` reports the archive
+  count in each of its shapes.
 - **Harness selection** — claude mode passes `-p`, `--agent` and `--permission-mode acceptEdits`;
   command mode without the opt-in exits 3 and never starts the agent; opted in, it passes one
   relative prompt-file path whose content is the agent's body plus the task, logs the allowlist
@@ -343,10 +369,23 @@ a lint that does nothing and a lint that found nothing wrong print the same thin
 
 A control that cannot run on the platform in hand prints `SKIP [<id>] <reason> (not counted)`.
 Set `RUN_TESTS_REQUIRED` to a space-separated list of those ids and the suite fails any of them
-that did not run. The CI jobs set it per operating system: `win-native-tree noncesweep
-win-sweep-report win-orphan-stop win-fork-stop` on Windows and `groupkill symlink run-log-link
-run-log-dirlink reaped-group line-break-name` on
-Linux, macOS and bash 3.2. A fake pass whose stop is reported as `KILL_FAILED` fails the suite at
+that did not run. The CI jobs set it per operating system, on Windows to
+
+```
+win-native-tree noncesweep win-sweep-report win-orphan-stop win-fork-stop signal-scope
+runlog-tmp-case retention-junction
+```
+
+and on Linux, macOS and bash 3.2 to
+
+```
+groupkill symlink run-log-link run-log-dirlink reaped-group line-break-name signal-scope
+runlog-tmp-case keep-output-dirlink tripwire-name keep-output-fifo retention-symlink
+```
+
+Both lists are one line each in `.github/workflows/ci.yml`, wrapped here only to fit the page.
+Adding a platform-gated control means adding its id there as well, because a control nobody
+requires can quietly stop running on the platform it was written for. A fake pass whose stop is reported as `KILL_FAILED` fails the suite at
 the end, and its marked lock and the tripwire its stop set are moved aside after that run, so the
 cases after it still run.
 
@@ -368,8 +407,14 @@ for cron or launchd. The `.cmd` pair is for Windows Task Scheduler and is a thin
 the matching `.sh` through Git Bash, so there is one implementation. It looks for Git Bash in the
 standard install locations and never searches `PATH`, because `C:\Windows\System32\bash.exe` is
 WSL; set `BASH_EXE` if Git Bash lives elsewhere. Scheduling is optional and entirely manual:
-nothing is installed for you, and neither runner contains an absolute path (each resolves the vault
+nothing is installed for you, and no runner contains an absolute path (each resolves the vault
 root from its own location).
+
+`vault-retention.sh` / `vault-retention.cmd` is the third scheduled runner and the rest of this
+section up to § 4.3.1 does not describe it. It starts no agent, so nothing about `VAULT_AGENT`,
+the prompt file, the watchdog's stall detection or the artifact assertion applies to it. It shares
+the run lock, the tripwire, the state directory and the `.cmd` wrapper's Git Bash lookup, and
+§ 4.3.1 says what it does instead.
 
 `VAULT_AGENT` chooses how the agent is started:
 
@@ -547,7 +592,9 @@ Around that call, each runner does several things an exit code cannot:
   `.tmp.*` files, the run logs' temporary files `dream-agent.run.log.runner-tmp.XXXXXX` and
   `promotion-agent.run.log.runner-tmp.XXXXXX` (six ASCII letters or digits, in exactly that case),
   and the launchd output files `setup.md` names (`dream-pass.launchd.out`,
-  `dream-pass.launchd.err`, `promotion-pass.launchd.out` and `promotion-pass.launchd.err`). Any
+  `dream-pass.launchd.err`, `promotion-pass.launchd.out`, `promotion-pass.launchd.err`,
+  `vault-retention.launchd.out` and `vault-retention.launchd.err`). The retention runner's own log
+  is `vault-retention.log`, already covered by `*.log`, and it writes nothing else here. Any
   other file or symlink there, such as a planted `CLAUDE.md`, is fenced and counts as a steering
   surface. A planted name that differs from one of the other names only in case is listed and
   reported as a violation, but not quarantined. A path with a line break in its name, anywhere in the vault, is never read as a line,
@@ -843,7 +890,149 @@ Both runners resolve the vault from their own location **only**. They ignore
 `CLAUDE_PROJECT_DIR` and any other inherited root variable, so a stale value in a scheduler or a
 harness session cannot point an unattended pass, and its fence, at a different vault.
 
-| Exit | Meaning (both runners) |
+#### 4.3.1 `vault-retention.sh` — the retention mover
+
+`vault-retention.sh` / `vault-retention.cmd` archives what the other two passes have left behind.
+It moves a file out of `20-projects/_logs/` into `99-archive/20-projects/_logs/` and does nothing
+else. It writes no note, starts no agent and calls no other vault script. The `.cmd` wrapper is the
+same thin Git Bash shim the other two use, and it passes arguments through, so `--dry-run` and
+`--adopt-legacy` work from Task Scheduler as well.
+
+Three ways to run it:
+
+- `vault-retention.sh` moves what is eligible and commits it.
+- `vault-retention.sh --dry-run` takes the lock, judges everything, logs the judgement, and writes
+  nothing at all, neither a move nor a report nor any state. Run this first on a real vault.
+- `vault-retention.sh --adopt-legacy <report>` moves the journals a report from an earlier run
+  lists, and only those.
+
+**What it moves.** A dream journal moves when all of this holds. Its name is
+`dream-YYYY-MM-DD.md`, or that plus a `-` and up to sixteen lowercase letters or digits, and the
+date is a real calendar date that is not in the future. Exactly one non-merge commit ever touched
+it, that commit added it, and its message carries one `Vault-Pass: dream` line and a
+`Vault-Pass-Blob:` line for every path it changed, the journal's naming the blob the commit
+actually stored. HEAD still holds that blob, the file is tracked, clean in the work tree and the
+index, and carries no `assume-unchanged` or `skip-worktree` flag. Its frontmatter has exactly one
+`tier:` key whose value is `medium`, and no `contradicts:` or `superseded_by:` key. Its filename
+date is older than `RETENTION_DAYS` and is not among the newest eight distinct dates among the
+journals this run did not refuse. That last rule is what keeps a recent window readable for the
+next dream pass, and it wins over age, so a folder whose eight newest dates are all old keeps them.
+
+The window is worked out over the journals that survived every other rule, not over everything in
+the folder, and that is deliberate. A journal with a date in the future, or a name nobody
+recognises, would otherwise hold one of the eight places open and push a real journal out of the
+window. The consequence worth knowing is the other direction. Eight recent journals that are all
+refused for some other reason, a `contradicts:` key for instance, take themselves out of the
+window and let older journals move. Clearing a recent refusal is therefore what holds the older
+ones back again.
+
+A compaction stub `compaction-<session>.md` moves when every committed version of it is exactly the
+compaction hook's template followed by entry lines, each version is a byte prefix of the next, the
+last equals HEAD's blob, and its last entry is older than `RETENTION_DAYS`. The prefix chain is the
+point. Appending is what the hook does, so anything else in the history means something other than
+the hook wrote it.
+
+Everything else is refused with its own reason on one log line, and every run ends with the line
+`evaluated N candidate(s): E eligible, L legacy, K kept, Q left alone, R refused, M moved`. `Q`
+counts the stubs a run passes over without judging them, an untracked one or one whose name the
+archive already holds, each of which is also counted on its own line just above. They are not
+refusals, and counting them as refusals sent the reader looking for a reason that was never
+written.
+
+**Journals older than the trailers.** A journal committed before any runner wrote trailers cannot
+be proved machine-written, and refusing it for good would leave it in the live tier forever. Those
+are LEGACY. A run lists them in a report in the state directory, named
+`retention-legacy-<date>-<hash8>.txt`, records the report's hash, and logs the exact
+`--adopt-legacy` command. Read the report, then run that command. Adoption re-checks every path
+against the report and against the rules, so a journal edited since the report was written is
+refused rather than moved. A report this runner never wrote, or one whose list has been changed,
+exits 2, which is why the hash is recorded rather than the report simply trusted.
+
+**What it shares with the other two runners, and what it does instead.**
+
+- **Run lock.** The same lock, in the same state directory, under the owner name
+  `vault-retention`. A retention pass and a dream pass therefore cannot run at once.
+- **Watchdog.** Each git step runs under `run_with_watchdog` with `RUNNER_GIT_TIMEOUT`. There is no
+  stall detection and no `*_PASS_TIMEOUT`, because there is no agent producing a stream to watch.
+  A git step that could not be stopped marks the run lock, exactly as for the other two.
+- **Write fence.** None, and it needs none. It writes no content, so there is nothing to check
+  afterwards. What stands in its place is that every move is judged before anything is written, is
+  made by one `git mv`, and is verified from the index against the blob that was judged before the
+  commit is made.
+- **Containment.** None of its own. It reads the same tripwire the other two set and exits 78 while
+  one exists, so a contained pass holds retention back too.
+- **Script integrity.** The same shape, a `main` called on the last line, so a truncated download
+  cannot run half of it.
+- **Artifact assertion.** None. "Nothing was eligible" is a correct and common exit 0, so there is
+  no artifact to assert. The judgement in the log is the evidence that the run did something, and
+  `--dry-run` is how you read it before any move.
+- **Git preflight.** The same checks, plus four refusals of its own, because its whole judgement
+  rests on history being complete. A shallow clone, `info/grafts`, a sparse checkout and a vault
+  that is not the top of its own repository each exit 1. Unmerged index entries exit 75.
+- **Runner commit.** One commit per run, subject `retention pass: moved N file(s) to 99-archive/`,
+  carrying `Vault-Pass: retention`, one `Vault-Retention-Run: <nonce>`, and one
+  `Vault-Retention-Move: <source> -> <destination>` per file. That last trailer is what
+  `vault-check.sh` counts to report the last pass.
+
+**When a move goes wrong.** Before the first move the runner writes a recovery file,
+`retention-inflight` in the state directory, naming HEAD, the nonce and every planned move. A
+failure while HEAD is still unchanged is put back and exits 3, or 4 when it was the commit that
+failed. A commit that may have landed is **never** put back, because putting back a committed move
+would need a second commit the runner cannot judge. When the outcome cannot be settled, the
+recovery file stays, the run exits 71, and every later run refuses with 78 until the vault matches
+either the before or the after state. The file says which files should be where.
+
+Known limits, each failing in the quiet direction:
+
+- The judgement rests entirely on git history. A rewritten, grafted or replaced history can make a
+  machine-written journal look human-written, or the reverse. The refusals above catch the cases
+  that are detectable, and a history rewritten in place is not one of them.
+- A move that has been committed is undone by reverting that commit, not by the runner. The runner
+  refuses a journal restored that way from then on, and says so, because a file that came back
+  after an archiving decision is a decision someone made.
+- A journal a sync plugin committed before the runner ever saw it carries no trailer and is not
+  LEGACY either, because a `Vault-Pass:` commit already exists in the history. It is refused for
+  good unless someone adopts it by hand. Configure a sync plugin not to auto-commit, or let the
+  retention pass run before it does.
+- `99-archive/` is not scanned by `vault-check.sh`, so a note's frontmatter stops being checked the
+  moment it is archived. The runner never rewrites frontmatter, so what is there is what was last
+  checked in the live tier.
+- **A file whose stored bytes do not survive a round trip through the repository's own
+  end-of-line setting cannot be archived, and the run that tries ends at 71.** The commit is made
+  with `git commit --only`, which takes its content from the work tree rather than from the index,
+  so git runs the conversion `core.autocrlf` asks for. A blob committed with that conversion
+  switched off, by another tool or on another machine, therefore hashes to something else on the
+  way back in, and the file would be committed with different bytes under a trailer saying it had
+  only moved. The runner asks HEAD what it actually holds after the commit, does not recognise it,
+  keeps the commit, writes the recovery file and exits 71, so nothing is lost and nothing is
+  silently rewritten. Every later run then refuses with 78 until the vault is settled by hand.
+  `git status` calls such a file clean, because the index stat information matches it, which is
+  why nothing earlier in the run notices. It is most likely on Windows, where `core.autocrlf` is
+  on by default. The fix is for the commit to be built from the index this run has already
+  verified rather than from the work tree, which would also close the case below where a source
+  recreated between the check and the commit is committed back alongside its destination. Until
+  then, renormalise the file by hand, or set the line endings for that path in `.gitattributes`,
+  and the next run will archive it.
+- A source path recreated between the index check and the commit is committed back alongside its
+  destination, under a trailer saying it moved away. `head_holds_moves` catches it, the commit is
+  kept and the run exits 71, so the mismatch is reported rather than hidden, but the commit stays
+  in the history.
+
+| Exit | Meaning (`vault-retention.sh`) |
+| --- | --- |
+| `0` | OK: the moves were committed, nothing was eligible, this was a dry run, or there is no `20-projects/_logs` folder. The log says which |
+| `1` | setup failure, git cannot read the vault, the vault is not the top of its own repository, a shallow clone, `info/grafts`, or a sparse checkout |
+| `2` | REPORT-REFUSED: the `--adopt-legacy` report was not written by this runner, or its list has changed since. Nothing moved |
+| `3` | PARTIAL: a move failed while HEAD was unchanged, and every file was put back. Nothing is committed. Also when the archive folders could not be made, where nothing had moved to put back |
+| `4` | COMMIT-FAILED: the commit failed with HEAD unchanged, and the moves were put back |
+| `6` | PATH-BLOCKED: `20-projects`, `20-projects/_logs` or one of the archive folders is a link, a junction, not a folder, or another entry differs from it only in case. Checked before anything is judged, so nothing moved |
+| `64` | usage error: an unknown option, or a report file that is missing or unreadable |
+| `70` | TRIPWIRE-ERROR, the same meaning as for the other runners |
+| `71` | RECOVERY-NEEDED: a put-back failed, or what a commit did cannot be determined, or a `git mv` was stopped and may still be running, in which case nothing is put back at all because whatever that git does next would land on top of the put-back. Also when HEAD could not be read to check a put-back, where the run says only that it cannot tell either way. `retention-inflight` in the state directory says what should be where, and later runs refuse until it checks out |
+| `75` | LOCKED: another runner's lock, git's `index.lock`, a git operation in progress, a detached HEAD, or unmerged index entries |
+| `78` | TRIPWIRE, or a recovery file from an earlier run that does not check out |
+
+| Exit | Meaning (dream and promotion runners) |
 | --- | --- |
 | `0` | OK: the artifact assertion held, nothing outside the fence changed, and the pass's files were committed, HEAD already held them, git ignores them, or the vault is not a repository of its own |
 | `1` | NO-ARTIFACT, the runner could not create its temporary directory, use its state directory, write its in-flight marker or (promotion pass) its git state file, run `git status` or back up the steering surfaces, git cannot read the vault's repository, or (command mode) the agent definition file is missing |
@@ -868,16 +1057,18 @@ harness session cannot point an unattended pass, and its fence, at a different v
 | `VAULT_ALLOW_UNENFORCED_TOOLS` | unset | both runners in command mode: `1` confirms the wrapper is sandboxed; anything else refuses the run |
 | `DREAM_PASS_TIMEOUT` | `3600` seconds | `dream-pass.sh` |
 | `PROMOTION_PASS_TIMEOUT` | `5400` seconds | `promotion-pass.sh` |
+| `RETENTION_DAYS` | `60` days | `vault-retention.sh`: how old a journal or stub must be before it may move, by its filename date for a journal and by its last entry for a stub. At least 1 |
+| `RETENTION_MAX_MOVES` | `50` | `vault-retention.sh`: the most files one run moves. A larger value is refused with a warning and 50 is used, so one run's commit stays reviewable. The rest wait for the next run, oldest first |
 | `WATCHDOG_POLL` | `5` seconds | `lib/runner-common.sh`: how often the watchdog checks the clock. The runners replace a value that is not a whole number of at least 1 with the default and log a warning, as they do for the timeouts, `WATCHDOG_GRACE` and the `RUN_LOCK_` settings |
 | `WATCHDOG_GRACE` | `15` seconds | `lib/runner-common.sh`: wait between `TERM` and `KILL` |
-| `RUN_LOCK_WAIT` | `1800` seconds | both runners: how long to wait for the run lock before exiting 75 |
-| `RUN_LOCK_POLL` | `30` seconds | both runners: how often to check the run lock while waiting |
+| `RUN_LOCK_WAIT` | `1800` seconds | all three runners: how long to wait for the run lock before exiting 75 |
+| `RUN_LOCK_POLL` | `30` seconds | all three runners: how often to check the run lock while waiting |
 | `RUNNER_STALL_SECONDS` | unset | both runners: the stall threshold in seconds, replacing the measured one. `0` turns stall detection off. Setting it is the only way to turn stall detection on in command mode |
 | `RUNNER_STALL_FLOOR` | `600` seconds | both runners in claude mode: the stall threshold until three passes are measured, and the lowest it can be after |
 | `RUNNER_RUN_LOG_MAX_BYTES` | `10000000` | both runners: the size above which a pass's run log in `.claude/logs` is cut to its newest part after the pass |
-| `RUNNER_GIT_TIMEOUT` | `120` seconds | both runners: how long each git step of the runner commit (staging, then the commit and its signing) may take before it is stopped and the run exits 4 |
-| `VAULT_STATE_DIR` | per-vault directory under `%LOCALAPPDATA%` or `~/.local/state` | both runners: the run lock, the quarantine, the tripwire and in-flight copies, and the pre-pass backup of a running pass, all outside the vault, and `vault-check.sh`, which looks for the tripwire copy there. An absolute path is required, and a Windows path is converted. A relative one, one containing `..`, or one inside the vault is replaced with a directory under the system temp folder, and the runner logs a warning. A state directory the runner's account does not own or cannot write stops the run with exit 1. Give each vault its own value |
-| `BASH_EXE` | standard Git for Windows paths | the `.cmd` wrappers |
+| `RUNNER_GIT_TIMEOUT` | `120` seconds | all three runners: how long each git step of the runner commit (staging, then the commit and its signing) may take before it is stopped and the run exits 4. In `vault-retention.sh` it bounds the history walk and the move as well, and a step it stops there gives 75 before any move or 71 after one |
+| `VAULT_STATE_DIR` | per-vault directory under `%LOCALAPPDATA%` or `~/.local/state` | all three runners: the run lock, the quarantine, the tripwire and in-flight copies, the pre-pass backup of a running pass, and the retention runner's legacy reports and its `retention-inflight` recovery file, all outside the vault, and `vault-check.sh`, which looks for the tripwire copy there. An absolute path is required, and a Windows path is converted. A relative one, one containing `..`, or one inside the vault is replaced with a directory under the system temp folder, and the runner logs a warning. A state directory the runner's account does not own or cannot write stops the run with exit 1. Give each vault its own value |
+| `BASH_EXE` | standard Git for Windows paths | all three `.cmd` wrappers |
 | `VAULT_FORCE_NO_JQ` | unset | `vault-lint.sh` and `postcompact-wrap-up.sh`: take the no-jq branch even when `jq` is installed |
 
 `lib/runner-common.sh` holds the shared pieces: `ts` (timestamps), `run_with_watchdog`,
@@ -1120,6 +1311,7 @@ while a note under `40-llm-wiki/wiki/` is covered by the six-tier rules only.
 | `.claude/scripts/run-tests.sh` | `0` all controls passed · `1` at least one failed · `130` SIGINT · `143` SIGTERM | stdout only; fixtures in a temp dir, removed on exit |
 | `.claude/scripts/dream-pass.sh` / `.cmd` | `0` OK · `1` NO-ARTIFACT · `2` VIOLATION · `3` REFUSED · `4` COMMIT-FAILED · `5` CHECK-FAILED · `64` unknown `VAULT_AGENT` · `70` TRIPWIRE-ERROR · `75` LOCKED · `78` TRIPWIRE · `124` TIMEOUT · `125` STALLED · `127` `claude`, wrapper or Git Bash not found · otherwise the agent's code | `.claude/logs/dream-agent.log` · agent output in `dream-agent.run.log` · `dream-pass.git-state.txt` · `dream-pass.prompt.md` in command mode · `runner-tripwire` after a contained violation or a `KILL_FAILED` stop · `dream-pass.interrupted.run` in the state directory after a signal or a `KILL_FAILED` stop, or when the run log could not be written, or `dream-pass.interrupted.run.<six characters>` beside it when something was in the way |
 | `.claude/scripts/promotion-pass.sh` / `.cmd` | `0` OK · `1` NO-ARTIFACT · `2` VIOLATION · `3` REFUSED · `4` COMMIT-FAILED · `5` CHECK-FAILED · `64` unknown `VAULT_AGENT` · `70` TRIPWIRE-ERROR · `75` LOCKED · `78` TRIPWIRE · `124` TIMEOUT · `125` STALLED · `127` `claude`, wrapper or Git Bash not found · otherwise the agent's code | `.claude/logs/promotion-agent.log` · agent output added to `promotion-agent.run.log` · `promotion-pass.git-state.txt` · `promotion-pass.prompt.md` in command mode · `runner-tripwire` after a contained violation or a `KILL_FAILED` stop · `promotion-pass.interrupted.run` in the state directory after a signal or a `KILL_FAILED` stop, or when the run log could not be written, or `promotion-pass.interrupted.run.<six characters>` beside it when something was in the way |
+| `.claude/scripts/vault-retention.sh` / `.cmd` | `0` OK · `1` setup, git or repository shape · `2` REPORT-REFUSED · `3` PARTIAL · `4` COMMIT-FAILED · `6` PATH-BLOCKED · `64` usage · `70` TRIPWIRE-ERROR · `71` RECOVERY-NEEDED · `75` LOCKED · `78` TRIPWIRE · `127` Git Bash not found (from the `.cmd`) | `.claude/logs/vault-retention.log` · in the state directory `retention-legacy-<date>-<hash8>.txt` and the `retention-legacy.hashes` index of reports it wrote, and `retention-inflight` while a move is in flight, which is left behind on exit 71 and holds later runs back · no run log and no prompt file, because it starts no agent |
 | `.claude/githooks/pre-commit` | `vault-check.sh`'s status: `0` commit proceeds · `1` commit refused | stdout/stderr only |
 | `dream-agent` | n/a (agent) | one file: `20-projects/_logs/dream-<YYYY-MM-DD>.md` |
 | `promotion-agent` | n/a (agent) | `31-standards/`, `40-llm-wiki/wiki/`, optionally `20-projects/_logs/promotion-*.md`, committed by its runner |

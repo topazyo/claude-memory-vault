@@ -338,11 +338,17 @@ It validates five invariants across the content tiers (`01-inbox`, `10-daily`, `
 It is **report-only**: it never writes, stamps, or repairs, and it exits 1 when any note violates
 an invariant so you can gate a pass on it. Repair is a human act.
 
-The final line looks like this:
+A full scan looks like this:
 
 ```
 vault-check: 0 violation(s) across 9 file(s) checked (as of 2026-01-01).
+vault-check: 99-archive/ holds 0 note(s) on disk.
+vault-check: No retention pass is in this repository's history.
 ```
+
+The count is the line to read. The two after it report what the retention pass has taken out of the
+live tiers, so an archived vault can be told apart from one that lost notes, and neither changes
+the exit code. See `docs/reference.md` § 4.3.1.
 
 ### The one output you must not misread
 
@@ -364,15 +370,23 @@ result becomes vacuous again.
 
 ---
 
-## 8. Optional: scheduling the dream and promotion agents
+## 8. Optional: scheduling the dream and promotion agents and the retention pass
 
-Two agents are defined in `.claude/agents/`. Scheduling them is optional. The vault
-works fine driven only by `/obsidian-save` and `/preserve` during ordinary sessions.
+Two agents are defined in `.claude/agents/`, and there is a third scheduled pass that is not an
+agent. Scheduling any of them is optional. The vault works fine driven only by `/obsidian-save`
+and `/preserve` during ordinary sessions.
 
-| Agent | Cadence | What it writes |
+| Pass | Cadence | What it writes |
 | --- | --- | --- |
 | `dream-agent` | Nightly, if you want it | **One** dated dream-journal file. Nothing else, ever. |
 | `promotion-agent` | Weekly | **Creates and edits notes** in `31-standards/` and `40-llm-wiki/wiki/` |
+| `vault-retention.sh` | Weekly, after the other two | **Writes no content.** Moves aged dream journals and compaction stubs from `20-projects/_logs/` into `99-archive/20-projects/_logs/` |
+
+The retention pass is the safest of the three to leave unattended, and for a different reason from
+the other two. It writes nothing at all. It only moves files git can prove a machine wrote and
+nobody has edited since, it never renames one or touches its frontmatter, and each run is a single
+commit you can revert. Run it with `--dry-run` first to read its judgement before it moves
+anything.
 
 The dream-agent is safe to run unattended because it proposes rather than executes: its
 only write is a new file at a predictable path, so a pass that misreads something cannot corrupt
@@ -393,18 +407,30 @@ pass actually produced something. Exit codes are `0` OK, `1` no artifact, `2` wr
 fence, `3` refused (see below), `64` unknown `VAULT_AGENT`, `124` timeout, `125` stalled, `127` no
 `claude` or wrapper. `docs/reference.md` § 4.3 has the full table.
 
+`vault-retention.sh` uses some of the same numbers for different things, so read its codes against
+its own table in `docs/reference.md` § 4.3.1 rather than the list above. They are `0` OK, `2`
+REPORT-REFUSED, `3` PARTIAL, `4` COMMIT-FAILED, `6` PATH-BLOCKED, `64` usage and `71`
+RECOVERY-NEEDED, and it has no `124` or `125` because it runs no agent.
+
 ```cron
 # dream pass, nightly at 02:30
 30 2 * * *  /path/to/your-vault/.claude/scripts/dream-pass.sh
 # promotion pass, Sundays at 03:30
 30 3 * * 0  /path/to/your-vault/.claude/scripts/promotion-pass.sh
+# retention pass, Sundays at 04:30, after the promotion pass
+30 4 * * 0  /path/to/your-vault/.claude/scripts/vault-retention.sh
 ```
+
+Give the retention pass a slot after the other two rather than beside them. All three take the same
+run lock, so an overlap costs one of them a wait of up to `RUN_LOCK_WAIT` and then exit 75.
 
 If `claude` is not on the PATH cron gives you (it usually is not, since cron runs no login
 profile), set `CLAUDE_BIN` to the full path in the crontab. The watchdog limits are environment
 variables too: `DREAM_PASS_TIMEOUT` (default 3600 seconds) and `PROMOTION_PASS_TIMEOUT` (default
 5400). Set them the same way, as `NAME=value` lines above the entries, if a pass legitimately needs
-longer. A claude-mode pass whose output stops for the stall threshold is stopped sooner, with exit
+longer. `RETENTION_DAYS` (default 60) and `RETENTION_MAX_MOVES` (default 50, and 50 is also the
+most it will accept) belong in the same place when the retention pass's own defaults do not suit
+the vault. A claude-mode pass whose output stops for the stall threshold is stopped sooner, with exit
 125. The threshold is 10 minutes until three passes that ended OK are measured, then 1.5 times the
 longest silence those passes usually have, and never below 10 minutes. Each run logs it.
 `RUNNER_STALL_SECONDS` sets it outright, and turns stall detection on for a command-mode wrapper
@@ -557,6 +583,32 @@ nightly):
   <string>/Users/YOU/Vaults/my-vault/.claude/logs/promotion-pass.launchd.err</string>
 ```
 
+The retention runner's plist differs in the same few keys, and it needs no `CLAUDE_BIN` because it
+starts no agent:
+
+```xml
+  <key>Label</key>
+  <string>com.claude-memory-vault.vault-retention</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/YOU/Vaults/my-vault/.claude/scripts/vault-retention.sh</string>
+  </array>
+
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Weekday</key><integer>0</integer>
+    <key>Hour</key><integer>4</integer>
+    <key>Minute</key><integer>30</integer>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>/Users/YOU/Vaults/my-vault/.claude/logs/vault-retention.launchd.out</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/YOU/Vaults/my-vault/.claude/logs/vault-retention.launchd.err</string>
+```
+
 `Weekday` 0 is Sunday; omit the key entirely for a daily job.
 
 Load them:
@@ -573,7 +625,7 @@ Three things that will otherwise cost you an evening:
 
 - **launchd creates the log file, not its directory.** `StandardOutPath` and `StandardErrorPath`
   are opened before your script runs, so the `.claude/logs/` directory must already exist, hence
-  the `mkdir -p` above. The runners leave these four `.launchd.out` and `.launchd.err` names out
+  the `mkdir -p` above. The runners leave these six `.launchd.out` and `.launchd.err` names out
   of their write fence. A file of any other name that appears in `.claude/logs/` during a pass
   is contained as a planted file, so keep these names if you rename the jobs.
 - **The plist must be mode 0644 and owned by you**, or `bootstrap` fails with
@@ -605,7 +657,12 @@ is elsewhere. `CLAUDE_BIN` and the timeout variables pass through from the task'
 ```bat
 schtasks /create /tn "Vault-DreamAgent" /tr "\"C:\path\to\your-vault\.claude\scripts\dream-pass.cmd\"" /sc daily /st 23:00
 schtasks /create /tn "Vault-PromotionAgent" /tr "\"C:\path\to\your-vault\.claude\scripts\promotion-pass.cmd\"" /sc weekly /d SAT /st 20:00
+schtasks /create /tn "Vault-Retention" /tr "\"C:\path\to\your-vault\.claude\scripts\vault-retention.cmd\"" /sc weekly /d SUN /st 04:00
 ```
+
+Arguments pass through the retention wrapper, so a task that runs
+`vault-retention.cmd --dry-run` is a good way to watch its judgement for a few weeks before you
+let it move anything.
 
 Those two files already encode the traps below. They are documented here anyway, because if you
 ever write your own wrapper you will meet all three.
@@ -661,6 +718,18 @@ Set-ScheduledTask -InputObject $task | Out-Null
 Repeat for `Vault-PromotionAgent` with a limit above the lock wait plus `PROMOTION_PASS_TIMEOUT`
 (default 90 minutes), for example `PT2H30M`.
 
+`Vault-Retention` has no `*_PASS_TIMEOUT`, because it runs no agent, so its limit is derived from
+its git steps instead. A run that goes well spends the wait for the run lock (`RUN_LOCK_WAIT`,
+default 30 minutes) and then a handful of watched git steps at `RUNNER_GIT_TIMEOUT` each (default
+2 minutes) — the history walk, two batched lookups, one `git mv` for the whole move set, and the
+commit. The expensive case is a move that fails and has to be put back, which walks the files back
+one at a time, up to `RETENTION_MAX_MOVES` steps of `RUNNER_GIT_TIMEOUT`. At the defaults that
+worst case is 30 + 12 + 100 minutes, so `PT2H30M` covers it with margin. Lowering
+`RETENTION_MAX_MOVES` lowers the worst case directly, and is the right move on a vault where you
+would rather archive in small batches anyway. A limit shorter than the run leaves the lock and the
+`retention-inflight` recovery file behind, and the next run then refuses with exit 78 until the
+vault matches what that file describes.
+
 **Trap 3 — judging health by `State`.** Task health is `LastTaskResult` **plus a log file on
 disk**, never `State`. A task can sit at `Ready` for weeks while every run dies on startup.
 If `.claude/logs/dream-agent.log` has no new lines, the task is not working, whatever the UI says.
@@ -670,19 +739,22 @@ If `.claude/logs/dream-agent.log` has no new lines, the task is not working, wha
 Scheduling is the only part of the vault that lives outside the folder, so remove it first.
 
 ```bash
-# Linux: delete the two runner lines
+# Linux: delete the three runner lines
 crontab -e
 
-# macOS: unload both jobs, then delete their plists
+# macOS: unload the jobs, then delete their plists
 launchctl bootout gui/$(id -u)/com.claude-memory-vault.dream-pass
 launchctl bootout gui/$(id -u)/com.claude-memory-vault.promotion-pass
+launchctl bootout gui/$(id -u)/com.claude-memory-vault.vault-retention
 rm ~/Library/LaunchAgents/com.claude-memory-vault.dream-pass.plist \
-   ~/Library/LaunchAgents/com.claude-memory-vault.promotion-pass.plist
+   ~/Library/LaunchAgents/com.claude-memory-vault.promotion-pass.plist \
+   ~/Library/LaunchAgents/com.claude-memory-vault.vault-retention.plist
 ```
 
 ```bat
 schtasks /delete /tn "Vault-DreamAgent" /f
 schtasks /delete /tn "Vault-PromotionAgent" /f
+schtasks /delete /tn "Vault-Retention" /f
 ```
 
 To stop any harness using the vault's hooks, skills, agents and rules, delete the `.claude/`
@@ -697,7 +769,7 @@ removes `.claude/logs/`. Your notes are plain Markdown and are untouched.
 | --- | --- | --- |
 | Hooks never fire; `.claude/logs/` stays empty or absent | Claude Code was started outside the vault, so `${CLAUDE_PROJECT_DIR}` points elsewhere | `cd <your-vault>` and start Claude Code there; confirm the three hooks are listed under `/hooks` |
 | Hooks still silent, on Windows | No bash on `PATH` for the `"shell": "bash"` invocation | Install Git for Windows and confirm `bash --version` works in the shell you launch Claude Code from |
-| Runner exits 3 and the log says `REFUSED` | `VAULT_AGENT=command` without `VAULT_ALLOW_UNENFORCED_TOOLS=1` | Sandbox the wrapper first (§ 8, *Running the passes with another harness*), then set the variable. The refusal is the intended behaviour |
+| Dream or promotion runner exits 3 and the log says `REFUSED` | `VAULT_AGENT=command` without `VAULT_ALLOW_UNENFORCED_TOOLS=1` | Sandbox the wrapper first (§ 8, *Running the passes with another harness*), then set the variable. The refusal is the intended behaviour |
 | Runner exits 64 | `VAULT_AGENT` is set to something other than `claude` or `command` | Fix the value; unset it to use Claude Code |
 | Commits refused with `pre-commit: vault-check exited 1` | The commit gate found a note that violates C1–C5, anywhere in the working tree | Fix the notes it lists. The gate never repairs anything |
 | `vault-lint: jq not found; path parsing is degraded` | `jq` is missing — expected on a stock Git for Windows | Install jq (step 1). The hook keeps working, less reliably, until you do |
@@ -708,7 +780,7 @@ removes `.claude/logs/`. Your notes are plain Markdown and are untouched.
 | `vault-check: no content-tier folders found under ...` | Wrong working directory, or the tier folders were renamed | Run from the vault root, or finish the rename everywhere (see below) |
 | `run-tests.sh` fails only on a path containing spaces | A word-splitting regression in a local edit | Revert the edit; the suite builds fixtures under a directory named with a space specifically to catch this |
 | Scheduled agent "succeeded" but nothing changed | On Windows, the exit code was swallowed by `%ERRORLEVEL%>>`; or the run did nothing because `-p` was missing | Use the shipped runners (step 8), and judge health by the log file rather than by `State` |
-| Runner exits 2 and the log says `VIOLATION` | A file outside the pass's allowed folders changed during the run — the agent, or another writer such as a sync client | Read the paths listed under the `VIOLATION` line in `.claude/logs/`, and revert with git anything you did not expect |
+| Dream or promotion runner exits 2 and the log says `VIOLATION` | A file outside the pass's allowed folders changed during the run — the agent, or another writer such as a sync client | Read the paths listed under the `VIOLATION` line in `.claude/logs/`, and revert with git anything you did not expect |
 | Runner exits 2, the log says `contained`, and `.claude/logs/runner-tripwire` exists | The pass changed a steering or execution surface (an Obsidian plugin, something under `.claude/`, a harness config, an instruction file at any depth, memory, or git's config or hooks), or HEAD was rewound. The runner restored those files and moved what the pass wrote into the quarantine outside the vault | Read the tripwire, which names each path, anything it could not contain, and the quarantine directory. Inspect the quarantined files, and check `git reflog` if HEAD is listed. Then delete the tripwire and its copy in the state directory. If only a code-running plugin's `data.json` is listed (Dataview, Templater and the others named in `docs/reference.md` § 4.3) and you changed its settings during the pass, here or on another device through Obsidian Sync, that is the likely cause. If HEAD is listed and you rebased, pulled with rebase or switched branches during the pass, that is the likely cause |
 | Runner exits 78 and the log says `TRIPWIRE`, or `vault-check.sh` says `TRIPWIRE` | A tripwire is still in place, or a previous pass ended before containment ran (the scheduler ended the task, or the machine stopped) and this run turned its marker into a tripwire. A tripwire whose reason, or a section added at its end, says a process may still be running comes from a `KILL_FAILED` stop | Read the tripwire the log names and do what it says. When the log says a pass may have written it, because no copy in the state directory is a file, compare its reason with the runner log before you follow anything in it. When the log says the path is not a file, remove it and read the runner log for why the tripwire was set. For a changed surface, review as above. For a `KILL_FAILED` stop, see that row below, because its run lock also has to go. Then delete both copies of the tripwire |
 | Runner exits 75 and the log says `LOCKED` | Another pass held the run lock, or git's `index.lock` stayed, for the whole `RUN_LOCK_WAIT`, or the `index.lock` is more than 10 minutes old | For a held lock, nothing if the schedules overlap by design, otherwise move one schedule. A lock left by a killed runner is reclaimed on its own once that runner's longest run has passed. The log names the holder, and the lock is `run.lock` in the state directory. A lock whose holder cannot be checked, because its owner file cannot be read or, on Windows, PowerShell cannot look the process up, is never reclaimed, so once no pass is running, delete `run.lock` yourself. For `index.lock`, make sure no git command is running, then delete the file |
@@ -717,13 +789,19 @@ removes `.claude/logs/`. Your notes are plain Markdown and are untouched.
 | Runner exits 1 and the log says git could not read the vault's repository | The vault has a `.git` that git refuses or cannot open, most often "detected dubious ownership" when the scheduler runs under another account | Run `git status` in the vault as the account the scheduler uses. Fix the ownership, or add the vault with `git config --global --add safe.directory <path>` for that account |
 | Dream runner exits 5 and the log says `CHECK-FAILED` | The journal the pass wrote fails `vault-check.sh` (C1–C5), so it was not committed | Read the check output under that line. Then fix the journal by hand and commit it yourself, or delete it. Later runs leave the rejected journal alone and commit their own, except a run the same day that writes to that same journal, which exits 2 until you commit or delete it |
 | Promotion runner exits 5 and the log says `CHECK-FAILED` and `REVERTED`, or exits 2 with `REVERTED` | A note the pass wrote or changed fails `vault-check.sh` (C1–C5), or the pass deleted a note, so none of its notes were committed. Each was copied to the quarantine in the state directory and put back as it was in the commit before the pass, and a new note was moved there | Read the check output and the `REVERTED` list. A note listed as changed after the pass ended, as committed while the pass ran, or as in no commit because git ignores it, was left as it is, so review it by hand. An edit you made to a note while the pass ran is in the quarantine copy. The candidates stay in the project logs for the next pass |
-| Runner exits 4 and the log says `COMMIT-FAILED` | Staging or committing the pass's notes failed or ran past `RUNNER_GIT_TIMEOUT`, for example a signing key that needs a passphrase, no git identity, or a busy `index.lock` | The log shows git's output. Fix the cause and rerun, and the next run of the same pass checks the notes the failed one left and commits them, or puts them back when they fail the check, as long as nobody has edited them. If the log says the files could not be taken back out of the index, run `git reset -- <file>` first. Delete an `index.lock` the log names once no git command is running |
+| Dream or promotion runner exits 4 and the log says `COMMIT-FAILED` | Staging or committing the pass's notes failed or ran past `RUNNER_GIT_TIMEOUT`, for example a signing key that needs a passphrase, no git identity, or a busy `index.lock` | The log shows git's output. Fix the cause and rerun, and the next run of the same pass checks the notes the failed one left and commits them, or puts them back when they fail the check, as long as nobody has edited them. If the log says the files could not be taken back out of the index, run `git reset -- <file>` first. Delete an `index.lock` the log names once no git command is running |
 | Runner exits 70, or exits 130 or 143 after a signal, and the log says `TRIPWIRE-ERROR` | Containment was needed but no tripwire could be written, for example a full disk | Free the space, then run the pass by hand. It refuses with 78 and writes the tripwire, which you then review |
 | Runner exits 124 and the log says `TIMEOUT` | The pass exceeded `DREAM_PASS_TIMEOUT` / `PROMOTION_PASS_TIMEOUT` and was killed | Check the `.run.log` for where it stalled; raise the limit only if the pass was making progress |
 | Runner exits 125 and the log says `STALLED` | A pass wrote nothing to its output for the stall threshold the log names, and was stopped with everything it started. That is a claude-mode pass, or a command-mode one with `RUNNER_STALL_SECONDS` set | Read the end of the `.run.log`. A pass waiting on a slow tool or a rate limit is not stalled, so raise `RUNNER_STALL_SECONDS` or `RUNNER_STALL_FLOOR` if that is what you see. The notes it left are checked by the next run |
 | Runner exits 124 or 125, the log says `KILL_FAILED`, the tripwire is set, and every later run exits 75 | A process of the stopped pass was still running after the stop, its output kept growing, or the check gave no answer (the log says `unknown`, for example when `ps` or PowerShell could not run or PowerShell took over a minute). The runner kept its run lock so another pass cannot race it, set the tripwire because that process may have written after containment, and kept the pre-pass backup in the state directory. The tripwire says when the lock could not be marked or no backup was made | Find the process the log lists (on Windows, a `claude` or `bash` whose command line holds the session id the log names) and end it. For `unknown`, make `ps` or `powershell.exe` runnable for the task's account. Review the vault as the tripwire says, against the backup it names and `git status`, then delete both copies of the tripwire, and the `run.lock` folder the log names when the lock was marked |
 | Runner exits 4, or 130 or 143 after a signal, the log says `KILL_FAILED`, and every later run exits 75 | A commit step, or the stop a signal started, left a process running or could not check. A signal before containment also sets the tripwire, and the log says `INTERRUPTED`. After containment only the run lock is marked | End the process the log lists, as above, and check `git status` for a half-made commit. Then delete the `run.lock` folder the log names, and the tripwire too if one is set |
 | The log says the output of the pass is kept in the state directory | The pass was stopped by a signal before its output reached the `.run.log` in the vault, where writing is safe only after containment, a stop left a process that may still be running (`KILL_FAILED`), or a `WARNING` just before says the run log could not be written, for example because a folder or an unreadable file is in its place | Read `<runner>.interrupted.run` in the state directory the log names to see where the pass was. For a `WARNING`, fix what it names at the run-log path. A `WARNING` that names what is at that path (a folder, a link, or a path the output could not be renamed to) gives the new name the output was kept under instead. Read that file, then remove what is in the way. A `WARNING` that the output may be inside what took the path means something replaced it during the run, so look inside it. A `WARNING` that the output is lost means this run's output is gone. It says whether what is still at that path is an earlier run's output or something else, which you remove |
+| Retention runner exits 2 and the log says `REPORT-REFUSED` | The file given to `--adopt-legacy` is not a report this runner wrote, or its list of paths has been changed since it was written. Nothing moved | Use the report path the runner logged, in the state directory. Never hand-edit a report to add a path. Run the pass with no arguments to have it write a fresh report, read that one, and adopt it |
+| Retention runner exits 3 and the log says `PARTIAL` | A `git mv` failed while HEAD was still unchanged, so every file was put back where it was and nothing was committed | The log names what failed, usually a file that another program had open or a permission problem. Fix it and run again. The vault is already back at HEAD, so nothing is half moved |
+| Retention runner exits 6 and the log says `PATH-BLOCKED` | `20-projects`, `20-projects/_logs` or one of the `99-archive/...` folders is a symlink, an NTFS junction, a plain file, or another entry exists whose name differs only in case. Checked before anything is judged, so nothing moved | Make the path named in the log a real folder in the vault, or remove the case-variant entry. The runner refuses rather than following a link because a link is how an archived note would be written somewhere you cannot see |
+| Retention runner exits 71 and the log says `RECOVERY-NEEDED`, and later runs exit 78 | A put-back failed, or a commit was made and what it did could not be determined. The runner never puts back a commit that may have landed | Read `retention-inflight` in the state directory. It names HEAD before the run and every file with where it should be. Put each file where the record says, with `git mv` if it is in the index, then run the pass again. It clears the record itself once the vault matches either the before or the after state |
+| Retention runner exits 1 and the log names a shallow clone, grafts or a sparse checkout | Its whole judgement rests on complete history, and none of those can provide it | Run the pass in a full clone of the vault. `git fetch --unshallow` fixes a shallow one. Do not work around it, because an incomplete history is exactly what makes a human-edited journal look machine-written |
+| A journal never becomes eligible and the log says it was committed without a dream trailer | A sync plugin committed the journal before the runner could, so it carries no `Vault-Pass: dream` trailer and there is no way to prove a machine wrote it | Turn off the plugin's auto-commit, or schedule it after the dream pass. Existing journals in that state have to be archived by hand. Obsidian Git's "auto commit-and-sync" interval is the usual cause, and setting it longer than the passes take is enough |
 
 ### One more, because it is the template's biggest customization cost
 
@@ -734,6 +812,7 @@ hardcoded in at least these files (`docs/customizing.md` § 2 has the full proce
 - `.claude/hooks/vault-lint.sh`
 - `.claude/hooks/postcompact-wrap-up.sh`
 - `.claude/scripts/vault-check.sh`
+- `.claude/scripts/vault-retention.sh` (it names `20-projects/_logs` and the archive path it moves to)
 - `.claude/agents/dream-agent.md`
 - `.claude/rules/vault-notes.md`, `.claude/rules/verification.md`,
   `.claude/rules/untrusted-captures.md`

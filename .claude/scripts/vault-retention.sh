@@ -1,0 +1,2919 @@
+#!/usr/bin/env bash
+# .claude/scripts/vault-retention.sh
+#
+# Scheduled runner that archives old dream journals and compaction stubs.
+# For cron or launchd, or Task Scheduler through vault-retention.cmd.
+#
+# It moves a file from 20-projects/_logs/ to 99-archive/20-projects/_logs/ only
+# when git shows a machine wrote it and nobody changed it since:
+#
+#   a dream journal   dream-YYYY-MM-DD.md or dream-YYYY-MM-DD-<suffix>.md, added
+#                     by exactly one commit that carries the dream runner's
+#                     Vault-Pass and Vault-Pass-Blob trailers for it, never
+#                     changed after, older than RETENTION_DAYS by its file name,
+#                     and not among the newest eight dates of the journals this
+#                     run did not refuse, which is a smaller set than everything
+#                     in the folder
+#   a compaction stub compaction-<session>.md, every committed version exactly
+#                     the hook's template plus entry lines, each version a
+#                     prefix of the next, its last entry older than
+#                     RETENTION_DAYS
+#
+# Journals committed before any runner trailer existed are LEGACY. They are
+# listed once in a report in the state directory and move only when the owner
+# runs --adopt-legacy with that report. Every refusal still applies to them.
+#
+# All moves are one git mv and one commit with the trailers
+#   Vault-Pass: retention
+#   Vault-Retention-Run: <nonce>
+#   Vault-Retention-Move: <source> -> <destination>
+# A failed move or commit is put back while HEAD is unchanged. A commit that
+# may have landed is never put back. When the outcome cannot be settled, a
+# recovery file in the state directory says what is where, and later runs
+# refuse until it checks out.
+#
+# Usage:
+#   vault-retention.sh                         move what is eligible
+#   vault-retention.sh --dry-run               judge and log, move and write nothing
+#   vault-retention.sh --adopt-legacy <report> move the legacy journals the report lists
+#
+# Environment:
+#   RETENTION_DAYS       days before a journal or stub may move (default 60)
+#   RETENTION_MAX_MOVES  the most files one run moves (default 50, at most 50)
+#   VAULT_STATE_DIR      per-vault state outside the vault (see dream-pass.sh)
+#   RUN_LOCK_WAIT        seconds to wait for another runner's lock (default 1800)
+#   RUN_LOCK_POLL        seconds between checks while waiting (default 30)
+#   RUNNER_GIT_TIMEOUT   seconds each watched git step may take (default 120)
+#
+# Exit codes:
+#   0    moved and committed, nothing to move, or no 20-projects/_logs folder
+#   1    setup failure, git cannot read the vault, the vault is not the top of
+#        its own repository, a shallow clone, grafts, or a sparse checkout
+#   2    REPORT-REFUSED: the report was not written by this runner, or changed
+#   3    PARTIAL: the move failed and the vault was put back to HEAD
+#   4    COMMIT-FAILED: the commit failed with HEAD unchanged and was put back
+#   6    PATH-BLOCKED: 20-projects, 20-projects/_logs or an archive folder is a
+#        link, a junction or not a folder, or a folder differs only in case
+#   64   usage error, or a report file that cannot be read
+#   70   TRIPWIRE-ERROR, as for the other runners
+#   71   RECOVERY-NEEDED: a put-back failed, or what a commit did is unknown.
+#        The recovery file in the state directory says what is where
+#   75   LOCKED: another runner's lock, git's index.lock, a git operation in
+#        progress, a detached HEAD, or unmerged index entries
+#   78   TRIPWIRE, or a recovery file from an earlier run that does not check out
+
+set -u
+
+# Every pattern, glob, sort and range in this file is meant in byte order, and a
+# range in a shell pattern otherwise follows the locale's collating order. Three
+# defects of this change were decided by that, and one of them archived a file on
+# macOS that Linux correctly refused, from identical code and an identical vault.
+# The character sets below are spelled out one character at a time for the same
+# reason, so neither is the only defence.
+#
+# LC_ALL rather than LC_COLLATE, because LC_ALL in the environment overrides
+# LC_COLLATE and this runner is started by cron, launchd or Task Scheduler under
+# whatever locale that user's session carries, which no CI job models. Nothing
+# here reads a translated message. What is parsed is object names, paths and
+# commit messages, and those are the author's bytes in any locale.
+LC_ALL=C
+export LC_ALL
+
+RUNNER=vault-retention
+SNAP_DIR=""
+LOG=""
+STATE=""
+ROOT=""
+HOOKS=""
+# 1 from the moment the recovery file is written until the outcome is settled.
+MOVING=0
+HEAD_BEFORE=""
+# The index do_commit builds its commit from, empty at every other moment. See
+# watched_git, which passes it to one call at a time.
+RETENTION_GIT_INDEX=""
+# Named apart from the library's RUN_NONCE on purpose. That one is the string
+# the Windows stop sweep looks for on a command line, and giving it this run's
+# identifier would point the sweep at whatever else happened to carry it.
+RETENTION_NONCE=""
+# Archive folders this run made, deepest last, so a put-back can remove them.
+MADE_DIRS=""
+
+LOGS_REL="20-projects/_logs"
+ARCH_REL="99-archive/20-projects/_logs"
+
+say() {  # say <text> - one timestamped line in the log
+  printf '[%s] %s\n' "$(ts)" "$1" >> "$LOG"
+}
+
+# safe_name <name> - a name with its invisible bytes spelled out, for a log line
+# One line of this log is written about a string already known to hold a control
+# character, and say is a bare printf. A file called dream-2020-01-01.md
+# followed by a newline and then a line of the author's choosing therefore wrote
+# that line into the log whole, in the shape this runner writes an OK line, and
+# the log is the only account an unattended scheduled pass leaves of what it
+# did. A carriage return or an escape sequence in the same place erases or
+# rewrites what came before when the file is read with cat. ext4 and APFS both
+# allow such names and the vault is explicitly cross-platform, so the answer is
+# to spell the bytes out rather than to assume the name cannot exist.
+#
+# The rendering follows the parser's own esc, which turns the bytes it meets
+# into <TAB> and <CR> and the two record markers, with <LF> added here because a
+# name can hold one where a parsed line never can. It is a character walk with
+# the control bytes built by sprintf, so no control byte crosses the shell
+# boundary or reaches a regular expression, which is the rule the rest of this
+# file follows after three wrong answers from that interpreter.
+# It keeps a spelled-out set and escapes everything else, rather than escaping a
+# list of control bytes and keeping everything else. A denylist here would have
+# exactly the hole the [[:cntrl:]] filter above has. Under the LC_ALL=C this
+# file now pins, that class is only ASCII 0x00 to 0x1f and 0x7f, so the two
+# bytes of U+0085 are neither refused by the filter nor escaped by a denylist,
+# and a C1 control reaches a terminal that acts on it. Measured rather than
+# reasoned about, the same name matches [[:cntrl:]] under C.UTF-8 and under
+# en_US.UTF-8 and survives it under C.
+#
+# The less-than sign is left out of the kept set on purpose, so that a name
+# holding one cannot be mistaken for one of these escapes.
+safe_name() {
+  SAFE_N="$1" LC_ALL=C awk 'BEGIN {
+    for (i = 32; i < 127; i++) if (i != 60) keep = keep sprintf("%c", i)
+    for (i = 1; i < 256; i++) hex[sprintf("%c", i)] = sprintf("%02X", i)
+    s = substr(ENVIRON["SAFE_N"], 1, 300)
+    n = length(s)
+    o = ""
+    for (i = 1; i <= n; i++) {
+      c = substr(s, i, 1)
+      if (c == "\n") o = o "<LF>"
+      else if (c == "\r") o = o "<CR>"
+      else if (c == "\t") o = o "<TAB>"
+      else if (index(keep, c) > 0) o = o c
+      else o = o "<" hex[c] ">"
+    }
+    print o
+  }'
+}
+
+on_exit() {
+  [ -n "$SNAP_DIR" ] && rm -rf "$SNAP_DIR"
+  run_lock_release
+}
+
+# On INT, TERM or HUP: stop a watched git command, then settle what the moves
+# did. A second signal while that runs is ignored, so the put-back is not cut in
+# two.
+on_signal() {
+  trap '' INT TERM HUP
+  if [ -n "${RUN_PID:-}" ] && [ -n "$SNAP_DIR" ] && [ -d "$SNAP_DIR" ]; then
+    stop_tree "$RUN_PID" 2 "$SNAP_DIR/signal-stop" "" 1
+    if grep -qE '^(alive|unknown)' "$SNAP_DIR/signal-stop" 2>/dev/null; then
+      RUN_KILL_FAILED=1
+      RUN_KILL_REPORT="$(cat "$SNAP_DIR/signal-stop")"
+    fi
+  fi
+  if [ "$MOVING" -eq 1 ]; then
+    say "INTERRUPTED by a signal while moving."
+    settle_outcome "$1"
+  fi
+  exit "$1"
+}
+
+# rgit <git args...>
+# Git on the vault as every runner calls it (safe_git), with log.follow off and
+# paths printed as their raw bytes, so history reads as it was committed.
+# core.quotePath=false matters: with quoting on, a path holding a byte above
+# 127 comes back as an escaped C string, and it would never equal the same path
+# written plainly in a commit trailer, so a journal would be refused for a
+# mismatch that is only a difference of spelling.
+#
+# --no-replace-objects is what watched_git gets from GIT_NO_REPLACE_OBJECTS, and
+# it has to be here too. This runner already refuses a repository carrying
+# info/grafts, because a judgement about who wrote a file is worth nothing when
+# the history can be rewritten under it. A replace ref does the same thing by a
+# different route, and without this flag the walk would read the real history
+# while every question that decides a verdict read the replaced one.
+rgit() {
+  safe_git "$HOOKS" --no-replace-objects -C "$ROOT" -c log.follow=false -c core.quotePath=false "$@"
+}
+
+# watched_git <stdout-file> <stdin-file> <git args...>
+# The same git under the watchdog, for the steps that can be slow or run other
+# programs. Standard output goes to the file, standard error to $SNAP_DIR/git.err.
+# Returns 0 when git exited 0 in time.
+watched_git() {
+  local o="$1" i="$2"
+  shift 2
+  # An index for this one call, when do_commit asks for one. It is passed per
+  # call rather than exported, so that nothing else in the run can inherit it:
+  # a stray GIT_INDEX_FILE reaching the put-back would have it judge the wrong
+  # index. The ${a[@]+...} form because bash 3.2 reads an empty array as unset
+  # under set -u.
+  local idxenv=()
+  if [ -n "${RETENTION_GIT_INDEX:-}" ]; then
+    idxenv=(GIT_INDEX_FILE="$RETENTION_GIT_INDEX")
+  fi
+  : > "$SNAP_DIR/git.err"
+  run_with_watchdog "$GIT_TIMEOUT" "$SNAP_DIR/git.err" \
+    env GIT_TERMINAL_PROMPT=0 GIT_NO_REPLACE_OBJECTS=1 $LITERAL_PATHS ${idxenv[@]+"${idxenv[@]}"} RETENTION_GIT_OUT="$o" RETENTION_GIT_IN="$i" \
+    bash -c 'exec git "$@" < "$RETENTION_GIT_IN" > "$RETENTION_GIT_OUT"' vault-retention-git \
+    -C "$ROOT" -c core.hooksPath="$HOOKS" -c core.fsmonitor=false -c log.showSignature=false \
+    -c log.follow=false -c core.quotePath=false "$@"
+  RUN_PID=""
+  [ "$RUN_TIMED_OUT" -eq 0 ] && [ "$RUN_RC" -eq 0 ]
+}
+
+# date_day <YYYY-MM-DD>
+# Sets DATE_DAY to the number of days from a fixed epoch, and returns 1 when the
+# string is not a real calendar date. Written in shell arithmetic rather than
+# handed to date or awk, because the runner asks this of every candidate on
+# every run, and one process per question is the kind of cost that decides
+# whether a scheduled pass finishes inside its Windows time limit.
+#
+# 10# on each field is load bearing. Shell arithmetic reads a leading zero as
+# octal, so 08 and 09 are errors that would abort the runner under set -u.
+DATE_DAY=0
+date_day() {
+  local s="$1" y m d last yy era yoe doy doe
+  case "$s" in
+    [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;;
+    *) return 1 ;;
+  esac
+  y=$((10#${s:0:4}))
+  m=$((10#${s:5:2}))
+  d=$((10#${s:8:2}))
+  [ "$m" -ge 1 ] && [ "$m" -le 12 ] || return 1
+  case "$m" in
+    1|3|5|7|8|10|12) last=31 ;;
+    4|6|9|11) last=30 ;;
+    *)
+      if [ $((y % 4)) -eq 0 ] && { [ $((y % 100)) -ne 0 ] || [ $((y % 400)) -eq 0 ]; }; then
+        last=29
+      else
+        last=28
+      fi
+      ;;
+  esac
+  [ "$d" -ge 1 ] && [ "$d" -le "$last" ] || return 1
+  # Howard Hinnant's days-from-civil, with March as the first month of the year
+  # so that the leap day falls at the end of a cycle and needs no special case.
+  yy=$y
+  [ "$m" -le 2 ] && yy=$((yy - 1))
+  era=$(( (yy >= 0 ? yy : yy - 399) / 400 ))
+  yoe=$(( yy - era * 400 ))
+  doy=$(( (153 * (m > 2 ? m - 3 : m + 9) + 2) / 5 + d - 1 ))
+  doe=$(( yoe * 365 + yoe / 4 - yoe / 100 + doy ))
+  DATE_DAY=$(( era * 146097 + doe ))
+  return 0
+}
+
+# index_lock_wait
+# Waits up to 30 seconds for git's index.lock to go, because a sync plugin or an
+# editor can hold it for a moment. Returns 1 when it is still there.
+index_lock_wait() {
+  local idx="" i=0
+  idx="$(git_index_lock_path "$ROOT")"
+  [ -n "$idx" ] || return 0
+  while [ -e "$idx" ] && [ "$i" -lt 30 ]; do
+    sleep 1
+    i=$((i + 1))
+  done
+  [ ! -e "$idx" ]
+}
+
+# real_dir_ok <relative path>
+# True when a real folder is at exactly that path in the vault, so no link or
+# junction leads the move somewhere else.
+real_dir_ok() {
+  local p="$ROOT/$1" real=""
+  [ -d "$p" ] && [ ! -L "$p" ] || return 1
+  real="$(cd "$p" 2>/dev/null && pwd -P)" || return 1
+  [ "$(path_key "$real")" = "$(path_key "$ROOT_REAL/$1")" ]
+}
+
+# case_variant <parent relative path or empty> <name>
+# True when the parent holds another entry, on disk or in HEAD, whose name
+# differs from <name> only in ASCII case.
+case_variant() {
+  local dir="$ROOT" tree=""
+  if [ -n "$1" ]; then
+    dir="$ROOT/$1"
+    tree="$(rgit ls-tree --name-only HEAD -- "$1/" 2>/dev/null)"
+  else
+    tree="$(rgit ls-tree --name-only HEAD 2>/dev/null)"
+  fi
+  # The name and the prefix reach awk through the environment rather than -v,
+  # because a -v value is read for escapes. A folder name holding a backslash
+  # would be changed on the way in, the comparison below would never match, and
+  # a case variant would go unreported. That is the one direction this check
+  # must not fail in, since its whole job is to block a path.
+  { ls -A "$dir" 2>/dev/null; printf '%s\n' "$tree"; } \
+    | LC_ALL=C CV_NAME="$2" CV_PREFIX="$1/" awk '
+        BEGIN { n = ENVIRON["CV_NAME"]; p = ENVIRON["CV_PREFIX"] }
+        { k = $0; if (index(k, p) == 1) k = substr(k, length(p) + 1)
+          if (k != n && tolower(k) == tolower(n)) f = 1 }
+        END { exit f ? 0 : 1 }'
+}
+
+# folder_checks
+# Returns 0 to go on, 6 after logging a blocked path, and 10 when there is no
+# 20-projects/_logs folder to evaluate.
+folder_checks() {
+  local rel="" parent="" name=""
+  for rel in 20-projects "$LOGS_REL" 99-archive 99-archive/20-projects "$ARCH_REL"; do
+    parent="${rel%/*}"
+    [ "$parent" = "$rel" ] && parent=""
+    name="${rel##*/}"
+    if case_variant "$parent" "$name"; then
+      say "PATH-BLOCKED: ${parent:-the vault root} holds a folder whose name differs from $name only in case. Rename or merge it, then run again."
+      return 6
+    fi
+    if [ -e "$ROOT/$rel" ] || [ -L "$ROOT/$rel" ]; then
+      if ! real_dir_ok "$rel"; then
+        say "PATH-BLOCKED: $rel is a link, a junction or not a folder, so nothing is moved through it. Replace it with a real folder, then run again."
+        return 6
+      fi
+    else
+      case "$rel" in
+        20-projects|"$LOGS_REL")
+          say "There is no $LOGS_REL folder, so there is nothing to evaluate."
+          return 10 ;;
+      esac
+    fi
+  done
+  return 0
+}
+
+# retention_preflight
+# Returns 1 for a history the runner cannot trust to be whole, and 75 for
+# unmerged index entries, after logging.
+retention_preflight() {
+  local gd="" common="" top=""
+  # A vault sitting inside someone else's repository would have its journals
+  # judged by a history that is not its own, and the moves would land in that
+  # repository's commit.
+  top="$(rgit rev-parse --show-toplevel 2>/dev/null)"
+  if [ -z "$top" ] || [ "$(path_key "$top")" != "$(path_key "$ROOT_REAL")" ]; then
+    say "ERROR: the vault is not the top of its own git repository, so the history that shows who wrote each journal belongs to something else. Refusing to run."
+    return 1
+  fi
+  if [ "$(rgit rev-parse --is-shallow-repository 2>/dev/null)" = true ]; then
+    say "ERROR: the vault is a shallow clone, so the history that shows who wrote each journal is incomplete. Refusing to run."
+    return 1
+  fi
+  gd="$(rgit rev-parse --absolute-git-dir 2>/dev/null)"
+  common="$(cd "$ROOT" && cd "$(rgit rev-parse --git-common-dir 2>/dev/null)" 2>/dev/null && pwd)"
+  if [ -e "$gd/info/grafts" ] || { [ -n "$common" ] && [ -e "$common/info/grafts" ]; }; then
+    say "ERROR: the repository has info/grafts, which rewrite history. Refusing to run."
+    return 1
+  fi
+  if [ "$(rgit config --bool core.sparseCheckout 2>/dev/null)" = true ]; then
+    say "ERROR: the vault uses a sparse checkout, where moves into 99-archive/ can fail. Refusing to run."
+    return 1
+  fi
+  if [ -n "$(rgit ls-files -u 2>/dev/null)" ]; then
+    say "LOCKED: the index holds unmerged entries. Resolve them, then run again."
+    return 75
+  fi
+  return 0
+}
+
+# ---------------------------------------------------------------- candidates --
+#
+# One slot per entry of 20-projects/_logs that could move, held in parallel
+# indexed arrays. Indexed rather than one map per fact because a CI job runs
+# bash 3.2, which has no associative arrays.
+C_N=0
+KEPT_NEW=0
+KEPT_EIGHT=0
+QUIET_UNTRACKED=0
+QUIET_TAKEN=0
+REFUSED_EARLY=0
+# Report entries that are no longer in the log folder. Kept apart from
+# REFUSED_EARLY because that one counts files the folder did hold, and folding
+# these into the evaluated total claimed the folder held files that are not
+# in it.
+REFUSED_GONE=0
+MOVED_N=0
+TODAY=""
+TODAY_DAY=0
+# The oldest commit in the history of 20-projects/_logs that carries any
+# Vault-Pass trailer. Everything before it predates the runners.
+FIRST_VP=""
+
+# add_candidate <name>
+add_candidate() {
+  C_NAME[$C_N]="$1"
+  case "$1" in
+    dream-*) C_KIND[$C_N]=journal ;;
+    *) C_KIND[$C_N]=stub ;;
+  esac
+  C_VERDICT[$C_N]=""
+  C_REASON[$C_N]=""
+  C_DATE[$C_N]=""
+  C_DAY[$C_N]=0
+  C_BLOB[$C_N]=""
+  C_N=$((C_N + 1))
+}
+
+# refuse <index> <reason>
+# The first reason wins, so the order the checks run in is the order of the
+# reasons a person reads in the log.
+refuse() {
+  [ -z "${C_VERDICT[$1]}" ] || return 0
+  C_VERDICT[$1]=REFUSED
+  C_REASON[$1]="$2"
+  return 0
+}
+
+# quiet <index> <counter name>
+# For the two groups that are common, expected and uninteresting one at a time.
+# They are counted and summarised rather than given a line each.
+quiet() {
+  [ -z "${C_VERDICT[$1]}" ] || return 0
+  C_VERDICT[$1]=QUIET
+  case "$2" in
+    untracked) QUIET_UNTRACKED=$((QUIET_UNTRACKED + 1)) ;;
+    # The taken arm has no caller. destination_rule counts that group itself,
+    # because by the time it runs the verdict is already set and the guard on
+    # the first line here would send the call straight back. Kept rather than
+    # dropped so the two groups read as the pair they are, and so the next
+    # reader does not take the asymmetry for an oversight.
+    taken) QUIET_TAKEN=$((QUIET_TAKEN + 1)) ;;
+  esac
+  return 0
+}
+
+# enumerate_candidates
+# Every entry of 20-projects/_logs named like a journal or a stub, whatever its
+# type. Types are not filtered here on purpose, so a symlink is refused with a
+# reason rather than quietly passed over.
+enumerate_candidates() {
+  local p n
+  : > "$SNAP_DIR/names"
+  LC_ALL=C find "$ROOT/$LOGS_REL/" -maxdepth 1 -mindepth 1 -print0 > "$SNAP_DIR/find.out" 2>/dev/null
+  while IFS= read -r -d '' p; do
+    n="${p##*/}"
+    case "$n" in
+      dream-*|compaction-*) ;;
+      *) continue ;;
+    esac
+    # A name holding a control character can be neither a journal name nor a
+    # stub name, and no line-based list could carry it through to the rest of
+    # the run, so it is judged here and left out.
+    case "$n" in
+      *[[:cntrl:]]*)
+        say "REFUSED: $LOGS_REL/$(safe_name "$n") (the name holds a control character, so it is neither a journal name nor a stub name)"
+        REFUSED_EARLY=$((REFUSED_EARLY + 1))
+        continue
+        ;;
+    esac
+    printf '%s\n' "$n" >> "$SNAP_DIR/names"
+  done < "$SNAP_DIR/find.out"
+  LC_ALL=C sort "$SNAP_DIR/names" > "$SNAP_DIR/names.sorted" 2>/dev/null
+  while IFS= read -r n; do
+    [ -n "$n" ] && add_candidate "$n"
+  done < "$SNAP_DIR/names.sorted"
+  return 0
+}
+
+# journal_name_ok <name>
+# True for dream-YYYY-MM-DD.md, or the same with a suffix of one to sixteen
+# lower case letters and digits. Sets JN_DATE and JN_DAY. The date has to be a
+# real one, so dream-2026-02-30.md is not a journal name at all rather than a
+# journal with a strange date.
+JN_DATE=""
+JN_DAY=0
+journal_name_ok() {
+  local n="$1" rest sfx
+  case "$n" in
+    dream-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*) ;;
+    *) return 1 ;;
+  esac
+  JN_DATE="${n:6:10}"
+  rest="${n:16}"
+  case "$rest" in
+    .md) ;;
+    -*.md)
+      sfx="${rest%.md}"
+      sfx="${sfx#-}"
+      # Spelled out rather than written as a range, for the reason given at the
+      # index flag test. A range in a shell pattern follows the collating order
+      # of the locale, and in a UTF-8 locale that order interleaves the cases,
+      # so [!a-z0-9] excluded upper case letters as well and a name like
+      # dream-2026-06-11-PM.md was accepted as a journal this runner had
+      # written. It was then archived on macOS and refused on Linux, from the
+      # same code and the same vault. Ranges made of digits alone are left as
+      # they are, because digits collate together everywhere.
+      case "$sfx" in
+        ''|*[!abcdefghijklmnopqrstuvwxyz0123456789]*) return 1 ;;
+      esac
+      [ "${#sfx}" -le 16 ] || return 1
+      ;;
+    *) return 1 ;;
+  esac
+  date_day "$JN_DATE" || return 1
+  JN_DAY="$DATE_DAY"
+  return 0
+}
+
+# stub_name_ok <name>
+# True for compaction-<id>.md with an id of letters, digits, dot, underscore and
+# hyphen that does not start with a dot, which is what the compaction hook
+# sanitises a session id down to. Sets SN_ID.
+SN_ID=""
+stub_name_ok() {
+  local n="$1" id
+  case "$n" in
+    compaction-*.md) ;;
+    *) return 1 ;;
+  esac
+  id="${n#compaction-}"
+  id="${id%.md}"
+  # Spelled out rather than written as ranges. A range follows the locale's
+  # collating order, where a letter carrying an accent sorts beside the letter
+  # it is built from and so falls inside A-Z and a-z, which admits names this
+  # was written to keep out and admits them on one platform and not another.
+  # The file pins the collation as well, and this is the second of the two.
+  case "$id" in
+    ''|.*|*[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-]*) return 1 ;;
+  esac
+  SN_ID="$id"
+  return 0
+}
+
+# ------------------------------------------------------------ frontmatter --
+
+# frontmatter_reason <path>
+# Prints why the note may not be archived, or the single word ok when it may. A
+# journal the dream pass wrote is medium tier, and a tier that has been changed
+# by hand, or an unresolved contradiction recorded against it, means somebody is
+# still working with it.
+#
+# The word ok is what makes this safe. The contract used to be that no output
+# meant the note could move, so an awk that died before its END rule, or could
+# not open the file, said nothing and the whole tier and contradicts gate was
+# skipped. Every other way of being unreadable here refuses, and this one let
+# the note through. A positive word costs nothing and turns the silence the
+# wrong way round.
+frontmatter_reason() {
+  awk '
+    BEGIN { q = sprintf("%c", 39) }
+    NR == 1 && /^---[ \t\r]*$/ { f = 1; next }
+    f && /^---[ \t\r]*$/ { closed = 1; exit }
+    f {
+      line = $0
+      gsub(/\r/, "", line)
+      if (line ~ /^[ \t]*contradicts:/ || line ~ /^[ \t]*superseded_by:/) flagged = 1
+      if (line ~ /^tier:/) {
+        tiers++
+        v = line
+        sub(/^tier:[ \t]*/, "", v)
+        sub(/[ \t]+#.*$/, "", v)
+        sub(/[ \t]+$/, "", v)
+        if (length(v) >= 2) {
+          a = substr(v, 1, 1)
+          b = substr(v, length(v), 1)
+          # The single quote is built in BEGIN rather than written as \047,
+          # because an octal escape in a string is read differently by the awk
+          # macOS ships, which has already cost this repository two silent wrong
+          # answers. It cannot be written literally here because the whole
+          # program is inside single quotes.
+          if (a == b && (a == "\"" || a == q)) v = substr(v, 2, length(v) - 2)
+        }
+        value = tolower(v)
+      }
+    }
+    END {
+      if (!f) { print "no frontmatter, so nothing says this is a medium tier note"; exit }
+      if (!closed) { print "the frontmatter opens and is never closed, so nothing in it can be read as settled"; exit }
+      if (flagged) { print "contradicts or superseded_by is set, so it is still being argued over"; exit }
+      if (tiers != 1 || value != "medium") { print "tier is not medium, so it is not a note this pass may retire"; exit }
+      print "ok"
+    }' "$1" 2>/dev/null
+}
+
+# ------------------------------------------------------------- git history --
+
+# read_history
+# One walk of everything that ever touched 20-projects/_logs, parsed once into
+# three tables. Record separator 036 between commits and 037 between the message
+# and the file list, because a commit message may hold anything else, including
+# blank lines and the word that starts a file list.
+#
+# Returns 1 when a record does not have exactly one 037, which means a message
+# held one and the parse cannot be trusted. Refusing beats guessing, because
+# every later judgement rests on this table.
+read_history() {
+  local hist_rc=0 hist_why="" hist_code="" hist_want="" hist_got="" line=""
+  : > "$SNAP_DIR/commits"
+  : > "$SNAP_DIR/touch"
+  : > "$SNAP_DIR/trailers"
+  : > "$SNAP_DIR/parse.err"
+  : > "$SNAP_DIR/parse.stderr"
+  if ! watched_git "$SNAP_DIR/walk" /dev/null \
+      log --full-history --no-renames --parents --encoding=UTF-8 --date=short \
+      --format='%x1e%cd %H %P%n%B%x1f' --name-status -- "$LOGS_REL/"; then
+    if [ "${RUN_TIMED_OUT:-0}" -eq 1 ]; then
+      say "LOCKED: reading the history of $LOGS_REL did not finish within ${GIT_TIMEOUT}s and was stopped, so nothing was judged."
+      return 75
+    fi
+    say "ERROR: the history of $LOGS_REL could not be read. Refusing to run."
+    while IFS= read -r line; do say "    git: $line"; done < "$SNAP_DIR/git.err"
+    return 1
+  fi
+  # The walk is read a line at a time, on the default record separator, and the
+  # two marker bytes are built inside awk with sprintf. Nothing here asks an awk
+  # to agree about an escape, about a record separator that is not a newline, or
+  # about a regular expression built from a control character.
+  #
+  # That is not tidiness. Two runs of this parser have already been lost to the
+  # awk macOS ships. The first wrote RS = "\036" and that awk read the octal
+  # escape differently, so RS matched nothing and the whole history arrived as
+  # one record. The second built both bytes with printf in the shell and handed
+  # them over with -v, and that awk still reported a record holding one marker
+  # as holding six, while the same byte passed to gsub in the same program
+  # matched exactly once. The two cannot both be true of one string, so the
+  # mechanism was never established, only the failure. The answer was to stop
+  # depending on the answer.
+  #
+  # This is the third time that interpreter has cost this repository a wrong
+  # answer, and every one of them was silent. vault-check.sh records that it
+  # reads [[:space:]] as the literal characters in the brackets, which would
+  # report every note as missing tier and type. Treat any construct only gawk
+  # and mawk are known to agree on as a defect waiting for a macOS run, and
+  # prefer index, substr and a plain string compare to a regular expression
+  # wherever the choice exists.
+  #
+  # Each commit begins at a line whose first byte is the record marker. A
+  # message line may hold that byte too, so the line that opens a record must
+  # also carry a date and an object name, and a marker anywhere else refuses the
+  # walk rather than guessing at the boundary. Every later judgement rests on
+  # this table, so refusing beats guessing.
+  LC_ALL=C awk -v commits="$SNAP_DIR/commits" -v touch="$SNAP_DIR/touch" -v trailers="$SNAP_DIR/trailers" \
+      -v perr="$SNAP_DIR/parse.err" -v nrec="$SNAP_DIR/nrec" '
+    # What the offending line looked like, with the bytes that would otherwise
+    # be invisible in a log spelled out. Without this a refusal names a cause it
+    # has not established, which sends the reader to the wrong place. Written as
+    # a character walk so that no control byte reaches a regular expression.
+    function esc(s,   t, o, c, i, n) {
+      t = substr(s, 1, 300)
+      n = length(t)
+      o = ""
+      for (i = 1; i <= n; i++) {
+        c = substr(t, i, 1)
+        if (c == RSB) o = o "<RS>"
+        else if (c == USB) o = o "<US>"
+        else if (c == "\t") o = o "<TAB>"
+        else if (c == "\r") o = o "<CR>"
+        else o = o c
+      }
+      return o
+    }
+    # The commit an open record belongs to, for a refusal that can name it.
+    # head is the identity line of the record being read, a short date and then
+    # one object name per commit and parent, so the second field is the commit
+    # itself. A refusal that names only the offending line sends the reader to a
+    # folder and a byte rather than to the commit that carries it, and this
+    # refusal stops the whole folder until the history changes, so the commit is
+    # the one thing the reader needs. It is spoken only where the answer is not
+    # ambiguous. A line that begins with the record marker but carries no
+    # identity might be a message line of the open record or a boundary git
+    # meant to write, and those two belong to different commits, so that refusal
+    # names none.
+    function at_commit(   idv) {
+      if (!inrec || head == "") return ""
+      split(head, idv, " ")
+      return (idv[2] == "" ? "" : " The commit is " idv[2] ".")
+    }
+    # A git status field, one capital letter and then any digits.
+    function status_ok(s,   i, n, c) {
+      n = length(s)
+      if (n < 1) return 0
+      if (index("ABCDEFGHIJKLMNOPQRSTUVWXYZ", substr(s, 1, 1)) == 0) return 0
+      for (i = 2; i <= n; i++) {
+        c = substr(s, i, 1)
+        if (index("0123456789", c) == 0) return 0
+      }
+      return 1
+    }
+    # A line that opens a record, a short date and then one object name per
+    # commit and parent. A root commit has no parent, so two fields is the
+    # smallest shape that counts.
+    function identity_ok(s,   a, n, i, j, c, m) {
+      n = split(s, a, " ")
+      if (n < 2) return 0
+      if (length(a[1]) != 10) return 0
+      for (i = 1; i <= 10; i++) {
+        c = substr(a[1], i, 1)
+        if (i == 5 || i == 8) { if (c != "-") return 0 }
+        else if (index("0123456789", c) == 0) return 0
+      }
+      for (j = 2; j <= n; j++) {
+        m = length(a[j])
+        if (m != 40 && m != 64) return 0
+        for (i = 1; i <= m; i++) {
+          if (index("0123456789abcdef", substr(a[j], i, 1)) == 0) return 0
+        }
+      }
+      return 1
+    }
+    # One finished record into the three tables.
+    function flush(   i, nb, bl, ln, rest, sp, nid, idv, parents, cdate, sha, dreamn, anyvp, retn, nn, nl, t, st, ismerge) {
+      nid = split(head, idv, " ")
+      # The committer date comes first, so the parents can be any number of
+      # trailing fields without the parse having to count them.
+      cdate = idv[1]
+      sha = idv[2]
+      seq++
+      dreamn = 0
+      anyvp = 0
+      retn = 0
+      nb = split(body, bl, "\n")
+      for (i = 1; i <= nb; i++) {
+        ln = bl[i]
+        # The emptiness test is not decoration. body ends with a newline, so the
+        # split leaves a final empty element and this runs with ln empty, where
+        # the substr start is 0. The three awks are believed to agree there, and
+        # this file has lost three answers to constructs where they were believed
+        # to agree.
+        if (ln != "" && substr(ln, length(ln), 1) == "\r") ln = substr(ln, 1, length(ln) - 1)
+        if (ln == "Vault-Pass: dream") dreamn++
+        if (ln == "Vault-Pass: retention") retn++
+        if (index(ln, "Vault-Pass: ") == 1) anyvp++
+        if (index(ln, "Vault-Pass-Blob: ") == 1) {
+          rest = substr(ln, 18)
+          sp = index(rest, " ")
+          if (sp > 1) printf "%s\t%s\t%s\n", sha, substr(rest, 1, sp - 1), substr(rest, sp + 1) >> trailers
+        }
+      }
+      parents = ""
+      for (i = 3; i <= nid; i++) {
+        if (parents == "") parents = idv[i]
+        else parents = parents " " idv[i]
+      }
+      # The identity line is the date, the commit and then one field per parent,
+      # so two parents make four fields. Counting from the wrong field here is
+      # silent, because no commit is ever taken for a merge and every merge
+      # check then passes over an empty list. Held in its own variable because a
+      # greater-than sign among the arguments of a print is a redirection to
+      # some awks, whatever the parentheses around it say.
+      ismerge = 0
+      if (nid > 3) ismerge = 1
+      printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", seq, sha, ismerge, dreamn, anyvp, retn, cdate, parents >> commits
+      nn = split(names, nl, "\n")
+      for (i = 1; i <= nn; i++) {
+        ln = nl[i]
+        if (ln == "") continue
+        t = index(ln, "\t")
+        if (t == 0) { err = 2; bad = "commit " sha " has a changed-file line with no tab. The line was: " esc(ln); return }
+        st = substr(ln, 1, t - 1)
+        if (!status_ok(st)) { err = 2; bad = "commit " sha " has a changed-file line whose status field is not a letter and digits. The line was: " esc(ln); return }
+        # A rename or a copy status carries two paths on the line, and storing
+        # both as one path would put a tab inside a field of a tab separated
+        # table, where the reader would silently keep the old path and drop the
+        # new one. The walk asks for --no-renames so this should not arrive, and
+        # the refusal is here so that a change to the walk cannot make it arrive
+        # quietly.
+        if (index(substr(ln, t + 1), "\t") > 0) { err = 2; bad = "commit " sha " names two paths on one changed-file line, which the walk should never produce. The line was: " esc(ln); return }
+        printf "%s\t%s\t%s\t%s\n", seq, sha, st, substr(ln, t + 1) >> touch
+      }
+    }
+    BEGIN {
+      RSB = sprintf("%c", 30)
+      USB = sprintf("%c", 31)
+      err = 0; seq = 0; bad = ""
+      inrec = 0; inmsg = 0
+      head = ""; body = ""; names = ""
+    }
+    {
+      line = $0
+      if (substr(line, 1, 1) == RSB) {
+        rest = substr(line, 2)
+        if (index(rest, RSB) > 0 || index(rest, USB) > 0) {
+          err = 1
+          bad = "a line beginning with the record marker holds a second marker byte. The line was: " esc(line)
+          exit
+        }
+        # A commit message line and a file name may begin with the record marker
+        # too, so a line opens a record only when it also carries a date and an
+        # object name. Without this the walk would take a message line for the
+        # start of the next commit and read the rest of the table from the wrong
+        # boundaries, which is the one failure here that would be silent.
+        if (!identity_ok(rest)) {
+          err = 3
+          bad = "a line begins with the record marker but does not carry a date and an object name. The line was: " esc(line)
+          exit
+        }
+        # A record whose message never ended would take its own changed-file
+        # lines for more message, and the commit would then look as though it
+        # touched nothing. git always writes the byte, so reaching this means the
+        # walk was cut short or the shape of what git writes has changed.
+        if (inrec && inmsg) {
+          err = 5
+          bad = "record " (seq + 1) " ended without the byte that ends its message. The line was: " esc(line) at_commit()
+          exit
+        }
+        if (inrec) { flush(); if (err) exit }
+        inrec = 1; inmsg = 1; head = rest; body = ""; names = ""
+        next
+      }
+      if (!inrec) {
+        if (line == "") next
+        err = 4
+        bad = "the walk begins with a line that is not a record marker, so no record was ever opened. The line was: " esc(line)
+        exit
+      }
+      if (index(line, RSB) > 0) {
+        err = 1
+        bad = "record " (seq + 1) " holds the record marker in the middle of a line. The line was: " esc(line) at_commit()
+        exit
+      }
+      p = index(line, USB)
+      if (p > 0) {
+        if (!inmsg) {
+          err = 1
+          bad = "record " (seq + 1) " holds the message marker after its message had already ended. The line was: " esc(line) at_commit()
+          exit
+        }
+        if (substr(line, p + 1) != "") {
+          err = 1
+          bad = "record " (seq + 1) " holds something after the byte that ends its message. The line was: " esc(line) at_commit()
+          exit
+        }
+        body = body substr(line, 1, p - 1)
+        inmsg = 0
+        next
+      }
+      if (inmsg) body = body line "\n"
+      else if (line != "") names = names line "\n"
+    }
+    END {
+      if (!err && inrec && inmsg) {
+        err = 5
+        bad = "the last record of the walk ended without the byte that ends its message"
+      }
+      if (!err && inrec) flush()
+      # How many records this parse believes it read, for the count check the
+      # shell makes below. Written whatever happened, so a refusal can still be
+      # told apart from a parse that silently read the wrong number.
+      printf "%s\n", seq > nrec
+      close(nrec)
+      if (err) { printf "%s\t%s\n", err, bad > perr; close(perr); exit 1 }
+    }' \
+    "$SNAP_DIR/walk" 2> "$SNAP_DIR/parse.stderr"
+  hist_rc=$?
+  if [ "$hist_rc" -ne 0 ]; then
+    # Two different failures reach here and they need different answers, so the
+    # log says which one it was. An awk that refused the data writes the record
+    # it stopped on. An awk that could not run at all, or could not open one of
+    # its output files, writes nothing there and leaves its own message on
+    # standard error, which used to be discarded. Blaming the data for that was
+    # telling the reader to go and look at commit messages that are fine.
+    hist_why=""
+    hist_code=""
+    if [ -s "$SNAP_DIR/parse.err" ]; then
+      hist_code="$(LC_ALL=C cut -f1 < "$SNAP_DIR/parse.err")"
+      hist_why="$(LC_ALL=C cut -f2- < "$SNAP_DIR/parse.err")"
+    fi
+    if [ -n "$hist_why" ]; then
+      say "ERROR: the history of $LOGS_REL could not be read unambiguously, so nothing was judged. $hist_why"
+      # The refusals are told apart here rather than sharing one line, because a
+      # message written for the wrong one sends the reader after bytes that are
+      # not there.
+      case "$hist_code" in
+        1) say "    A commit message or a file name holds one of the two bytes that mark where a record and its message end." ;;
+        2) say "    git named a changed file in a shape this parser does not recognise, which is not a commit message problem." ;;
+        3) say "    A line that opens a commit record does not carry a date and an object name, so a message line holding the record marker cannot be told from a real boundary." ;;
+        4) say "    The walk did not begin at a record marker at all. The awk running this parser may not be building the marker byte the way the walk was written with it." ;;
+        5) say "    A commit record ended before its message did, so the walk was cut short or git has changed the shape of what it writes." ;;
+        *) say "    The parser did not say which of its refusals this was, which is itself worth reporting." ;;
+      esac
+      say "    Refusing beats guessing, because every later judgement rests on this table."
+      # The blast radius, said plainly, because nothing else says it. This is
+      # not one note held back. Nothing in the folder is judged while it stands,
+      # --adopt-legacy and --dry-run are refused with it, and the byte need only
+      # have been in the history once. Deleting the file whose name carried it
+      # does not help, because the commit that added it still touches the folder
+      # and the walk still reads its changed-file row.
+      say "    Nothing in $LOGS_REL is judged while this stands, so retention is stopped for the whole folder rather than for one note, and --adopt-legacy and --dry-run are refused with it. Deleting a file whose name carried the byte does not clear it, because the commit that added the file is still in the folder's history. Only changing the history clears it."
+    else
+      say "ERROR: the history of $LOGS_REL could not be parsed, and the parser itself failed rather than refusing the data (awk exited $hist_rc). This is not a commit message problem."
+      while IFS= read -r line; do say "    awk: $line"; done < "$SNAP_DIR/parse.stderr"
+    fi
+    return 1
+  fi
+  # How many commits git says touched the folder, asked separately and without
+  # the message or the file list, so nothing a commit message holds can reach
+  # this answer. It has to agree with how many records the parse believes it
+  # read.
+  #
+  # This is the only check that closes an injected record. A message may hold
+  # the byte that ends a message, which closes its own record early, and a later
+  # line of the same message may then begin with the record marker and carry a
+  # date and an object name of the author's choosing. Every in-stream test is
+  # blind to it, because that line sits exactly where a real boundary is allowed
+  # to sit. It was measured rather than assumed. In this repository 11 of 58
+  # real records are followed straight by the next record marker with no blank
+  # line between, so the shape after a message end proves nothing.
+  #
+  # What the injection produced was a fabricated record carrying the file
+  # changes of the real one, under a commit name the message chose, while the
+  # real commit was left looking as though it had changed nothing. A count that
+  # cannot be reached from inside a commit message is what makes that visible.
+  #
+  # An empty parse is caught by the same comparison, which matters because zero
+  # records makes every candidate look older than the trailers and so LEGACY,
+  # the one verdict that moves in bulk.
+  #
+  # rev-list is not used, because it does not take --full-history and a different
+  # history simplification would count a different set.
+  #
+  # --parents is here to make the two selections the same, and it is not
+  # cosmetic. It asks git to rewrite parents, which is the flag history
+  # simplification tests before it decides whether to drop a merge that is
+  # tree-same to one of its parents for this pathspec. Without it the count
+  # drops such merges and the walk keeps them, so the two disagree by the number
+  # of merges that do not touch this folder. Measured on git 2.53, a merge
+  # touching nothing under the folder counts 1 without the flag and 2 with it,
+  # while a merge bringing a journal in from one side counts the same either
+  # way, which is why the merge already in the controls did not show it. The
+  # effect is that any vault whose history holds an ordinary merge refuses every
+  # candidate and reports a rewritten history, so the count has to ask for the
+  # same set rather than the check be relaxed. Counting is by line and --parents
+  # puts the parents on the commit's own line, so it adds no lines.
+  if ! watched_git "$SNAP_DIR/count.out" /dev/null \
+      log --full-history --no-renames --parents --format=%H -- "$LOGS_REL/"; then
+    say "ERROR: the number of commits touching $LOGS_REL could not be read, so the history table cannot be checked against it. Refusing to run."
+    return 1
+  fi
+  hist_want="$(LC_ALL=C awk 'END { print NR + 0 }' "$SNAP_DIR/count.out")"
+  hist_got="$(LC_ALL=C awk 'NR == 1 { print $0 + 0; f = 1 } END { if (!f) print -1 }' "$SNAP_DIR/nrec" 2>/dev/null)"
+  [ -n "$hist_got" ] || hist_got=-1
+  if [ "$hist_want" != "$hist_got" ]; then
+    say "ERROR: the history of $LOGS_REL read as $hist_got record(s) while git counts $hist_want commit(s) touching it, so nothing was judged."
+    say "    A commit message holding the byte that ends a message can close its own record and open another, which is what a count higher than git's means. A lower one means the walk was cut short. Either way the table cannot be trusted, and refusing beats guessing."
+    return 1
+  fi
+  # The oldest commit carrying any Vault-Pass trailer. The walk is newest first,
+  # so the last such line is the oldest one.
+  FIRST_VP="$(LC_ALL=C awk -F '\t' '$5 > 0 { s = $2 } END { if (s != "") print s }' "$SNAP_DIR/commits")"
+  return 0
+}
+
+# ------------------------------------------------------------ object blobs --
+
+# blob_ask <rev> <path>
+# Adds one question to the batch of object lookups.
+blob_ask() {
+  printf '%s:%s\n' "$1" "$2" >> "$SNAP_DIR/batch.in"
+}
+
+# blob_run
+# Asks all of them at once. Writes <question><TAB><blob or -> so the answers can
+# be looked up by name afterwards. cat-file answers in the order it was asked,
+# which is what pairs the two files.
+blob_run() {
+  [ -s "$SNAP_DIR/batch.in" ] || { : > "$SNAP_DIR/blobs"; return 0; }
+  if ! watched_git "$SNAP_DIR/batch.out" "$SNAP_DIR/batch.in" cat-file --batch-check; then
+    if [ "${RUN_TIMED_OUT:-0}" -eq 1 ]; then
+      say "LOCKED: reading the stored content of the candidates did not finish within ${GIT_TIMEOUT}s and was stopped, so nothing was judged."
+      return 75
+    fi
+    say "ERROR: the stored content of the candidates could not be read. Refusing to run."
+    return 1
+  fi
+  LC_ALL=C awk -v q="$SNAP_DIR/batch.in" '
+    BEGIN {
+      n = 0
+      while ((getline line < q) > 0) { n++; ask[n] = line }
+      close(q)
+      i = 0
+    }
+    {
+      i++
+      if (i > n) next
+      v = "-"
+      if ($NF != "missing") { split($0, f, " "); if (f[2] == "blob") v = f[1] }
+      printf "%s\t%s\n", ask[i], v
+    }' "$SNAP_DIR/batch.out" > "$SNAP_DIR/blobs"
+  return 0
+}
+
+# blob_of <rev> <path>
+# The blob recorded for one question, or - when the path is not there.
+blob_of() {
+  # ENVIRON rather than -v, matching the six other call sites that route a path
+  # this way. awk performs escape processing on a -v value, so a path holding a
+  # backslash arrives as something else and the comparison below can never
+  # match, which answers - for a file that is there. Every path that reaches it
+  # today is refused by a name rule first, so this fails closed, but merge_ok
+  # reads a pair of - answers as "no merge decided this content", and that is a
+  # silent pass waiting for the first name rule that admits one more character.
+  LC_ALL=C BLOB_K="$1:$2" awk -F '\t' 'BEGIN { k = ENVIRON["BLOB_K"] } $1 == k { print $2; found = 1; exit } END { if (!found) print "-" }' "$SNAP_DIR/blobs"
+}
+
+# --------------------------------------------------------- journal history --
+
+# journal_facts
+# One pass that turns the three history tables into one line per journal
+# candidate, so the shell asks awk once rather than once per candidate.
+# Columns: path, commits that are not merges, the oldest such commit and how it
+# touched the path, the newest such commit, whether any of them is a retention
+# commit, whether any of them carries a Vault-Pass trailer, and how many carry
+# the dream one.
+journal_facts() {
+  LC_ALL=C awk -F '\t' -v cf="$SNAP_DIR/commits" -v tf="$SNAP_DIR/touch" '
+    BEGIN {
+      while ((getline l < cf) > 0) {
+        split(l, c, "\t")
+        DREAM[c[2]] = c[4]; VP[c[2]] = c[5]; RET[c[2]] = c[6]; CD[c[2]] = c[7]
+      }
+      close(cf)
+      while ((getline l < tf) > 0) {
+        split(l, t, "\t")
+        s = t[1] + 0; sha = t[2]; st = t[3]; p = t[4]
+        N[p]++
+        if (!(p in OLD) || s > OLDS[p]) { OLD[p] = sha; OLDS[p] = s; OLDST[p] = st }
+        if (!(p in NEW) || s < NEWS[p]) { NEW[p] = sha; NEWS[p] = s }
+        if (RET[sha] > 0) HASRET[p] = 1
+        if (VP[sha] > 0) HASVP[p] = 1
+      }
+      close(tf)
+    }
+    {
+      p = $0
+      printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", p, (p in N ? N[p] : 0), \
+        (p in OLD ? OLD[p] : "-"), (p in OLDST ? OLDST[p] : "-"), \
+        (p in NEW ? NEW[p] : "-"), (p in HASRET ? 1 : 0), (p in HASVP ? 1 : 0), \
+        (p in OLD ? DREAM[OLD[p]] : 0), (p in OLD ? CD[OLD[p]] : "-")
+    }' "$SNAP_DIR/jpaths" > "$SNAP_DIR/jfacts"
+  return 0
+}
+
+# fact <path> <column>
+fact() {
+  # The path goes through the environment, not -v, because -v reads its value
+  # for escapes and a candidate name may hold a backslash. The column number is
+  # a number and has nothing to read.
+  LC_ALL=C FACT_P="$1" awk -F '\t' -v c="$2" 'BEGIN { p = ENVIRON["FACT_P"] } $1 == p { print $c; exit }' "$SNAP_DIR/jfacts"
+}
+
+# trailer_check <commit> <path> <blob>
+# True when the commit says, in its own trailers, exactly what it did. It must
+# carry one Vault-Pass-Blob line for this path, naming this blob, and the set of
+# paths on its Vault-Pass-Blob lines must be the set of paths it changed. The
+# second half is what a squash or an amend cannot fake, because the trailers it
+# inherits describe a commit that no longer exists.
+trailer_check() {
+  # sha, path and blob come through ENVIRON for the reason blob_of gives. The
+  # two file names stay on -v, because they are built here out of SNAP_DIR and
+  # hold no candidate-controlled bytes.
+  LC_ALL=C TC_SHA="$1" TC_PATH="$2" TC_BLOB="$3" awk -F '\t' \
+    -v tf="$SNAP_DIR/trailers" -v chf="$SNAP_DIR/changed" '
+    BEGIN {
+      sha = ENVIRON["TC_SHA"]
+      path = ENVIRON["TC_PATH"]
+      blob = ENVIRON["TC_BLOB"]
+      mine = 0
+      while ((getline l < tf) > 0) {
+        split(l, t, "\t")
+        if (t[1] != sha) continue
+        T[t[3]]++
+        nt++
+        if (t[3] == path) { mine++; got = t[2] }
+      }
+      close(tf)
+      while ((getline l < chf) > 0) {
+        split(l, c, "\t")
+        if (c[1] != sha) continue
+        C[c[2]]++
+        nc++
+      }
+      close(chf)
+      if (mine != 1 || got != blob) exit 1
+      if (nt != nc) exit 1
+      for (k in T) if (!(k in C)) exit 1
+      for (k in C) if (!(k in T)) exit 1
+      exit 0
+    }'
+}
+
+# merge_ok <path>
+# True when no merge in the history decided the content of the path by itself.
+# A merge may carry a blob one of its parents already had, or leave the path out
+# when no parent had it. Anything else is a person resolving a conflict, and the
+# result is not what the dream pass wrote.
+merge_ok() {
+  local path="$1" seq sha ismerge parents mb pb ok par _d _v _r _c
+  while IFS=$'\t' read -r seq sha ismerge _d _v _r _c parents; do
+    [ "$ismerge" = 1 ] || continue
+    mb="$(blob_of "$sha" "$path")"
+    ok=0
+    for par in $parents; do
+      pb="$(blob_of "$par" "$path")"
+      [ "$pb" = "$mb" ] && ok=1
+    done
+    [ "$ok" -eq 1 ] || return 1
+  done < "$SNAP_DIR/commits"
+  return 0
+}
+
+# ------------------------------------------------------------------- stubs --
+
+# stub_entry_ok <line>
+# True for one entry line exactly as the compaction hook appends it, which is a
+# hyphen, a timestamp, two spaces, trigger=, two spaces and transcript=. The
+# trigger may not hold a space and the transcript may not hold two in a row,
+# because two spaces are what separates the fields and a value holding them
+# would make the line mean two different things.
+ENTRY_DATE=""
+stub_entry_ok() {
+  local l="$1" rest trg val
+  case "$l" in
+    "- "[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]" "[0-9][0-9]:[0-9][0-9]:[0-9][0-9]"  trigger="*) ;;
+    *) return 1 ;;
+  esac
+  rest="${l:21}"
+  rest="${rest#  trigger=}"
+  case "$rest" in
+    *"  transcript="*) ;;
+    *) return 1 ;;
+  esac
+  trg="${rest%%  transcript=*}"
+  val="${rest#*  transcript=}"
+  case "$trg" in *" "*) return 1 ;; esac
+  case "$val" in *"  "*) return 1 ;; esac
+  date_day "${l:2:10}" || return 1
+  ENTRY_DATE="${l:2:10}"
+  return 0
+}
+
+# The cap line the hook writes once, when a session reaches its fiftieth
+# compaction. The fifty here mirrors MAX_ENTRIES in the hook, and the control
+# that builds this fixture with the real hook is what proves the two agree.
+STUB_MAX_ENTRIES=50
+stub_cap_ok() {
+  local l="$1"
+  case "$l" in
+    "- "[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]" "[0-9][0-9]:[0-9][0-9]:[0-9][0-9]"  CAP REACHED ($STUB_MAX_ENTRIES entries) — further compactions in this session are not appended") return 0 ;;
+  esac
+  return 1
+}
+
+# stub_template_ok <file> <session id>
+# True when the file is the stub the compaction hook writes for that session and
+# nothing else, followed by its entries. Sets STUB_LAST_DAY and STUB_LAST_DATE
+# from the newest entry, which is when the session was last active.
+#
+# The template is spelled out here rather than read from the hook, because the
+# whole point is to recognise the bytes a machine wrote. The control that feeds
+# this function output from the real hook is what keeps the two in step.
+STUB_LAST_DATE=""
+STUB_LAST_DAY=0
+stub_template_ok() {
+  local f="$1" id="$2" line n=0 created="" reviewed="" entries=0 capped=0 want
+  STUB_LAST_DATE=""
+  STUB_LAST_DAY=0
+  while IFS= read -r line; do
+    line="${line%$'\r'}"
+    n=$((n + 1))
+    if [ "$n" -le 24 ]; then
+      case "$n" in
+        1|12) want="---" ;;
+        2) want="title: \"Compaction stub — session $id\"" ;;
+        3) want="tier: medium" ;;
+        4) want="tags: [tier/medium, type/project-log, compaction]" ;;
+        5) want="status: active" ;;
+        6) want="type: project-log" ;;
+        7) want="project: \"\"" ;;
+        8|9)
+          case "$line" in
+            created:\ \"*\"|last_reviewed:\ \"*\")
+              want="$line"
+              if [ "$n" -eq 8 ]; then
+                created="${line#created: \"}"
+                created="${created%\"}"
+              else
+                reviewed="${line#last_reviewed: \"}"
+                reviewed="${reviewed%\"}"
+              fi
+              ;;
+            *) return 1 ;;
+          esac
+          ;;
+        10) want="session_id: \"$id\"" ;;
+        11) want="source_notes: []" ;;
+        13|15|22|24) want="" ;;
+        14) want="# Compaction stub" ;;
+        16) want="Auto-written by the PostCompact hook so this session's material is" ;;
+        17) want="recoverable even when no summary was generated" ;;
+        18) want="([Claude Code #34556](https://github.com/anthropics/claude-code/issues/34556))." ;;
+        19) want="Not a substitute for \`/wrap-up\` or \`/obsidian-save\` — capture the actual" ;;
+        20) want="work into a proper project log when you can. Excluded from dream-agent" ;;
+        21) want="occurrence counting (see \`.claude/agents/dream-agent.md\`)." ;;
+        23) want="## Compactions" ;;
+      esac
+      [ "$line" = "$want" ] || return 1
+      continue
+    fi
+    # Past the template every line is an entry, and the cap line may only be the
+    # last of them.
+    [ "$capped" -eq 0 ] || return 1
+    if stub_entry_ok "$line"; then
+      entries=$((entries + 1))
+      STUB_LAST_DATE="$ENTRY_DATE"
+      STUB_LAST_DAY="$DATE_DAY"
+    elif stub_cap_ok "$line"; then
+      capped=1
+    else
+      return 1
+    fi
+  done < "$f"
+  [ "$n" -gt 24 ] || return 1
+  [ "$entries" -ge 1 ] && [ "$entries" -le "$STUB_MAX_ENTRIES" ] || return 1
+  [ -n "$created" ] && [ "$created" = "$reviewed" ] || return 1
+  date_day "$created" || return 1
+  # The hook asks the clock twice, once for the note date and once for the first
+  # entry, so a stub written just before midnight may be dated the day before.
+  local cday="$DATE_DAY" fday
+  date_day "$STUB_FIRST_DATE" || return 1
+  fday="$DATE_DAY"
+  [ "$cday" -eq "$fday" ] || [ "$cday" -eq $((fday - 1)) ] || return 1
+  return 0
+}
+
+# stub_first_date <file>
+# The date of the first entry, which stub_template_ok compares the note date
+# against.
+STUB_FIRST_DATE=""
+stub_first_date() {
+  local line
+  STUB_FIRST_DATE=""
+  while IFS= read -r line; do
+    line="${line%$'\r'}"
+    case "$line" in
+      "- "[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]" "*)
+        STUB_FIRST_DATE="${line:2:10}"
+        return 0
+        ;;
+    esac
+  done < "$1"
+  return 1
+}
+
+# stub_unknown_ts <file>
+# True when the file holds an entry line the hook wrote with the word unknown
+# where the time goes. postcompact-wrap-up.sh writes that when its own date call
+# fails, so such a stub is the hook's work rather than a person's, and saying
+# somebody has written in it accuses a person of an edit the hook made.
+stub_unknown_ts() {
+  local line
+  while IFS= read -r line; do
+    line="${line%$'\r'}"
+    case "$line" in
+      "- unknown  trigger="*"  transcript="*) return 0 ;;
+    esac
+  done < "$1"
+  return 1
+}
+
+# stub_versions <path>
+# Every version of the stub now at this path that was ever committed, oldest
+# first, written one per file so the bytes can be compared without going through
+# a parser. Prints how many there are.
+#
+# Only the versions since the last commit that deleted the path count. A stub
+# this runner has already archived leaves a delete row for its live path, and
+# the compaction hook writes a whole new stub there the next time that session
+# compacts, because it rebuilds the file from its template whenever the file is
+# gone. Reading across that delete asked git for a blob at a commit where the
+# path does not exist, which failed and refused the candidate with the words
+# "one of its committed versions could not be read" when nothing was unreadable
+# and a commit had simply deleted it. That refusal was permanent, because the
+# delete row stays in the history for good. Reading across it also chained a
+# fresh stub onto the archived one, where the prefix test could only ever say
+# the stub had been rewritten.
+#
+# Lower sequence numbers are newer, because the walk numbers commits in git log
+# order and that is newest first. So the most recent delete is the one with the
+# smallest sequence number, and the versions that belong to the file now on disk
+# are the ones below it.
+stub_versions() {
+  local path="$1" n=0 sha
+  rm -f "$SNAP_DIR"/ver.* 2>/dev/null
+  while IFS= read -r sha; do
+    n=$((n + 1))
+    rgit cat-file blob "$sha:$path" > "$SNAP_DIR/ver.$n" 2>/dev/null || return 1
+  done < <(LC_ALL=C VER_P="$path" awk -F '\t' '
+             BEGIN { p = ENVIRON["VER_P"]; dmin = 0; n = 0 }
+             $4 == p {
+               # The sequence number is kept as the field it came in as well as
+               # as a number. Printing the number would put it through CONVFMT
+               # on its way into the string, and the six significant digits that
+               # spells would render a seventh-digit sequence in exponent form.
+               n++; s[n] = $1; v[n] = $1 + 0; h[n] = $2
+               if (substr($3, 1, 1) == "D" && (dmin == 0 || $1 + 0 < dmin)) dmin = $1 + 0
+             }
+             END { for (i = 1; i <= n; i++) if (dmin == 0 || v[i] < dmin) print s[i] "\t" h[i] }' "$SNAP_DIR/touch" \
+             | LC_ALL=C sort -rn | cut -f2)
+  printf '%s\n' "$n"
+  return 0
+}
+
+# ends_with_newline <file>
+ends_with_newline() {
+  [ -s "$1" ] || return 1
+  [ "$(tail -c 1 "$1" | od -An -c 2>/dev/null | tr -d ' ')" = "\\n" ]
+}
+
+# is_line_prefix <earlier file> <later file>
+# True when every line of the earlier file is the start of the later one, in
+# order. Both files end in a newline, which is checked first, so a whole-line
+# prefix and a byte prefix are the same thing here.
+#
+# Do not add an exit to the END rule. The verdict is carried by the exit 1 in
+# the main rule, and every awk keeps that status through an END that does not
+# itself exit. An exit 0 there would clear it, and a stub whose versions are not
+# a prefix chain would then read as clean and be archived, which is the wrong
+# direction to fail in.
+is_line_prefix() {
+  LC_ALL=C awk -v a="$1" '
+    BEGIN { n = 0; while ((getline l < a) > 0) { n++; A[n] = l } close(a) }
+    { if (FNR <= n && $0 != A[FNR]) exit 1 }
+    END { if (FNR < n) exit 1 }' "$2"
+}
+
+# ----------------------------------------------------------- classification --
+
+# classify_journals
+# Runs the checks in the order their reasons should be read in. Everything that
+# needs git is asked once, in batches, before any of this.
+classify_journals() {
+  local i=0 name path reason nmv add addst new hasret hasvp dreamn headblob addblob
+  while [ "$i" -lt "$C_N" ]; do
+    if [ "${C_KIND[$i]}" != journal ] || [ -n "${C_VERDICT[$i]}" ]; then
+      i=$((i + 1))
+      continue
+    fi
+    name="${C_NAME[$i]}"
+    path="$LOGS_REL/$name"
+    reason="$(frontmatter_reason "$ROOT/$path")"
+    if [ "$reason" != ok ]; then
+      # Anything that is not the word ok refuses, including nothing at all,
+      # which is what an awk that could not read the file leaves behind.
+      [ -n "$reason" ] || reason="its frontmatter could not be read, so nothing says this is a medium tier note"
+      refuse "$i" "$reason"
+      i=$((i + 1))
+      continue
+    fi
+    if [ "${C_DAY[$i]}" -gt "$TODAY_DAY" ]; then
+      refuse "$i" "date in the future, so it is not a journal of a pass that has run"
+      i=$((i + 1))
+      continue
+    fi
+    nmv="$(fact "$path" 2)"
+    add="$(fact "$path" 3)"
+    addst="$(fact "$path" 4)"
+    new="$(fact "$path" 5)"
+    hasret="$(fact "$path" 6)"
+    hasvp="$(fact "$path" 7)"
+    dreamn="$(fact "$path" 8)"
+    if [ "$hasret" = 1 ]; then
+      refuse "$i" "restored after an earlier retention move, so moving it again would undo whatever brought it back"
+      i=$((i + 1))
+      continue
+    fi
+    if ! merge_ok "$path"; then
+      refuse "$i" "a merge changed it, so its content was decided by whoever resolved that merge"
+      i=$((i + 1))
+      continue
+    fi
+    # Whether this journal predates the runner trailers is asked before any test
+    # phrased in terms of what a pass did. A journal committed and then edited
+    # by hand in a vault where no pass had ever run used to be refused for
+    # having changed after the dream pass wrote it, which named a pass that had
+    # never run and, worse, took the file permanently out of LEGACY and so
+    # beyond --adopt-legacy, the one route by which the owner could ever archive
+    # it. Nothing is loosened by asking earlier, because a legacy journal still
+    # moves only when the owner has reviewed the report and asked for it.
+    if [ "$hasvp" = 0 ]; then
+      # Nothing in its history claims to be a pass. Either it predates the
+      # runners, or something committed it after they began without writing
+      # their trailers.
+      #
+      # The question is put to the commit that added it rather than to the
+      # newest one to touch it. Asking the newest meant a journal written before
+      # the runners existed and edited by hand afterwards was refused as though
+      # a sync plugin had raced the runner, and refusing took it out of LEGACY
+      # and so beyond --adopt-legacy for good. That is the same permanent
+      # exclusion this branch was moved earlier to prevent, one step further on.
+      # Sending it to LEGACY loosens nothing, because a legacy journal moves only
+      # after the owner has read the report and asked for it by name and blob.
+      if [ "$add" = - ]; then
+        refuse "$i" "no commit in the history is recorded as having added it, so nothing says where it came from"
+      elif [ -z "$FIRST_VP" ] || rgit merge-base --is-ancestor "$add" "$FIRST_VP" >/dev/null 2>&1; then
+        C_VERDICT[$i]=LEGACY
+      else
+        refuse "$i" "added after the runners began writing trailers but carrying none, for example by a sync plugin that reached it before the runner did"
+      fi
+      i=$((i + 1))
+      continue
+    fi
+    if [ "$nmv" != 1 ] || [ "$addst" != A ]; then
+      refuse "$i" "changed after the dream pass wrote it, so it is no longer only what a machine produced"
+      i=$((i + 1))
+      continue
+    fi
+    headblob="${C_BLOB[$i]}"
+    addblob="$(blob_of "$add" "$path")"
+    if [ "$dreamn" != 1 ] || [ "$addblob" = - ] || ! trailer_check "$add" "$path" "$addblob"; then
+      refuse "$i" "trailers do not match the commit, so the commit was rewritten after the pass made it"
+      i=$((i + 1))
+      continue
+    fi
+    if [ "$headblob" = - ] || [ "$headblob" != "$addblob" ]; then
+      refuse "$i" "changed after the dream pass wrote it, so it is no longer only what a machine produced"
+      i=$((i + 1))
+      continue
+    fi
+    # A name may be one day ahead of the commit that added it, because a pass
+    # that starts before midnight and commits after it dates the journal by the
+    # day it began. More than that means the name was chosen, not computed.
+    #
+    # A date that cannot be read refuses rather than skipping the comparison.
+    # The check used to sit inside the same condition as the comparison, so a
+    # missing committer date turned the test off and let the candidate through
+    # to ELIGIBLE with its name never checked against its commit. That is the
+    # same shape as the frontmatter gate that was closed this round, where
+    # silence was read as permission.
+    if ! date_day "$(fact "$path" 9)"; then
+      refuse "$i" "the history holds no committer date for the commit that added it, so its name cannot be checked against it"
+      i=$((i + 1))
+      continue
+    fi
+    if [ "${C_DAY[$i]}" -gt "$((DATE_DAY + 1))" ]; then
+      refuse "$i" "date in the future, so it is not a journal of a pass that has run"
+      i=$((i + 1))
+      continue
+    fi
+    C_VERDICT[$i]=ELIGIBLE
+    i=$((i + 1))
+  done
+  return 0
+}
+
+# classify_stubs
+classify_stubs() {
+  local i=0 name path nv v prev reason
+  while [ "$i" -lt "$C_N" ]; do
+    if [ "${C_KIND[$i]}" != stub ] || [ -n "${C_VERDICT[$i]}" ]; then
+      i=$((i + 1))
+      continue
+    fi
+    name="${C_NAME[$i]}"
+    path="$LOGS_REL/$name"
+    stub_name_ok "$name" || { refuse "$i" "not a stub name"; i=$((i + 1)); continue; }
+    nv="$(stub_versions "$path")" || { refuse "$i" "one of its committed versions could not be read"; i=$((i + 1)); continue; }
+    if [ "${nv:-0}" -lt 1 ]; then
+      refuse "$i" "no commit in the history of $LOGS_REL adds it"
+      i=$((i + 1))
+      continue
+    fi
+    # Every version has to end in a newline and extend the one before it. A stub
+    # the hook wrote only ever grows by whole lines at the end, so anything else
+    # is a person editing, and the reason says so before the template is even
+    # looked at.
+    reason=""
+    v=1
+    while [ "$v" -le "$nv" ]; do
+      ends_with_newline "$SNAP_DIR/ver.$v" || { reason="stub rewritten, because one committed version does not end in a newline"; break; }
+      if [ "$v" -gt 1 ]; then
+        prev=$((v - 1))
+        is_line_prefix "$SNAP_DIR/ver.$prev" "$SNAP_DIR/ver.$v" \
+          || { reason="stub rewritten, because a committed version is not the one before it with more entries added"; break; }
+      fi
+      v=$((v + 1))
+    done
+    if [ -n "$reason" ]; then
+      refuse "$i" "$reason"
+      i=$((i + 1))
+      continue
+    fi
+    v=1
+    while [ "$v" -le "$nv" ]; do
+      if ! stub_first_date "$SNAP_DIR/ver.$v" || ! stub_template_ok "$SNAP_DIR/ver.$v" "$SN_ID"; then
+        if stub_unknown_ts "$SNAP_DIR/ver.$v"; then
+          reason="the compaction hook could not read the clock when it wrote an entry, so the word unknown stands where a time belongs and there is no last entry to date it by"
+        else
+          reason="not the hook's stub, so somebody has written in it"
+        fi
+        break
+      fi
+      v=$((v + 1))
+    done
+    if [ -n "$reason" ]; then
+      refuse "$i" "$reason"
+      i=$((i + 1))
+      continue
+    fi
+    # The newest version is the one HEAD holds, and its last entry is when the
+    # session was last active.
+    # --no-filters because the file holds the raw bytes of a blob that is
+    # already in the repository, so the question is what its object id is, not
+    # what it would become if someone added it. Without the flag git runs the
+    # end-of-line conversion that core.autocrlf asks for, which is on by default
+    # in Git for Windows, and a stub committed with CRLF would hash to something
+    # other than the blob it came from and be refused as rewritten by a person.
+    if [ "$(rgit hash-object --no-filters -- "$SNAP_DIR/ver.$nv" 2>/dev/null)" != "${C_BLOB[$i]}" ]; then
+      refuse "$i" "stub rewritten, because the newest committed version is not what HEAD holds"
+      i=$((i + 1))
+      continue
+    fi
+    C_DATE[$i]="$STUB_LAST_DATE"
+    C_DAY[$i]="$STUB_LAST_DAY"
+    C_VERDICT[$i]=ELIGIBLE
+    i=$((i + 1))
+  done
+  return 0
+}
+
+# keep_rule
+# Age first, then the newest eight dates. The keep rule reads only candidates
+# that nothing else has refused, so a journal with a date in the future or a
+# name nobody recognises cannot push a real one out of the window.
+keep_rule() {
+  local i=0 dates=""
+  # The window is worked out before either rule is applied. Taking it after the
+  # age rule had run would leave only the old journals in the pool, and the
+  # newest eight of those is all of them, so nothing would ever move.
+  # Journals only, because a compaction stub is not something a later pass reads
+  # back, so it does not hold a date open.
+  : > "$SNAP_DIR/keepdates"
+  while [ "$i" -lt "$C_N" ]; do
+    case "${C_VERDICT[$i]}" in
+      ELIGIBLE|LEGACY)
+        [ "${C_KIND[$i]}" = journal ] && printf '%s\n' "${C_DATE[$i]}" >> "$SNAP_DIR/keepdates"
+        ;;
+    esac
+    i=$((i + 1))
+  done
+  dates=" $(LC_ALL=C sort -ru "$SNAP_DIR/keepdates" 2>/dev/null | head -n 8 | tr '\n' ' ')"
+  i=0
+  while [ "$i" -lt "$C_N" ]; do
+    case "${C_VERDICT[$i]}" in
+      ELIGIBLE|LEGACY)
+        if [ "$((TODAY_DAY - ${C_DAY[$i]}))" -le "$RETENTION_DAYS" ]; then
+          C_VERDICT[$i]=KEPT
+          KEPT_NEW=$((KEPT_NEW + 1))
+        elif [ "${C_KIND[$i]}" = journal ]; then
+          case "$dates" in
+            *" ${C_DATE[$i]} "*)
+              C_VERDICT[$i]=KEPT
+              KEPT_EIGHT=$((KEPT_EIGHT + 1))
+              ;;
+          esac
+        fi
+        ;;
+    esac
+    i=$((i + 1))
+  done
+  return 0
+}
+
+# destination_rule
+# A candidate whose name is already taken in the archive stays. For a journal
+# that is a collision worth a line each time, because the two files are
+# different notes with one name. For a stub it means the session came back to
+# life after an earlier run archived it, which is ordinary.
+# arch_idx_has <name>
+# True when the index holds that name under the archive folder.
+arch_idx_has() {
+  LC_ALL=C ARCH_P="$ARCH_REL/$1" awk '
+    BEGIN { p = ENVIRON["ARCH_P"] }
+    $0 == p { f = 1; exit }
+    END { exit f ? 0 : 1 }' "$SNAP_DIR/archidx"
+}
+
+destination_rule() {
+  local i=0 name
+  # What the index holds under the archive folder, asked once. A name staged
+  # there but on neither disk nor HEAD was invisible to the two tests below,
+  # and git mv refuses such a destination all the same. Because the whole run
+  # moves in one git mv, a single name in that state put every eligible journal
+  # of the run back and ended it at exit 3 with a git line naming a file nobody
+  # was archiving.
+  # The status is captured rather than discarded. An ls-files that fails leaves
+  # an empty list, every name then looks free, and the run falls back to the two
+  # tests this one was added to cover, which is the under-blocking direction. A
+  # check that cannot run says so rather than reporting nothing to find.
+  : > "$SNAP_DIR/archidx"
+  if ! rgit ls-files -z -- "$ARCH_REL/" > "$SNAP_DIR/archidx.raw" 2>/dev/null; then
+    say "WARNING: the index could not be read for $ARCH_REL, so a destination staged there but on neither disk nor HEAD would not be seen. Any move that hits one is refused by git rather than by name."
+    : > "$SNAP_DIR/archidx.raw"
+  fi
+  tr '\0' '\n' < "$SNAP_DIR/archidx.raw" > "$SNAP_DIR/archidx"
+  while [ "$i" -lt "$C_N" ]; do
+    case "${C_VERDICT[$i]}" in
+      ELIGIBLE|LEGACY)
+        name="${C_NAME[$i]}"
+        if [ -e "$ROOT/$ARCH_REL/$name" ] || [ -L "$ROOT/$ARCH_REL/$name" ] \
+           || [ "$(blob_of HEAD "$ARCH_REL/$name")" != - ] || arch_idx_has "$name"; then
+          # Set here rather than through refuse and quiet, because both of those
+          # keep the first reason and by this point the verdict is already
+          # ELIGIBLE. Going through them would do nothing at all, and the file
+          # would go into the move set with its name already taken.
+          if [ "${C_KIND[$i]}" = journal ]; then
+            C_VERDICT[$i]=REFUSED
+            C_REASON[$i]="destination exists, so moving it would write over a different note of the same name"
+          else
+            C_VERDICT[$i]=QUIET
+            QUIET_TAKEN=$((QUIET_TAKEN + 1))
+            # Named rather than only counted, but only once it is past
+            # RETENTION_DAYS. Nothing has asked this stub's age by the time this
+            # runs, so the line used to be printed for a session still being
+            # written to, every run, telling the owner to rename a file the hook
+            # was still appending to. Past the retention age it is worth one
+            # named line, because the archive will hold the name on every future
+            # run and a bare count reads like an ordinary skip a later run would
+            # resolve.
+            if [ "$((TODAY_DAY - ${C_DAY[$i]}))" -gt "$RETENTION_DAYS" ]; then
+              say "LEFT ALONE: $LOGS_REL/$name (the archive already holds this name, so no run can archive this one under it. Rename it by hand if it should leave the live tier.)"
+            fi
+          fi
+        fi
+        ;;
+    esac
+    i=$((i + 1))
+  done
+  return 0
+}
+
+# log_verdicts
+# One line for each candidate a person may want to act on, and a count for the
+# groups that are ordinary.
+log_verdicts() {
+  local i=0 p e=0 l=0 k=0 q=0 r=0
+  while [ "$i" -lt "$C_N" ]; do
+    p="$LOGS_REL/${C_NAME[$i]}"
+    case "${C_VERDICT[$i]}" in
+      ELIGIBLE) e=$((e + 1)); say "ELIGIBLE: $p" ;;
+      LEGACY)   l=$((l + 1)); say "LEGACY: $p (committed before any runner wrote trailers, so it moves only with --adopt-legacy)" ;;
+      KEPT)     k=$((k + 1)) ;;
+      # QUIET has its own arm and its own word. It used to fall through to the
+      # refused arm, which counted it as a refusal while the say beside it
+      # printed nothing, so one untracked stub was reported twice and the owner
+      # was sent to hunt for a refusal that had never been made.
+      QUIET)    q=$((q + 1)) ;;
+      # The refused arm is the only one a name the validators rejected can
+      # reach, and it is the second place such a name is printed. The arms above
+      # take names that passed journal_name_ok or stub_name_ok, so they hold
+      # nothing to escape, and escaping them would start an awk for every
+      # candidate of every run rather than for a refusal.
+      *)        r=$((r + 1)); [ "${C_VERDICT[$i]}" = REFUSED ] && say "REFUSED: $LOGS_REL/$(safe_name "${C_NAME[$i]}") (${C_REASON[$i]})" ;;
+    esac
+    i=$((i + 1))
+  done
+  r=$((r + REFUSED_EARLY))
+  [ "$KEPT_NEW" -gt 0 ] && say "  $KEPT_NEW candidate(s) kept because they are newer than $RETENTION_DAYS days."
+  [ "$KEPT_EIGHT" -gt 0 ] && say "  $KEPT_EIGHT journal(s) kept by the newest eight dates, so a later pass still has recent ones to read."
+  [ "$QUIET_UNTRACKED" -gt 0 ] && say "  $QUIET_UNTRACKED compaction stub(s) not tracked by git."
+  [ "$QUIET_TAKEN" -gt 0 ] && say "  $QUIET_TAKEN compaction stub(s) whose name is already in the archive, so the session resumed after archiving."
+  [ "$REFUSED_GONE" -gt 0 ] && say "  $REFUSED_GONE entry(ies) of the report are no longer in $LOGS_REL, so they are not part of the count below."
+  say "evaluated $((C_N + REFUSED_EARLY)) candidate(s): $e eligible, $l legacy, $k kept, $q left alone, $r refused, $MOVED_N moved"
+  return 0
+}
+# ------------------------------------------------------------- index state --
+
+# in_set <value> <set>
+# Membership without a process per question. The set is newline separated with
+# a newline at each end, and no candidate name may hold a newline, because
+# enumerate_candidates refuses those before anything else sees them.
+in_set() {
+  case "$2" in
+    *"
+$1
+"*) return 0 ;;
+  esac
+  return 1
+}
+
+# pre_checks
+# Everything that can be judged without reading history. Name, type, and what
+# the index says about the file.
+pre_checks() {
+  local i=0 name path tag p rec tracked flagged dirty
+  : > "$SNAP_DIR/tracked"
+  : > "$SNAP_DIR/flagged"
+  : > "$SNAP_DIR/dirty"
+  # One call for every tracked path in the folder and the flags on it. A lower
+  # case tag is assume-unchanged and S is skip-worktree. Either one tells git to
+  # stop looking at the file, which is exactly the state in which a move would
+  # quietly lose somebody's work.
+  rgit ls-files -v -z -- "$LOGS_REL" > "$SNAP_DIR/lsfiles" 2>/dev/null
+  while IFS= read -r -d '' rec; do
+    tag="${rec%% *}"
+    p="${rec#* }"
+    printf '%s\n' "$p" >> "$SNAP_DIR/tracked"
+    # The lower case letters are spelled out rather than written as a range.
+    # A range in a shell pattern is read in the collating order of the locale
+    # the run happens to have, and in a UTF-8 locale that order interleaves the
+    # cases, so [a-z] also matches H, the tag git gives an ordinary cached file.
+    # Every candidate was then reported as having an index flag set and refused,
+    # on a vault where nothing was flagged at all. It cost two macOS runs to
+    # see, because the history walk was failing ahead of it and classification
+    # never ran.
+    case "$tag" in
+      [abcdefghijklmnopqrstuvwxyz]|S) printf '%s\n' "$p" >> "$SNAP_DIR/flagged" ;;
+    esac
+  done < "$SNAP_DIR/lsfiles"
+  # Dirtiness comes from status, not from diff-index. diff-index believes the
+  # stat information the index recorded, and a vault that has been copied,
+  # restored from a backup or handed over by a sync client has stat information
+  # that no longer matches while every byte is identical. Asked that way, every
+  # journal in the vault looks edited and nothing is ever archived.
+  # --no-optional-locks keeps this a question rather than a write, so the runner
+  # does not take the index lock to find out.
+  rgit --no-optional-locks status --porcelain -z --untracked-files=all -- "$LOGS_REL" \
+    > "$SNAP_DIR/status" 2>/dev/null
+  while IFS= read -r -d '' rec; do
+    [ -n "$rec" ] || continue
+    tag="${rec:0:2}"
+    p="${rec:3}"
+    case "$tag" in
+      '??') continue ;;
+      R*|C*)
+        # A rename or a copy is reported as the new path and then the old one in
+        # a record of its own. Both of them have changed.
+        printf '%s\n' "$p" >> "$SNAP_DIR/dirty"
+        if IFS= read -r -d '' rec; then
+          [ -n "$rec" ] && printf '%s\n' "$rec" >> "$SNAP_DIR/dirty"
+        fi
+        continue
+        ;;
+    esac
+    printf '%s\n' "$p" >> "$SNAP_DIR/dirty"
+  done < "$SNAP_DIR/status"
+  tracked="
+$(cat "$SNAP_DIR/tracked" 2>/dev/null)
+"
+  flagged="
+$(cat "$SNAP_DIR/flagged" 2>/dev/null)
+"
+  dirty="
+$(cat "$SNAP_DIR/dirty" 2>/dev/null)
+"
+  while [ "$i" -lt "$C_N" ]; do
+    name="${C_NAME[$i]}"
+    path="$LOGS_REL/$name"
+    if [ "${C_KIND[$i]}" = journal ]; then
+      if journal_name_ok "$name"; then
+        C_DATE[$i]="$JN_DATE"
+        C_DAY[$i]="$JN_DAY"
+      else
+        refuse "$i" "not a journal name, so no pass of this runner produced it"
+        i=$((i + 1))
+        continue
+      fi
+    fi
+    if [ -L "$ROOT/$path" ] || [ ! -f "$ROOT/$path" ]; then
+      refuse "$i" "not a regular file, so what a move would carry is not the note itself"
+      i=$((i + 1))
+      continue
+    fi
+    if ! in_set "$path" "$tracked"; then
+      if [ "${C_KIND[$i]}" = stub ]; then
+        quiet "$i" untracked
+      else
+        refuse "$i" "not tracked by git, so nothing records who wrote it"
+      fi
+      i=$((i + 1))
+      continue
+    fi
+    if in_set "$path" "$flagged"; then
+      refuse "$i" "index flag skip-worktree or assume-unchanged is set on it, so git is not watching it"
+      i=$((i + 1))
+      continue
+    fi
+    if in_set "$path" "$dirty"; then
+      refuse "$i" "uncommitted changes, so what is on disk is not what was committed"
+      i=$((i + 1))
+      continue
+    fi
+    i=$((i + 1))
+  done
+  return 0
+}
+
+# ask_batches
+# Every object question this run has, asked in as few git calls as the answers
+# allow. The order matters, because the adding commit of each journal is only
+# known after the history tables are joined.
+ask_batches() {
+  local i=0 path rc=0 sha parents par
+  : > "$SNAP_DIR/jpaths"
+  i=0
+  while [ "$i" -lt "$C_N" ]; do
+    [ "${C_KIND[$i]}" = journal ] && [ -z "${C_VERDICT[$i]}" ] \
+      && printf '%s\n' "$LOGS_REL/${C_NAME[$i]}" >> "$SNAP_DIR/jpaths"
+    i=$((i + 1))
+  done
+  journal_facts
+
+  : > "$SNAP_DIR/batch.in"
+  i=0
+  while [ "$i" -lt "$C_N" ]; do
+    if [ -z "${C_VERDICT[$i]}" ] || [ "${C_VERDICT[$i]}" = QUIET ]; then
+      blob_ask HEAD "$LOGS_REL/${C_NAME[$i]}"
+      blob_ask HEAD "$ARCH_REL/${C_NAME[$i]}"
+    fi
+    i=$((i + 1))
+  done
+  # The adding commit of each journal, and every merge the path passed through.
+  LC_ALL=C awk -F '\t' '$3 != "-" { print $1 "\t" $3 }' "$SNAP_DIR/jfacts" > "$SNAP_DIR/adds"
+  while IFS=$'\t' read -r path sha; do
+    [ -n "$path" ] && blob_ask "$sha" "$path"
+  done < "$SNAP_DIR/adds"
+  LC_ALL=C awk -F '\t' '$3 == 1 { print $2 "\t" $8 }' "$SNAP_DIR/commits" > "$SNAP_DIR/merges"
+  if [ -s "$SNAP_DIR/merges" ]; then
+    while IFS= read -r path; do
+      [ -n "$path" ] || continue
+      while IFS=$'\t' read -r sha parents; do
+        blob_ask "$sha" "$path"
+        for par in $parents; do blob_ask "$par" "$path"; done
+      done < "$SNAP_DIR/merges"
+    done < "$SNAP_DIR/jpaths"
+  fi
+  blob_run
+  rc=$?
+  [ "$rc" -eq 0 ] || return "$rc"
+
+  # What each adding commit changed, in all folders, so a commit cannot claim in
+  # its trailers to have written only the journal while it also wrote elsewhere.
+  : > "$SNAP_DIR/changed"
+  LC_ALL=C awk -F '\t' '{ print $2 }' "$SNAP_DIR/adds" | LC_ALL=C sort -u > "$SNAP_DIR/addshas"
+  if [ -s "$SNAP_DIR/addshas" ]; then
+    if ! watched_git "$SNAP_DIR/difftree" "$SNAP_DIR/addshas" \
+        diff-tree -r --no-renames --name-only --root --stdin; then
+      if [ "${RUN_TIMED_OUT:-0}" -eq 1 ]; then
+        say "LOCKED: listing what each commit changed did not finish within ${GIT_TIMEOUT}s and was stopped, so nothing was judged."
+        return 75
+      fi
+      say "ERROR: what each commit changed could not be listed. Refusing to run."
+      return 1
+    fi
+    LC_ALL=C awk -v kf="$SNAP_DIR/addshas" '
+      BEGIN { while ((getline l < kf) > 0) K[l] = 1; close(kf); cur = "" }
+      { if ($0 in K) { cur = $0; next }
+        if (cur != "" && $0 != "") printf "%s\t%s\n", cur, $0 }' \
+      "$SNAP_DIR/difftree" > "$SNAP_DIR/changed"
+  fi
+
+  # The blob HEAD holds for each candidate, kept beside it for the checks that
+  # follow and for the legacy report.
+  i=0
+  while [ "$i" -lt "$C_N" ]; do
+    if [ -z "${C_VERDICT[$i]}" ] || [ "${C_VERDICT[$i]}" = QUIET ]; then
+      C_BLOB[$i]="$(blob_of HEAD "$LOGS_REL/${C_NAME[$i]}")"
+    fi
+    i=$((i + 1))
+  done
+  return 0
+}
+
+# ------------------------------------------------------------------ legacy --
+
+# legacy_report
+# Journals from before any runner wrote trailers are listed once, with the blob
+# HEAD holds, and move only when the owner comes back with that list. The list
+# is bound to its content rather than to where it sits, so a copy of the report
+# is as good as the original and an edited one is refused.
+legacy_report() {
+  local i=0 hash known report n=0
+  : > "$SNAP_DIR/legacy.body"
+  while [ "$i" -lt "$C_N" ]; do
+    if [ "${C_VERDICT[$i]}" = LEGACY ]; then
+      printf '%s\t%s\n' "$LOGS_REL/${C_NAME[$i]}" "${C_BLOB[$i]}" >> "$SNAP_DIR/legacy.body"
+      n=$((n + 1))
+    fi
+    i=$((i + 1))
+  done
+  [ "$n" -gt 0 ] || return 0
+  LC_ALL=C sort "$SNAP_DIR/legacy.body" > "$SNAP_DIR/legacy.sorted"
+  mv -f "$SNAP_DIR/legacy.sorted" "$SNAP_DIR/legacy.body"
+  # The file is named rather than fed on standard input, because safe_git hands
+  # every command /dev/null there and the hash would be the hash of nothing,
+  # which is the same for every report ever written.
+  hash="$(rgit hash-object --no-filters -- "$SNAP_DIR/legacy.body" 2>/dev/null)"
+  if [ -z "$hash" ]; then
+    say "WARNING: the legacy list could not be hashed, so no report was written this run."
+    return 0
+  fi
+  known=""
+  [ -f "$STATE/retention-legacy.hashes" ] && known="$(LC_ALL=C awk -v h="$hash" '
+    $1 == h { sub(/^[^ ]* /, ""); print; exit }' "$STATE/retention-legacy.hashes")"
+  if [ -n "$known" ]; then
+    say "LEGACY: $n journal(s) from before the runner trailers are already listed in $known. Run vault-retention.sh --adopt-legacy \"$known\" to move them."
+    return 0
+  fi
+  report="$STATE/retention-legacy-$TODAY-${hash:0:8}.txt"
+  {
+    printf '# Journals in %s that were committed before any runner wrote trailers.\n' "$ROOT"
+    printf '# Written by vault-retention.sh on %s. Lines below are the path and the blob git holds.\n' "$TODAY"
+    printf '# Review them, then move them with\n'
+    printf '#   vault-retention.sh --adopt-legacy "%s"\n' "$report"
+    cat "$SNAP_DIR/legacy.body"
+  } > "$SNAP_DIR/legacy.report"
+  if ! write_file_atomic "$report" "$SNAP_DIR/legacy.report"; then
+    say "WARNING: the legacy report could not be written to $report, so nothing was recorded this run."
+    return 0
+  fi
+  printf '%s %s\n' "$hash" "$report" >> "$STATE/retention-legacy.hashes"
+  say "LEGACY: $n journal(s) from before the runner trailers are listed in $report. Review them, then run vault-retention.sh --adopt-legacy \"$report\" to move them."
+  return 0
+}
+
+# adopt_legacy <report>
+# Returns 64 for a report that cannot be read, 2 for one this runner never wrote
+# or that has been changed since, and 0 when the list has been taken up.
+adopt_legacy() {
+  local report="$1" hash i path blob idx found
+  if [ ! -f "$report" ] || [ ! -r "$report" ]; then
+    say "USAGE: the report $report is not a readable file."
+    return 64
+  fi
+  # tr rather than sed, because \r in a sed expression is a GNU extension and
+  # nothing else. BSD sed, which is what both macOS jobs and every owner on a
+  # Mac run, reads it as the letter r, so s/\r$// strips a trailing r there and
+  # leaves the carriage return in place. A report saved with CRLF line endings,
+  # which is what any Windows editor writes and what a vault synced between two
+  # machines can easily carry, then hashes differently from the list this runner
+  # wrote, and adopt_legacy refuses it with a line accusing the owner of having
+  # changed it. The plain run beside it finds the same hash already known and
+  # points the owner back at the same file, so the two messages loop and no
+  # fresh report is ever written. Deleting every carriage return rather than
+  # only a trailing one is not a widening, because a body line is a path and a
+  # blob, enumerate_candidates refuses any name holding a control character, and
+  # the blob is hex. This is the form the library already uses.
+  LC_ALL=C tr -d '\r' < "$report" 2>/dev/null | LC_ALL=C awk '!/^#/' > "$SNAP_DIR/adopt.body"
+  if ! LC_ALL=C sort -c "$SNAP_DIR/adopt.body" 2>/dev/null; then
+    say "REPORT-REFUSED: the list in $report is not in the order this runner writes it, so it has been changed since."
+    return 2
+  fi
+  hash="$(rgit hash-object --no-filters -- "$SNAP_DIR/adopt.body" 2>/dev/null)"
+  found=""
+  [ -n "$hash" ] && [ -f "$STATE/retention-legacy.hashes" ] \
+    && found="$(LC_ALL=C awk -v h="$hash" '$1 == h { print "yes"; exit }' "$STATE/retention-legacy.hashes")"
+  if [ -z "$found" ]; then
+    say "REPORT-REFUSED: $report is not a list this runner wrote, or it has been changed since. Run vault-retention.sh with no arguments to get a current one."
+    return 2
+  fi
+  while IFS=$'\t' read -r path blob; do
+    [ -n "$path" ] || continue
+    idx=-1
+    i=0
+    while [ "$i" -lt "$C_N" ]; do
+      [ "$LOGS_REL/${C_NAME[$i]}" = "$path" ] && idx=$i && break
+      i=$((i + 1))
+    done
+    if [ "$idx" -lt 0 ]; then
+      # Not called a refusal, because it is counted apart from the refusals and
+      # a reader tallying the REFUSED lines against the summary would come out
+      # one over for each of these.
+      say "NOT FOUND: $path (listed in the report but no longer in $LOGS_REL, so there is nothing here to move)"
+      REFUSED_GONE=$((REFUSED_GONE + 1))
+      continue
+    fi
+    if [ "${C_VERDICT[$idx]}" = LEGACY ]; then
+      if [ "${C_BLOB[$idx]}" = "$blob" ]; then
+        C_ADOPT[$idx]=1
+      else
+        C_VERDICT[$idx]=REFUSED
+        C_REASON[$idx]="changed since the report was written, so it is no longer the journal the owner reviewed"
+      fi
+    elif [ "${C_VERDICT[$idx]}" = KEPT ]; then
+      # The keep rule runs before adoption, so a first adoption that shrinks the
+      # pool slides the newest eight dates onto older journals and a listed one
+      # can become KEPT. Running the same report again then moved fewer files
+      # and said nothing about any of them, which reads as the report having
+      # been wrong rather than as the window having moved.
+      say "KEPT: $path (listed in the report, but the newest eight dates or $RETENTION_DAYS days now cover it, so it waits for a later run)"
+    fi
+  done < "$SNAP_DIR/adopt.body"
+  return 0
+}
+
+# --------------------------------------------------------------- the moves --
+
+# build_move_set
+# Oldest first, so a cap always takes the ones that have waited longest.
+build_move_set() {
+  # ci, cn and cd belong to the clash loop below. It used to read into n and i,
+  # which are this function's own count and candidate index, and into an
+  # undeclared global. Nothing broke, because both are written again straight
+  # afterwards, but the first edit that read i after that loop would have taken
+  # a stale candidate index for a live one and set a verdict on the wrong file,
+  # which set -u could never catch because the name is in range.
+  local i=0 n rest ci cn cd
+  : > "$SNAP_DIR/moveset.raw"
+  while [ "$i" -lt "$C_N" ]; do
+    if [ "$ADOPT_MODE" -eq 1 ]; then
+      [ "${C_ADOPT[$i]}" = 1 ] && printf '%s\t%s\t%s\n' "${C_DATE[$i]}" "${C_NAME[$i]}" "$i" >> "$SNAP_DIR/moveset.raw"
+    else
+      [ "${C_VERDICT[$i]}" = ELIGIBLE ] && printf '%s\t%s\t%s\n' "${C_DATE[$i]}" "${C_NAME[$i]}" "$i" >> "$SNAP_DIR/moveset.raw"
+    fi
+    i=$((i + 1))
+  done
+  # Two candidates whose names differ only in case would be one file in the
+  # archive on a file system that does not tell them apart, and the second move
+  # would write over the first. Neither goes.
+  LC_ALL=C awk -F '\t' '
+    { n = tolower($2); c[n]++; line[NR] = $0; key[NR] = n }
+    END { for (i = 1; i <= NR; i++) if (c[key[i]] > 1) print line[i] }' \
+    "$SNAP_DIR/moveset.raw" > "$SNAP_DIR/moveset.clash"
+  if [ -s "$SNAP_DIR/moveset.clash" ]; then
+    while IFS=$'\t' read -r cd cn ci; do
+      C_VERDICT[$ci]=REFUSED
+      C_REASON[$ci]="another candidate of this run differs from it only in case, so one archive name would have to hold both"
+    done < "$SNAP_DIR/moveset.clash"
+    LC_ALL=C awk -F '\t' '
+      { n = tolower($2); c[n]++; line[NR] = $0; key[NR] = n }
+      END { for (i = 1; i <= NR; i++) if (c[key[i]] == 1) print line[i] }' \
+      "$SNAP_DIR/moveset.raw" > "$SNAP_DIR/moveset.kept"
+    mv -f "$SNAP_DIR/moveset.kept" "$SNAP_DIR/moveset.raw"
+  fi
+  LC_ALL=C sort "$SNAP_DIR/moveset.raw" > "$SNAP_DIR/moveset.all"
+  n="$(LC_ALL=C awk 'END { print NR + 0 }' "$SNAP_DIR/moveset.all")"
+  if [ "$n" -gt "$MAX_MOVES" ]; then
+    rest=$((n - MAX_MOVES))
+    say "The cap is $MAX_MOVES move(s) a run, so $rest more wait for a later run."
+    head -n "$MAX_MOVES" "$SNAP_DIR/moveset.all" > "$SNAP_DIR/moveset"
+  else
+    cp "$SNAP_DIR/moveset.all" "$SNAP_DIR/moveset"
+  fi
+  return 0
+}
+
+# load_moves
+# Fills SRCS, DSTS and MBLOBS from the move set.
+load_moves() {
+  local d n i
+  SRCS=()
+  DSTS=()
+  MBLOBS=()
+  while IFS=$'\t' read -r d n i; do
+    [ -n "$n" ] || continue
+    SRCS[${#SRCS[@]}]="$LOGS_REL/$n"
+    DSTS[${#DSTS[@]}]="$ARCH_REL/$n"
+    MBLOBS[${#MBLOBS[@]}]="${C_BLOB[$i]}"
+  done < "$SNAP_DIR/moveset"
+  return 0
+}
+
+# write_recovery <state word>
+# The record a later run reads when this one could not say what it did. Written
+# by rename before the first move, so there is never a move with no record.
+write_recovery() {
+  local k=0
+  {
+    printf 'state %s\n' "$1"
+    printf 'head %s\n' "$HEAD_BEFORE"
+    printf 'nonce %s\n' "$RETENTION_NONCE"
+    while [ "$k" -lt "${#SRCS[@]}" ]; do
+      printf 'move %s\t%s\t%s\n' "${SRCS[$k]}" "${DSTS[$k]}" "${MBLOBS[$k]}"
+      k=$((k + 1))
+    done
+  } > "$SNAP_DIR/recovery"
+  write_file_atomic "$STATE/retention-inflight" "$SNAP_DIR/recovery"
+}
+
+# make_dirs
+# The archive folders, one level at a time and never with -p, so a folder that
+# appears between two checks is noticed rather than made part of the path.
+make_dirs() {
+  local rel
+  for rel in 99-archive 99-archive/20-projects "$ARCH_REL"; do
+    if [ ! -e "$ROOT/$rel" ] && [ ! -L "$ROOT/$rel" ]; then
+      if ! mkdir "$ROOT/$rel" 2>/dev/null; then
+        say "ERROR: the folder $rel could not be made, so nothing was moved."
+        return 1
+      fi
+      MADE_DIRS="$rel
+$MADE_DIRS"
+    fi
+    if ! real_dir_ok "$rel"; then
+      say "PATH-BLOCKED: $rel is a link, a junction or not a folder, so nothing is moved through it."
+      return 1
+    fi
+  done
+  return 0
+}
+
+# drop_made_dirs
+# Undoes make_dirs, deepest first, and only while each is still empty.
+drop_made_dirs() {
+  local rel
+  while IFS= read -r rel; do
+    [ -n "$rel" ] || continue
+    rmdir "$ROOT/$rel" 2>/dev/null
+  done <<EOF
+$MADE_DIRS
+EOF
+  MADE_DIRS=""
+  return 0
+}
+
+# index_of_moves
+# One call that says, for every source and destination of this run, what the
+# index holds. Written as <path><TAB><blob>.
+index_of_moves() {
+  : > "$SNAP_DIR/idx"
+  # The status of the question is kept rather than discarded. This used to end
+  # in an unconditional return 0, with the error swallowed by 2>/dev/null and
+  # the exit status taken from the last stage of a pipeline, so an index that
+  # could not be read was indistinguishable from an index holding nothing.
+  # Every caller reads that as no destination being staged, and the put-back
+  # answers it by moving files with a plain mv and telling git nothing, which
+  # leaves the work tree right and the index wrong and reports that the vault
+  # could not be put back when the files are in fact back. No later run can
+  # clear it either, because recovery_check asks the same unanswerable question
+  # and gets the same answer, so the vault stops until a person runs git reset
+  # by hand. The precedent for keeping the status is destination_rule, which
+  # captures it into its own file and says so when the read fails.
+  if ! rgit ls-files -s -z -- "${SRCS[@]}" "${DSTS[@]}" > "$SNAP_DIR/idx.raw" 2>/dev/null; then
+    return 1
+  fi
+  tr '\0' '\n' < "$SNAP_DIR/idx.raw" \
+    | LC_ALL=C awk '{ t = index($0, "\t"); if (t > 0) { split(substr($0, 1, t - 1), f, " "); printf "%s\t%s\n", substr($0, t + 1), f[2] } }' \
+    > "$SNAP_DIR/idx"
+  return 0
+}
+
+# idx_blob <path>
+idx_blob() {
+  LC_ALL=C IDX_P="$1" awk -F '\t' 'BEGIN { p = ENVIRON["IDX_P"] } $1 == p { print $2; f = 1; exit } END { if (!f) print "-" }' "$SNAP_DIR/idx"
+}
+
+# do_moves
+# One git mv for the whole set. Returns 0 when every file is where it should be,
+# 3 when nothing moved in the end, and 71 when the way back could not be walked.
+do_moves() {
+  local line mv1_kf=0 kill_failed=0 timed_out=0
+  if ! make_dirs; then
+    # The record of what was about to move is written before this runs, and
+    # nothing has moved, so it is taken back. Leaving it meant a run that
+    # touched no file at all sent every later run down the recovery path,
+    # about a vault sitting exactly as it was before. Making the archive
+    # folders is allowed to fail by design, one level at a time and never with
+    # -p, so a sync client making a folder in the same instant, a full volume
+    # or a scanner holding one open all arrive here rather than being unusual.
+    rm -f "$STATE/retention-inflight" 2>/dev/null
+    return 3
+  fi
+  index_lock_wait
+  if watched_git "$SNAP_DIR/mv.out" /dev/null mv -- "${SRCS[@]}" "$ARCH_REL/"; then
+    printf 'done\n' >> "$STATE/retention-inflight" 2>/dev/null
+    return 0
+  fi
+  # run_with_watchdog clears its stop result at the top of every call, so what
+  # the first attempt did has to be taken here. A retry erases it, and a second
+  # git mv that fails in milliseconds against the lock a half stopped first one
+  # left behind would then report a clean stop that never happened.
+  mv1_kf="${RUN_KILL_FAILED:-0}"
+  kill_failed="$mv1_kf"
+  timed_out="${RUN_TIMED_OUT:-0}"
+  # git will not touch the index while another process holds its lock, and a
+  # sync client or an editor takes it for a moment all the time. That is worth
+  # one wait and one more try before anything is undone. Not while the first
+  # attempt may still be running, though, because a second git mv over the top
+  # of it is a second writer rather than a retry.
+  if [ "$mv1_kf" -eq 0 ] \
+     && [ -n "$(git_index_lock_path "$ROOT")" ] && [ -e "$(git_index_lock_path "$ROOT")" ]; then
+    say "The index was locked by another git process, so the move waits for it."
+    index_lock_wait
+    if watched_git "$SNAP_DIR/mv.out" /dev/null mv -- "${SRCS[@]}" "$ARCH_REL/"; then
+      printf 'done\n' >> "$STATE/retention-inflight" 2>/dev/null
+      return 0
+    fi
+    [ "${RUN_KILL_FAILED:-0}" -eq 1 ] && kill_failed=1
+    [ "${RUN_TIMED_OUT:-0}" -eq 1 ] && timed_out=1
+  fi
+  # A git mv that was stopped and may still be running is the one failure where
+  # putting back is the wrong answer. Whatever it goes on to do would land on
+  # top of the put-back, and the record saying where each file belongs would
+  # already have been deleted, so the vault would be left moved and staged with
+  # nothing to say so. settle_outcome refuses for the same reason.
+  if [ "$kill_failed" -eq 1 ]; then
+    mark_kill_failed "$LOG" "${RUN_KILL_REPORT:-}"
+    write_recovery kill-failed
+    say "RECOVERY-NEEDED: the move was stopped and a git process of it may still be running, so nothing is put back. $STATE/retention-inflight says what was being moved."
+    MOVING=0
+    return 71
+  fi
+  if [ "$timed_out" -eq 1 ]; then
+    say "PARTIAL: the move did not finish within ${GIT_TIMEOUT}s and was stopped, so the vault is being put back to what HEAD holds."
+  else
+    say "PARTIAL: the move failed, so the vault is being put back to what HEAD holds."
+  fi
+  while IFS= read -r line; do say "    git: $line"; done < "$SNAP_DIR/git.err"
+  put_back && return 3
+  return 71
+}
+
+# head_of_sources
+# What HEAD holds for every source of this run, asked fresh. Written as
+# <question><TAB><blob, - for absent, or ? for present but not a blob>.
+head_of_sources() {
+  local k=0
+  : > "$SNAP_DIR/srchead"
+  : > "$SNAP_DIR/srchead.in"
+  while [ "$k" -lt "${#SRCS[@]}" ]; do
+    printf 'HEAD:%s\n' "${SRCS[$k]}" >> "$SNAP_DIR/srchead.in"
+    k=$((k + 1))
+  done
+  # watched_git rather than rgit, for the same reason head_holds_moves gives.
+  # safe_git hands every command /dev/null for standard input, and a batch
+  # question asked that way comes back missing for everything.
+  watched_git "$SNAP_DIR/srchead.out" "$SNAP_DIR/srchead.in" cat-file --batch-check || return 1
+  LC_ALL=C awk -v q="$SNAP_DIR/srchead.in" '
+    BEGIN { n = 0; while ((getline l < q) > 0) { n++; ask[n] = l } close(q); i = 0 }
+    { i++
+      if (i > n) next
+      v = "-"
+      if ($NF != "missing") { split($0, f, " "); if (f[2] == "blob") v = f[1]; else v = "?" }
+      printf "%s\t%s\n", ask[i], v }' "$SNAP_DIR/srchead.out" > "$SNAP_DIR/srchead"
+  return 0
+}
+
+# head_src_blob <path>
+head_src_blob() {
+  LC_ALL=C SRC_P="HEAD:$1" awk -F '\t' 'BEGIN { p = ENVIRON["SRC_P"] } $1 == p { print $2; f = 1; exit } END { if (!f) print "?" }' "$SNAP_DIR/srchead"
+}
+
+# put_back
+# Reconciles from what is actually on disk and in the index rather than from how
+# far the run is thought to have got, because the two disagree exactly when this
+# is needed. True when every source is back where HEAD has it and no destination
+# is left.
+put_back() {
+  local k=0 src dst ok=1 lock want pb_kill=0 line="" pb_head=""
+  # Nothing is undone once HEAD has moved. A commit made while this run was
+  # working may hold the moves, and taking them back would undo whatever else
+  # that commit carried, which is a change of somebody else's that this runner
+  # was never asked to touch.
+  #
+  # The undo loop asks only whether the index still holds a destination, and a
+  # commit does not empty the index, so every staged move survives a commit and
+  # read as still needing undoing. The check that tolerates a commit landing in
+  # this window sat in the verification loop, which runs after every rename has
+  # already been reversed, so it could report the damage and never prevent it.
+  # settle_outcome refuses for this reason before it calls here, and the other
+  # two callers did not, so the refusal belongs here where all three meet it.
+  pb_head="$(rgit rev-parse -q --verify 'HEAD^{commit}' 2>/dev/null)"
+  if [ -z "$pb_head" ] || [ "$pb_head" != "$HEAD_BEFORE" ]; then
+    write_recovery putback-head-moved
+    say "RECOVERY-NEEDED: HEAD is not where this run started, so nothing is put back. A commit made while this run was working may hold the moves, and undoing them would undo whatever else it carried. $STATE/retention-inflight says where each file belongs."
+    return 1
+  fi
+  index_lock_wait
+  # Nothing is undone until the index has been read. An index that could not be
+  # read leaves every destination looking unstaged, which sends each pair down
+  # the branch below that moves the file with a plain mv and never tells git,
+  # and that is the one outcome here no later run can resolve.
+  if ! index_of_moves; then
+    write_recovery putback-unreadable-index
+    say "RECOVERY-NEEDED: the index could not be read, so nothing is put back rather than putting files back where git would not see them. $STATE/retention-inflight says where each file belongs."
+    return 1
+  fi
+  while [ "$k" -lt "${#SRCS[@]}" ]; do
+    src="${SRCS[$k]}"
+    dst="${DSTS[$k]}"
+    if [ "$pb_kill" -eq 1 ]; then
+      ok=0
+      break
+    fi
+    if [ "$(idx_blob "$dst")" != - ]; then
+      if [ -e "$ROOT/$src" ]; then
+        # Never write over bytes at a path this run did not put there. A sync
+        # client restoring the source from a copy edited on another machine is
+        # exactly the case where -f would destroy work git has never seen, and
+        # so could never give back.
+        say "PUT-BACK-BLOCKED: $src is on disk again, so $dst is left where it is rather than written over it. Both files are there. Compare them and keep the one you want at $src, then remove the other and run again."
+        ok=0
+      elif ! watched_git "$SNAP_DIR/mv.out" /dev/null mv -f -- "$dst" "$src"; then
+        # The stop result of this attempt is read before anything else runs, for
+        # the reason do_moves gives. A retry here would clear it, and retrying at
+        # all while that git may still be running would make this a second writer
+        # rather than a retry. do_moves was hardened against exactly this, and
+        # the guard has to be repeated here because the retry is repeated here.
+        if [ "${RUN_KILL_FAILED:-0}" -eq 1 ]; then
+          pb_kill=1
+          ok=0
+        else
+          # A sync client or an editor takes the index lock for a moment all the
+          # time, and one failure here costs a run that was a single retry away
+          # from clean, so the same wait and one more try the move itself gets.
+          lock="$(git_index_lock_path "$ROOT")"
+          if [ -n "$lock" ] && [ -e "$lock" ]; then
+            say "The index was locked by another git process, so the put-back waits for it."
+            index_lock_wait
+            if ! watched_git "$SNAP_DIR/mv.out" /dev/null mv -f -- "$dst" "$src"; then
+              ok=0
+              [ "${RUN_KILL_FAILED:-0}" -eq 1 ] && pb_kill=1
+            fi
+          else
+            ok=0
+          fi
+        fi
+      fi
+    elif [ -e "$ROOT/$dst" ] && [ ! -e "$ROOT/$src" ]; then
+      mv -f "$ROOT/$dst" "$ROOT/$src" 2>/dev/null || ok=0
+    fi
+    k=$((k + 1))
+  done
+  # A kill that may have left a git running settles the outcome on its own, and
+  # the tests below would be asking about a vault something else is still
+  # changing. This block used to sit underneath the two calls that now follow
+  # it, which made its own words untrue of the folders drop_made_dirs had
+  # already removed and of the index read it had already made. Those folders are
+  # the ones a git that survived a stop is most likely to be writing into, since
+  # the only way to reach here on the first pair is a stop of the first rename.
+  if [ "$pb_kill" -eq 1 ]; then
+    mark_kill_failed "$LOG" "${RUN_KILL_REPORT:-}"
+    write_recovery kill-failed
+    say "RECOVERY-NEEDED: a git command of the put-back was stopped and may still be running, so nothing further was touched. $STATE/retention-inflight says where each file belongs."
+    while IFS= read -r line; do say "    git: $line"; done < "$SNAP_DIR/git.err"
+    return 1
+  fi
+  drop_made_dirs
+  # A read that fails here is not the wedge the one above is, because the checks
+  # below then disagree and the run writes a putback-failed record a later run
+  # can clear. It still must not read as an index holding nothing.
+  index_of_moves || ok=0
+  # Judged against what HEAD holds now, not against the blob read before the
+  # move. The owner may have committed an edit or a deletion of a source while
+  # this run worked, and asking for the old blob would turn that ordinary commit
+  # into a refusal no later run could ever clear, while telling the owner to
+  # restore a journal they had deliberately deleted.
+  if ! head_of_sources; then
+    write_recovery putback-unverified
+    say "RECOVERY-NEEDED: the files may be back, but HEAD could not be read to check them, so this run does not claim either way. $STATE/retention-inflight says where each file belongs."
+    return 1
+  fi
+  k=0
+  while [ "$k" -lt "${#SRCS[@]}" ]; do
+    want="$(head_src_blob "${SRCS[$k]}")"
+    [ "$(idx_blob "${SRCS[$k]}")" = "$want" ] || ok=0
+    # A file at neither path passed every test here before, so the record was
+    # deleted and the run said the vault was restored while nothing was.
+    if [ "$want" = - ]; then
+      [ -e "$ROOT/${SRCS[$k]}" ] && ok=0
+    else
+      [ -e "$ROOT/${SRCS[$k]}" ] || ok=0
+    fi
+    [ "$(idx_blob "${DSTS[$k]}")" = - ] || ok=0
+    [ -e "$ROOT/${DSTS[$k]}" ] && ok=0
+    k=$((k + 1))
+  done
+  if [ "$ok" -eq 1 ]; then
+    rm -f "$STATE/retention-inflight" 2>/dev/null
+    MOVING=0
+    say "The vault is back at HEAD and nothing was moved."
+    return 0
+  fi
+  write_recovery putback-failed
+  say "RECOVERY-NEEDED: the vault could not be put back. $STATE/retention-inflight says where each file should be. Put them back, then run again."
+  while IFS= read -r line; do say "    git: $line"; done < "$SNAP_DIR/git.err"
+  return 1
+}
+
+# verify_moves
+# The index has to agree with what was judged, or the thing that was moved is
+# not the thing that was read.
+verify_moves() {
+  local k=0 ok=1
+  # An index that could not be read is never taken for an index that disagrees.
+  # Both send the run to the put-back, but only one of them is true, and the
+  # line the owner is given is the only account of what happened.
+  if ! index_of_moves; then
+    say "PARTIAL: the index could not be read after the move, so what was moved cannot be checked and the vault is being put back."
+    return 1
+  fi
+  while [ "$k" -lt "${#SRCS[@]}" ]; do
+    [ "$(idx_blob "${DSTS[$k]}")" = "${MBLOBS[$k]}" ] || ok=0
+    [ "$(idx_blob "${SRCS[$k]}")" = - ] || ok=0
+    k=$((k + 1))
+  done
+  rgit diff --quiet -- "${DSTS[@]}" 2>/dev/null || ok=0
+  [ "$ok" -eq 1 ] && return 0
+  say "PARTIAL: after the move the index does not hold what was judged, so the vault is being put back."
+  return 1
+}
+
+# head_holds_moves
+# True when HEAD holds every destination with the blob that was judged and no
+# source at all. Asked fresh rather than from the batch taken before the move.
+head_holds_moves() {
+  local k=0 ok=1
+  # Both files are truncated, the way head_of_sources does it. Leaving the
+  # answer map from a previous call is the asymmetry the next edit trips on.
+  : > "$SNAP_DIR/after"
+  : > "$SNAP_DIR/after.in"
+  while [ "$k" -lt "${#SRCS[@]}" ]; do
+    printf 'HEAD:%s\n' "${DSTS[$k]}" >> "$SNAP_DIR/after.in"
+    printf 'HEAD:%s\n' "${SRCS[$k]}" >> "$SNAP_DIR/after.in"
+    k=$((k + 1))
+  done
+  # watched_git rather than rgit, because rgit goes through safe_git, which
+  # gives every command /dev/null for standard input. A batch question asked
+  # that way is no question at all, and every answer comes back missing.
+  watched_git "$SNAP_DIR/after.out" "$SNAP_DIR/after.in" cat-file --batch-check || return 1
+  # An answer that is present but is not a blob becomes ? rather than -, because
+  # - is the word for absent and every caller tests it that way. A source path
+  # HEAD holds as a tree would otherwise pass the test that no source is left
+  # and let the run report success, which is the one wrong answer here that
+  # nothing else would catch.
+  LC_ALL=C awk -v q="$SNAP_DIR/after.in" '
+    BEGIN { n = 0; while ((getline l < q) > 0) { n++; ask[n] = l } close(q); i = 0 }
+    { i++
+      if (i > n) next
+      v = "-"
+      if ($NF != "missing") { split($0, f, " "); if (f[2] == "blob") v = f[1]; else v = "?" }
+      printf "%s\t%s\n", ask[i], v }' "$SNAP_DIR/after.out" > "$SNAP_DIR/after"
+  k=0
+  while [ "$k" -lt "${#SRCS[@]}" ]; do
+    [ "$(LC_ALL=C AFT_P="HEAD:${DSTS[$k]}" awk -F '\t' 'BEGIN { p = ENVIRON["AFT_P"] } $1 == p { print $2; exit }' "$SNAP_DIR/after")" = "${MBLOBS[$k]}" ] || ok=0
+    [ "$(LC_ALL=C AFT_P="HEAD:${SRCS[$k]}" awk -F '\t' 'BEGIN { p = ENVIRON["AFT_P"] } $1 == p { print $2; exit }' "$SNAP_DIR/after")" = - ] || ok=0
+    k=$((k + 1))
+  done
+  [ "$ok" -eq 1 ]
+}
+
+# do_commit
+do_commit() {
+  local k=0
+  {
+    printf 'retention pass: moved %s file(s) to 99-archive/\n\n' "${#SRCS[@]}"
+    printf 'Vault-Pass: retention\n'
+    printf 'Vault-Retention-Run: %s\n' "$RETENTION_NONCE"
+    while [ "$k" -lt "${#SRCS[@]}" ]; do
+      printf 'Vault-Retention-Move: %s -> %s\n' "${SRCS[$k]}" "${DSTS[$k]}"
+      k=$((k + 1))
+    done
+  } > "$SNAP_DIR/commit-msg"
+  # The commit is made from an index built for it -- HEAD, with exactly this
+  # run's moves written in from the entries git mv already staged -- and not
+  # with `commit --only -- <paths>`.
+  #
+  # --only re-reads those paths from the working tree and runs the end-of-line
+  # filters over them again. Where the blob a file already has in git is not
+  # what those filters would now produce, that stores a different blob: a stub
+  # committed with CRLF in a repository whose core.autocrlf is on, which is the
+  # default in Git for Windows, came back out as LF. So archiving a file
+  # quietly rewrote it, and head_holds_moves was right to refuse the run. A
+  # move must not change what it moves.
+  #
+  # Pinning core.autocrlf off for the commit only moves the defect rather than
+  # fixing it. With the ordinary Windows setting the blob holds LF and the
+  # working file holds CRLF, and committing the working file verbatim rewrites
+  # it the other way. Both directions were measured before this was written.
+  # The index git mv wrote is already exactly right, so the answer is to
+  # re-read nothing at all. Restricting the commit to an index of its own also
+  # keeps the old promise that the run commits only its own files: anything
+  # else the owner had staged stays staged and uncommitted.
+  : > "$SNAP_DIR/index-rm"
+  k=0
+  while [ "$k" -lt "${#SRCS[@]}" ]; do
+    printf '%s\0' "${SRCS[$k]}" >> "$SNAP_DIR/index-rm"
+    k=$((k + 1))
+  done
+  rm -f "$SNAP_DIR/commit-index"
+  index_lock_wait
+  # ls-files reads the repository's own index and must not see the new one, so
+  # it is asked through rgit, which never carries RETENTION_GIT_INDEX. Its
+  # "mode SP oid SP stage TAB path" output is one of the forms --index-info
+  # takes, which is what carries the blobs across untouched.
+  if rgit ls-files -s -z -- "${DSTS[@]}" > "$SNAP_DIR/index-add" 2>/dev/null; then
+    RETENTION_GIT_INDEX="$SNAP_DIR/commit-index"
+    if watched_git "$SNAP_DIR/commit.out" /dev/null read-tree "$HEAD_BEFORE" \
+       && watched_git "$SNAP_DIR/commit.out" "$SNAP_DIR/index-add" update-index -z --index-info \
+       && watched_git "$SNAP_DIR/commit.out" "$SNAP_DIR/index-rm" update-index --force-remove -z --stdin; then
+      watched_git "$SNAP_DIR/commit.out" /dev/null -c gc.auto=0 -c maintenance.auto=false \
+        commit -q --cleanup=verbatim -F "$SNAP_DIR/commit-msg"
+    fi
+    RETENTION_GIT_INDEX=""
+  fi
+  # Nothing is reported from here either way. settle_outcome judges what this
+  # run did from the repository rather than from an exit code, and a commit
+  # that did not happen reaches it as a HEAD that did not move.
+  return 0
+}
+
+# settle_outcome [<signal note>]
+# What this run actually did, judged from the repository rather than from the
+# exit code of the last command. Also what a signal and a later run use, so
+# there is one answer to the question and not three.
+settle_outcome() {
+  local head_now parent msg
+  # do_commit clears this itself, but a signal can land between setting it and
+  # clearing it, and this is the one place both the ordinary path and the
+  # signal path come through. Everything below, the put-back included, must ask
+  # the repository's own index.
+  RETENTION_GIT_INDEX=""
+  if [ "${RUN_KILL_FAILED:-0}" -eq 1 ]; then
+    mark_kill_failed "$LOG" "${RUN_KILL_REPORT:-}"
+    write_recovery kill-failed
+    say "RECOVERY-NEEDED: a git command of this run was stopped and may still be running, so what it did is not known and nothing is put back. $STATE/retention-inflight says what was being moved."
+    MOVING=0
+    return 71
+  fi
+  head_now="$(rgit rev-parse -q --verify 'HEAD^{commit}' 2>/dev/null)"
+  if [ -z "$head_now" ]; then
+    write_recovery head-unreadable
+    say "RECOVERY-NEEDED: HEAD could not be read after the move, so what this run did is not known. $STATE/retention-inflight says what was being moved."
+    MOVING=0
+    return 71
+  fi
+  if [ "$head_now" = "$HEAD_BEFORE" ]; then
+    say "COMMIT-FAILED: nothing was committed, so the vault is being put back to what HEAD holds."
+    if put_back; then
+      MOVING=0
+      return 4
+    fi
+    MOVING=0
+    return 71
+  fi
+  parent="$(rgit rev-parse -q --verify "$head_now^1" 2>/dev/null)"
+  msg="$(rgit log -1 --format=%B "$head_now" 2>/dev/null)"
+  if [ "$parent" = "$HEAD_BEFORE" ] && printf '%s\n' "$msg" | LC_ALL=C grep -qxF "Vault-Retention-Run: $RETENTION_NONCE"; then
+    if head_holds_moves; then
+      rm -f "$STATE/retention-inflight" 2>/dev/null
+      MOVING=0
+      MOVED_N="${#SRCS[@]}"
+      say "OK: $MOVED_N file(s) moved to $ARCH_REL and committed as $head_now."
+      return 0
+    fi
+    write_recovery commit-mismatch
+    say "RECOVERY-NEEDED: the commit was made but HEAD does not hold what was judged, so it is left alone. $STATE/retention-inflight says what was being moved."
+    MOVING=0
+    return 71
+  fi
+  # Something else committed while this run was working. A commit that may hold
+  # the moves is never put back, because undoing it would undo whatever else it
+  # carried.
+  if rgit merge-base --is-ancestor "$HEAD_BEFORE" "$head_now" >/dev/null 2>&1 && head_holds_moves; then
+    rm -f "$STATE/retention-inflight" 2>/dev/null
+    MOVING=0
+    MOVED_N="${#SRCS[@]}"
+    # HEAD_BEFORE is read at the start of the run, so an owner commit made while
+    # the candidates were still being judged puts this run's own commit here.
+    # The nonce is what tells the two apart, and without asking for it the log
+    # credited a stranger with work this run had just done.
+    if printf '%s\n' "$msg" | LC_ALL=C grep -qxF "Vault-Retention-Run: $RETENTION_NONCE"; then
+      say "OK: $MOVED_N file(s) moved to $ARCH_REL and committed as $head_now. Something else committed while this run was judging, so the commit sits on that rather than on the HEAD this run started from."
+      return 0
+    fi
+    say "NOTE: another tool committed the moves before this run could, so they are left as they are. HEAD is $head_now."
+    return 0
+  fi
+  write_recovery head-moved
+  say "RECOVERY-NEEDED: HEAD moved to $head_now while this run was working and it does not hold the moves, so nothing is put back. $STATE/retention-inflight says what was being moved."
+  MOVING=0
+  return 71
+}
+
+# recovery_check
+# A record an earlier run left. It clears itself when the repository shows the
+# question is settled, either because the commit landed or because everything is
+# back where it started. Anything else stops the run, because a second set of
+# moves on top of an unknown first one is how a vault loses a note.
+recovery_check() {
+  local f="$STATE/retention-inflight" key rest rhead rnonce headnow undone=1 n=0
+  [ -e "$f" ] || return 0
+  if [ ! -f "$f" ] || [ ! -r "$f" ]; then
+    say "TRIPWIRE: $f is not a readable file, so what an earlier run was doing cannot be established. Look at it, then remove it."
+    return 78
+  fi
+  rhead=""
+  rnonce=""
+  SRCS=()
+  DSTS=()
+  MBLOBS=()
+  while IFS=' ' read -r key rest; do
+    case "$key" in
+      head) rhead="$rest" ;;
+      nonce) rnonce="$rest" ;;
+      move)
+        n=$((n + 1))
+        SRCS[${#SRCS[@]}]="$(printf '%s' "$rest" | cut -f1)"
+        DSTS[${#DSTS[@]}]="$(printf '%s' "$rest" | cut -f2)"
+        MBLOBS[${#MBLOBS[@]}]="$(printf '%s' "$rest" | cut -f3)"
+        ;;
+    esac
+  done < "$f"
+  headnow="$(rgit rev-parse -q --verify 'HEAD^{commit}' 2>/dev/null)"
+  if [ "$n" -eq 0 ] || [ -z "$rhead" ] || [ -z "$headnow" ]; then
+    say "TRIPWIRE: $f does not say what an earlier run was moving, so it cannot be cleared here. Look at it, then remove it."
+    return 78
+  fi
+  # The commit landed, and HEAD holds every destination and no source.
+  #
+  # The nonce is looked for anywhere between the commit the record names and the
+  # one HEAD is on, rather than in the tip's own message. Reading only the tip
+  # meant the first commit to land on top of a retention commit made this branch
+  # unreachable for good, and the branch below cannot fire once the moves have
+  # landed either, so a vault showing the after state exactly was reported as
+  # showing neither. In the arrangement these runners ship with, retention runs
+  # weekly and the dream pass commits nightly, so by the time any later run
+  # looked the tip was almost never still the retention commit.
+  #
+  # Widening the search loosens nothing on its own, because the moves still have
+  # to be in HEAD with the blobs that were judged before the record is cleared.
+  if [ -n "$rnonce" ] \
+     && rgit log --format=%B "$rhead..$headnow" 2>/dev/null | LC_ALL=C grep -qxF "Vault-Retention-Run: $rnonce" \
+     && head_holds_moves; then
+    rm -f "$f" 2>/dev/null
+    say "An earlier run left a record of moves that did land, and HEAD holds them. The record is cleared and this run goes on."
+    return 0
+  fi
+  # Or somebody else committed the moves, which the run that met them could not
+  # record as its own. settle_outcome already settles that case in the run it
+  # happens to, by asking whether HEAD descends from where the run started and
+  # then whether it holds what was judged, and it leaves the commit alone rather
+  # than putting anything back. A later run had no branch for it at all, so the
+  # record such a run writes could be cleared by nothing and every retention
+  # pass afterwards stopped at a tripwire, over a vault already in the state the
+  # record was written to reach. The nonce cannot rescue it, because a run that
+  # refused to put anything back never committed and so never minted one into
+  # any message. The branch above stays for the run whose own commit landed,
+  # because it names the answer more exactly, and this is the general case
+  # underneath it.
+  #
+  # Asking nothing about who committed loosens nothing. head_holds_moves wants
+  # every destination in HEAD with the blob that was judged and every source
+  # gone, so a half moved vault, a partial commit or a commit of some other
+  # content all fail it and still stop here.
+  if rgit merge-base --is-ancestor "$rhead" "$headnow" >/dev/null 2>&1 && head_holds_moves; then
+    rm -f "$f" 2>/dev/null
+    say "An earlier run left a record of moves that another tool committed, and HEAD holds them. The record is cleared and this run goes on."
+    return 0
+  fi
+  # Or nothing moved and every source is back where HEAD holds it.
+  #
+  # HEAD is asked rather than compared against the blob the record carries, and
+  # the branch no longer requires HEAD to be where it was. The put-back was
+  # moved onto HEAD in the round before this one and this is the same question
+  # asked by a later run, so the two have to agree or they disagree exactly when
+  # a run has died and the answer matters. Requiring HEAD to be unmoved meant an
+  # owner who committed anything at all while a run was dying left a record that
+  # no later run could clear, and the vault stops for a tripwire until somebody
+  # deletes it by hand. Nothing is loosened, because every question that branch
+  # asked is still asked, against HEAD now instead of against a remembered HEAD.
+  # An unreadable index answers neither question, so the record stays rather
+  # than being cleared on the strength of a read that did not happen.
+  if index_of_moves && head_of_sources; then
+    local k=0 want
+    while [ "$k" -lt "${#SRCS[@]}" ]; do
+      want="$(head_src_blob "${SRCS[$k]}")"
+      case "$want" in
+        -|'?')
+          # HEAD has to hold the source at its own path as a blob. A source HEAD
+          # does not have is a note at neither path, which is a loss and not a
+          # restoration, and clearing the record for it would let the next run
+          # move on over a missing note.
+          undone=0
+          ;;
+        *)
+          [ "$(idx_blob "${SRCS[$k]}")" = "$want" ] || undone=0
+          [ -e "$ROOT/${SRCS[$k]}" ] || undone=0
+          ;;
+      esac
+      [ "$(idx_blob "${DSTS[$k]}")" = - ] || undone=0
+      [ -e "$ROOT/${DSTS[$k]}" ] && undone=0
+      k=$((k + 1))
+    done
+  else
+    undone=0
+  fi
+  if [ "$undone" -eq 1 ]; then
+    rm -f "$f" 2>/dev/null
+    say "An earlier run left a record of moves that did not happen, and the vault is back where it started. The record is cleared and this run goes on."
+    return 0
+  fi
+  say "TRIPWIRE: an earlier run could not say what its moves did, and the vault does not yet show either outcome. Nothing is moved until this is settled."
+  say "  the record is $f, and HEAD was $rhead when it was written"
+  local k=0
+  while [ "$k" -lt "${#SRCS[@]}" ]; do
+    say "  $(printf '%s' "${SRCS[$k]}") work tree $([ -e "$ROOT/${SRCS[$k]}" ] && echo present || echo absent), index $(idx_blob "${SRCS[$k]}")"
+    say "  $(printf '%s' "${DSTS[$k]}") work tree $([ -e "$ROOT/${DSTS[$k]}" ] && echo present || echo absent), index $(idx_blob "${DSTS[$k]}")"
+    k=$((k + 1))
+  done
+  say "  put every file back where the record says it belongs, or finish the move by hand, then remove $f"
+  return 78
+}
+
+# ------------------------------------------------------------------- main --
+
+usage() {
+  say "USAGE: vault-retention.sh [--dry-run | --adopt-legacy <report>]"
+  return 0
+}
+
+main() {
+  local rc=0 lock_rc=0 state_rc=0 folder_rc=0
+  ADOPT_MODE=0
+  DRY_RUN=0
+  ADOPT_REPORT=""
+  SRCS=()
+  DSTS=()
+  MBLOBS=()
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --dry-run) DRY_RUN=1 ;;
+      --adopt-legacy)
+        ADOPT_MODE=1
+        shift
+        ADOPT_REPORT="${1:-}"
+        [ -n "$ADOPT_REPORT" ] || { printf 'vault-retention.sh: --adopt-legacy needs the report to adopt\n' >&2; return 64; }
+        ;;
+      *)
+        printf 'vault-retention.sh: unknown option %s\n' "$1" >&2
+        return 64
+        ;;
+    esac
+    shift
+  done
+
+  ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+  cd "$ROOT" || return 1
+  # shellcheck source=lib/runner-common.sh
+  . "$ROOT/.claude/scripts/lib/runner-common.sh"
+  ROOT_REAL="$(pwd -P)"
+
+  LOG_DIR="$ROOT/.claude/logs"
+  mkdir -p "$LOG_DIR" 2>/dev/null
+  LOG="$LOG_DIR/vault-retention.log"
+  # Anything that reaches arithmetic is checked first, because the shell reads a
+  # variable in arithmetic as an expression and a planted one would run.
+  RETENTION_DAYS="$(uint_setting RETENTION_DAYS 60 1 "$LOG" days)"
+  MAX_MOVES="$(uint_setting RETENTION_MAX_MOVES 50 1 "$LOG" moves)"
+  if [ "$MAX_MOVES" -gt 50 ]; then
+    say "WARNING: RETENTION_MAX_MOVES $MAX_MOVES is more than the 50 files one run may move. Using 50."
+    MAX_MOVES=50
+  fi
+  GIT_TIMEOUT="$(uint_setting RUNNER_GIT_TIMEOUT 120 1 "$LOG")"
+  WATCHDOG_GRACE="$(uint_setting WATCHDOG_GRACE 15 0 "$LOG")"
+  WATCHDOG_POLL="$(uint_setting WATCHDOG_POLL 5 1 "$LOG")"
+  STATE="$(vault_state_dir "$ROOT" 2>>"$LOG")"
+  STATE_REAL="$(state_dir_ready "$STATE" "$ROOT")"
+  state_rc=$?
+  if [ "$state_rc" -ne 0 ]; then
+    printf '[%s] ERROR: the state directory %s %s. Refusing to run.\n' "$(ts)" "$STATE" "$(state_dir_problem "$state_rc")" >> "$LOG"
+    return 1
+  fi
+  STATE="$STATE_REAL"
+
+  trap on_exit EXIT
+  trap 'on_signal 130' INT
+  trap 'on_signal 143' TERM
+  trap 'on_signal 129' HUP
+  run_lock_acquire "$STATE" "$ROOT" "$RUNNER" "$LOG" "$((GIT_TIMEOUT * 4 + WATCHDOG_GRACE + 900))"
+  lock_rc=$?
+  [ "$lock_rc" -eq 0 ] || return "$lock_rc"
+
+  tripwire_check "$ROOT" "$STATE" "$RUNNER" "$LOG"
+  rc=$?
+  [ "$rc" -eq 0 ] || return "$rc"
+
+  SNAP_DIR="$(mktemp -d 2>/dev/null || mktemp -d -t vaultretention)" || {
+    SNAP_DIR=""
+    printf '[%s] ERROR: could not create a temporary directory\n' "$(ts)" >> "$LOG"
+    return 1
+  }
+  mkdir -p "$SNAP_DIR/nohooks"
+  HOOKS="$SNAP_DIR/nohooks"
+
+  git_preflight "$ROOT" "$HOOKS" "$LOG"
+  rc=$?
+  [ "$rc" -eq 0 ] || return "$rc"
+  if [ "${VAULT_GIT:-0}" -ne 1 ]; then
+    say "ERROR: ${VAULT_GIT_NOTE:-the vault is not a git repository}, so there is no history to say who wrote each journal. Refusing to run."
+    return 1
+  fi
+  retention_preflight
+  rc=$?
+  [ "$rc" -eq 0 ] || return "$rc"
+
+  recovery_check
+  rc=$?
+  [ "$rc" -eq 0 ] || return "$rc"
+
+  folder_checks
+  folder_rc=$?
+  case "$folder_rc" in
+    0) ;;
+    10) return 0 ;;
+    *) return "$folder_rc" ;;
+  esac
+
+  TODAY="$(date +%Y-%m-%d 2>/dev/null)"
+  if ! date_day "$TODAY"; then
+    say "ERROR: today's date could not be read, so no age could be worked out. Refusing to run."
+    return 1
+  fi
+  TODAY_DAY="$DATE_DAY"
+  HEAD_BEFORE="$(rgit rev-parse -q --verify 'HEAD^{commit}' 2>/dev/null)"
+  if [ -z "$HEAD_BEFORE" ]; then
+    say "ERROR: HEAD names no commit, so there is no history to judge against. Refusing to run."
+    return 1
+  fi
+
+  enumerate_candidates
+  if [ "$C_N" -eq 0 ]; then
+    log_verdicts
+    say "OK: there is nothing in $LOGS_REL to evaluate."
+    return 0
+  fi
+  local i=0
+  while [ "$i" -lt "$C_N" ]; do
+    C_ADOPT[$i]=0
+    i=$((i + 1))
+  done
+
+  pre_checks
+  read_history
+  rc=$?
+  [ "$rc" -eq 0 ] || return "$rc"
+  ask_batches
+  rc=$?
+  [ "$rc" -eq 0 ] || return "$rc"
+
+  classify_journals
+  classify_stubs
+  destination_rule
+  keep_rule
+
+  if [ "$ADOPT_MODE" -eq 1 ]; then
+    adopt_legacy "$ADOPT_REPORT"
+    rc=$?
+    if [ "$rc" -ne 0 ]; then
+      log_verdicts
+      return "$rc"
+    fi
+  elif [ "$DRY_RUN" -eq 0 ]; then
+    legacy_report
+  fi
+
+  build_move_set
+  load_moves
+
+  if [ "$DRY_RUN" -eq 1 ]; then
+    log_verdicts
+    say "OK: this was a dry run, so nothing was moved and nothing was written."
+    return 0
+  fi
+  if [ "${#SRCS[@]}" -eq 0 ]; then
+    log_verdicts
+    say "OK: nothing is ready to move."
+    return 0
+  fi
+
+  RETENTION_NONCE="$(new_uuid)"
+  write_recovery moving || {
+    say "ERROR: the record of what is about to move could not be written to $STATE, so nothing was moved."
+    log_verdicts
+    return 1
+  }
+  MOVING=1
+
+  do_moves
+  rc=$?
+  if [ "$rc" -ne 0 ]; then
+    MOVING=0
+    log_verdicts
+    return "$rc"
+  fi
+  if ! verify_moves; then
+    if put_back; then
+      MOVING=0
+      log_verdicts
+      return 3
+    fi
+    MOVING=0
+    log_verdicts
+    return 71
+  fi
+  if ! real_dir_ok "$LOGS_REL" || ! real_dir_ok "$ARCH_REL"; then
+    write_recovery folders-changed
+    say "RECOVERY-NEEDED: a folder on the path changed while this run was moving, so nothing further is done. $STATE/retention-inflight says what was moved."
+    MOVING=0
+    log_verdicts
+    return 71
+  fi
+
+  do_commit
+  settle_outcome
+  rc=$?
+  log_verdicts
+  return "$rc"
+}
+
+main "$@"
+exit $?

@@ -120,17 +120,21 @@ count_key() {
 }
 
 # First value for a key, stripped of a trailing CR, trailing spaces, and one
-# surrounding quote pair. \047 is the apostrophe — written escaped so this awk
-# program stays inside single quotes.
+# surrounding quote pair. The apostrophe is built with sprintf rather than
+# written as \047, because it cannot be written literally inside this single
+# quoted program and the awk macOS ships does not read an octal escape in a
+# string the way gawk and mawk do. That difference has already cost this
+# repository two silent wrong answers, both of which took a CI run to see.
 value_of() {
   printf '%s\n' "$2" | awk -v k="^$1:" '
+    BEGIN { q = sprintf("%c", 39) }
     $0 ~ k {
       sub(/^[^:]*:[ \t]*/, "")
       gsub(/\r/, "")
       sub(/[ \t\r]+$/, "")
       if (length($0) >= 2) {
         a = substr($0, 1, 1); b = substr($0, length($0), 1)
-        if (a == b && (a == "\"" || a == "\047")) $0 = substr($0, 2, length($0) - 2)
+        if (a == b && (a == "\"" || a == q)) $0 = substr($0, 2, length($0) - 2)
       }
       print; exit
     }'
@@ -206,7 +210,12 @@ check_note() {
 missing=0
 if [ "${#NAMED[@]}" -gt 0 ]; then
   for file in "${NAMED[@]}"; do
-    case "$file" in /*|[A-Za-z]:[\\/]*) ;; *) file="$ROOT/$file" ;; esac
+    # The drive letter is spelled out rather than written as a range. A range
+    # follows the locale's collating order, where a letter carrying an accent
+    # sorts beside the letter it is built from and so falls inside A-Z, which
+    # would read a relative name beginning with such a letter and a colon as an
+    # absolute path on one platform and not on another.
+    case "$file" in /*|[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]:[\\/]*) ;; *) file="$ROOT/$file" ;; esac
     if [ -f "$file" ] && [ -r "$file" ]; then
       check_note "$file"
     else
@@ -230,6 +239,52 @@ printf 'vault-check: %s violation(s) across %s file(s) checked (as of %s).\n' \
 if [ "$files" -eq 0 ]; then
   printf 'vault-check: VACUOUS - no notes were scanned, so this is not a pass. Check CLAUDE_PROJECT_DIR and the TIERS list.\n' >&2
   exit 1
+fi
+
+# What the retention pass has taken out of the live tiers. 99-archive is not a
+# content tier and nothing above scans it, so without this line a note that has
+# been archived simply disappears from every count this script prints, and there
+# is no way to tell an archived vault from one that lost notes. Reported on a
+# full scan only, because a scan of named notes is answering a different
+# question. It changes no count and no exit code.
+if [ "${#NAMED[@]}" -eq 0 ]; then
+  archived=0
+  if [ -d "$ROOT/99-archive" ]; then
+    archived="$(find "$ROOT/99-archive" -type f -name '*.md' 2>/dev/null | awk 'END { print NR + 0 }')"
+  fi
+  printf 'vault-check: 99-archive/ holds %s note(s) on disk.\n' "$archived"
+  # Replace refs off and hooks and fsmonitor out of the way, for the same reason
+  # the runners do it. The vault has to be the top of its own repository, or the
+  # history being read belongs to something else.
+  pass_line=""
+  if ! command -v git >/dev/null 2>&1; then
+    pass_line="The last retention pass is unknown (git is not installed)."
+  elif ! git_top="$(GIT_TERMINAL_PROMPT=0 git -C "$ROOT" rev-parse --show-toplevel 2>/dev/null)" || [ -z "$git_top" ]; then
+    pass_line="The last retention pass is unknown (this vault is not in a git repository)."
+  elif [ "$(cd "$git_top" 2>/dev/null && pwd -P)" != "$(cd "$ROOT" 2>/dev/null && pwd -P)" ]; then
+    pass_line="The last retention pass is unknown (this vault is not the top of its own repository)."
+  elif [ "$(GIT_TERMINAL_PROMPT=0 git -C "$ROOT" rev-parse --is-shallow-repository 2>/dev/null)" = true ]; then
+    pass_line="The last retention pass is unknown (this is a shallow clone, so the history is incomplete)."
+  else
+    # grep.patternType is pinned because --grep honours it from the user config,
+    # and the anchors in the pattern are load bearing. Somebody carrying
+    # grep.patternType=fixed in their own git config would otherwise be told
+    # that no retention pass is in the history straight after a pass ran, which
+    # is a wrong answer in the reassuring direction.
+    last_pass="$(GIT_TERMINAL_PROMPT=0 GIT_NO_REPLACE_OBJECTS=1 git -C "$ROOT" \
+      -c core.fsmonitor=false -c log.showSignature=false -c grep.patternType=basic \
+      log -1 --grep='^Vault-Pass: retention$' --format='%h%x09%cs' 2>/dev/null)"
+    if [ -z "$last_pass" ]; then
+      pass_line="No retention pass is in this repository's history."
+    else
+      moved="$(GIT_TERMINAL_PROMPT=0 GIT_NO_REPLACE_OBJECTS=1 git -C "$ROOT" \
+        -c core.fsmonitor=false -c log.showSignature=false -c grep.patternType=basic \
+        log -1 --grep='^Vault-Pass: retention$' --format=%B 2>/dev/null \
+        | awk '/^Vault-Retention-Move: / { n++ } END { print n + 0 }')"
+      pass_line="The last retention pass ($(printf '%s' "$last_pass" | cut -f1) on $(printf '%s' "$last_pass" | cut -f2)) moved $moved note(s)."
+    fi
+  fi
+  printf 'vault-check: %s\n' "$pass_line"
 fi
 
 [ "$violations" -gt 0 ] && exit 1

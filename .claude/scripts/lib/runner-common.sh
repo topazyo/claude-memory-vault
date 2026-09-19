@@ -47,7 +47,13 @@ file_size() {
 new_uuid() {
   local hex i
   hex="$(od -An -tx1 -N16 /dev/urandom 2>/dev/null | tr -d ' \n')"
-  case "$hex" in *[!0-9a-f]*) hex="" ;; esac
+  # Spelled out rather than 0-9a-f. The digits are safe under any collation but
+  # a-f is a letter range, so a UTF-8 collation would let an upper case or an
+  # accented letter through the test that is meant to reject anything that is
+  # not hex. This library is sourced by vault-check.sh as well as by the three
+  # runners, and vault-check carries no locale pin, so the pattern has to stand
+  # on its own here.
+  case "$hex" in *[!0123456789abcdef]*) hex="" ;; esac
   if [ "${#hex}" -ne 32 ]; then
     hex=""
     for i in 1 2 3 4; do
@@ -165,7 +171,11 @@ win_tree_stop() {
   local winpid="$1" nonce="$2" record="$3" more="${4:-}" listed="${5:-}" script limit out ps_pid ps_win waited=0
   is_uint "$winpid" || winpid=0
   is_uint "$listed" || listed=0
-  case "$nonce" in *[!A-Za-z0-9-]*) nonce="" ;; esac
+  # Spelled out rather than a range. This value is interpolated into a
+  # PowerShell script, so what it may hold is a security question, and a range
+  # follows the locale's collating order, where a letter carrying an accent
+  # sorts beside the letter it is built from and falls inside A-Z and a-z.
+  case "$nonce" in *[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-]*) nonce="" ;; esac
   case "$more" in *[!0-9\ ]*) more="" ;; esac
   limit="${WINDOWS_STOP_LIMIT:-60}"
   is_uint "$limit" && [ "$limit" -gt 0 ] || limit=60
@@ -610,7 +620,8 @@ snapshot_tree() {
         -o -name 'dream-agent.run.log.runner-tmp.[A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9]' \
         -o -name 'promotion-agent.run.log.runner-tmp.[A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9]' \
         -o -name dream-pass.launchd.out -o -name dream-pass.launchd.err \
-        -o -name promotion-pass.launchd.out -o -name promotion-pass.launchd.err \) \) -prune -o
+        -o -name promotion-pass.launchd.out -o -name promotion-pass.launchd.err \
+        -o -name vault-retention.launchd.out -o -name vault-retention.launchd.err \) \) -prune -o
     fi
     # Every path with a line break, .claude/logs included, summed by name and
     # content into one line under a name no file has. A change to any of them
@@ -831,7 +842,8 @@ steering_filter() {
             || obase ~ /^dream-agent\.run\.log\.runner-tmp\.[A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9]$/ \
             || obase ~ /^promotion-agent\.run\.log\.runner-tmp\.[A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9]$/ \
             || base == "dream-pass.launchd.out" || base == "dream-pass.launchd.err" \
-            || base == "promotion-pass.launchd.out" || base == "promotion-pass.launchd.err") next
+            || base == "promotion-pass.launchd.out" || base == "promotion-pass.launchd.err" \
+            || base == "vault-retention.launchd.out" || base == "vault-retention.launchd.err") next
         print $0
         next
       }
@@ -1337,7 +1349,8 @@ is_uint() {
 # is_nonce <value>
 # True for a lock nonce as run_lock_acquire writes it.
 is_nonce() {
-  case "$1" in ''|*[!A-Za-z0-9._-]*) return 1 ;; *) return 0 ;; esac
+  # Spelled out rather than a range, for the reason win_tree_stop gives.
+  case "$1" in ''|*[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-]*) return 1 ;; *) return 0 ;; esac
 }
 
 # uint_setting <variable-name> <default> <minimum> <log> [<unit>]
@@ -1414,7 +1427,7 @@ windows_runner_alive() {
 # on Windows, when the recorded Windows process is still that runner.
 runner_alive() {
   local pid="$1" name="$2" cmd
-  case "$name" in dream-pass|promotion-pass) ;; *) return 1 ;; esac
+  case "$name" in dream-pass|promotion-pass|vault-retention) ;; *) return 1 ;; esac
   if ! is_uint "$pid" || [ "$pid" = "$$" ] || ! pid_exists "$pid"; then
     [ "${3:-}" != "$(cat "/proc/$$/winpid" 2>/dev/null)" ] && windows_runner_alive "${3:-}" "${4:-}" && return 0
     return 1
@@ -1612,7 +1625,7 @@ run_lock_acquire() {
       o_started="$(owner_field "$owner" started)"
       o_longest="$(owner_field "$owner" longest)"
       o_nonce="$(owner_field "$owner" nonce)"
-      case "$o_runner" in dream-pass|promotion-pass) ;; *) o_runner="" ;; esac
+      case "$o_runner" in dream-pass|promotion-pass|vault-retention) ;; *) o_runner="" ;; esac
       # A number longer than any real value is malformed, so no sum can wrap.
       is_uint "$o_pid" && [ "${#o_pid}" -le 10 ] || o_pid=""
       is_uint "$o_winpid" && [ "${#o_winpid}" -le 10 ] || o_winpid=""

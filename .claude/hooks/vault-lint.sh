@@ -47,8 +47,13 @@ lint_file() {
   # does not name a file from the current directory, try the session's cwd
   # from the hook input (a session can start in a vault subfolder), then the
   # vault root.
+  # The drive letter is spelled out rather than given as a range. A range in a
+  # shell pattern follows the locale's collating order, which sorts an accented
+  # letter beside the letter it is built from and so inside the range, and this
+  # hook carries no locale pin of its own because every harness calls it
+  # directly. Four defects of this family have already reached main here.
   case "$NORM" in
-    /*|[A-Za-z]:/*) ;;
+    /*|[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]:/*) ;;
     *)
       if [ ! -e "$NORM" ]; then
         local base_cwd

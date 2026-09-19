@@ -78,6 +78,22 @@
 
 set -u
 
+# The same pin the retention runner carries, and for a sharper reason here.
+# steering_filter in the library decides which files the fence backs up and
+# quarantines, and it decides it by folding a path to lower case and comparing
+# it against ASCII literals. gawk folds by the locale, so under a Turkish or an
+# Azeri locale tolower on GEMINI.md gives a dotless i, the literal comparison
+# fails, and a planted steering file is reported by the fence and then left
+# exactly where it is, to load into the next session as instructions. That is
+# the direction a containment control must never fail in. The scheduled runners
+# are started by cron, launchd or Task Scheduler under whatever locale that
+# user's session carries, which no CI job models, and LC_ALL rather than
+# LC_COLLATE because LC_ALL in the environment overrides LC_COLLATE. The pin
+# also covers the other unprefixed awks and the one sed the library runs on this
+# path. Nothing here reads a translated message.
+LC_ALL=C
+export LC_ALL
+
 RUNNER=dream-pass
 CONTAINMENT_CHECKED=0
 INFLIGHT=0
