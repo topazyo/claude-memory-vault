@@ -16,7 +16,7 @@ optional and can be skipped without breaking anything.
 | **Obsidian** | Reads the vault, renders the Dataview dashboards, draws the graph | Required to *use* the vault as a human; an agent alone does not need it | Launch it; Help → About shows the version |
 | **A coding-agent harness** | Writes and promotes notes. Claude Code runs the hooks, skills and subagents automatically; any other harness that reads `AGENTS.md` follows the same contract (§ 6a) | Required | e.g. `claude --version` |
 | **bash** | Every hook and script is a bash script. macOS and Linux have it; on Windows it comes with Git for Windows | Required | `bash --version` |
-| **git** | Cloning the template, and the git snapshot the promotion-agent takes before writing, which is what makes its writes revertible | Required | `git --version` |
+| **git** | Cloning the template, and the commits the runners make of each pass's notes, which are what make an unattended pass's writes revertible | Required | `git --version` |
 | **jq** | Parses the JSON a harness pipes into the lint hook | Strongly recommended | `command -v jq` |
 | **perl** | Runs the invisible-character (zero-width / bidi) scan in the lint hook | Strongly recommended | `command -v perl` |
 
@@ -377,8 +377,9 @@ works fine driven only by `/obsidian-save` and `/preserve` during ordinary sessi
 The dream-agent is safe to run unattended because it proposes rather than executes: its
 only write is a new file at a predictable path, so a pass that misreads something cannot corrupt
 anything, and its runner fails the pass if any other file changed. **The promotion-agent is
-different, because it writes into your long-term tier.** It takes a git snapshot before writing so a bad
-pass is reversible, and its runner fails a pass that writes outside `31-standards/`,
+different, because it writes into your long-term tier.** It has no shell. Its runner commits the
+notes of a clean pass and puts back the notes of a pass that fails the check, so a bad pass is
+reversible, and it fails a pass that writes outside `31-standards/`,
 `40-llm-wiki/wiki/` or a `20-projects/_logs/promotion-*.md` report. Still, read
 `.claude/agents/promotion-agent.md` in full before you put it on a timer, and run it manually a
 few times first.
@@ -448,17 +449,17 @@ Do not use `CLAUDE_BIN` to run another harness. It must name the Claude Code bin
 at a different CLI keeps claude mode, which skips the refusal below while enforcing nothing.
 
 **Why command mode refuses to run until you opt in.** Under Claude Code, each agent's `tools:`
-list is enforced: the dream agent has no shell at all, and the promotion agent has a shell but no
-web tools. A wrapper cannot enforce that list, and the runner's snapshot fence only sees files that
+list is enforced. Neither agent has a shell or web tools, and the runner commits the promotion
+agent's notes for it. A wrapper cannot enforce that list, and the runner's snapshot fence only sees files that
 change inside the vault. It cannot see a shell command, network traffic, or a write outside the
 vault. So until `VAULT_ALLOW_UNENFORCED_TOOLS=1` is set, a command-mode run is refused with exit
 `3` and a `REFUSED` line in the log, and the agent never starts. Set the variable only after you
-have configured your harness's own sandbox or approval settings so that:
+have configured your harness's own sandbox or approval settings so that the **dream pass** and
+the **promotion pass** alike:
 
-- the **dream pass** cannot run shell commands or reach the network, and can write only inside
-  the vault;
-- the **promotion pass** can run `git` but cannot reach the network, and can write only inside
-  the vault.
+- cannot run shell commands, `git` included
+- cannot reach the network
+- can write only inside the vault.
 
 Once opted in, every run still logs a `WARNING` line saying the allowlist is not enforced by the
 runner. The write fence, the watchdog and the artifact assertion work exactly as they do under
@@ -568,7 +569,9 @@ Three things that will otherwise cost you an evening:
 
 - **launchd creates the log file, not its directory.** `StandardOutPath` and `StandardErrorPath`
   are opened before your script runs, so the `.claude/logs/` directory must already exist, hence
-  the `mkdir -p` above.
+  the `mkdir -p` above. The runners leave these four `.launchd.out` and `.launchd.err` names out
+  of their write fence. A file of any other name that appears in `.claude/logs/` during a pass
+  is contained as a planted file, so keep these names if you rename the jobs.
 - **The plist must be mode 0644 and owned by you**, or `bootstrap` fails with
   `Path had bad ownership/permissions`.
 - **A launchd job gets a minimal PATH and no login shell**, so a bare `claude` will usually not be
@@ -632,8 +635,8 @@ so a missing timeout turns one hang into permanent silence.
 
 Make the task's limit longer than everything the runner can spend before it exits on its own:
 the wait for the run lock (`RUN_LOCK_WAIT`, default 30 minutes), the pass's own timeout, the
-watchdog's grace period, and for the dream pass two git steps of `RUNNER_GIT_TIMEOUT` (default 2
-minutes each), each with its own grace period, to commit its journal, plus a margin. Then the runner always kills a hung pass first, logs
+watchdog's grace period, and two git steps of `RUNNER_GIT_TIMEOUT` (default 2 minutes each), each
+with its own grace period, to commit the pass's notes, plus a margin. Then the runner always kills a hung pass first, logs
 `TIMEOUT` with exit 124, and releases its lock. A limit shorter than that lets Task Scheduler end
 the runner mid-pass with no cleanup, which leaves its lock and in-flight marker behind. The next run
 then reclaims the lock after it goes stale and sets the tripwire. Change the existing task object
@@ -704,10 +707,11 @@ removes `.claude/logs/`. Your notes are plain Markdown and are untouched.
 | Runner exits 78 and the log says `TRIPWIRE`, or `vault-check.sh` says `TRIPWIRE` | A tripwire is still in place, or a previous pass ended before containment ran (the scheduler ended the task, or the machine stopped) and this run turned its marker into a tripwire | As above: review, then delete both copies of the tripwire |
 | Runner exits 75 and the log says `LOCKED` | Another pass held the run lock, or git's `index.lock` stayed, for the whole `RUN_LOCK_WAIT`, or the `index.lock` is more than 10 minutes old | For a held lock, nothing if the schedules overlap by design, otherwise move one schedule. A lock left by a killed runner is reclaimed on its own once that runner's longest run has passed. The log names the holder, and the lock is `run.lock` in the state directory. A lock whose holder cannot be checked, because its owner file cannot be read or, on Windows, PowerShell cannot look the process up, is never reclaimed, so once no pass is running, delete `run.lock` yourself. For `index.lock`, make sure no git command is running, then delete the file |
 | Runner exits 75 and the log says a git operation is in progress, or HEAD is detached | A merge, rebase, cherry-pick, revert or bisect was left unfinished, or a commit is checked out instead of a branch. A pass commits, so it will not start then | Finish or abort the operation (`git merge --abort`, `git rebase --abort` and so on), or check out your branch, then let the next run start |
-| Runner exits 2 and the log says the pass changed files that already had uncommitted changes | You, a sync client or another tool had uncommitted edits in a journal or long-tier note, and the pass wrote to the same file | The runner committed nothing. Open the file (for a new, untracked one `git diff` shows nothing), keep what you want, commit it yourself, and the next pass runs normally |
+| Runner exits 2 and the log says the pass changed files that already had uncommitted changes | You, a sync client or another tool had uncommitted edits in a journal or long-tier note, and the pass wrote to the same file. A `TIMEOUT` or `NO-ARTIFACT` line may come first, because this exit wins over 124 and 1 | The runner committed and recorded nothing, and the promotion runner put back the pass's other notes. Open the file (for a new, untracked one `git diff` shows nothing), keep what you want, commit it yourself, and the next pass runs normally |
 | Runner exits 1 and the log says git could not read the vault's repository | The vault has a `.git` that git refuses or cannot open, most often "detected dubious ownership" when the scheduler runs under another account | Run `git status` in the vault as the account the scheduler uses. Fix the ownership, or add the vault with `git config --global --add safe.directory <path>` for that account |
-| Dream runner exits 5 and the log says `CHECK-FAILED` | The journal the pass wrote fails `vault-check.sh` (C1–C5), so it was not committed | Read the check output under that line. Then fix the journal by hand and commit it yourself, or delete it. A rerun picks up the journal only while it is exactly as the failed run left it, where it fails the check again |
-| Dream runner exits 4 and the log says `COMMIT-FAILED` | Staging or committing the journal failed or ran past `RUNNER_GIT_TIMEOUT`, for example a signing key that needs a passphrase, no git identity, or a busy `index.lock` | The log shows git's output. Fix the cause and rerun, and the next run commits the journal the failed one left, as long as nobody has edited it. If the log says the journal could not be taken back out of the index, run `git reset -- <journal>` first. Delete an `index.lock` the log names once no git command is running |
+| Dream runner exits 5 and the log says `CHECK-FAILED` | The journal the pass wrote fails `vault-check.sh` (C1–C5), so it was not committed | Read the check output under that line. Then fix the journal by hand and commit it yourself, or delete it. Later runs leave the rejected journal alone and commit their own, except a run the same day that writes to that same journal, which exits 2 until you commit or delete it |
+| Promotion runner exits 5 and the log says `CHECK-FAILED` and `REVERTED`, or exits 2 with `REVERTED` | A note the pass wrote or changed fails `vault-check.sh` (C1–C5), or the pass deleted a note, so none of its notes were committed. Each was copied to the quarantine in the state directory and put back as it was in the commit before the pass, and a new note was moved there | Read the check output and the `REVERTED` list. A note listed as changed after the pass ended, as committed while the pass ran, or as in no commit because git ignores it, was left as it is, so review it by hand. An edit you made to a note while the pass ran is in the quarantine copy. The candidates stay in the project logs for the next pass |
+| Runner exits 4 and the log says `COMMIT-FAILED` | Staging or committing the pass's notes failed or ran past `RUNNER_GIT_TIMEOUT`, for example a signing key that needs a passphrase, no git identity, or a busy `index.lock` | The log shows git's output. Fix the cause and rerun, and the next run of the same pass checks the notes the failed one left and commits them, or puts them back when they fail the check, as long as nobody has edited them. If the log says the files could not be taken back out of the index, run `git reset -- <file>` first. Delete an `index.lock` the log names once no git command is running |
 | Runner exits 70, or exits 130 or 143 after a signal, and the log says `TRIPWIRE-ERROR` | Containment was needed but no tripwire could be written, for example a full disk | Free the space, then run the pass by hand. It refuses with 78 and writes the tripwire, which you then review |
 | Runner exits 124 and the log says `TIMEOUT` | The pass exceeded `DREAM_PASS_TIMEOUT` / `PROMOTION_PASS_TIMEOUT` and was killed | Check the `.run.log` for where it stalled; raise the limit only if the pass was making progress |
 
