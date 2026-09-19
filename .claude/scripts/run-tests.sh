@@ -533,6 +533,44 @@ else
   bad "the no-jq branch did not report a hidden codepoint -- got: ${out_nojq:-<silence>}"
 fi
 
+# jq on Windows writes CRLF, and the hook reads its output field by field, so
+# every field arrives with a carriage return on it.
+#
+# This was caught by windows-latest and by nothing else, after a change that
+# removed the awk which had been stripping the CR by accident. A jq that adds
+# the carriage return regardless of platform makes it catchable everywhere,
+# for the same reason the cksum shim above exists: a control that only
+# discriminates on one platform is not watching the other four.
+JQS="$TMP/jq-crlf"
+rm -rf "$JQS"; mkdir -p "$JQS"
+jqs_real="$(command -v jq 2>/dev/null)"
+if [ -n "$jqs_real" ]; then
+  cat > "$JQS/jq" <<JQSHIM
+#!/usr/bin/env bash
+# A jq that ends every line with CRLF, the way the Windows build does.
+"$jqs_real" "\$@" | awk '{ printf "%s\r\n", \$0 }'
+JQSHIM
+  chmod +x "$JQS/jq" 2>/dev/null
+  # Prove the shim really adds the carriage return before trusting it.
+  jqs_probe="$(printf '{"a":"b"}' | PATH="$JQS:$PATH" jq -r '.a' 2>/dev/null | od -c | head -1)"
+  case "$jqs_probe" in
+    *'\r'*)
+      ran jq-crlf-output
+      jqs_out=$(printf '{"tool_input":{"file_path":"%s"}}' "$WORK/31-standards/bad.md" \
+        | PATH="$JQS:$PATH" CLAUDE_PROJECT_DIR="$WORK" bash "$HOOK" 2>&1 | strip_notices)
+      if printf '%s' "$jqs_out" | grep -q "missing 'tier'"; then
+        ok "a jq that writes CRLF does not stop the lint reading the path it named"
+      else
+        bad "a carriage return from jq broke the lint -- got: ${jqs_out:-<silence>}"
+      fi
+      ;;
+    *) skip jq-crlf-output "a jq that writes CRLF: the shim did not add one, od said [$jqs_probe]" ;;
+  esac
+else
+  skip jq-crlf-output 'a jq that writes CRLF: jq is not installed'
+fi
+rm -rf "$JQS"
+
 printf '\n=== the instruction-load logger is opt-in ===\n'
 # A default session has to start no process for the logger, which means the
 # shipped settings register it nowhere. Read as JSON where jq is present and as

@@ -372,6 +372,7 @@ if [ -z "${VAULT_FORCE_NO_JQ:-}" ] && command -v jq >/dev/null 2>&1; then
     IFS= read -r PATHS
     IFS= read -r HOOK_CWD
     while IFS= read -r _hp; do
+      _hp="${_hp%$'\r'}"
       [ -n "$_hp" ] || continue
       PATCHED="${PATCHED:+$PATCHED
 }$_hp"
@@ -379,6 +380,20 @@ if [ -z "${VAULT_FORCE_NO_JQ:-}" ] && command -v jq >/dev/null 2>&1; then
   } <<EOF
 $JQ_OUT
 EOF
+  # jq on Windows writes CRLF, so every field arrives with a carriage return on
+  # the end, and this has to be taken off deliberately.
+  #
+  # It used to come off by accident. The dedupe awk that ran after these values
+  # were read drops a CR silently, because gawk on Git Bash reads its input in
+  # text mode -- two Windows behaviours cancelling each other out, jq adding
+  # the character and gawk removing it. Skipping that awk when no patch named
+  # anything, to save a process, removed the accident along with the process
+  # and left the CR on the path. The cwd never went through that awk at all, so
+  # its carriage return was never removed and the session directory has been
+  # quietly failing to resolve on Windows for as long as both existed.
+  JQ_STATUS="${JQ_STATUS%$'\r'}"
+  PATHS="${PATHS%$'\r'}"
+  HOOK_CWD="${HOOK_CWD%$'\r'}"
   # Requires OK rather than refusing one known-bad value. A status this program
   # cannot currently emit, or an empty one because jq failed outright, must not
   # read as permission to carry on with fields that may have shifted.
