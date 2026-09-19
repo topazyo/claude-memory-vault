@@ -5905,6 +5905,47 @@ else
   bad "the stub rules are wrong --$rd_bad log: [$(tr '\n' '|' < "$(ret_log "$RD")" 2>/dev/null | cut -c1-900)]"
 fi
 
+# --- a move must not rewrite what it moves ---
+# The pass commits the entries git mv staged rather than re-reading the moved
+# paths from the work tree. Re-reading runs the end-of-line filters again, and
+# where the bytes a file already has in git are not what those filters would
+# now produce, the archived copy is a different blob: the move rewrites the
+# file it is only supposed to relocate, and the run then refuses itself for a
+# mismatch it caused.
+#
+# core.autocrlf is on by default in Git for Windows, so there this happened to
+# every stub holding CRLF, and it is why windows-latest was the one job red.
+# The condition is not really about Windows though -- it is about a blob the
+# clean filter would change -- and core.autocrlf=input puts any platform in
+# exactly that state. The fixture asks for it, so this control runs everywhere
+# instead of only where a default happens to supply it.
+RCR="$(ret_copy crlfblob)"
+ret_git "$RCR" config core.autocrlf input
+ret_hook "$RCR" crlfblob "${RET_DATE[90]}"
+rcr_stub="$RCR/20-projects/_logs/compaction-crlfblob.md"
+awk '{ printf "%s\r\n", $0 }' "$rcr_stub" > "$rcr_stub.tmp" && mv -f "$rcr_stub.tmp" "$rcr_stub"
+ret_git "$RCR" -c core.autocrlf=false add -- "20-projects/_logs/compaction-crlfblob.md" >/dev/null 2>&1
+ret_git "$RCR" -c core.autocrlf=false commit -q -m "a stub written with CRLF" >/dev/null 2>&1
+rcr_before="$(ret_git "$RCR" rev-parse "HEAD:20-projects/_logs/compaction-crlfblob.md" 2>/dev/null)"
+rcr_bad=''
+# Vacuity guard. If the fixture did not actually get a CRLF blob into history,
+# the filters have nothing to change and every assertion below passes without
+# testing anything.
+ret_git "$RCR" cat-file -p "$rcr_before" 2>/dev/null \
+  | LC_ALL=C awk '/\r/ { f = 1 } END { exit f ? 0 : 1 }' || rcr_bad="$rcr_bad fixture-not-crlf"
+rcr_rc="$(ret_run "$RCR")"
+rcr_after="$(ret_git "$RCR" rev-parse "HEAD:99-archive/20-projects/_logs/compaction-crlfblob.md" 2>/dev/null)"
+ran crlf-blob-preserved
+[ "$rcr_rc" = 0 ] || rcr_bad="$rcr_bad rc:$rcr_rc"
+ret_moved "$RCR" "compaction-crlfblob.md" || rcr_bad="$rcr_bad not-moved"
+[ -n "$rcr_before" ] || rcr_bad="$rcr_bad no-blob-before"
+[ "$rcr_before" = "$rcr_after" ] || rcr_bad="$rcr_bad blob-changed($rcr_before -> ${rcr_after:-missing})"
+if [ -z "$rcr_bad" ]; then
+  ok "a stub whose bytes the end-of-line filters would change is archived with the blob it already had"
+else
+  bad "the archiving move rewrote the file it moved --$rcr_bad log: [$(tr '\n' '|' < "$(ret_log "$RCR")" 2>/dev/null | cut -c1-400)]"
+fi
+
 # --- the same verdicts under a locale that does not collate in byte order ---
 # Two defects of this change were decided by a range in a shell pattern
 # following the locale's collating order, and one of them archived a file on
