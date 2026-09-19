@@ -277,14 +277,26 @@ parsing and no locale dependency.
 act — an automated fix here would clear the alarm without establishing the fact, the same failure
 as an unearned freshness stamp.
 
-Exit status: **0** when at least one note was scanned and none violated an invariant; **1** when
-any note violates one (including a malformed date), when no content-tier folder exists, or when
-the scan examined zero notes. That makes it usable as a gate. `.github/workflows/ci.yml` runs it
-against this repository's own example notes; no `pre-commit` config or git hook ships. If you want
-it enforced on your vault, that is your wiring to add.
+Exit status distinguishes a vault with a problem from a checker that could not run. Those two want
+opposite responses, and while both were `1` a caller reading only the code could not choose.
+
+| Exit | Meaning | What to do about it |
+| --- | --- | --- |
+| `0` | At least one note was scanned and none violates an invariant | Nothing |
+| `1` | **A note violates an invariant**, including a malformed date | Fix the notes it names |
+| `2` | **The checker could not run**, so it establishes nothing about the vault. Either no notes were scanned at all, or there is no content-tier folder under the root, or a note named after `--` is not a readable file | Check the root and the working directory. Nothing here says a note is wrong |
+| `64` | The command line was wrong | Fix the invocation |
+| `78` | A scheduled pass set the tripwire, so nothing was checked | Read the tripwire and do what it says. The three runners use `78` for this too |
+
+All of the non-zero codes make it usable as a gate, because none of them should let a commit
+through. `.github/workflows/ci.yml` runs it against this repository's own example notes; no
+`pre-commit` config or git hook ships enabled. If you want it enforced on your vault, that is your
+wiring to add, and `.claude/githooks/pre-commit` chooses its sentence from the code it got rather
+than telling you to fix a note in every case.
 
 **"0 violations across 0 files" is a vacuous result, not a pass**, so the script fails it: it
-prints `VACUOUS - no notes were scanned` to stderr and exits 1. Zero files checked means the
+prints `VACUOUS - no notes were scanned` to stderr and exits 2, the code that means this checker
+could not run rather than that a note is wrong. Zero files checked means the
 checker scanned nothing — the signature of a path-handling bug, most often a vault path containing
 a space. The count line always prints the file count as well. Against the vault as shipped, the
 correct output is:
@@ -669,8 +681,8 @@ Around that call, each runner does several things an exit code cannot:
 
   Any of this writes the tripwire `.claude/logs/runner-tripwire`, listing each path, anything that
   could not be contained, and the quarantine, and a second copy in the state directory. While either
-  copy exists, both runners exit **78** without starting an agent, `vault-check.sh` exits 1 without
-  checking anything, and `/resume` shows the tripwire instead of a briefing. Clear it by reviewing
+  copy exists, both runners exit **78** without starting an agent, `vault-check.sh` exits the same
+  **78** without checking anything, and `/resume` shows the tripwire instead of a briefing. Clear it by reviewing
   the paths and then deleting both copies. The refusal names the state directory copy when it is a
   file, because a pass cannot write it. When only the vault's copy is there, the runners and
   `vault-check.sh` name that copy and say a pass may have written it, so check its reason against

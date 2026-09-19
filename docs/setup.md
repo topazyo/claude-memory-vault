@@ -353,7 +353,8 @@ the exit code. See `docs/reference.md` § 4.3.1.
 ### The one output you must not misread
 
 > **`0 violation(s) across 0 file(s)` is NOT a pass.** It means the checker scanned nothing, so the
-> script also prints `VACUOUS` to stderr and exits 1.
+> script also prints `VACUOUS` to stderr and exits 2. That code means this checker could not run,
+> and it is deliberately not the 1 that means a note is wrong.
 
 Zero findings from an instrument that examined zero inputs is indistinguishable from zero findings
 from an instrument that examined everything. That is why the file count is printed at all. `vault-check.sh` resolves the vault from its **own location** (`$(dirname "$0")/../..`) unless
@@ -776,8 +777,11 @@ removes `.claude/logs/`. Your notes are plain Markdown and are untouched.
 | `INVISIBLE-CHAR SCAN DID NOT RUN (no perl, no grep -P)` | Neither scanner is available on this machine | Install perl. Do **not** treat earlier "clean" lint lines from that machine as evidence — they were unscanned |
 | Dataview tables in `VAULT-INDEX.md` show as code blocks or raw text | Dataview installed but not enabled, or not installed at all | Settings → Community plugins → enable **Dataview**, then reload Obsidian |
 | A new note renders `{{project}}` / `{{concept}}` / `{{selection}}` literally | Core Templates does not support those placeholders | Fill them by hand, or install Templater and adapt the syntax (step 5) |
-| `vault-check: 0 violation(s) across 0 file(s)` plus `VACUOUS`, exit 1 | The checker scanned nothing — **this is not a pass** | Check `CLAUDE_PROJECT_DIR`, and that the `TIERS=` line in the script still names folders that exist. Add a note and re-run until the file count is non-zero |
-| `vault-check: no content-tier folders found under ...` | Wrong working directory, or the tier folders were renamed | Run from the vault root, or finish the rename everywhere (see below) |
+| `vault-check: 0 violation(s) across 0 file(s)` plus `VACUOUS`, exit 2 | The checker scanned nothing — **this is not a pass**. The 2 says the checker could not run, as against the 1 that says a note is wrong | Check `CLAUDE_PROJECT_DIR`, and that the `TIERS=` line in the script still names folders that exist. Add a note and re-run until the file count is non-zero |
+| `vault-check: no content-tier folders found under ...`, exit 2 | Wrong working directory, or the tier folders were renamed | Run from the vault root, or finish the rename everywhere (see below) |
+| `vault-check: ... is not a readable file`, exit 2 | A note named after `--` is missing or unreadable, so that note was not checked | Fix the path. Nothing here says any note is wrong |
+| `vault-check: unknown option ...`, exit 64 | The command line was wrong | Notes go after `--`, as in `vault-check.sh -- 10-daily/2026-01-15.md` |
+| `vault-check: TRIPWIRE ...`, exit 78 | A scheduled pass changed a steering or execution surface, so nothing was checked | Read the tripwire, do what it says, then delete both copies. The runners use 78 for the same thing |
 | `run-tests.sh` fails only on a path containing spaces | A word-splitting regression in a local edit | Revert the edit; the suite builds fixtures under a directory named with a space specifically to catch this |
 | Scheduled agent "succeeded" but nothing changed | On Windows, the exit code was swallowed by `%ERRORLEVEL%>>`; or the run did nothing because `-p` was missing | Use the shipped runners (step 8), and judge health by the log file rather than by `State` |
 | Dream or promotion runner exits 2 and the log says `VIOLATION` | A file outside the pass's allowed folders changed during the run — the agent, or another writer such as a sync client | Read the paths listed under the `VIOLATION` line in `.claude/logs/`, and revert with git anything you did not expect |

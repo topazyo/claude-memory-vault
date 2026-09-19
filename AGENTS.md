@@ -138,6 +138,18 @@ checker's. It is report-only: it never writes to a note, and it exits 1 when any
 invariant (C1 opening `---` fence, C2 `tier:`, C3 `type:`, C4 `last_verified >= created` and a
 well-formed `created`, C5 `last_verified` well-formed and not in the future).
 
+**The exit code says which kind of answer you got**, so that "the vault has a problem" and "the
+checker could not run" are never the same number. Those two want opposite responses, and until
+they were told apart a caller reading only the code could not choose.
+
+| Exit | Meaning |
+| --- | --- |
+| `0` | At least one note was scanned and none violates an invariant |
+| `1` | **The vault has a problem.** A note violates an invariant |
+| `2` | **This checker could not run**, so it says nothing about the vault. No notes were scanned, or there are no content-tier folders under the root, or a named note is not a readable file |
+| `64` | The command line was wrong |
+| `78` | A scheduled pass set the tripwire, so nothing was checked and a human has to look first. The three runners use `78` for the same thing |
+
 A passing run looks like this, with a **non-zero** file count (on the vault as shipped):
 
 ```
@@ -151,17 +163,21 @@ second one names the last retention pass and how many notes it moved once one ha
 the last pass is unknown when git cannot answer. Neither line changes the exit code. A scan
 narrowed with `--` prints only the count.
 
-`0 violations across 0 files` is not a pass, and the script exits 1 with a `VACUOUS` message when
-it happens. It means the scan matched nothing — wrong working directory, a wrong
+`0 violations across 0 files` is not a pass, and the script exits **2** with a `VACUOUS` message
+when it happens. It means the scan matched nothing — wrong working directory, a wrong
 `CLAUDE_PROJECT_DIR` (the optional root override, which Claude Code sets and no other harness
 needs), or a vault path the invocation could not resolve. Read the file count before
 you believe the violation count; an absence claim needs a positive control.
+
+The count line is the sentinel a caller is meant to be able to trust, so read its **numbers**
+rather than matching its wording. A check that greps for the prefix `evaluated ` or
+`violation(s) across` passes whatever the counts say, which is no check at all.
 
 ## 7. Commands
 
 | Command | What it does | Passing run |
 | --- | --- | --- |
-| `bash .claude/scripts/vault-check.sh` | Frontmatter invariants C1–C5 over six content tiers, or only the notes named after `--` | `0 violation(s) across N file(s)`, N > 0; exit 0 |
+| `bash .claude/scripts/vault-check.sh` | Frontmatter invariants C1–C5 over six content tiers, or only the notes named after `--` | `0 violation(s) across N file(s)`, N > 0; exit 0. A violation is exit 1, a scan that could not happen is exit 2 |
 | `bash .claude/scripts/run-tests.sh` | Control suite for the hooks and runners — known-bad inputs that must be flagged, known-good inputs that must stay silent — in a temp dir | `=== N passed, 0 failed ===`; exit 0 |
 | `bash .claude/scripts/dream-pass.sh` | Nightly consolidation pass (`.cmd` wrapper for Task Scheduler) | One dated journal in `20-projects/_logs/`, committed with a `Vault-Pass: dream` trailer in a git vault; exit 0 |
 | `bash .claude/scripts/promotion-pass.sh` | Weekly medium → long promotion (`.cmd` wrapper) | A `PROMOTION-SUMMARY:` line or long-tier notes, committed with a `Vault-Pass: promotion` trailer in a git vault; exit 0 |
@@ -184,8 +200,8 @@ of its own git steps could not be stopped it marks that lock so no later pass st
 it, quarantines what the pass wrote outside the vault, and sets `.claude/logs/runner-tripwire`. It
 sets the same tripwire when a stopped pass may have left a process running (`KILL_FAILED`).
 **If that file exists, stop and tell the owner.** Runners exit 78, or 75 after `KILL_FAILED`, and
-`vault-check.sh` refuses until the owner has done what the tripwire says and deleted it. Never
-delete it yourself.
+`vault-check.sh` refuses with the same 78 until the owner has done what the tripwire says and
+deleted it. Never delete it yourself.
 
 The five skills in `.claude/skills/` cover the session lifecycle: `resume` (start),
 `obsidian-save` and `wrap-up` (end of a working block), `preserve` (medium → long promotion),

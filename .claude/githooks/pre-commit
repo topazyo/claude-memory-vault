@@ -24,7 +24,19 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 CLAUDE_PROJECT_DIR="$ROOT" bash "$ROOT/.claude/scripts/vault-check.sh"
 rc=$?
 
+# The code is passed through unchanged, and the sentence is chosen to match it.
+# The gate used to say "fix the notes it names above" whatever came back, which
+# is true only of a violation. For every other code no note was named and often
+# nothing was scanned, so that sentence sent the reader looking for a note that
+# does not exist. The refusal is the same in all cases, because a commit should
+# not go in over a checker that could not run any more than over a bad note.
 if [ "$rc" -ne 0 ]; then
-  printf 'pre-commit: vault-check exited %s, so the commit was refused. Fix the notes it names above.\n' "$rc" >&2
+  case "$rc" in
+    1)  printf 'pre-commit: vault-check exited 1, so the commit was refused. A note violates an invariant. Fix the notes it names above.\n' >&2 ;;
+    2)  printf 'pre-commit: vault-check exited 2, so the commit was refused. The checker could not run, so nothing was established about the vault. Its message above says which of the three ways it was, and the usual cause is a wrong root or a wrong working directory rather than anything wrong with a note.\n' >&2 ;;
+    64) printf 'pre-commit: vault-check exited 64, so the commit was refused. The checker was called with arguments it does not understand, which is a problem with this hook rather than with the vault.\n' >&2 ;;
+    78) printf 'pre-commit: vault-check exited 78, so the commit was refused. A scheduled pass set the tripwire, so nothing was checked at all. Read the tripwire, do what it says, then delete both copies of it before committing.\n' >&2 ;;
+    *)  printf 'pre-commit: vault-check exited %s, so the commit was refused. That is not a code this gate knows, which is worth reporting on its own.\n' "$rc" >&2 ;;
+  esac
 fi
 exit "$rc"
