@@ -47,7 +47,7 @@ log_line() {
 # lint_file <path> - the whole check for one file. Returns, never exits, so
 # argument mode can lint several files in one call.
 lint_file() {
-  local FILE="$1" NORM IS_CONTENT_TIER IS_CHAR_SCAN_SCOPE warn FMV HITS HITS_FMT HITS_JOINED SCAN_RAN
+  local FILE="$1" NORM MATCHN IS_CONTENT_TIER IS_CHAR_SCAN_SCOPE warn FMV HITS HITS_FMT HITS_JOINED SCAN_RAN
 
   # normalize backslashes -> forward slashes for git-bash / MSYS.
   # Bash parameter expansion, not `printf | tr`. The old form cost a process on
@@ -85,13 +85,50 @@ lint_file() {
       ;;
   esac
 
-  # markdown only, never templates
-  case "$NORM" in *.md) ;; *) return 0 ;; esac
-  case "$NORM" in */templates/*) return 0 ;; esac
+  # The name the scope tests are decided on, which is not always the name on
+  # the command line.
+  #
+  # Win32 strips a trailing dot or space from a name, so a write to
+  # `.claude/rules/evil.md.` arrives at `.claude/rules/evil.md` while this hook
+  # is handed a name that does not end in .md, returns immediately, and logs
+  # nothing. One character, aimed at the directory the character scan exists to
+  # protect. Stripped on a copy, because the real name is still what gets read
+  # and what the log has to show.
+  #
+  # Every iteration removes one character, so a name that is only dots and
+  # spaces ends up empty and fails the .md test, which is the right answer.
+  MATCHN="$NORM"
+  while :; do
+    case "$MATCHN" in
+      *.|*' ') MATCHN="${MATCHN%?}" ;;
+      *) break ;;
+    esac
+  done
+
+  # markdown only, never templates.
+  #
+  # The extension is matched without regard to case. NTFS and default APFS are
+  # not case sensitive, so CLAUDE.MD is CLAUDE.md there -- the most eagerly
+  # loaded steering file in the repository, reaching the vault unscanned
+  # because the test that gates everything else rejected it first. Restored
+  # immediately after, so nothing below inherits it by accident.
+  shopt -s nocasematch
+  case "$MATCHN" in *.md) ;; *) shopt -u nocasematch; return 0 ;; esac
+  shopt -u nocasematch
+  # templates stays case sensitive on purpose. This test SKIPS a file, so
+  # matching more here would scan less, and a directory really named Templates
+  # on a case-sensitive filesystem is not the pruned one.
+  case "$MATCHN" in */templates/*) return 0 ;; esac
 
   # content tiers: the mandatory tier/type frontmatter check applies here only
+  #
+  # Case sensitive, deliberately. A differently cased folder is the same
+  # directory on Windows and a genuinely different one on Linux, and this test
+  # decides whether a file is WARNED about for its frontmatter. Matching
+  # loosely here would start reporting notes in a folder that is not a tier at
+  # all on the platforms where it is not one.
   IS_CONTENT_TIER=0
-  case "$NORM" in
+  case "$MATCHN" in
     *"/01-inbox/"*|*"/10-daily/"*|*"/20-projects/"*|*"/30-knowledge/"*|*"/31-standards/"*|*"/40-llm-wiki/"*) IS_CONTENT_TIER=1 ;;
     01-inbox/*|10-daily/*|20-projects/*|30-knowledge/*|31-standards/*|40-llm-wiki/*) IS_CONTENT_TIER=1 ;;
   esac
@@ -104,8 +141,21 @@ lint_file() {
   # reaches. The instruction files are the ones loaded most eagerly, so leaving
   # them out would scan the lazily-loaded files and skip the always-loaded ones.
   # Widen this scan only, not the frontmatter check.
+  #
+  # Matched without regard to case, and that includes the tier folders again,
+  # which the frontmatter test above deliberately did not. The asymmetry is the
+  # point: matching loosely here only ever scans MORE files, which is the safe
+  # direction for a security control, while matching loosely there would warn
+  # about files that are not notes. On NTFS and default APFS `/31-STANDARDS/`
+  # and `.claude/Rules/` are the same directories as their lower-case spellings
+  # and a steering file dropped in either must not slip past.
   IS_CHAR_SCAN_SCOPE=$IS_CONTENT_TIER
-  case "$NORM" in
+  shopt -s nocasematch
+  case "$MATCHN" in
+    *"/01-inbox/"*|*"/10-daily/"*|*"/20-projects/"*|*"/30-knowledge/"*|*"/31-standards/"*|*"/40-llm-wiki/"*) IS_CHAR_SCAN_SCOPE=1 ;;
+    01-inbox/*|10-daily/*|20-projects/*|30-knowledge/*|31-standards/*|40-llm-wiki/*) IS_CHAR_SCAN_SCOPE=1 ;;
+  esac
+  case "$MATCHN" in
     *"/.claude/rules/"*|*"/.claude/agents/"*|*"/.claude/skills/"*) IS_CHAR_SCAN_SCOPE=1 ;;
     .claude/rules/*|.claude/agents/*|.claude/skills/*) IS_CHAR_SCAN_SCOPE=1 ;;
     */CLAUDE.md|CLAUDE.md|*/AGENTS.md|AGENTS.md|*/GEMINI.md|GEMINI.md) IS_CHAR_SCAN_SCOPE=1 ;;
@@ -113,6 +163,7 @@ lint_file() {
     */.hermes.md|.hermes.md) IS_CHAR_SCAN_SCOPE=1 ;;
     *"/.agents/skills/"*|.agents/skills/*) IS_CHAR_SCAN_SCOPE=1 ;;
   esac
+  shopt -u nocasematch
 
   [ "$IS_CONTENT_TIER" = 1 ] || [ "$IS_CHAR_SCAN_SCOPE" = 1 ] || return 0
   if [ ! -f "$NORM" ]; then
