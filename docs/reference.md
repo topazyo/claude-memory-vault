@@ -596,6 +596,11 @@ Around that call, each runner does several things an exit code cannot:
   the run, such as a sync client, or a harness that keeps state files in its working directory,
   trips the fence too; the logged paths tell you which.
 
+  A note whose name holds a backslash is fenced under the name the file really has. Some `cksum`
+  implementations escape such a name and some do not — uutils coreutils, which Ubuntu ships in
+  place of GNU's from 25.10, escapes it, and there is no switch to stop it — so the runner decodes
+  the escaping and the same vault fences the same way whichever one is installed.
+
   The fence checksums symlinks by their target, so swapping a file for a link, or retargeting one,
   counts as a change. A `.obsidian` or `.git` that is itself a symlink is fenced as a link as well,
   and the files described below are still fenced through it. In `.claude/logs` only the files the

@@ -88,6 +88,9 @@ HOOKS=""
 # 1 from the moment the recovery file is written until the outcome is settled.
 MOVING=0
 HEAD_BEFORE=""
+# The index do_commit builds its commit from, empty at every other moment. See
+# watched_git, which passes it to one call at a time.
+RETENTION_GIT_INDEX=""
 # Named apart from the library's RUN_NONCE on purpose. That one is the string
 # the Windows stop sweep looks for on a command line, and giving it this run's
 # identifier would point the sweep at whatever else happened to carry it.
@@ -198,9 +201,18 @@ rgit() {
 watched_git() {
   local o="$1" i="$2"
   shift 2
+  # An index for this one call, when do_commit asks for one. It is passed per
+  # call rather than exported, so that nothing else in the run can inherit it:
+  # a stray GIT_INDEX_FILE reaching the put-back would have it judge the wrong
+  # index. The ${a[@]+...} form because bash 3.2 reads an empty array as unset
+  # under set -u.
+  local idxenv=()
+  if [ -n "${RETENTION_GIT_INDEX:-}" ]; then
+    idxenv=(GIT_INDEX_FILE="$RETENTION_GIT_INDEX")
+  fi
   : > "$SNAP_DIR/git.err"
   run_with_watchdog "$GIT_TIMEOUT" "$SNAP_DIR/git.err" \
-    env GIT_TERMINAL_PROMPT=0 GIT_NO_REPLACE_OBJECTS=1 $LITERAL_PATHS RETENTION_GIT_OUT="$o" RETENTION_GIT_IN="$i" \
+    env GIT_TERMINAL_PROMPT=0 GIT_NO_REPLACE_OBJECTS=1 $LITERAL_PATHS ${idxenv[@]+"${idxenv[@]}"} RETENTION_GIT_OUT="$o" RETENTION_GIT_IN="$i" \
     bash -c 'exec git "$@" < "$RETENTION_GIT_IN" > "$RETENTION_GIT_OUT"' vault-retention-git \
     -C "$ROOT" -c core.hooksPath="$HOOKS" -c core.fsmonitor=false -c log.showSignature=false \
     -c log.follow=false -c core.quotePath=false "$@"
@@ -2446,9 +2458,51 @@ do_commit() {
       k=$((k + 1))
     done
   } > "$SNAP_DIR/commit-msg"
+  # The commit is made from an index built for it -- HEAD, with exactly this
+  # run's moves written in from the entries git mv already staged -- and not
+  # with `commit --only -- <paths>`.
+  #
+  # --only re-reads those paths from the working tree and runs the end-of-line
+  # filters over them again. Where the blob a file already has in git is not
+  # what those filters would now produce, that stores a different blob: a stub
+  # committed with CRLF in a repository whose core.autocrlf is on, which is the
+  # default in Git for Windows, came back out as LF. So archiving a file
+  # quietly rewrote it, and head_holds_moves was right to refuse the run. A
+  # move must not change what it moves.
+  #
+  # Pinning core.autocrlf off for the commit only moves the defect rather than
+  # fixing it. With the ordinary Windows setting the blob holds LF and the
+  # working file holds CRLF, and committing the working file verbatim rewrites
+  # it the other way. Both directions were measured before this was written.
+  # The index git mv wrote is already exactly right, so the answer is to
+  # re-read nothing at all. Restricting the commit to an index of its own also
+  # keeps the old promise that the run commits only its own files: anything
+  # else the owner had staged stays staged and uncommitted.
+  : > "$SNAP_DIR/index-rm"
+  k=0
+  while [ "$k" -lt "${#SRCS[@]}" ]; do
+    printf '%s\0' "${SRCS[$k]}" >> "$SNAP_DIR/index-rm"
+    k=$((k + 1))
+  done
+  rm -f "$SNAP_DIR/commit-index"
   index_lock_wait
-  watched_git "$SNAP_DIR/commit.out" /dev/null -c gc.auto=0 -c maintenance.auto=false \
-    commit -q --only --cleanup=verbatim -F "$SNAP_DIR/commit-msg" -- "${SRCS[@]}" "${DSTS[@]}"
+  # ls-files reads the repository's own index and must not see the new one, so
+  # it is asked through rgit, which never carries RETENTION_GIT_INDEX. Its
+  # "mode SP oid SP stage TAB path" output is one of the forms --index-info
+  # takes, which is what carries the blobs across untouched.
+  if rgit ls-files -s -z -- "${DSTS[@]}" > "$SNAP_DIR/index-add" 2>/dev/null; then
+    RETENTION_GIT_INDEX="$SNAP_DIR/commit-index"
+    if watched_git "$SNAP_DIR/commit.out" /dev/null read-tree "$HEAD_BEFORE" \
+       && watched_git "$SNAP_DIR/commit.out" "$SNAP_DIR/index-add" update-index -z --index-info \
+       && watched_git "$SNAP_DIR/commit.out" "$SNAP_DIR/index-rm" update-index --force-remove -z --stdin; then
+      watched_git "$SNAP_DIR/commit.out" /dev/null -c gc.auto=0 -c maintenance.auto=false \
+        commit -q --cleanup=verbatim -F "$SNAP_DIR/commit-msg"
+    fi
+    RETENTION_GIT_INDEX=""
+  fi
+  # Nothing is reported from here either way. settle_outcome judges what this
+  # run did from the repository rather than from an exit code, and a commit
+  # that did not happen reaches it as a HEAD that did not move.
   return 0
 }
 
@@ -2458,6 +2512,11 @@ do_commit() {
 # there is one answer to the question and not three.
 settle_outcome() {
   local head_now parent msg
+  # do_commit clears this itself, but a signal can land between setting it and
+  # clearing it, and this is the one place both the ordinary path and the
+  # signal path come through. Everything below, the put-back included, must ask
+  # the repository's own index.
+  RETENTION_GIT_INDEX=""
   if [ "${RUN_KILL_FAILED:-0}" -eq 1 ]; then
     mark_kill_failed "$LOG" "${RUN_KILL_REPORT:-}"
     write_recovery kill-failed

@@ -2996,6 +2996,48 @@ else
   skip symlink-under-git-modules 'symlink under .git/modules: ln -s does not create symlinks here'
 fi
 rm -rf "$SNR"
+# A note whose name holds a backslash is fenced under the name the file really
+# has. Where cksum escapes such a name the fence would record a name no file
+# has, every later step would read the note as somebody else's edit, and the
+# pass that should have quarantined it would leave it in the vault and refuse.
+# uutils coreutils escapes, GNU's plain cksum does not, and there is no switch
+# for it, so the same vault fenced differently on the two -- which is why this
+# went unseen wherever coreutils is GNU's. The decode is therefore controlled
+# on its own, against a line written here rather than by the local cksum, so
+# this catches a regression on a machine whose cksum never escapes either.
+BSF="$TMP/fence-backslash"
+rm -rf "$BSF" "$BSF.snap"
+mkdir -p "$BSF"
+bsf_dec="$( . "$ROOT/.claude/scripts/lib/runner-common.sh"
+  printf '%s\n' '\2192966820 2 ./31-standards/back\\bslash.md' | unescape_cksum )"
+bsf_plain="$( . "$ROOT/.claude/scripts/lib/runner-common.sh"
+  printf '%s\n' '2205067299 2 ./31-standards/plain.md' | unescape_cksum )"
+ran fence-cksum-unescape
+if [ "$bsf_dec" = '2192966820 2 ./31-standards/back\bslash.md' ] \
+   && [ "$bsf_plain" = '2205067299 2 ./31-standards/plain.md' ]; then
+  ok "an escaped checksum line decodes to the name the file really has, and an ordinary line is left alone"
+else
+  bad "the checksum decode is wrong -- escaped gave [$bsf_dec], ordinary gave [$bsf_plain]"
+fi
+# End to end, because the decode being right is no use if the fence does not
+# run it: what path_state reads for the note now must equal what the snapshot
+# recorded for it, which is the comparison the put-back itself makes.
+printf 'x\n' > "$BSF/back\\bslash.md" 2>/dev/null
+if [ -f "$BSF/back\\bslash.md" ]; then
+  ran fence-backslash-name
+  ( . "$ROOT/.claude/scripts/lib/runner-common.sh" && snapshot_tree "$BSF" "$BSF.snap" )
+  bsf_listed="$( . "$ROOT/.claude/scripts/lib/runner-common.sh" && snapshot_paths "$BSF.snap" | tr '\n' '|' )"
+  bsf_now="$( . "$ROOT/.claude/scripts/lib/runner-common.sh" && path_state "$BSF" 'back\bslash.md' )"
+  bsf_was="$( P="./back\\bslash.md" awk '{ line = $0; sub(/^[^ ]* [^ ]* /, "", line) } line == ENVIRON["P"] { print $1 " " $2; exit }' "$BSF.snap" )"
+  if [ "$bsf_listed" = 'back\bslash.md|' ] && [ -n "$bsf_was" ] && [ "$bsf_now" = "$bsf_was" ]; then
+    ok "a note whose name holds a backslash is fenced under its real name, and reads as unchanged against its own snapshot line"
+  else
+    bad "a backslash in a note's name reached the fence escaped -- listed [$bsf_listed] now [$bsf_now] was [$bsf_was] snapshot: $(tr '\n' '|' < "$BSF.snap")"
+  fi
+else
+  skip fence-backslash-name 'a note named with a backslash: this filesystem reads the backslash as a folder separator'
+fi
+rm -rf "$BSF" "$BSF.snap"
 # A .obsidian, a .git and a .git/info that are symlinks are fenced as links, and
 # the files below them are still fenced through them. The backup keeps those
 # files but not the links above them, which extracting first would carry them
@@ -6034,6 +6076,58 @@ if [ -z "$rd_bad" ]; then
   ok "stubs the hook wrote and nobody changed are archived by their last entry, and edited, rewritten, recent or untracked ones stay"
 else
   bad "the stub rules are wrong --$rd_bad log: [$(tr '\n' '|' < "$(ret_log "$RD")" 2>/dev/null | cut -c1-900)]"
+fi
+
+# --- a move must not rewrite what it moves ---
+# The pass commits the entries git mv staged rather than re-reading the moved
+# paths from the work tree. Re-reading runs the end-of-line filters again, and
+# where the bytes a file already has in git are not what those filters would
+# now produce, the archived copy is a different blob: the move rewrites the
+# file it is only supposed to relocate, and the run then refuses itself for a
+# mismatch it caused.
+#
+# core.autocrlf is on by default in Git for Windows, so there this happened to
+# every stub holding CRLF, and it is why windows-latest was the one job red.
+# The condition is not really about Windows though -- it is about a blob the
+# clean filter would change -- and core.autocrlf=input puts any platform in
+# exactly that state. The fixture asks for it, so this control runs everywhere
+# instead of only where a default happens to supply it.
+RCR="$(ret_copy crlfblob)"
+ret_git "$RCR" config core.autocrlf input
+ret_hook "$RCR" crlfblob "${RET_DATE[90]}"
+rcr_stub="$RCR/20-projects/_logs/compaction-crlfblob.md"
+awk '{ printf "%s\r\n", $0 }' "$rcr_stub" > "$rcr_stub.tmp" && mv -f "$rcr_stub.tmp" "$rcr_stub"
+ret_git "$RCR" -c core.autocrlf=false add -- "20-projects/_logs/compaction-crlfblob.md" >/dev/null 2>&1
+ret_git "$RCR" -c core.autocrlf=false commit -q -m "a stub written with CRLF" >/dev/null 2>&1
+rcr_before="$(ret_git "$RCR" rev-parse "HEAD:20-projects/_logs/compaction-crlfblob.md" 2>/dev/null)"
+rcr_bad=''
+# Vacuity guard: if the fixture did not really reach the state this is about,
+# every assertion below passes without testing anything.
+#
+# Asked of git rather than by looking for a CR in a pipe. The first version of
+# this guard read `cat-file -p | awk '/\r/'` and reported no CR on Windows for
+# a blob holding six of them -- measured: od counts them through the same pipe
+# and awk does not, because gawk there reads the pipe in text mode and the CR
+# is gone before the pattern sees it. So the guard failed on the one platform
+# the control exists for, while the fixture was provably correct there.
+#
+# The condition is not "the blob holds a CR" in any case. It is "the clean
+# filter would now produce something other than what is stored", which is what
+# hash-object answers directly, on every platform, with no pipe in the way.
+rcr_filtered="$(ret_git "$RCR" hash-object -- "20-projects/_logs/compaction-crlfblob.md" 2>/dev/null)"
+{ [ -n "$rcr_filtered" ] && [ "$rcr_filtered" != "$rcr_before" ]; } \
+  || rcr_bad="$rcr_bad fixture-not-mismatched($rcr_filtered vs $rcr_before)"
+rcr_rc="$(ret_run "$RCR")"
+rcr_after="$(ret_git "$RCR" rev-parse "HEAD:99-archive/20-projects/_logs/compaction-crlfblob.md" 2>/dev/null)"
+ran crlf-blob-preserved
+[ "$rcr_rc" = 0 ] || rcr_bad="$rcr_bad rc:$rcr_rc"
+ret_moved "$RCR" "compaction-crlfblob.md" || rcr_bad="$rcr_bad not-moved"
+[ -n "$rcr_before" ] || rcr_bad="$rcr_bad no-blob-before"
+[ "$rcr_before" = "$rcr_after" ] || rcr_bad="$rcr_bad blob-changed($rcr_before -> ${rcr_after:-missing})"
+if [ -z "$rcr_bad" ]; then
+  ok "a stub whose bytes the end-of-line filters would change is archived with the blob it already had"
+else
+  bad "the archiving move rewrote the file it moved --$rcr_bad log: [$(tr '\n' '|' < "$(ret_log "$RCR")" 2>/dev/null | cut -c1-400)]"
 fi
 
 # --- the same verdicts under a locale that does not collate in byte order ---
