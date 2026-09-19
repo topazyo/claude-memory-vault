@@ -2491,8 +2491,32 @@ do_commit() {
   # "mode SP oid SP stage TAB path" output is one of the forms --index-info
   # takes, which is what carries the blobs across untouched.
   if rgit ls-files -s -z -- "${DSTS[@]}" > "$SNAP_DIR/index-add" 2>/dev/null; then
+    # Every destination has to be in that answer before anything is committed.
+    # The removal below takes out every source unconditionally, so a short
+    # answer would commit a deletion without the addition that balances it,
+    # which is a lost note rather than a failed run. verify_moves has already
+    # asked the same question, so this is a second lock on the same door, and
+    # the door is one where being wrong costs a file.
+    idx_n="$(LC_ALL=C tr -cd '\0' < "$SNAP_DIR/index-add" | wc -c | tr -d ' ')"
+    if [ "${idx_n:-0}" -ne "${#DSTS[@]}" ]; then
+      say "COMMIT-FAILED: the index named ${idx_n:-0} of ${#DSTS[@]} moved file(s), so nothing was committed rather than commit a removal without its addition."
+      return 0
+    fi
     RETENTION_GIT_INDEX="$SNAP_DIR/commit-index"
-    if watched_git "$SNAP_DIR/commit.out" /dev/null read-tree "$HEAD_BEFORE" \
+    # read-tree HEAD, not HEAD_BEFORE, and the difference is a lost commit.
+    #
+    # HEAD_BEFORE is read once at the start of the run, before the candidates
+    # are even judged. git commit takes its PARENT from HEAD as it is now but
+    # its TREE from this index, so seeding from HEAD_BEFORE builds a tree that
+    # never saw anything committed in between and lands it on top of that work,
+    # reverting it. `commit --only` could not do this, because it built from
+    # HEAD at commit time, and settle_outcome cannot see it either, because
+    # head_holds_moves only ever asks about this run's own sources and
+    # destinations. The run would report OK over somebody else's undone commit.
+    #
+    # Reading HEAD here reproduces --only exactly, including its own
+    # unavoidable and pre-existing race between reading HEAD and committing.
+    if watched_git "$SNAP_DIR/commit.out" /dev/null read-tree HEAD \
        && watched_git "$SNAP_DIR/commit.out" "$SNAP_DIR/index-add" update-index -z --index-info \
        && watched_git "$SNAP_DIR/commit.out" "$SNAP_DIR/index-rm" update-index --force-remove -z --stdin; then
       watched_git "$SNAP_DIR/commit.out" /dev/null -c gc.auto=0 -c maintenance.auto=false \

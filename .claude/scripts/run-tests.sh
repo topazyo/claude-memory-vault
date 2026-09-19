@@ -141,6 +141,15 @@ printf -- '---\ntitle: "bad"\n---\n\nno keys\n' > "$WORK/31-standards/bad.md"
 # No frontmatter fence at all.
 printf 'just a body\n' > "$WORK/10-daily/nofm.md"
 
+# An opening fence padded with a vertical tab, which is whitespace to
+# [[:space:]] and not to [ \t\r]. The hook used to test that first line with a
+# grep for the first class while the awk beside it used the second, so this
+# note came back as missing both keys from one half and as a valid fence from
+# the other, and the checker disagreed with the hook about the same file. Both
+# now read it the way vault-check.sh C1 does, and nothing asserted that until
+# this fixture existed.
+printf -- '---\013\ntier: long\ntype: standard\n---\n\nbody\n' > "$WORK/10-daily/vtabfence.md"
+
 # last_verified EARLIER than created (C4).
 printf -- '---\ntitle: "x"\ntier: long\ntype: standard\ncreated: "2026-05-01"\nlast_verified: "2026-04-01"\n---\n\nbody\n' > "$WORK/31-standards/backwards.md"
 
@@ -196,6 +205,13 @@ else
   expect_match  "missing 'tier' is reported"          "$WORK/31-standards/bad.md"  "missing 'tier'"
   expect_match  "missing 'type' is reported"          "$WORK/31-standards/bad.md"  "missing 'type'"
   expect_match  "absent frontmatter is reported"      "$WORK/10-daily/nofm.md"     "missing YAML frontmatter"
+  # The hook and the checker have to tell the same story about a fence padded
+  # with a vertical tab. This is the hook's half; the checker's half is one
+  # more assertion in the vault-check block below, over the same fixture, and
+  # it is their agreeing that is the point rather than either answer alone.
+  ran vtab-fence-agrees
+  expect_match  "a fence padded with a vertical tab is not a fence" \
+    "$WORK/10-daily/vtabfence.md" "missing YAML frontmatter"
 
   # Windows-style path must normalise to the same verdict.
   win=$(printf '%s' "$WORK/31-standards/bad.md" | sed 's|/|\\|g')
@@ -337,6 +353,10 @@ else
   }
 
   present "C1 missing --- fence reported"        "nofm.md"
+  # The checker's half of vtab-fence-agrees above. The hook calls this file
+  # missing its frontmatter and C1 has to call it a violation, because the two
+  # reading the same fence differently is the defect the lint rewrite closed.
+  present "C1 vertical-tab fence reported"       "vtabfence.md"
   present "C2/C3 missing tier+type reported"     "bad.md"
   present "C4 last_verified < created reported"  "backwards.md"
   present "C5 last_verified in future reported"  "future.md"
@@ -531,6 +551,64 @@ else
   bad "the shipped settings.json still registers the instruction-load logger"
 fi
 
+# An absence is only worth asserting beside a presence. On its own the check
+# above passes more emphatically when the entire hooks object is deleted, and
+# every lint control would still pass, because they invoke the script directly
+# rather than through a harness. The shipped template would simply stop
+# linting, quietly, and nothing here would say so.
+ran settings-hooks-present
+il_hooks_bad=''
+if command -v jq >/dev/null 2>&1; then
+  il_pt="$(jq -r '.hooks.PostToolUse[0].hooks[0].command // empty' "$ROOT/.claude/settings.json" 2>/dev/null)"
+  il_pc="$(jq -r '.hooks.PostCompact[0].hooks[0].command // empty' "$ROOT/.claude/settings.json" 2>/dev/null)"
+  case "$il_pt" in *vault-lint.sh*) ;; *) il_hooks_bad="$il_hooks_bad PostToolUse[$il_pt]" ;; esac
+  case "$il_pc" in *postcompact-wrap-up.sh*) ;; *) il_hooks_bad="$il_hooks_bad PostCompact[$il_pc]" ;; esac
+else
+  grep -q 'PostToolUse' "$ROOT/.claude/settings.json" || il_hooks_bad="$il_hooks_bad PostToolUse-missing"
+  grep -q 'PostCompact' "$ROOT/.claude/settings.json" || il_hooks_bad="$il_hooks_bad PostCompact-missing"
+fi
+[ -f "$ROOT/.claude/hooks/vault-lint.sh" ] || il_hooks_bad="$il_hooks_bad lint-script-missing"
+[ -f "$ROOT/.claude/hooks/postcompact-wrap-up.sh" ] || il_hooks_bad="$il_hooks_bad stub-script-missing"
+if [ -z "$il_hooks_bad" ]; then
+  ok "the shipped settings.json still registers the lint and the compaction stub, naming scripts that ship"
+else
+  bad "the shipped settings.json lost a hook it must keep --$il_hooks_bad"
+fi
+
+# Nothing in this suite ever ran the logger, and this change rewrote its body:
+# three jq calls became one feeding three reads. Swapping the order of the jq
+# outputs would put the path where the reason belongs, the session_start gate
+# would never fire, the logger would record nothing for ever, and the suite
+# would stay green. Being opt-in makes that worse rather than better, because
+# nobody finds out until the day they turn it on.
+ILR="$TMP/logger-run"
+rm -rf "$ILR"; mkdir -p "$ILR/.claude/logs"
+il_log="$ILR/.claude/logs/instructions-loaded.log"
+il_run() {  # il_run <hook json> - the log the logger wrote for it
+  rm -f "$il_log"
+  printf '%s' "$1" | env CLAUDE_PROJECT_DIR="$ILR" \
+    bash "$ROOT/.claude/hooks/instructions-loaded-log.sh" >/dev/null 2>&1
+  cat "$il_log" 2>/dev/null
+}
+ran logger-records-session-start
+il_out="$(il_run '{"load_reason":"session_start","memory_type":"project","file_path":"/v/CLAUDE.md"}')"
+il_other="$(il_run '{"load_reason":"other","memory_type":"project","file_path":"/v/CLAUDE.md"}')"
+il_bad=''
+case "$il_out" in *'InstructionsLoaded[session_start]'*) ;; *) il_bad="$il_bad no-marker" ;; esac
+if command -v jq >/dev/null 2>&1; then
+  # The fields only come apart on the jq branch. Without jq the hook logs the
+  # raw input by design, so asserting them there would assert the wrong thing.
+  case "$il_out" in *'type=project'*) ;; *) il_bad="$il_bad no-type" ;; esac
+  case "$il_out" in *'file=/v/CLAUDE.md'*) ;; *) il_bad="$il_bad no-file" ;; esac
+fi
+[ -z "$il_other" ] || il_bad="$il_bad logged-a-load-that-was-not-session-start"
+if [ -z "$il_bad" ]; then
+  ok "the instruction-load logger records a session_start load with its type and file, and stays silent for every other load"
+else
+  bad "the instruction-load logger is wrong --$il_bad out: [$(printf '%s' "$il_out" | tr '\n' '|' | cut -c1-160)]"
+fi
+rm -rf "$ILR"
+
 # An opt-in has to be usable, not merely described. The snippet in the setup
 # guide is pulled out and checked as JSON that names a script which really
 # ships, because a snippet that is only prose is how an opt-in quietly becomes
@@ -599,10 +677,16 @@ else
     printf '{"tool_name":"Write","cwd":"%s","tool_input":{"file_path":"%s"}}' "$WORK" "$2" > "$lsb/$1.in"
     strace -f -e trace=execve -o "$lsb/$1.out" \
       env CLAUDE_PROJECT_DIR="$WORK" bash "$HOOK" < "$lsb/$1.in" >/dev/null 2>&1
-    # Successful execve lines only. strace writes a continuation line for a
-    # traced fork, which must not be counted twice, and a line ending in an
-    # error is a failed lookup along PATH rather than a process that started.
-    LC_ALL=C awk '/execve\(/ && !/<unfinished/ && !/resumed>/ && !/= -1/ { n++ } END { print n+0 }' \
+    # Successful execve lines only, counted once each.
+    #
+    # A signal can split one execve across two lines, `... <unfinished ...>`
+    # and `<... execve resumed>`. Dropping both halves counts that exec as
+    # zero, and an undercount slips under a budget written to catch creep, so
+    # the unfinished half is dropped and the resumed half is kept. Matching
+    # `execve` rather than `execve(` is what lets the resumed half count, since
+    # it carries no open bracket. A line ending in an error is a failed lookup
+    # along PATH rather than a process that started.
+    LC_ALL=C awk '/execve/ && !/<unfinished/ && !/= -1/ { n++ } END { print n+0 }' \
       "$lsb/$1.out" 2>/dev/null
   }
   lsb_in="$(lsb_count inscope "$WORK/31-standards/budget.md")"
@@ -614,8 +698,12 @@ else
   else
     ran lint-spawn-budget
     lsb_bad=''
-    [ "$lsb_in" -le "$LINT_BUDGET_IN" ] || lsb_bad="$lsb_bad in-scope($lsb_in>$LINT_BUDGET_IN)"
-    [ "$lsb_out" -le "$LINT_BUDGET_OUT" ] || lsb_bad="$lsb_bad out-of-scope($lsb_out>$LINT_BUDGET_OUT)"
+    # Equal, not at most. A ceiling cannot tell "cheaper because something was
+    # fixed" from "cheaper because a check was dropped", and dropping a check
+    # to save a process is the one thing this change was not allowed to do.
+    # Either direction has to be someone moving these numbers on purpose.
+    [ "$lsb_in" -eq "$LINT_BUDGET_IN" ] || lsb_bad="$lsb_bad in-scope($lsb_in not $LINT_BUDGET_IN)"
+    [ "$lsb_out" -eq "$LINT_BUDGET_OUT" ] || lsb_bad="$lsb_bad out-of-scope($lsb_out not $LINT_BUDGET_OUT)"
     [ "$lsb_out" -lt "$lsb_in" ] || lsb_bad="$lsb_bad out-not-cheaper($lsb_out vs $lsb_in)"
     if [ -z "$lsb_bad" ]; then
       # The counts are printed on success as well as on failure. A budget whose
@@ -3168,6 +3256,63 @@ else
   skip fence-backslash-name 'a note named with a backslash: this filesystem reads the backslash as a folder separator'
 fi
 rm -rf "$BSF" "$BSF.snap"
+
+# The same end-to-end question again, but with a cksum that escapes whether or
+# not this machine's own does.
+#
+# Without this the control above only discriminates where coreutils escapes.
+# uutils does and GNU's does not, and every job this repository runs in CI has
+# GNU or MSYS coreutils, so on all five of them the fence output was already
+# unescaped and the assertion passed either way. Deleting the decoder from
+# fence_find and path_state left the whole suite green there. fence-cksum-
+# unescape covers the decoder; nothing covered it being wired in. Same shape as
+# the fake git and the date shim this suite already uses.
+BSS="$TMP/cksum-shim"
+rm -rf "$BSS" "$BSS-vault"
+mkdir -p "$BSS" "$BSS-vault"
+bss_real="$(command -v cksum 2>/dev/null)"
+if [ -n "$bss_real" ] && printf 'x\n' > "$BSS-vault/back\\bslash.md" 2>/dev/null \
+   && [ -f "$BSS-vault/back\\bslash.md" ]; then
+  cat > "$BSS/cksum" <<SHIM
+#!/usr/bin/env bash
+# A cksum that escapes a backslash in a name the way uutils coreutils does:
+# the line gains a leading backslash and the backslash in the name is doubled.
+"$bss_real" "\$@" | while IFS= read -r line; do
+  name="\${line#* }"; name="\${name#* }"
+  head="\${line%"\$name"}"
+  case "\$name" in
+    *\\\\*) printf '\\\\%s%s\n' "\$head" "\$(printf '%s' "\$name" | sed 's/\\\\/\\\\\\\\/g')" ;;
+    *)      printf '%s\n' "\$line" ;;
+  esac
+done
+SHIM
+  chmod +x "$BSS/cksum" 2>/dev/null
+  # Prove the shim really escapes before trusting what it proves. A shim that
+  # quietly behaves like the real cksum would make this control as vacuous as
+  # the one it exists to strengthen.
+  bss_probe="$(cd "$BSS-vault" && PATH="$BSS:$PATH" cksum 'back\bslash.md' 2>/dev/null)"
+  case "$bss_probe" in
+    '\'*'\\'*)
+      ran fence-wiring-escaped
+      bss_now="$( . "$ROOT/.claude/scripts/lib/runner-common.sh"
+        PATH="$BSS:$PATH" snapshot_tree "$BSS-vault" "$BSS.snap"
+        PATH="$BSS:$PATH" path_state "$BSS-vault" 'back\bslash.md' )"
+      bss_was="$( P="./back\\bslash.md" awk '{ line = $0; sub(/^[^ ]* [^ ]* /, "", line) } line == ENVIRON["P"] { print $1 " " $2; exit }' "$BSS.snap" )"
+      if [ -n "$bss_was" ] && [ "$bss_now" = "$bss_was" ]; then
+        ok "the fence decodes an escaped checksum line where it is used, not only where it is defined"
+      else
+        bad "the decoder is not wired into the fence -- now [$bss_now] was [$bss_was] snapshot: $(tr '\n' '|' < "$BSS.snap" 2>/dev/null | cut -c1-200)"
+      fi
+      ;;
+    *)
+      skip fence-wiring-escaped "the fence wiring under an escaping cksum: the shim did not escape, it printed [$bss_probe]"
+      ;;
+  esac
+else
+  skip fence-wiring-escaped 'the fence wiring under an escaping cksum: no cksum, or this filesystem reads a backslash as a folder separator'
+fi
+rm -rf "$BSS" "$BSS-vault" "$BSS.snap"
+
 # A .obsidian, a .git and a .git/info that are symlinks are fenced as links, and
 # the files below them are still fenced through them. The backup keeps those
 # files but not the links above them, which extracting first would carry them
@@ -6402,6 +6547,21 @@ case "${RET_GIT_MODE:-}:$sub:$n" in
     echo "fatal: Unable to create '.git/index.lock': File exists." >&2
     exit 128 ;;
   mv-slow:mv:1) : > "$RET_GIT_MARK"; sleep 20; exec "$RET_REAL_GIT" "$@" ;;
+  # Commits a file of its own the moment the moves are staged, which is before
+  # do_commit builds its index.
+  #
+  # commit-other-first below fires on the commit itself, and by then read-tree
+  # has already run and HEAD has not moved since the run began, so it builds
+  # the same tree whether the index is seeded from current HEAD or from the
+  # HEAD the run started at. A mutant proved it: reverting the fix left that
+  # case green. The window that actually tells them apart is earlier, while the
+  # runner is still moving, and this is it.
+  other-mid-run:mv:1)
+    "$RET_REAL_GIT" "$@" || exit "$?"
+    printf 'mid\n' > "$RET_GIT_VAULT/10-daily/midrun.md"
+    "$RET_REAL_GIT" -C "$RET_GIT_VAULT" -c user.name=sync -c user.email=sync@example.invalid -c commit.gpgsign=false add -- 10-daily/midrun.md >/dev/null 2>&1
+    "$RET_REAL_GIT" -C "$RET_GIT_VAULT" -c user.name=sync -c user.email=sync@example.invalid -c commit.gpgsign=false commit -q -m "unrelated, mid run" -- 10-daily/midrun.md >/dev/null 2>&1
+    exit 0 ;;
   commit-fail:commit:*) exit 1 ;;
   commit-then-fail:commit:1) "$RET_REAL_GIT" "$@"; exit 1 ;;
   commit-then-hang:commit:1) "$RET_REAL_GIT" "$@"; sleep 30; exit 0 ;;
@@ -6506,12 +6666,44 @@ fi
 # and every other assertion here passes either way, because both branches move
 # the files, clear the record and return 0.
 re_rc="$(ret_case moves-other-first commit-other-first)"
+# The unrelated file that mode commits has to still be there afterwards, and
+# this fixture was built without ever asking.
+#
+# The runner makes its commit from an index of its own. Seeded from the HEAD
+# the run *started* at rather than the HEAD it is committing *onto*, that index
+# holds a tree which never saw this file, and committing it on top reverts the
+# other commit while the run still reports OK. settle_outcome cannot notice,
+# because head_holds_moves only asks about this run's own sources and
+# destinations. Every other assertion here passes either way, which is exactly
+# how a commit-eating regression sat in a green suite.
+re_other=1
+git -C "$RET/moves-other-first" cat-file -e "HEAD:10-daily/other.md" 2>/dev/null || re_other=0
 if [ "$re_rc" = 0 ] && ret_moved "$RET/moves-other-first" "$RE_J1" && ret_moved "$RET/moves-other-first" "$RE_J2" \
    && ret_says "$RET/moves-other-first" "Something else committed while this run was judging" \
-   && ! ret_says "$RET/moves-other-first" "another tool committed the moves"; then
-  ok "a commit this run made is credited to this run even when something else committed first, told apart by the nonce"
+   && ! ret_says "$RET/moves-other-first" "another tool committed the moves" \
+   && [ "$re_other" = 1 ]; then
+  ok "a commit this run made is credited to this run even when something else committed first, and the commit it landed on top of is still whole"
 else
-  bad "the nonce did not tell this run's own commit from another tool's -- rc $re_rc log: [$(tr '\n' '|' < "$(ret_log "$RET/moves-other-first")" 2>/dev/null | cut -c1-500)]"
+  bad "the nonce or the commit window is wrong -- rc $re_rc other.md-survived:$re_other log: [$(tr '\n' '|' < "$(ret_log "$RET/moves-other-first")" 2>/dev/null | cut -c1-500)]"
+fi
+
+# The commit that lands while the run is still moving, which is the window that
+# actually distinguishes an index seeded from current HEAD from one seeded from
+# the HEAD the run began at.
+#
+# This exists because a mutant proved the case above cannot: reverting the fix
+# and re-running left it green, since its commit arrives after read-tree, when
+# HEAD has not moved yet and both seedings give the same tree. The assertion
+# that matters is that a file committed by somebody else mid-run is still in
+# HEAD when the run has finished committing its own work on top.
+re2_rc="$(ret_case moves-mid-run other-mid-run)"
+re2_mid=1
+git -C "$RET/moves-mid-run" cat-file -e "HEAD:10-daily/midrun.md" 2>/dev/null || re2_mid=0
+ran commit-window-not-reverted
+if [ "$re2_rc" = 0 ] && ret_moved "$RET/moves-mid-run" "$RE_J1" && [ "$re2_mid" = 1 ]; then
+  ok "a commit that landed while the run was moving is still whole after the run commits its own work on top"
+else
+  bad "the archiving commit reverted a commit that landed during the run -- rc $re2_rc midrun-survived:$re2_mid log: [$(tr '\n' '|' < "$(ret_log "$RET/moves-mid-run")" 2>/dev/null | cut -c1-400)]"
 fi
 
 # A commit that lands and then hangs is stopped, and never put back.
