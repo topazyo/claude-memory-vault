@@ -533,6 +533,58 @@ else
   bad "the no-jq branch did not report a hidden codepoint -- got: ${out_nojq:-<silence>}"
 fi
 
+# --- names that used to walk past the character scan ---
+# Three ways a steering file reached the vault without the scan seeing it, all
+# of them a name the scope tests rejected before anything was read.
+#
+# Their own vault, not $WORK, because CLAUDE.MD and 31-STANDARDS are the same
+# names as CLAUDE.md and 31-standards on NTFS and default APFS and would
+# collide with the fixtures already there.
+EV="$TMP/evasion"
+rm -rf "$EV"
+mkdir -p "$EV/.claude/rules" "$EV/31-STANDARDS"
+ev_zw=$'a hidden ​ character\n'
+printf '%s' "$ev_zw" > "$EV/CLAUDE.MD"
+printf '%s' "$ev_zw" > "$EV/31-STANDARDS/upper.md"
+printf -- '---\ntype: standard\n---\n\nbody\n' > "$EV/31-STANDARDS/nokeys.md"
+ev_lint() { CLAUDE_PROJECT_DIR="$EV" bash "$HOOK" -- "$1" </dev/null 2>&1 | strip_notices; }
+
+# Win32 drops a trailing dot, so this name cannot even be made there and the
+# evasion it stands for does not exist on the filesystems that can make it.
+if printf '%s' "$ev_zw" > "$EV/.claude/rules/trailing.md." 2>/dev/null \
+   && [ -f "$EV/.claude/rules/trailing.md." ]; then
+  ran scan-trailing-dot
+  ev_dot="$(ev_lint "$EV/.claude/rules/trailing.md.")"
+  if printf '%s' "$ev_dot" | grep -q 'U+200B'; then
+    ok "a steering file whose name ends in a dot is still scanned"
+  else
+    bad "a trailing dot walked a hidden codepoint past the scan -- got: ${ev_dot:-<silence>}"
+  fi
+else
+  skip scan-trailing-dot 'a name ending in a dot: this filesystem will not make one'
+fi
+
+ran scan-upper-case
+ev_out="$(ev_lint "$EV/CLAUDE.MD")"
+ev_out2="$(ev_lint "$EV/31-STANDARDS/upper.md")"
+if printf '%s' "$ev_out" | grep -q 'U+200B' && printf '%s' "$ev_out2" | grep -q 'U+200B'; then
+  ok "an upper-case CLAUDE.MD and an upper-case tier folder are still scanned"
+else
+  bad "a differently cased name walked a hidden codepoint past the scan -- CLAUDE.MD: ${ev_out:-<silence>} tier: ${ev_out2:-<silence>}"
+fi
+
+# And the other half, which is why the tier test was left case sensitive: the
+# frontmatter warning must not start appearing for a folder that is a genuinely
+# different directory on a case-sensitive filesystem.
+ran scan-case-not-widened
+ev_out3="$(ev_lint "$EV/31-STANDARDS/nokeys.md")"
+if printf '%s' "$ev_out3" | grep -q "missing 'tier'"; then
+  bad "matching the tier folders loosely widened the frontmatter check -- got: $ev_out3"
+else
+  ok "the frontmatter check stays on the tier folders as spelled, while the character scan does not"
+fi
+rm -rf "$EV"
+
 # jq on Windows writes CRLF, and the hook reads its output field by field, so
 # every field arrives with a carriage return on it.
 #
