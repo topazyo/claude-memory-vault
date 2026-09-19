@@ -334,8 +334,21 @@ a lint that does nothing and a lint that found nothing wrong print the same thin
   the decoy untouched.
 - **Pre-commit gate** — allows a commit on a conformant vault even with an inherited
   `CLAUDE_PROJECT_DIR` pointing at a broken one, and refuses it once a note violates C1.
+- **Progress watchdog** — a pass that streams a line a second is not stopped, a silent pass is
+  stopped with 125 together with a grandchild whose parent already exited, a timeout reaches that
+  grandchild too, a failed stop marks and keeps the run lock, and in claude mode the summary line
+  counts only inside the stream's result event.
 - **Dependency report** (informational, never fails the run) — whether `jq`, `perl`, or `grep -P`
   are present, and what degrades without each.
+
+A control that cannot run on the platform in hand prints `SKIP [<id>] <reason> (not counted)`.
+Set `RUN_TESTS_REQUIRED` to a space-separated list of those ids and the suite fails any of them
+that did not run. The CI jobs set it per operating system: `win-native-tree noncesweep
+win-sweep-report win-orphan-stop win-fork-stop` on Windows and `groupkill symlink run-log-link
+run-log-dirlink reaped-group line-break-name` on
+Linux, macOS and bash 3.2. A fake pass whose stop is reported as `KILL_FAILED` fails the suite at
+the end, and its marked lock and the tripwire its stop set are moved aside after that run, so the
+cases after it still run.
 
 The fixture vault is created at a path containing spaces (`.../some one/my vault/`) on purpose:
 that is the case word-splitting bugs break on, while still printing a reassuring "0 violations".
@@ -361,8 +374,11 @@ root from its own location).
 `VAULT_AGENT` chooses how the agent is started:
 
 - **`claude`** (default): `claude -p "<prompt>" --agent <name> --permission-mode acceptEdits
+  --output-format stream-json --verbose --include-partial-messages --session-id <uuid>
   --disallowedTools Bash PowerShell Monitor`. The agent definition's `tools:` allowlist is enforced
-  by Claude Code. The deny list names every tool that runs a command, so a definition edited to
+  by Claude Code. The stream flags make progress visible to the watchdog below, and Claude Code
+  refuses `stream-json` under `-p` without `--verbose`. The runner chooses the session id, a random
+  version 4 UUID, so it knows the session even when the stream never names it. The deny list names every tool that runs a command, so a definition edited to
   add one still gets no shell. Claude Code offers `PowerShell` on Windows and accepts a name it
   does not offer, so the same list works on every platform. Checked on Claude Code 2.1.272
   (2026-09-15), where a pass's start event lists exactly the tools its definition allows.
@@ -436,9 +452,85 @@ Around that call, each runner does several things an exit code cannot:
   directory is the one checked. As a known limit, a runner in another pid namespace, such as a
   container, or on a Linux system that hides other users' processes, reads as gone.
 - **Watchdog.** The agent runs with stdin from `/dev/null` under a timer. A run that exceeds its
-  timeout gets `TERM`, then `KILL` after a grace period, and the runner exits **124**. The log
-  still lists, under `VIOLATION`, any file the pass wrote outside its allowed areas, and any note it
-  wrote that someone was already editing, before it was killed.
+  timeout is stopped and the runner exits **124**. A run whose output stops growing for the stall
+  threshold is stopped as well, and the runner exits **125** (STALLED). That is on by default in
+  claude mode, and in command mode only when `RUNNER_STALL_SECONDS` is set, because the harness's
+  output is unknown. Any new output counts as progress, including a partial message. The
+  threshold is `RUNNER_STALL_FLOOR` (10 minutes) until three passes that ended OK are measured.
+  The runner records each such pass's longest silent stretch, and from then on the threshold is
+  1.5 times the 99th percentile of those, and never below the floor. The start line of every run
+  logs the threshold, where it came from, and the session id. `RUNNER_STALL_SECONDS` sets the
+  threshold outright, and `0` turns stall detection off. A value that is not digits only, with no
+  leading zero and at most nine digits, is ignored with a warning.
+
+  A stop reaches everything the pass started. Outside Windows the agent starts in a process group
+  of its own. The runner signals that group only after `ps` shows the agent leads it and it is
+  not the runner's own group, and it signals each process of the tree it listed before the stop in
+  every case. `TERM` comes first, then `KILL` after `WATCHDOG_GRACE`. Without a working `ps` the
+  runner cannot list the tree, and it records the stop as unknown. On Windows a native process
+  ignores those signals, so the runner stops the tree before sending any. It lists the agent's
+  descendants from the Git Bash process table, which still links a child whose Windows parent
+  has exited, and hands their Windows ids to PowerShell. PowerShell takes one process list, runs
+  `taskkill /T /F` on the agent's Windows process, and stops those descendants and every process
+  whose command line holds the session id. It stops a listed id only while that id still belongs
+  to a process that started before the tree was listed, so an id Windows has given to a new
+  process is left alone. Then it lists the processes again once a second, up to 10 times, and
+  stops each new one that holds the session id or started before its parent's stop began,
+  because a process of the tree can start another between the list and the stop. A child started
+  while its parent's stop ran, or a child whose parent id now belongs to a newer process, is found
+  only by the session id. A program that Git Bash starts by exec has no Windows parent left, so
+  only the session id finds it too. PowerShell gets the id in its
+  environment, leaves itself out, and is itself stopped after 60 seconds, which counts as an
+  unknown result. A command-mode wrapper gets
+  the id in `VAULT_RUN_NONCE`, and only a process that puts it on its own command line can be
+  found that way.
+
+  The runner then checks that no process it listed is still running and that the run's output
+  has stopped growing. If either check fails, or the check itself gave no answer, it logs
+  `KILL_FAILED` with what it found, marks the run lock and keeps it. It also sets the tripwire,
+  because a process of the pass may still be writing after containment ran, and keeps the
+  pre-pass backup `inflight-backup.tar` in the state directory for the review. The tripwire says
+  whether the lock could be marked and whether there is a backup. When containment set the
+  tripwire in the same run, the stop's report is added to it. Otherwise a tripwire found only in
+  the vault was written by the pass, and is replaced. A signal that arrives once the watchdog's
+  stop has found such a process, and before the runner has reported it, reports it. A signal after
+  containment wrote its tripwire leaves that tripwire in place with a note, and before containment
+  the signal's own stop names what it found in the tripwire the signal sets. After such a stop the
+  run's output is kept in the state directory, not added to the run log in the vault, because a
+  process left running could swap the log's temporary file for a link. The runner still exits 124
+  or 125. A marked lock
+  is never released or reclaimed, so every later run exits **75** until a human has made sure
+  nothing of the old pass is running, reviewed the vault, deleted the tripwire and deleted the
+  lock folder. A stop of a commit step, or a stop made by a signal to the runner, that leaves a
+  process marks the lock the same way, and sets no tripwire unless the signal came before
+  containment. A signal that arrives while the watchdog is still stopping the run reaches what the
+  run left in its process group, or on Windows the processes holding the session id, and never
+  the pid of the ended command, which may belong to another process by then. After a stop the
+  runner also names a leftover `index.lock`, and the log still lists, under `VIOLATION`, any file
+  the pass wrote outside its allowed areas, and any note it wrote that someone was already
+  editing, before it was stopped.
+
+  Every session a claude-mode pass ran under is appended to `runner-sessions.tsv` in the state
+  directory, with the time, the runner and whether the stream's init event confirmed the id, so a
+  later capture of Claude Code sessions can leave the runners' own out. That includes a pass
+  stopped by a signal and one whose containment could not write a tripwire. The runner reads the
+  stream from its own copy outside the vault, then adds it to the pass's run log in
+  `.claude/logs` after containment. The new run log is built beside the old one and renamed into
+  place, and a link at the run-log path is removed first, so the output is never written through a
+  link or moved into a folder a link names. A run log with another name linked to it starts
+  again, and a run log keeps its file mode. A run log larger than `RUNNER_RUN_LOG_MAX_BYTES` keeps
+  its newest part from the start of a line, or the end of its last line when that line alone is
+  longer. A pass stopped by a signal before its output reached the run log, or whose run log could
+  not be written, has the output kept as `<runner>.interrupted.run` in the state directory, and the
+  log says why. That copy is written beside the earlier one and renamed over it. A link or an empty
+  folder at that path is removed first, so nothing is written through a link or into a folder. A
+  folder that holds files or cannot be removed, a link that cannot be removed, or a path the rename
+  fails on is left for you to look at, and the output is kept under a new name beside it,
+  `<runner>.interrupted.run.<six characters>`, which the log's `WARNING` names. When something takes
+  the path during the rename, the log says the output may be inside it. The output is lost only when
+  the copy itself fails, or when neither the path nor a name beside it can take it, and the
+  `WARNING` then says what is at that path: an earlier run's output, or something that is not a
+  regular file and holds none.
 - **Write fence.** The runner checksums every file in the vault before and after the run and exits
   **2** with the offending paths logged if anything changed outside the allowed areas. For
   `dream-pass` that is `20-projects/_logs/dream-*.md`. For `promotion-pass` it is `31-standards/`
@@ -452,10 +544,13 @@ Around that call, each runner does several things an exit code cannot:
   and the files described below are still fenced through it. In `.claude/logs` only the files the
   runners, the hooks and the documented schedulers write there are left out: `*.log`, the two
   `*.git-state.txt` and `*.prompt.md` files, `runner-tripwire` and `runner-inflight` with their
-  `.tmp.*` files, and the launchd output files `setup.md` names (`dream-pass.launchd.out`,
+  `.tmp.*` files, the run logs' temporary files `dream-agent.run.log.runner-tmp.XXXXXX` and
+  `promotion-agent.run.log.runner-tmp.XXXXXX` (six ASCII letters or digits, in exactly that case),
+  and the launchd output files `setup.md` names (`dream-pass.launchd.out`,
   `dream-pass.launchd.err`, `promotion-pass.launchd.out` and `promotion-pass.launchd.err`). Any
   other file or symlink there, such as a planted `CLAUDE.md`, is fenced and counts as a steering
-  surface. A path with a line break in its name, anywhere in the vault, is never read as a line,
+  surface. A planted name that differs from one of the other names only in case is listed and
+  reported as a violation, but not quarantined. A path with a line break in its name, anywhere in the vault, is never read as a line,
   because its second line could name any path, such as `.git`. Such paths are summed into one
   fence line, a change to them counts as a steering surface, and containment moves each of them to
   a folder made for them in the quarantine, as `line-break-name-<n>`, with its original path in
@@ -529,7 +624,11 @@ Around that call, each runner does several things an exit code cannot:
   could not be contained, and the quarantine, and a second copy in the state directory. While either
   copy exists, both runners exit **78** without starting an agent, `vault-check.sh` exits 1 without
   checking anything, and `/resume` shows the tripwire instead of a briefing. Clear it by reviewing
-  the paths and then deleting both copies. If no copy can be written, the runner exits **70**
+  the paths and then deleting both copies. The refusal names the state directory copy when it is a
+  file, because a pass cannot write it. When only the vault's copy is there, the runners and
+  `vault-check.sh` name that copy and say a pass may have written it, so check its reason against
+  the runner log before you follow anything it says. When neither copy is a file, they say so and
+  send you to the log instead. If no copy can be written, the runner exits **70**
   (TRIPWIRE-ERROR) and leaves its in-flight marker, so the next run still refuses. When a signal
   stops a pass and no copy of the tripwire can be written, the runner logs the same TRIPWIRE-ERROR
   keyword and keeps its marker too, but exits with the signal's code, 130 or 143.
@@ -539,7 +638,9 @@ Around that call, each runner does several things an exit code cannot:
   that never gets there, because the scheduler ended the task, the machine stopped, or a signal
   arrived, leaves the marker behind. The next runner reads the state-directory copy first, because
   the pass cannot reach it, and sets the tripwire instead of adopting the unknown state as its
-  baseline. A runner checks for the marker only while it holds the run lock, when no other pass can
+  baseline. The tripwire quotes that copy. A marker found only in the vault still sets the tripwire,
+  but is not quoted, because a pass or a process a stop left could have written it. A runner checks
+  for the marker only while it holds the run lock, when no other pass can
   be running, so a marker whose pid now belongs to another process still counts. If that tripwire cannot
   be written, it exits **70** and keeps the marker. A runner that cannot write the marker's
   state-directory copy refuses to start with exit 1. A copy of the pre-pass backup is kept in the
@@ -578,9 +679,17 @@ Around that call, each runner does several things an exit code cannot:
   shows their diff.
 
   Known limits:
-  - The watchdog stops the agent's own process. A command-mode wrapper's children, or a native
-    Windows process started from Git Bash, can outlive it and write after the second snapshot.
-    Killing the whole process tree is planned as separate work.
+  - The watchdog stops a pass's process tree only when it times out or stalls. A pass that exits
+    on its own but leaves a background process running, such as a server a hook started, is not
+    stopped, and that process can write after the second snapshot. A process that leaves the
+    process group with `setsid`, or on Windows starts without the session id on its command line
+    after its parent exited, is not found by the stop either. The output check still catches one
+    that keeps writing to the run's output.
+  - Outside Windows the agent runs in a process group of its own. A scheduler that ends a job by
+    signalling the runner's group, as launchd does when a job's process exits, no longer reaches
+    the agent. If the runner itself is killed with `KILL`, or dies before its signal handler
+    runs, the agent keeps running until it ends on its own, and the in-flight marker makes the
+    next run set the tripwire.
   - A directory symlink that existed before the pass, other than `.obsidian` or `.git` itself, is
     fenced as a link, not by what it points to. A write through a link such as
     `.claude/skills -> ~/shared-skills` is not seen. Retargeting or replacing the link is.
@@ -626,8 +735,10 @@ Around that call, each runner does several things an exit code cannot:
   (NO-ARTIFACT). For `dream-pass` a `dream-*.md` journal must have been added or changed during
   this run; matching any date rather than today's keeps a run that crosses midnight valid. For
   `promotion-pass` a week that promotes nothing is legitimate, so it accepts *either* a long-tier
-  change *or* a final `PROMOTION-SUMMARY: promoted=<n> pending=<n>` line in this run's own output,
-  which an error dump does not contain.
+  change *or* a `PROMOTION-SUMMARY: promoted=<n> pending=<n>` line in this run's own output,
+  which an error dump does not contain. In command mode the line must start a line of the output.
+  In claude mode it counts only in the text of the stream's result event, at the start of that text
+  or of one of its lines, so a summary quoted in a sentence or found in another field does not.
 - **Git preflight and files already being edited.** Before the agent starts, a runner exits
   **1** when the vault has a `.git` git cannot read (for example git's "dubious ownership" refusal
   under another account), because a real repository must not pass as none. A vault that is only a
@@ -685,7 +796,7 @@ Around that call, each runner does several things an exit code cannot:
   "put back" means every note except the ones the log lists.
 
   Files the runner could not commit are recorded with their exact bytes in the state directory.
-  That covers exit 124, exit 4, the agent's own failure, a promotion pass's NO-ARTIFACT exit 1,
+  That covers exit 124, exit 125, exit 4, the agent's own failure, a promotion pass's NO-ARTIFACT exit 1,
   and a dream pass's exit 5 for the journals that pass the check on their own, after a pass that
   wrote only where it may. A file someone was already editing is never recorded, and neither is
   one that is no longer as the pass left it, such as a note edited while the commit ran. Each
@@ -742,9 +853,10 @@ harness session cannot point an unattended pass, and its fence, at a different v
 | `5` | CHECK-FAILED: `vault-check.sh` rejected a file the pass changed, and nothing was committed. The dream pass leaves the journal in place. The promotion pass puts back every note it changed, except any the log lists as left as it is, and logs them under `REVERTED` |
 | `64` | `VAULT_AGENT` is neither `claude` nor `command` |
 | `70` | TRIPWIRE-ERROR: containment was needed but neither copy of the tripwire could be written. The in-flight marker is left, so the next run refuses |
-| `75` | LOCKED: the run lock stayed held, or git's `index.lock` stayed, for `RUN_LOCK_WAIT` seconds, the `index.lock` is older than 10 minutes, another runner took the lock over before the pass started, a git merge, rebase, cherry-pick, revert or bisect is in progress, or HEAD is detached. The agent was not started |
+| `75` | LOCKED: the run lock stayed held, or git's `index.lock` stayed, for `RUN_LOCK_WAIT` seconds, the run lock is marked `KILL_FAILED` (this exits at once), the `index.lock` is older than 10 minutes, another runner took the lock over before the pass started, a git merge, rebase, cherry-pick, revert or bisect is in progress, or HEAD is detached. The agent was not started |
 | `78` | TRIPWIRE: a tripwire exists, or an earlier pass died before containment and this run turned its marker into one; the agent was not started |
-| `124` | TIMEOUT: the watchdog killed the run |
+| `124` | TIMEOUT: the watchdog killed the run and everything it started. With `KILL_FAILED` in the log, a process may still be running, the run lock is kept and the tripwire is set |
+| `125` | STALLED: the run's output stopped growing for the stall threshold (claude mode, or command mode with `RUNNER_STALL_SECONDS` set), and the watchdog killed the run and everything it started. `KILL_FAILED` means the same as for 124 |
 | `127` | the `claude` binary, the `VAULT_AGENT_CMD` wrapper, or (from a `.cmd`) Git Bash was not found |
 | other | the agent's own non-zero status, when nothing above applies |
 
@@ -760,6 +872,9 @@ harness session cannot point an unattended pass, and its fence, at a different v
 | `WATCHDOG_GRACE` | `15` seconds | `lib/runner-common.sh`: wait between `TERM` and `KILL` |
 | `RUN_LOCK_WAIT` | `1800` seconds | both runners: how long to wait for the run lock before exiting 75 |
 | `RUN_LOCK_POLL` | `30` seconds | both runners: how often to check the run lock while waiting |
+| `RUNNER_STALL_SECONDS` | unset | both runners: the stall threshold in seconds, replacing the measured one. `0` turns stall detection off. Setting it is the only way to turn stall detection on in command mode |
+| `RUNNER_STALL_FLOOR` | `600` seconds | both runners in claude mode: the stall threshold until three passes are measured, and the lowest it can be after |
+| `RUNNER_RUN_LOG_MAX_BYTES` | `10000000` | both runners: the size above which a pass's run log in `.claude/logs` is cut to its newest part after the pass |
 | `RUNNER_GIT_TIMEOUT` | `120` seconds | both runners: how long each git step of the runner commit (staging, then the commit and its signing) may take before it is stopped and the run exits 4 |
 | `VAULT_STATE_DIR` | per-vault directory under `%LOCALAPPDATA%` or `~/.local/state` | both runners: the run lock, the quarantine, the tripwire and in-flight copies, and the pre-pass backup of a running pass, all outside the vault, and `vault-check.sh`, which looks for the tripwire copy there. An absolute path is required, and a Windows path is converted. A relative one, one containing `..`, or one inside the vault is replaced with a directory under the system temp folder, and the runner logs a warning. A state directory the runner's account does not own or cannot write stops the run with exit 1. Give each vault its own value |
 | `BASH_EXE` | standard Git for Windows paths | the `.cmd` wrappers |
@@ -1003,8 +1118,8 @@ while a note under `40-llm-wiki/wiki/` is covered by the six-tier rules only.
 | `.claude/hooks/read-guard.sh` | `2` blocked (`.env`, `.env.*`, `secrets/`) · `0` allowed, or no path to check | `.claude/logs/read-guard.log` (`BLOCKED:`, `DEGRADED:`); the reason also to stderr |
 | `.claude/scripts/vault-check.sh` | `0` notes scanned, no violations · `1` one or more violations (including a malformed date), no content-tier folder found, zero notes scanned (`VACUOUS`), or a named note that is not a readable file | stdout, plus the `VACUOUS` and unreadable-note lines on stderr — never writes to a note |
 | `.claude/scripts/run-tests.sh` | `0` all controls passed · `1` at least one failed · `130` SIGINT · `143` SIGTERM | stdout only; fixtures in a temp dir, removed on exit |
-| `.claude/scripts/dream-pass.sh` / `.cmd` | `0` OK · `1` NO-ARTIFACT · `2` VIOLATION · `3` REFUSED · `4` COMMIT-FAILED · `5` CHECK-FAILED · `64` unknown `VAULT_AGENT` · `70` TRIPWIRE-ERROR · `75` LOCKED · `78` TRIPWIRE · `124` TIMEOUT · `127` `claude`, wrapper or Git Bash not found · otherwise the agent's code | `.claude/logs/dream-agent.log`; agent output in `dream-agent.run.log`; `dream-pass.git-state.txt`; `dream-pass.prompt.md` in command mode; `runner-tripwire` after a contained violation |
-| `.claude/scripts/promotion-pass.sh` / `.cmd` | `0` OK · `1` NO-ARTIFACT · `2` VIOLATION · `3` REFUSED · `4` COMMIT-FAILED · `5` CHECK-FAILED · `64` unknown `VAULT_AGENT` · `70` TRIPWIRE-ERROR · `75` LOCKED · `78` TRIPWIRE · `124` TIMEOUT · `127` `claude`, wrapper or Git Bash not found · otherwise the agent's code | `.claude/logs/promotion-agent.log`; agent output appended to `promotion-agent.run.log`; `promotion-pass.git-state.txt`; `promotion-pass.prompt.md` in command mode; `runner-tripwire` after a contained violation |
+| `.claude/scripts/dream-pass.sh` / `.cmd` | `0` OK · `1` NO-ARTIFACT · `2` VIOLATION · `3` REFUSED · `4` COMMIT-FAILED · `5` CHECK-FAILED · `64` unknown `VAULT_AGENT` · `70` TRIPWIRE-ERROR · `75` LOCKED · `78` TRIPWIRE · `124` TIMEOUT · `125` STALLED · `127` `claude`, wrapper or Git Bash not found · otherwise the agent's code | `.claude/logs/dream-agent.log` · agent output in `dream-agent.run.log` · `dream-pass.git-state.txt` · `dream-pass.prompt.md` in command mode · `runner-tripwire` after a contained violation or a `KILL_FAILED` stop · `dream-pass.interrupted.run` in the state directory after a signal or a `KILL_FAILED` stop, or when the run log could not be written, or `dream-pass.interrupted.run.<six characters>` beside it when something was in the way |
+| `.claude/scripts/promotion-pass.sh` / `.cmd` | `0` OK · `1` NO-ARTIFACT · `2` VIOLATION · `3` REFUSED · `4` COMMIT-FAILED · `5` CHECK-FAILED · `64` unknown `VAULT_AGENT` · `70` TRIPWIRE-ERROR · `75` LOCKED · `78` TRIPWIRE · `124` TIMEOUT · `125` STALLED · `127` `claude`, wrapper or Git Bash not found · otherwise the agent's code | `.claude/logs/promotion-agent.log` · agent output added to `promotion-agent.run.log` · `promotion-pass.git-state.txt` · `promotion-pass.prompt.md` in command mode · `runner-tripwire` after a contained violation or a `KILL_FAILED` stop · `promotion-pass.interrupted.run` in the state directory after a signal or a `KILL_FAILED` stop, or when the run log could not be written, or `promotion-pass.interrupted.run.<six characters>` beside it when something was in the way |
 | `.claude/githooks/pre-commit` | `vault-check.sh`'s status: `0` commit proceeds · `1` commit refused | stdout/stderr only |
 | `dream-agent` | n/a (agent) | one file: `20-projects/_logs/dream-<YYYY-MM-DD>.md` |
 | `promotion-agent` | n/a (agent) | `31-standards/`, `40-llm-wiki/wiki/`, optionally `20-projects/_logs/promotion-*.md`, committed by its runner |

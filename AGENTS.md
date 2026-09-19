@@ -164,12 +164,14 @@ you believe the violation count; an absence claim needs a positive control.
 The two scheduled passes run the `dream-agent` and `promotion-agent` definitions in
 `.claude/agents/`. The dream agent **proposes only**: its single write is one dated journal, and it
 mutates no existing note. Keep it that way. Both runners also fail a pass that writes outside its
-allowed folders (exit 2) and kill one that hangs (exit 124); see `docs/reference.md` §4.3. When a
-pass changes a steering or execution surface (Obsidian plugins, `.claude/`, harness configs,
-instruction files, memory, git config or hooks), the runner restores it, quarantines what the pass
-wrote outside the vault, and sets `.claude/logs/runner-tripwire`. **If that file exists, stop and
-tell the owner.** Runners exit 78 and `vault-check.sh` refuses until the owner has reviewed the
-quarantine and deleted the tripwire. Never delete it yourself.
+allowed folders (exit 2) and kill one that hangs (exit 124) or stops streaming (exit 125). See
+`docs/reference.md` §4.3. When a pass changes a steering or execution surface (Obsidian plugins,
+`.claude/`, harness configs, instruction files, memory, git config or hooks), the runner restores
+it, quarantines what the pass wrote outside the vault, and sets `.claude/logs/runner-tripwire`. It
+sets the same tripwire when a stopped pass may have left a process running (`KILL_FAILED`).
+**If that file exists, stop and tell the owner.** Runners exit 78, or 75 after `KILL_FAILED`, and
+`vault-check.sh` refuses until the owner has done what the tripwire says and deleted it. Never
+delete it yourself.
 
 The five skills in `.claude/skills/` cover the session lifecycle: `resume` (start),
 `obsidian-save` and `wrap-up` (end of a working block), `preserve` (medium → long promotion),

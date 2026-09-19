@@ -505,7 +505,8 @@ hook falls back to a cruder path parse and prints a degraded-mode warning rather
 extracting an empty path and exiting 0. The scheduled passes carry the same idea in a different
 place: both runners assert that an artifact was produced, and exit 1 when a pass exits 0 having
 written nothing, so a silent no-op cannot masquerade as a green run; a pass that hangs is killed
-and exits 124 rather than holding the scheduler slot indefinitely. (`docs/setup.md` covers
+and exits 124 rather than holding the scheduler slot indefinitely, and one whose output stops for
+longer than it normally goes quiet is killed sooner, with exit 125. (`docs/setup.md` covers
 installing `jq`, `perl` and the Dataview plugin.)
 
 The shipped test suite in `.claude/scripts/run-tests.sh` applies the rule to itself with **both**
