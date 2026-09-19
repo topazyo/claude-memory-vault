@@ -6059,11 +6059,22 @@ ret_git "$RCR" -c core.autocrlf=false add -- "20-projects/_logs/compaction-crlfb
 ret_git "$RCR" -c core.autocrlf=false commit -q -m "a stub written with CRLF" >/dev/null 2>&1
 rcr_before="$(ret_git "$RCR" rev-parse "HEAD:20-projects/_logs/compaction-crlfblob.md" 2>/dev/null)"
 rcr_bad=''
-# Vacuity guard. If the fixture did not actually get a CRLF blob into history,
-# the filters have nothing to change and every assertion below passes without
-# testing anything.
-ret_git "$RCR" cat-file -p "$rcr_before" 2>/dev/null \
-  | LC_ALL=C awk '/\r/ { f = 1 } END { exit f ? 0 : 1 }' || rcr_bad="$rcr_bad fixture-not-crlf"
+# Vacuity guard: if the fixture did not really reach the state this is about,
+# every assertion below passes without testing anything.
+#
+# Asked of git rather than by looking for a CR in a pipe. The first version of
+# this guard read `cat-file -p | awk '/\r/'` and reported no CR on Windows for
+# a blob holding six of them -- measured: od counts them through the same pipe
+# and awk does not, because gawk there reads the pipe in text mode and the CR
+# is gone before the pattern sees it. So the guard failed on the one platform
+# the control exists for, while the fixture was provably correct there.
+#
+# The condition is not "the blob holds a CR" in any case. It is "the clean
+# filter would now produce something other than what is stored", which is what
+# hash-object answers directly, on every platform, with no pipe in the way.
+rcr_filtered="$(ret_git "$RCR" hash-object -- "20-projects/_logs/compaction-crlfblob.md" 2>/dev/null)"
+{ [ -n "$rcr_filtered" ] && [ "$rcr_filtered" != "$rcr_before" ]; } \
+  || rcr_bad="$rcr_bad fixture-not-mismatched($rcr_filtered vs $rcr_before)"
 rcr_rc="$(ret_run "$RCR")"
 rcr_after="$(ret_git "$RCR" rev-parse "HEAD:99-archive/20-projects/_logs/compaction-crlfblob.md" 2>/dev/null)"
 ran crlf-blob-preserved
