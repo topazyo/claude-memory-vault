@@ -111,11 +111,13 @@ before you believe you are done. See [`customizing.md`](customizing.md) § 2 for
 
 ## 3. Hooks
 
-All three are registered for Claude Code in `.claude/settings.json` with `"shell": "bash"`, so
-they run on Windows through Git Bash as well as on macOS and Linux. Two of them are not tied to
-Claude Code: any harness can call `vault-lint.sh` and `postcompact-wrap-up.sh` (see
+Two of them, `vault-lint.sh` and `postcompact-wrap-up.sh`, are registered for Claude Code in
+`.claude/settings.json` with `"shell": "bash"`, so they run on Windows through Git Bash as well as
+on macOS and Linux, and neither is tied to Claude Code: any harness can call them (see
 [`AGENTS.md` § 8](../AGENTS.md#8-harness-support)). `instructions-loaded-log.sh` reads a
-Claude-Code-only event. **All three always exit 0**, so none can block a tool call or fail a
+Claude-Code-only event and is **opt-in**, so the shipped settings register it nowhere and a
+default session starts no process for it. [`docs/setup.md`](setup.md) has the snippet that turns
+it on. **All three always exit 0**, so none can block a tool call or fail a
 session. Their output is advisory: stderr text that the harness surfaces, plus an append-only log
 under `.claude/logs/` (gitignored).
 
@@ -225,6 +227,7 @@ such as `cat`.
 | | |
 | --- | --- |
 | Event | `InstructionsLoaded` |
+| Registered | **No. Opt-in**, see [`docs/setup.md`](setup.md) |
 | Matcher | `*` |
 | Timeout | 30 s |
 | stdin | Hook JSON; reads `.load_reason`, `.file_path`, `.memory_type` |
@@ -237,6 +240,12 @@ Audit-only. It records **which instruction files were loaded at session start** 
 non-`session_start` loads exit immediately. The value is answering "was this rule file actually
 in context for that session?" after the fact — a question that is otherwise unanswerable, and
 whose wrong answer looks identical to the right one.
+
+**It is not registered.** The event fires once per instruction file, so a registered logger starts
+several processes before a session has done anything, and a vault that never opens the log pays
+that at every session start. Registering it is one snippet in the gitignored
+`.claude/settings.local.json`, given in [`docs/setup.md`](setup.md), and nothing is lost by
+turning it on later. When it is on it reads its three fields with a single `jq` call.
 
 ---
 
@@ -1322,9 +1331,9 @@ while a note under `40-llm-wiki/wiki/` is covered by the six-tier rules only.
 | --- | --- | --- |
 | `.claude/hooks/vault-lint.sh` | always `0` | `.claude/logs/vault-lint.log` (`OK:`, `CONFORMANCE:`, `DEGRADED:`); warnings also to stderr |
 | `.claude/hooks/postcompact-wrap-up.sh` | always `0` | `20-projects/_logs/compaction-<session_id>.md`; events to `.claude/logs/hook-events.log` |
-| `.claude/hooks/instructions-loaded-log.sh` | always `0` | `.claude/logs/instructions-loaded.log` |
+| `.claude/hooks/instructions-loaded-log.sh` (opt-in, not registered) | always `0` | `.claude/logs/instructions-loaded.log` |
 | `.claude/hooks/read-guard.sh` | `2` blocked (`.env`, `.env.*`, `secrets/`) · `0` allowed, or no path to check | `.claude/logs/read-guard.log` (`BLOCKED:`, `DEGRADED:`); the reason also to stderr |
-| `.claude/scripts/vault-check.sh` | `0` notes scanned, no violations · `1` one or more violations (including a malformed date), no content-tier folder found, zero notes scanned (`VACUOUS`), or a named note that is not a readable file | stdout, plus the `VACUOUS` and unreadable-note lines on stderr — never writes to a note |
+| `.claude/scripts/vault-check.sh` | `0` at least one note scanned and none violates an invariant · `1` a note violates an invariant, including a malformed date · `2` the checker could not run, meaning zero notes scanned (`VACUOUS`), no content-tier folder under the root, or a named note that is not a readable file · `64` the command line was wrong · `78` a scheduled pass set the tripwire | stdout, plus the `VACUOUS` and unreadable-note lines on stderr — never writes to a note |
 | `.claude/scripts/run-tests.sh` | `0` all controls passed · `1` at least one failed · `130` SIGINT · `143` SIGTERM | stdout only; fixtures in a temp dir, removed on exit |
 | `.claude/scripts/dream-pass.sh` / `.cmd` | `0` OK · `1` NO-ARTIFACT · `2` VIOLATION · `3` REFUSED · `4` COMMIT-FAILED · `5` CHECK-FAILED · `64` unknown `VAULT_AGENT` · `70` TRIPWIRE-ERROR · `75` LOCKED · `78` TRIPWIRE · `124` TIMEOUT · `125` STALLED · `127` `claude`, wrapper or Git Bash not found · otherwise the agent's code | `.claude/logs/dream-agent.log` · agent output in `dream-agent.run.log` · `dream-pass.git-state.txt` · `dream-pass.prompt.md` in command mode · `runner-tripwire` after a contained violation or a `KILL_FAILED` stop · `dream-pass.interrupted.run` in the state directory after a signal or a `KILL_FAILED` stop, or when the run log could not be written, or `dream-pass.interrupted.run.<six characters>` beside it when something was in the way |
 | `.claude/scripts/promotion-pass.sh` / `.cmd` | `0` OK · `1` NO-ARTIFACT · `2` VIOLATION · `3` REFUSED · `4` COMMIT-FAILED · `5` CHECK-FAILED · `64` unknown `VAULT_AGENT` · `70` TRIPWIRE-ERROR · `75` LOCKED · `78` TRIPWIRE · `124` TIMEOUT · `125` STALLED · `127` `claude`, wrapper or Git Bash not found · otherwise the agent's code | `.claude/logs/promotion-agent.log` · agent output added to `promotion-agent.run.log` · `promotion-pass.git-state.txt` · `promotion-pass.prompt.md` in command mode · `runner-tripwire` after a contained violation or a `KILL_FAILED` stop · `promotion-pass.interrupted.run` in the state directory after a signal or a `KILL_FAILED` stop, or when the run log could not be written, or `promotion-pass.interrupted.run.<six characters>` beside it when something was in the way |

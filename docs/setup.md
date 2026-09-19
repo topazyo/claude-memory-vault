@@ -207,16 +207,52 @@ cd <your-vault>
 claude
 ```
 
-### What the three hooks do
+### What the hooks do
+
+Two are registered in the shipped `.claude/settings.json`. The third is opt-in and the section
+after this one turns it on.
 
 | Hook | Fires on | What it does | Can it block you? |
 | --- | --- | --- | --- |
 | `vault-lint.sh` | `PostToolUse`, matcher `Write` or `Edit` | Checks the just-written note for the mandatory `tier:` and `type:` frontmatter, and scans it for zero-width / bidi codepoints. The character scan is widened to `.claude/rules/`, `.claude/agents/`, `.claude/skills/`, and any `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` or `.github/copilot-instructions.md`, which are exactly what a rules-file backdoor targets. Logs to `.claude/logs/vault-lint.log`. | No — advisory, **always exits 0** |
 | `postcompact-wrap-up.sh` | `PostCompact` | Writes one idempotent, size-capped stub per session into `20-projects/_logs/compaction-<session>.md`, so the material in a compacted context is still recoverable afterwards. Caps at 50 entries, and sanitizes the session id before building a path. | No |
-| `instructions-loaded-log.sh` | `InstructionsLoaded`, session start only | Appends which instruction files loaded, to `.claude/logs/instructions-loaded.log`. This is how you answer "was that rule actually in context?" instead of guessing. | No |
+| `instructions-loaded-log.sh` | `InstructionsLoaded`, session start only | Appends which instruction files loaded, to `.claude/logs/instructions-loaded.log`. This is how you answer "was that rule actually in context?" instead of guessing. **Opt-in: the shipped `settings.json` does not register it.** | No |
 
-All three write only into `.claude/logs/` (gitignored) or into `20-projects/_logs/`. None of them
+All of them write only into `.claude/logs/` (gitignored) or into `20-projects/_logs/`. None of them
 edits an existing note.
+
+### Turning the instruction-load audit on
+
+The logger is not registered by default. It fires once per instruction file at session start, and
+each firing is a process, so a vault that never reads the log pays for it at the start of every
+session. Nothing else depends on it, and turning it on later costs nothing that was lost.
+
+Turn it on in `.claude/settings.local.json`, which is gitignored, so the choice stays yours and no
+pull request carries it:
+
+```json
+{
+  "hooks": {
+    "InstructionsLoaded": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PROJECT_DIR}/.claude/hooks/instructions-loaded-log.sh\"",
+            "shell": "bash",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Start a new session and read `.claude/logs/instructions-loaded.log`. One line per instruction file
+means it is working. The script itself is unchanged and still ships in `.claude/hooks/`, so this is
+the only step.
 
 The five skills in `.claude/skills/` — `obsidian-save`, `wrap-up`, `resume`, `preserve` and
 `onboard-project` — are picked up automatically from the project directory; there is no

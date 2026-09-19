@@ -25,22 +25,39 @@
 # would scatter .claude/logs/ folders wherever the hook happened to be invoked.
 ROOT="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "$0")/../.." && pwd)}"
 LOG_DIR="$ROOT/.claude/logs"
-mkdir -p "$LOG_DIR" 2>/dev/null
 LOG="$LOG_DIR/vault-lint.log"
+
+# The timestamp and the log folder each cost a process, and both used to be
+# spent at startup on every call. A call whose path is not Markdown, or not in
+# scope, never writes a line, so both are done on first use instead. The date
+# is read once and reused, so a call linting several files still spends one.
+#
 # `date -Iseconds` is GNU-only; BSD/macOS date has no -I. Fall back to an
 # explicit ISO-8601 format so the log has ONE shape on every platform.
-TS=$(date -Iseconds 2>/dev/null || date +%Y-%m-%dT%H:%M:%S%z 2>/dev/null || date)
+TS=""
+# log_line <text> - one line in the lint log, timestamped. The text is passed
+# whole and printed verbatim, so every DEGRADED, CONFORMANCE and OK line reads
+# exactly as it did when the timestamp was taken at startup.
+log_line() {
+  [ -n "$TS" ] || TS=$(date -Iseconds 2>/dev/null || date +%Y-%m-%dT%H:%M:%S%z 2>/dev/null || date)
+  [ -d "$LOG_DIR" ] || mkdir -p "$LOG_DIR" 2>/dev/null
+  printf '[%s] %s\n' "$TS" "$1" >> "$LOG"
+}
 
 # lint_file <path> - the whole check for one file. Returns, never exits, so
 # argument mode can lint several files in one call.
 lint_file() {
-  local FILE="$1" NORM IS_CONTENT_TIER IS_CHAR_SCAN_SCOPE warn FM HITS HITS_FMT HITS_JOINED SCAN_RAN
+  local FILE="$1" NORM IS_CONTENT_TIER IS_CHAR_SCAN_SCOPE warn FMV HITS HITS_FMT HITS_JOINED SCAN_RAN
 
   # normalize backslashes -> forward slashes for git-bash / MSYS.
-  # The backslash is written as the octal escape \134: spelled literally, GNU tr
-  # emits an "unescaped backslash at end of string" warning to stderr on every
-  # single invocation, which a harness surfaces as hook noise on every write.
-  NORM=$(printf '%s' "$FILE" | tr '\134' '/')
+  # Bash parameter expansion, not `printf | tr`. The old form cost a process on
+  # every call, including every call whose path is not Markdown at all, and
+  # those now return below having started nothing. The reason the old one wrote
+  # the backslash as the octal escape \134 is worth keeping on the record:
+  # spelled literally, GNU tr warns "unescaped backslash at end of string" to
+  # stderr on every single invocation, which a harness surfaces as hook noise
+  # on every write.
+  NORM="${FILE//\\//}"
 
   # A patch header, or a harness, may give a path relative to the agent's
   # session directory while the hook runs from somewhere else. When the path
@@ -57,7 +74,8 @@ lint_file() {
     *)
       if [ ! -e "$NORM" ]; then
         local base_cwd
-        base_cwd=$(printf '%s' "${HOOK_CWD:-}" | tr '\134' '/')
+        base_cwd="${HOOK_CWD:-}"
+        base_cwd="${base_cwd//\\//}"
         if [ -n "$base_cwd" ] && [ -e "$base_cwd/$NORM" ]; then
           NORM="$base_cwd/$NORM"
         elif [ -e "$ROOT/$NORM" ]; then
@@ -98,22 +116,73 @@ lint_file() {
 
   [ "$IS_CONTENT_TIER" = 1 ] || [ "$IS_CHAR_SCAN_SCOPE" = 1 ] || return 0
   if [ ! -f "$NORM" ]; then
-    echo "[$TS] DEGRADED: in-scope path does not resolve to a file, nothing was linted: $NORM" >> "$LOG"
+    log_line "DEGRADED: in-scope path does not resolve to a file, nothing was linted: $NORM"
+    return 0
+  fi
+  # Readable, not merely present, and this is load bearing.
+  #
+  # An unreadable file used to reach `head -n1 | grep`, which matched nothing
+  # and so reported "missing YAML frontmatter" - wrong, but loud. The single
+  # awk that replaced those five processes returns an empty string instead,
+  # which matches no case below, leaves warn empty, and logs the file OK. That
+  # is this hook reporting clean on a check that never ran, which is the one
+  # thing AGENTS.md says it must never do.
+  #
+  # perl is no help either: it exits 0 on a file it cannot open, measured, so
+  # the invisible-character scan would have called such a file clean too. That
+  # half was already true before this change and is fixed by the same guard.
+  if [ ! -r "$NORM" ]; then
+    log_line "DEGRADED: in-scope file could not be read, nothing was checked: $NORM"
+    printf 'vault-lint: %s could not be read, so nothing was checked.\n' "$NORM" >&2
     return 0
   fi
 
   warn=""
 
   if [ "$IS_CONTENT_TIER" = 1 ]; then
-    if ! head -n1 "$NORM" | grep -q '^---[[:space:]]*$'; then
-      warn="missing YAML frontmatter"
+    # ONE awk pass where there were five processes: a head, a grep, the
+    # frontmatter awk and two more greps. It answers the same three questions
+    # and prints zero or more of nofence, notier and notype. The warnings below
+    # are worded and ordered exactly as they were.
+    #
+    # Both fences stay anchored and both match fm_of() in
+    # .claude/scripts/vault-check.sh, so the hook and the checker agree on
+    # where frontmatter ends. An unanchored /^---/ would end it at any line
+    # merely STARTING with dashes.
+    #
+    # The opening fence now uses the same [ \t\r] as fm_of. It used to be
+    # tested by a grep for [[:space:]] while the awk beside it used [ \t\r], so
+    # an opening fence padded with a vertical tab was accepted by one and
+    # rejected by the other, and the file was reported as missing both keys
+    # rather than as missing its frontmatter. One class, one answer, and the
+    # answer is the checker's.
+    # awk's status is kept, not dropped. The -r test above catches the ordinary
+    # unreadable file, but it is a test at one moment and the read happens at
+    # another, and an I/O error part way through is not a permissions problem
+    # at all. Either way an empty answer must not read as a clean note.
+    if FMV=$(awk '
+      NR == 1 && /^---[ \t\r]*$/ { f = 1; next }
+      NR == 1 { print "nofence"; bad = 1; exit }
+      f && /^---[ \t\r]*$/ { exit }
+      f && /^tier:/ { t = 1 }
+      f && /^type:/ { y = 1 }
+      END {
+        if (bad) { exit }
+        if (!f) { print "nofence"; exit }
+        if (!t) { print "notier" }
+        if (!y) { print "notype" }
+      }' "$NORM" 2>/dev/null); then
+      case "$FMV" in
+        *nofence*)
+          warn="missing YAML frontmatter"
+          ;;
+        *)
+          case "$FMV" in *notier*) warn="${warn:+$warn; }missing 'tier'" ;; esac
+          case "$FMV" in *notype*) warn="${warn:+$warn; }missing 'type'" ;; esac
+          ;;
+      esac
     else
-      # Identical to fm_of() in .claude/scripts/vault-check.sh - both fences
-      # anchored - so the hook and the checker agree on where frontmatter ends.
-      # An unanchored /^---/ would end it at any line merely STARTING with dashes.
-      FM=$(awk 'NR==1&&/^---[ \t\r]*$/{f=1;next} f&&/^---[ \t\r]*$/{exit} f{print}' "$NORM")
-      printf '%s\n' "$FM" | grep -q '^tier:' || warn="${warn:+$warn; }missing 'tier'"
-      printf '%s\n' "$FM" | grep -q '^type:' || warn="${warn:+$warn; }missing 'type'"
+      warn="${warn:+$warn; }FRONTMATTER CHECK DID NOT RUN (the file could not be read)"
     fi
   fi
 
@@ -125,18 +194,57 @@ lint_file() {
   # Git for Windows, and whose -CSD flag decodes input as UTF-8 (without it perl
   # uses byte semantics on a file argument and the codepoint classes never match).
   # If neither tool exists, say so; do not imply a clean result.
+  # SCAN_RAN used to mean "a scanner exists on this machine", and was then read
+  # as though it meant "a scanner read this file". Those are different claims
+  # and the gap between them is this hook's worst failure: a file the scanner
+  # never opened is logged OK, which is a security control reporting clean on
+  # something it did not look at.
+  #
+  # perl cannot report it through its exit status, measured: it exits 0 on a
+  # file it cannot open. So perl opens the file itself and says so, and only an
+  # open that succeeded can produce exit 0 here. The -r test above is a cheap
+  # early-out and NOT a substitute: on Git Bash the mount is noacl, so
+  # access(R_OK) answers from the DOS read-only attribute alone and returns
+  # true for a file another process holds under a sharing violation, which on
+  # Windows is the routine case rather than the exotic one - an open note, a
+  # sync client, a virus scanner.
   HITS_FMT=""
   SCAN_RAN=0
   if command -v perl >/dev/null 2>&1; then
-    SCAN_RAN=1
-    HITS_FMT=$(perl -CSD -ne 'while (/([\x{200B}-\x{200D}\x{FEFF}\x{202A}-\x{202E}\x{2066}-\x{2069}])/g) { printf "line %d: U+%04X\n", $., ord($1); }' "$NORM" 2>/dev/null | head -n 5)
+    # perl stops itself after the fifth hit, which is what `| head -n 5` used
+    # to do at the cost of another process. The first five are all the warning
+    # ever showed.
+    if HITS_FMT=$(perl -CSD -e '
+        open(my $h, "<:utf8", $ARGV[0]) or exit 3;
+        my $n = 0;
+        while (my $line = <$h>) {
+          while ($line =~ /([\x{200B}-\x{200D}\x{FEFF}\x{202A}-\x{202E}\x{2066}-\x{2069}])/g) {
+            printf "line %d: U+%04X\n", $., ord($1);
+            exit 0 if ++$n >= 5;
+          }
+        }
+        exit 0;' "$NORM" 2>/dev/null); then
+      SCAN_RAN=1
+    else
+      SCAN_RAN=2
+    fi
   elif echo x | grep -qP x 2>/dev/null; then
-    SCAN_RAN=1
-    HITS=$(grep -noP '[\x{200B}-\x{200D}\x{FEFF}\x{202A}-\x{202E}\x{2066}-\x{2069}]' "$NORM" 2>/dev/null | head -n 5)
-    [ -n "$HITS" ] && HITS_FMT=$(printf '%s\n' "$HITS" | sed 's/:.*/: (invisible codepoint)/')
+    # The pipeline's status is grep's only because head cannot fail here, so
+    # the read is tested by asking whether the file opens at all. grep -P is
+    # the fallback for a machine with no perl, and it gets the weaker check.
+    if HITS=$(grep -noP '[\x{200B}-\x{200D}\x{FEFF}\x{202A}-\x{202E}\x{2066}-\x{2069}]' "$NORM" 2>/dev/null; [ "$?" -le 1 ] || exit 1) \
+       && { : < "$NORM"; } 2>/dev/null; then
+      SCAN_RAN=1
+      HITS=$(printf '%s' "$HITS" | head -n 5)
+      [ -n "$HITS" ] && HITS_FMT=$(printf '%s\n' "$HITS" | sed 's/:.*/: (invisible codepoint)/')
+    else
+      SCAN_RAN=2
+    fi
   fi
 
-  if [ "$SCAN_RAN" = 0 ]; then
+  if [ "$SCAN_RAN" = 2 ]; then
+    warn="${warn:+$warn; }INVISIBLE-CHAR SCAN COULD NOT READ THIS FILE — file NOT checked"
+  elif [ "$SCAN_RAN" = 0 ]; then
     warn="${warn:+$warn; }INVISIBLE-CHAR SCAN DID NOT RUN (no perl, no grep -P) — file NOT checked"
   elif [ -n "$HITS_FMT" ]; then
     HITS_JOINED=$(printf '%s' "$HITS_FMT" | paste -sd';' - | sed 's/;/; /g')
@@ -144,10 +252,10 @@ lint_file() {
   fi
 
   if [ -n "$warn" ]; then
-    echo "[$TS] CONFORMANCE: $NORM — $warn" >> "$LOG"
+    log_line "CONFORMANCE: $NORM — $warn"
     echo "vault-lint: $NORM — $warn (see .claude/rules/vault-notes.md)" >&2
   else
-    echo "[$TS] OK: $NORM" >> "$LOG"
+    log_line "OK: $NORM"
   fi
   return 0
 }
@@ -209,24 +317,91 @@ INPUT=$(cat)
 # VAULT_FORCE_NO_JQ=1 takes the no-jq branch even when jq is installed, so the
 # fallback can be tested on a machine that has jq (run-tests.sh does exactly that).
 if [ -z "${VAULT_FORCE_NO_JQ:-}" ] && command -v jq >/dev/null 2>&1; then
-  PATHS=$(printf '%s' "$INPUT" | jq -r '
+  # ONE jq call where there were three, and it also does the patch-header parse
+  # that cost a tr and a sed after them. Line one is the written path, line two
+  # the session cwd, and every line after that is a file a patch header names.
+  # Nothing below starts a process to take the answer apart.
+  #
+  # startswith and ltrimstr rather than a regex, so this still works on a jq
+  # built without the regex module. ltrimstr strips only a real prefix, so
+  # chaining the three is safe. "Move to:" follows an "Update File:" whose file
+  # is renamed, and the new name is the file that now holds the content.
+  # One line per field, and the fields are read by position, so a value that
+  # spans two lines would be read as two fields. The three separate jq calls
+  # this replaced could not do that, because each had its own command
+  # substitution, and that property has to be put back deliberately.
+  #
+  # Two ways it can happen. `.cwd` is not necessarily a string, and `jq -r`
+  # prints a non-string as JSON, which for an object is several lines. And a
+  # written path may itself hold a line break, in which case its tail lands in
+  # the cwd slot -- which is the directory every relative path in this call is
+  # then resolved against, so the input would be choosing where the hook looks.
+  # Both were reproduced before this guard was written.
+  #
+  # So cwd is type-guarded, and jq reports on its own first line whether either
+  # field holds a line break. index() rather than a regex, to stay off the
+  # regex module.
+  JQ_OUT=$(printf '%s' "$INPUT" | jq -r '
     def obj: if type == "object" then . elif type == "string" then (fromjson? // {}) else {} end;
-    [ (.tool_input | obj | .file_path), (.tool_input | obj | .path),
-      .file_path, .path,
-      (.tool_info | obj | .file_path),
-      (.toolArgs | obj | .path), (.toolArgs | obj | .file_path) ]
-    | map(select(type == "string" and length > 0)) | .[0] // empty' 2>/dev/null)
-  PATCH_TEXT=$(printf '%s' "$INPUT" | jq -r '
-    def obj: if type == "object" then . elif type == "string" then (fromjson? // {}) else {} end;
-    [ (.tool_input | obj | .command), (.tool_input | obj | .patch),
-      (.tool_input | obj | .patchText), (.toolArgs | obj | .patch) ]
-    | map(select(type == "string")) | join("\n")' 2>/dev/null)
-  HOOK_CWD=$(printf '%s' "$INPUT" | jq -r '.cwd // empty' 2>/dev/null)
-  # Separate -e expressions rather than \| alternation, which BSD sed lacks.
-  # "Move to:" follows an "Update File:" whose file is renamed; the new name is
-  # the file that now holds the content.
-  PATCHED=$(printf '%s\n' "$PATCH_TEXT" | tr -d '\r' \
-    | sed -n -e 's/^\*\*\* Add File: //p' -e 's/^\*\*\* Update File: //p' -e 's/^\*\*\* Move to: //p')
+    def patchtext: [ (.tool_input | obj | .command), (.tool_input | obj | .patch),
+                     (.tool_input | obj | .patchText), (.toolArgs | obj | .patch) ]
+                   | map(select(type == "string")) | join("\n");
+    def pathv: [ (.tool_input | obj | .file_path), (.tool_input | obj | .path),
+                 .file_path, .path,
+                 (.tool_info | obj | .file_path),
+                 (.toolArgs | obj | .path), (.toolArgs | obj | .file_path) ]
+               | map(select(type == "string" and length > 0)) | .[0] // "";
+    def cwdv: (.cwd | if type == "string" then . else "" end);
+    (if (pathv | index("\n")) != null or (cwdv | index("\n")) != null
+     then "BADFIELD" else "OK" end),
+    pathv,
+    cwdv,
+    (patchtext | split("\n") | map(rtrimstr("\r"))
+     | map(select(startswith("*** Add File: ") or startswith("*** Update File: ")
+                  or startswith("*** Move to: ")))
+     | map(ltrimstr("*** Add File: ") | ltrimstr("*** Update File: ")
+           | ltrimstr("*** Move to: "))
+     | .[])' 2>/dev/null)
+  JQ_STATUS=""
+  PATHS=""
+  HOOK_CWD=""
+  PATCHED=""
+  # A group with a here-document, not a pipe, because bash 3.2 runs the body of
+  # a pipeline in a subshell and these have to survive it.
+  { IFS= read -r JQ_STATUS
+    IFS= read -r PATHS
+    IFS= read -r HOOK_CWD
+    while IFS= read -r _hp; do
+      _hp="${_hp%$'\r'}"
+      [ -n "$_hp" ] || continue
+      PATCHED="${PATCHED:+$PATCHED
+}$_hp"
+    done
+  } <<EOF
+$JQ_OUT
+EOF
+  # jq on Windows writes CRLF, so every field arrives with a carriage return on
+  # the end, and this has to be taken off deliberately.
+  #
+  # It used to come off by accident. The dedupe awk that ran after these values
+  # were read drops a CR silently, because gawk on Git Bash reads its input in
+  # text mode -- two Windows behaviours cancelling each other out, jq adding
+  # the character and gawk removing it. Skipping that awk when no patch named
+  # anything, to save a process, removed the accident along with the process
+  # and left the CR on the path. The cwd never went through that awk at all, so
+  # its carriage return was never removed and the session directory has been
+  # quietly failing to resolve on Windows for as long as both existed.
+  JQ_STATUS="${JQ_STATUS%$'\r'}"
+  PATHS="${PATHS%$'\r'}"
+  HOOK_CWD="${HOOK_CWD%$'\r'}"
+  # Requires OK rather than refusing one known-bad value. A status this program
+  # cannot currently emit, or an empty one because jq failed outright, must not
+  # read as permission to carry on with fields that may have shifted.
+  if [ "$JQ_STATUS" != OK ]; then
+    log_line "DEGRADED: the hook input could not be read into separate fields, so nothing was linted. The parse said [${JQ_STATUS:-nothing}], which is what a line break inside the written path or the session directory looks like."
+    printf 'vault-lint: the hook input could not be parsed into fields; nothing was linted.\n' >&2
+    finish
+  fi
 else
   # Minimal parse without jq: pull the first "file_path":"..." value with sed,
   # then undo JSON string escaping. That second step is not optional - on
@@ -245,16 +420,20 @@ else
     | sed -e 's/^\*\*\* Add File: //' -e 's/^\*\*\* Update File: //' -e 's/^\*\*\* Move to: //')
   HOOK_CWD=$(printf '%s' "$INPUT" | sed -n 's/.*"cwd"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1 \
     | sed -e 's/\\\\/\\/g' -e 's/\\\//\//g')
-  echo "[$TS] DEGRADED: jq not found — using fallback path parse. Install jq for reliable linting." >> "$LOG"
+  log_line "DEGRADED: jq not found — using fallback path parse. Install jq for reliable linting."
   echo "vault-lint: jq not found; path parsing is degraded. Install jq." >&2
 fi
-PATHS=$(printf '%s\n%s\n' "$PATHS" "$PATCHED" | awk 'NF && !seen[$0]++')
+# The dedupe is only needed when a patch named files as well, and a Claude Code
+# Write or Edit names none, so the common call no longer starts an awk for it.
+if [ -n "$PATCHED" ]; then
+  PATHS=$(printf '%s\n%s\n' "$PATHS" "$PATCHED" | awk 'NF && !seen[$0]++')
+fi
 
 # A post-write hook always names a file. An empty path is therefore an anomaly -
 # malformed input or a parse failure - and it goes on the record instead of
 # vanishing into a silent exit 0.
 if [ -z "$PATHS" ]; then
-  echo "[$TS] DEGRADED: could not read a file path from the hook input; nothing was linted." >> "$LOG"
+  log_line "DEGRADED: could not read a file path from the hook input; nothing was linted."
   finish
 fi
 

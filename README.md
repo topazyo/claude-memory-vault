@@ -164,7 +164,7 @@ claude-memory-vault/
 │   │   ├── vault-lint.sh            # advisory lint; hook JSON on stdin or file paths as arguments; exits 0
 │   │   ├── postcompact-wrap-up.sh   # one idempotent, size-capped compaction stub per session
 │   │   ├── read-guard.sh            # pre-read hook: blocks .env, .env.*, secrets/ (Windsurf)
-│   │   └── instructions-loaded-log.sh # Claude Code only: audit log of instruction files loaded at start
+│   │   └── instructions-loaded-log.sh # Claude Code only: audit log of instruction files loaded at start; OPT-IN, not registered
 │   ├── rules/
 │   │   ├── vault-notes.md           # frontmatter contract, wikilinks, Dataview, filing (path-scoped)
 │   │   ├── verification.md          # freshness, citation, earned-stamp discipline (path-scoped)
