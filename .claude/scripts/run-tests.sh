@@ -569,7 +569,8 @@ JQSHIM
 else
   skip jq-crlf-output 'a jq that writes CRLF: jq is not installed'
 fi
-rm -rf "$JQS"
+# $JQS is kept for the logger control below, which needs the same shim, and
+# removed after it.
 
 printf '\n=== the instruction-load logger is opt-in ===\n'
 # A default session has to start no process for the logger, which means the
@@ -645,7 +646,27 @@ if [ -z "$il_bad" ]; then
 else
   bad "the instruction-load logger is wrong --$il_bad out: [$(printf '%s' "$il_out" | tr '\n' '|' | cut -c1-160)]"
 fi
-rm -rf "$ILR"
+
+# And again under a jq that writes CRLF. That is exactly what stopped this hook
+# recording anything on Windows, and the control above only saw it because
+# windows-latest happened to run. The same shim makes it visible everywhere.
+if [ -x "$JQS/jq" ]; then
+  ran logger-crlf
+  rm -f "$il_log"
+  printf '%s' '{"load_reason":"session_start","memory_type":"project","file_path":"/v/CLAUDE.md"}' \
+    | env PATH="$JQS:$PATH" CLAUDE_PROJECT_DIR="$ILR" \
+      bash "$ROOT/.claude/hooks/instructions-loaded-log.sh" >/dev/null 2>&1
+  il_crlf="$(cat "$il_log" 2>/dev/null)"
+  case "$il_crlf" in
+    *'InstructionsLoaded[session_start]'*'type=project'*)
+      ok "the logger still records a session_start load when jq writes CRLF" ;;
+    *)
+      bad "a carriage return from jq stopped the logger recording what it read -- out: [$(printf '%s' "$il_crlf" | tr '\n' '|' | cut -c1-140)]" ;;
+  esac
+else
+  skip logger-crlf 'the logger under a jq that writes CRLF: no jq to build a shim from'
+fi
+rm -rf "$ILR" "$JQS"
 
 # An opt-in has to be usable, not merely described. The snippet in the setup
 # guide is pulled out and checked as JSON that names a script which really

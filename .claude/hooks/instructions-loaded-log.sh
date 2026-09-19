@@ -24,6 +24,14 @@ if command -v jq >/dev/null 2>&1; then
   { IFS= read -r reason; IFS= read -r mt; IFS= read -r fp; } <<EOF
 $(printf '%s' "$input" | jq -r '(.load_reason // ""), (.memory_type // "?"), (.file_path // "?")' 2>/dev/null)
 EOF
+  # jq on Windows writes CRLF, so each of these arrives with a carriage return
+  # on the end and the session_start test below never matches. Nothing here
+  # passed the values through a text tool that would have absorbed it, so this
+  # hook simply recorded nothing on Windows, silently, which is what an audit
+  # log must never do. Found by the first control ever to run this script.
+  reason="${reason%$'\r'}"
+  mt="${mt%$'\r'}"
+  fp="${fp%$'\r'}"
   : "${mt:=?}"
   : "${fp:=?}"
 else
