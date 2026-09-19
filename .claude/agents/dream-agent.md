@@ -3,7 +3,6 @@ name: dream-agent
 description: Scheduled "dream" pass — consolidates recent captures, logs, and auto-memory into confirmed preferences with confidence, runs a trust sweep, and writes a dated dream journal. Proposes only; never mutates existing notes.
 tools: Read, Glob, Grep, Write, Skill
 model: sonnet
-memory: project
 maxTurns: 40
 ---
 
