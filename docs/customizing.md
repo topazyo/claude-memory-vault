@@ -257,10 +257,12 @@ empty result.
 
 ## 5. Turning hooks off, or changing what the lint does
 
-For Claude Code, three hooks are registered in `.claude/settings.json`: `PostToolUse` with matcher `Write|Edit`
-(vault-lint), `PostCompact` with matcher `*` (compaction stub), and `InstructionsLoaded` with
-matcher `*` (audit log). Each is registered with `"shell": "bash"`, which is what makes them run
-on Windows through Git Bash. All three log to `.claude/logs/`, which is gitignored.
+For Claude Code, two hooks are registered in `.claude/settings.json`: `PostToolUse` with matcher
+`Write|Edit` (vault-lint) and `PostCompact` with matcher `*` (compaction stub). Each is registered
+with `"shell": "bash"`, which is what makes them run on Windows through Git Bash. A third ships
+unregistered, the `InstructionsLoaded` audit log, because it starts a process for every
+instruction file of every session; [`docs/setup.md`](setup.md) has the snippet that turns it on.
+All of them log to `.claude/logs/`, which is gitignored.
 
 **To disable one**, remove its entry from `.claude/settings.json`. Edit that file by hand. It
 governs the permission and hook surface, and assistants are routinely blocked from writing to it.

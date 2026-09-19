@@ -499,6 +499,136 @@ else
   bad "harness instruction files not scanned -- got: ${out_steer:-<silence>} / ${out_steer2:-<silence>}"
 fi
 
+# The invisible-character scan is the security control in this hook, and the
+# no-jq branch is a realistic default rather than an edge case, because Git for
+# Windows ships no jq. That branch was only ever proven to still find a missing
+# key, never to still find a hidden codepoint, so the scan could have been lost
+# there without any control noticing.
+out_nojq=$(printf '{"tool_input":{"file_path":"%s"}}' "$WORK/31-standards/probe.md" \
+  | VAULT_FORCE_NO_JQ=1 CLAUDE_PROJECT_DIR="$WORK" bash "$HOOK" 2>&1)
+if printf '%s' "$out_nojq" | grep -q 'jq not found' \
+   && printf '%s' "$out_nojq" | grep -q 'U+200B'; then
+  ok "the invisible-character scan still runs on the no-jq branch"
+else
+  bad "the no-jq branch did not report a hidden codepoint -- got: ${out_nojq:-<silence>}"
+fi
+
+printf '\n=== the instruction-load logger is opt-in ===\n'
+# A default session has to start no process for the logger, which means the
+# shipped settings register it nowhere. Read as JSON where jq is present and as
+# text where it is not, so this says the same thing on every machine.
+if command -v jq >/dev/null 2>&1; then
+  il_reg="$(jq -r 'if (.hooks.InstructionsLoaded // null) == null then "absent" else "present" end' \
+    "$ROOT/.claude/settings.json" 2>/dev/null)"
+else
+  il_reg=absent
+  grep -q 'InstructionsLoaded' "$ROOT/.claude/settings.json" 2>/dev/null && il_reg=present
+fi
+ran logger-not-registered
+if [ "$il_reg" = absent ]; then
+  ok "the shipped settings.json registers no InstructionsLoaded hook"
+else
+  bad "the shipped settings.json still registers the instruction-load logger"
+fi
+
+# An opt-in has to be usable, not merely described. The snippet in the setup
+# guide is pulled out and checked as JSON that names a script which really
+# ships, because a snippet that is only prose is how an opt-in quietly becomes
+# unavailable.
+il_snip="$TMP/optin-snippet.json"
+awk '/^### Turning the instruction-load audit on/ { s = 1 }
+     s && /^```json$/ { c = 1; next }
+     c && /^```$/ { exit }
+     c { print }' "$ROOT/docs/setup.md" > "$il_snip" 2>/dev/null
+if [ ! -s "$il_snip" ]; then
+  ran logger-optin-snippet
+  bad "docs/setup.md carries no opt-in snippet under 'Turning the instruction-load audit on'"
+elif command -v jq >/dev/null 2>&1; then
+  ran logger-optin-snippet
+  il_cmd="$(jq -r '.hooks.InstructionsLoaded[0].hooks[0].command // empty' "$il_snip" 2>/dev/null)"
+  case "$il_cmd" in
+    *instructions-loaded-log.sh*)
+      if [ -f "$ROOT/.claude/hooks/instructions-loaded-log.sh" ]; then
+        ok "the documented opt-in snippet is valid JSON naming a logger script that ships"
+      else
+        bad "the opt-in snippet names a logger script that is not in the repository"
+      fi
+      ;;
+    *) bad "the opt-in snippet is not valid JSON registering the logger -- command: [${il_cmd:-none}]" ;;
+  esac
+else
+  skip logger-optin-snippet 'the opt-in snippet: jq is needed to read it back as JSON'
+fi
+
+printf '\n=== lint process budget ===\n'
+# Fewer processes is the whole point of the change, and only a count proves it.
+# strace -f -e trace=execve counts execs, which is what starting a process
+# means here.
+#
+# The budgets are the measured counts exactly, not a comfortable ceiling above
+# them. A budget with slack in it is the failure this suite keeps finding in
+# itself: it reads as coverage and catches nothing, because putting back a
+# single process still fits. 7 in scope and 4 out of it, against 17 and 12
+# before this change. Anything that adds a process has to move these numbers
+# deliberately, which is the point.
+#
+# The log folder is made first, deliberately. The hook creates it only when it
+# is missing, so whether that costs a process depends on whether anything has
+# written a lint line before, which is a property of the order controls run in
+# rather than of the hook. Measuring the steady state makes the number the same
+# on a fresh vault and a used one. It was worth finding: with the folder left
+# to chance the in-scope budget carried one process of slack, and a mutant that
+# put one back slipped past that half of the control.
+#
+# Which path the hook takes decides the count, so the budget only applies where
+# jq and perl are both present. Without jq it takes the fallback parse and
+# without perl it scans with grep -P, and both cost differently. Comparing a
+# different path against these numbers would be measuring the machine.
+LINT_BUDGET_IN=7
+LINT_BUDGET_OUT=4
+if ! command -v strace >/dev/null 2>&1; then
+  skip lint-spawn-budget 'the lint process budget: strace is not installed'
+elif ! command -v jq >/dev/null 2>&1 || ! command -v perl >/dev/null 2>&1; then
+  skip lint-spawn-budget 'the lint process budget: the measured counts are for the jq and perl path, and one of those is missing'
+else
+  lsb="$TMP/spawn"
+  mkdir -p "$lsb" "$WORK/.claude/logs"
+  printf -- '---\ntier: long\ntype: standard\n---\n\nbody\n' > "$WORK/31-standards/budget.md"
+  printf 'plain\n' > "$WORK/budget.txt"
+  lsb_count() {  # lsb_count <name> <path> - execs one hook-mode lint starts
+    printf '{"tool_name":"Write","cwd":"%s","tool_input":{"file_path":"%s"}}' "$WORK" "$2" > "$lsb/$1.in"
+    strace -f -e trace=execve -o "$lsb/$1.out" \
+      env CLAUDE_PROJECT_DIR="$WORK" bash "$HOOK" < "$lsb/$1.in" >/dev/null 2>&1
+    # Successful execve lines only. strace writes a continuation line for a
+    # traced fork, which must not be counted twice, and a line ending in an
+    # error is a failed lookup along PATH rather than a process that started.
+    LC_ALL=C awk '/execve\(/ && !/<unfinished/ && !/resumed>/ && !/= -1/ { n++ } END { print n+0 }' \
+      "$lsb/$1.out" 2>/dev/null
+  }
+  lsb_in="$(lsb_count inscope "$WORK/31-standards/budget.md")"
+  lsb_out="$(lsb_count outscope "$WORK/budget.txt")"
+  if [ "${lsb_in:-0}" -lt 1 ] || [ "${lsb_out:-0}" -lt 1 ]; then
+    # Counting nothing is not a pass. Where ptrace is not permitted the honest
+    # answer is that the budget was not measured.
+    skip lint-spawn-budget "the lint process budget: strace traced nothing (in ${lsb_in:-0}, out ${lsb_out:-0}), ptrace is probably not permitted here"
+  else
+    ran lint-spawn-budget
+    lsb_bad=''
+    [ "$lsb_in" -le "$LINT_BUDGET_IN" ] || lsb_bad="$lsb_bad in-scope($lsb_in>$LINT_BUDGET_IN)"
+    [ "$lsb_out" -le "$LINT_BUDGET_OUT" ] || lsb_bad="$lsb_bad out-of-scope($lsb_out>$LINT_BUDGET_OUT)"
+    [ "$lsb_out" -lt "$lsb_in" ] || lsb_bad="$lsb_bad out-not-cheaper($lsb_out vs $lsb_in)"
+    if [ -z "$lsb_bad" ]; then
+      # The counts are printed on success as well as on failure. A budget whose
+      # measurements are only visible when it fails cannot be seen drifting
+      # towards its own ceiling.
+      ok "one hook-mode lint stays inside its process budget ($lsb_in/$LINT_BUDGET_IN in scope, $lsb_out/$LINT_BUDGET_OUT out of it), and a path out of scope costs less than one in it"
+    else
+      bad "the lint process budget is exceeded --$lsb_bad"
+    fi
+  fi
+  rm -f "$WORK/31-standards/budget.md" "$WORK/budget.txt"
+fi
+
 # ------------------------------------------------ postcompact-wrap-up.sh --
 
 POSTCOMPACT="$ROOT/.claude/hooks/postcompact-wrap-up.sh"

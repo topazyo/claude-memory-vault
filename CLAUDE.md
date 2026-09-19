@@ -15,8 +15,10 @@ nothing in `AGENTS.md` depends on it.
   folders its `paths:` frontmatter names. Other harnesses read the same files because `AGENTS.md`
   tells them to.
 - **Hooks** are registered in `.claude/settings.json`: `vault-lint.sh` runs after every Write or
-  Edit, `postcompact-wrap-up.sh` writes a stub after a compaction, and
-  `instructions-loaded-log.sh` records which instruction files loaded at session start.
+  Edit and `postcompact-wrap-up.sh` writes a stub after a compaction.
+  `instructions-loaded-log.sh` records which instruction files loaded at session start. It ships
+  but is **not registered**, because it starts a process for every instruction file of every
+  session and most sessions never read its log. `docs/setup.md` has the snippet that turns it on.
 - **A Read deny** covers `.env`, `.env.*` and `secrets/**` at the vault root.
 - **Skills** are slash commands: `/resume`, `/obsidian-save`, `/wrap-up`, `/preserve`,
   `/onboard-project`.

@@ -8,7 +8,7 @@ already works when you start Claude Code from the vault root.
 | File | What it does |
 | --- | --- |
 | `CLAUDE.md` | Imports `AGENTS.md` and `30-knowledge/moc/ARCH-INDEX.md`, and lists the Claude-only extras |
-| `.claude/settings.json` | Registers the three hooks (`PostToolUse` lint, `PostCompact` stub, `InstructionsLoaded` audit) and denies reads of `.env`, `.env.*`, `secrets/**` |
+| `.claude/settings.json` | Registers two hooks (`PostToolUse` lint, `PostCompact` stub) and denies reads of `.env`, `.env.*`, `secrets/**`. The `InstructionsLoaded` audit ships unregistered, see [`docs/setup.md`](../setup.md) |
 | `.claude/rules/*.md` | Loaded automatically; three are path-scoped |
 | `.claude/skills/*/SKILL.md` | The five skills, as slash commands |
 | `.claude/agents/*.md` | `dream-agent` and `promotion-agent`, with `tools:` allowlists |
@@ -41,11 +41,15 @@ without asking me.
 
 ## Harness-specific checks
 
-- **H1. Hooks registered.** Ask the human to run `/hooks` and confirm `PostToolUse`,
-  `PostCompact` and `InstructionsLoaded` each list a `.claude/hooks/` script. You cannot open
-  that menu yourself, so record their answer, or NOT VERIFIED.
-- **H2. Instruction audit.** Read `.claude/logs/instructions-loaded.log`. PASS if it has
-  `session_start` entries for this session naming `CLAUDE.md`.
+- **H1. Hooks registered.** Ask the human to run `/hooks` and confirm `PostToolUse` and
+  `PostCompact` each list a `.claude/hooks/` script. You cannot open that menu yourself, so
+  record their answer, or NOT VERIFIED. `InstructionsLoaded` is **expected to be absent**: it is
+  opt-in, and seeing it there only means this vault turned it on.
+- **H2. Instruction audit.** Only when this vault has opted in, which is an `InstructionsLoaded`
+  block in `.claude/settings.local.json` (see [`docs/setup.md`](../setup.md)). If there is none,
+  NOT APPLICABLE, and an empty or absent `.claude/logs/instructions-loaded.log` is the correct
+  result rather than a failure. If there is one, read that log and PASS if it has `session_start`
+  entries for this session naming `CLAUDE.md`.
 - **H3. Read deny.** Use the Read tool on `.env` (the file does not need to exist). PASS if the
   tool reports the read was denied by permissions. A "file not found" error means the deny did
   not apply: FAILED.
