@@ -6354,6 +6354,49 @@ else
   bad "the keep rule or the cap is wrong --$rb_bad log: [$(tr '\n' '|' < "$(ret_log "$RB")" 2>/dev/null | cut -c1-900)]"
 fi
 
+# --- a destination staged in the index but on neither disk nor HEAD ---
+# git mv refuses such a destination, and because the whole run moves in one
+# git mv, a single name in that state put every eligible journal of the run
+# back and ended it at exit 3 with a git line naming a file nobody was
+# archiving. The name test that prevents that reads the index, and nothing
+# exercised it: every other collision case puts the file on disk and in HEAD,
+# where the two older tests already see it and this one is never reached.
+AI="$(ret_copy arch-staged)"
+ret_journal "$AI" "dream-${RET_DATE[90]}.md" "tier: medium"
+# Eight newer journals, or the candidate is held back by the newest-eight rule
+# and the collision is never asked about at all.
+ai_batch=""
+for ai_i in 2 3 4 5 6 7 8 9; do
+  ret_journal "$AI" "dream-${RET_DATE[$ai_i]}.md" "tier: medium"
+  ai_batch="$ai_batch dream-${RET_DATE[$ai_i]}.md"
+done
+# shellcheck disable=SC2086
+ret_dream_commit "$AI" "dream-${RET_DATE[90]}.md" $ai_batch
+# The destination name, staged and then taken off the disk again, so it is on
+# neither disk nor HEAD and shows only in the index.
+mkdir -p "$AI/99-archive/20-projects/_logs"
+printf 'a different note that happens to carry the same name\n' > "$AI/99-archive/20-projects/_logs/dream-${RET_DATE[90]}.md"
+ret_git "$AI" add -- "99-archive/20-projects/_logs/dream-${RET_DATE[90]}.md" >/dev/null 2>&1
+rm -f "$AI/99-archive/20-projects/_logs/dream-${RET_DATE[90]}.md"
+ai_staged=0
+ret_git "$AI" ls-files -- "99-archive/20-projects/_logs/dream-${RET_DATE[90]}.md" 2>/dev/null | grep -q . && ai_staged=1
+ai_rc="$(ret_run "$AI")"
+ai_bad=''
+# The fixture is only the case it claims to be while the name really is in the
+# index and really is off the disk. Either half slipping turns this into one of
+# the collision cases that were already covered.
+[ "$ai_staged" = 1 ] || ai_bad="$ai_bad not-staged"
+[ -e "$AI/99-archive/20-projects/_logs/dream-${RET_DATE[90]}.md" ] && ai_bad="$ai_bad on-disk"
+[ "$ai_rc" = 0 ] || ai_bad="$ai_bad rc:$ai_rc"
+ret_says "$AI" "REFUSED: 20-projects/_logs/dream-${RET_DATE[90]}.md (destination exists" || ai_bad="$ai_bad no-reason"
+ret_stayed "$AI" "dream-${RET_DATE[90]}.md" || ai_bad="$ai_bad moved"
+ran destination-staged-only
+if [ -z "$ai_bad" ]; then
+  ok "a destination staged in the index but on neither disk nor HEAD refuses that one candidate by name, and the rest of the run goes through"
+else
+  bad "a staged-only destination was not seen --$ai_bad log: [$(tr '\n' '|' < "$(ret_log "$AI")" 2>/dev/null | cut -c1-500)]"
+fi
+
 # --- a journal older than the trailers, edited by hand after they began ---
 # The branch that sends such a journal to LEGACY puts its question to the
 # commit that added the file, not to the newest one to touch it. Asking the
