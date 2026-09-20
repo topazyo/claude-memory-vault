@@ -1324,6 +1324,36 @@ ends_with_newline() {
   [ "$(tail -c 1 "$1" | od -An -c 2>/dev/null | tr -d ' ')" = "\\n" ]
 }
 
+# has_nul <file>
+# True when the file holds a NUL byte, and true as well when that question
+# could not be answered, because every caller here is deciding whether a file
+# is the machine's own boilerplate and the safe answer to an unreadable file is
+# no rather than yes.
+#
+# bash cannot hold a NUL in a variable, and read drops the byte rather than
+# ending the line at it, so the text after a NUL is spliced onto the end of the
+# line before. An entry line built that way still satisfies stub_entry_ok,
+# whose fields are separated by two spaces and which sees no two spaces in the
+# smuggled tail, so a committed version carrying prose reads as a file the
+# compaction hook wrote and nothing else.
+#
+# Measured on 2026-09-20 rather than reasoned about. bash reads such a line at
+# 74 characters and awk reads the same line at 75, so stub_entry_ok and
+# is_line_prefix are not even comparing the same string, and the awk half
+# cannot be relied on to notice what the bash half missed.
+#
+# The byte count against the count with NULs removed, rather than a grep for
+# the byte, because what counts as a match for an empty pattern varies between
+# greps and this arithmetic does not.
+has_nul() {
+  local nb nz
+  [ -r "$1" ] || return 0
+  nb="$(LC_ALL=C wc -c < "$1" 2>/dev/null)"
+  nz="$(LC_ALL=C tr -d '\000' < "$1" 2>/dev/null | LC_ALL=C wc -c)"
+  [ -n "$nb" ] && [ -n "$nz" ] || return 0
+  [ "$((nb))" -ne "$((nz))" ]
+}
+
 # is_line_prefix <earlier file> <later file>
 # True when every line of the earlier file is the start of the later one, in
 # order. Both files end in a newline, which is checked first, so a whole-line
@@ -1485,6 +1515,8 @@ classify_stubs() {
     v=1
     while [ "$v" -le "$nv" ]; do
       ends_with_newline "$SNAP_DIR/ver.$v" || { reason="stub rewritten, because one committed version does not end in a newline"; break; }
+      # Before the lines are read, because reading is where the byte is lost.
+      has_nul "$SNAP_DIR/ver.$v" && { reason="stub rewritten, because a committed version holds a NUL byte, which the hook never writes and which bash drops on reading, so the text after it would ride along on the line before"; break; }
       if [ "$v" -gt 1 ]; then
         prev=$((v - 1))
         is_line_prefix "$SNAP_DIR/ver.$prev" "$SNAP_DIR/ver.$v" \

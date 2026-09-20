@@ -6419,8 +6419,31 @@ ret_hook "$RD" prose "${RET_DATE[90]}"
 printf 'my own notes about this session\n' >> "$rd_stub-prose.md"
 ret_hook "$RD" rewritten "${RET_DATE[90]}"
 printf 'kept this\n' >> "$rd_stub-rewritten.md"
+ret_hook "$RD" nul "${RET_DATE[90]}"
+# A NUL spliced into the last entry line with prose after it. bash drops the
+# byte on reading rather than ending the line there, so the prose is glued onto
+# the end of transcript= and the line still satisfies stub_entry_ok, whose
+# fields are two spaces apart and which sees no two spaces in the tail. Without
+# the guard this file passes for one the hook wrote and is archived.
+# sed rather than head -n -1, because BSD head takes no negative count and this
+# fixture is built on macOS too.
+sed '$d' "$rd_stub-nul.md" > "$rd_stub-nul.tmp" 2>/dev/null
+tail -n 1 "$rd_stub-nul.md" | tr -d '\n' >> "$rd_stub-nul.tmp"
+printf '\000' >> "$rd_stub-nul.tmp"
+printf 'smuggled single spaced prose\n' >> "$rd_stub-nul.tmp"
+mv -f "$rd_stub-nul.tmp" "$rd_stub-nul.md"
+# Whether the fixture carries the byte is a question about the fixture, so it
+# is answered here rather than after the pass has run. Asking afterwards reads
+# the work tree, and a stub that was wrongly archived is no longer in the work
+# tree, so the guard reported that the fixture had lost the byte when what had
+# actually happened was the defect firing. A mutation run said exactly that.
+rd_nb="$(LC_ALL=C wc -c < "$rd_stub-nul.md" 2>/dev/null | tr -d ' ')"
+rd_nz="$(LC_ALL=C tr -d '\000' < "$rd_stub-nul.md" 2>/dev/null | LC_ALL=C wc -c | tr -d ' ')"
+rd_nul_planted=0
+[ -n "$rd_nb" ] && [ -n "$rd_nz" ] && [ "$rd_nb" != "$rd_nz" ] && rd_nul_planted=1
 ret_git "$RD" -c core.autocrlf=false add -- "20-projects/_logs/compaction-capped.md" "20-projects/_logs/compaction-crlf.md" \
-  "20-projects/_logs/compaction-prose.md" "20-projects/_logs/compaction-rewritten.md" >/dev/null 2>&1
+  "20-projects/_logs/compaction-prose.md" "20-projects/_logs/compaction-rewritten.md" \
+  "20-projects/_logs/compaction-nul.md" >/dev/null 2>&1
 rd_unknown="$(ls "$RD/20-projects/_logs/" | grep '^compaction-unknown' | head -n 1)"
 [ -n "$rd_unknown" ] && ret_git "$RD" add -- "20-projects/_logs/$rd_unknown" >/dev/null 2>&1
 ret_git "$RD" -c core.autocrlf=false commit -q -m "more stubs" >/dev/null 2>&1
@@ -6433,7 +6456,7 @@ rd_bad=''
 for rd_n in old capped crlf; do
   ret_moved "$RD" "compaction-$rd_n.md" || rd_bad="$rd_bad not-moved:$rd_n"
 done
-for rd_n in active prose rewritten untracked; do
+for rd_n in active prose rewritten untracked nul; do
   ret_stayed "$RD" "compaction-$rd_n.md" || rd_bad="$rd_bad moved:$rd_n"
 done
 [ -z "$rd_unknown" ] || ret_stayed "$RD" "$rd_unknown" || rd_bad="$rd_bad moved:unknown"
@@ -6457,6 +6480,22 @@ else
 fi
 ret_says "$RD" "REFUSED: 20-projects/_logs/compaction-prose.md (not the hook's stub" || rd_bad="$rd_bad reason:prose"
 ret_says "$RD" "REFUSED: 20-projects/_logs/compaction-rewritten.md (stub rewritten" || rd_bad="$rd_bad reason:rewritten"
+# The NUL stub, asserted on its reason rather than on the file having stayed.
+# Staying is satisfied by any refusal at all, and the whole point is that this
+# file is refused for holding the byte rather than for looking edited.
+#
+# Guarded on the fixture having carried the byte, measured before the pass ran
+# rather than now. A filesystem or a git filter that dropped it would leave an
+# ordinary well-formed stub, and an ordinary stub is archived, so that case is
+# caught by the moved:nul assertion above and this one says out loud that it
+# could not ask.
+if [ "$rd_nul_planted" -eq 1 ]; then
+  ran stub-nul-refused
+  ret_says "$RD" "REFUSED: 20-projects/_logs/compaction-nul.md (stub rewritten, because a committed version holds a NUL byte" \
+    || rd_bad="$rd_bad reason:nul"
+else
+  skip stub-nul-refused 'a committed stub version holding a NUL byte: the byte did not survive into the fixture, so the question cannot be asked here'
+fi
 [ "$(ret_evaluated "$RD")" -gt 0 ] 2>/dev/null || rd_bad="$rd_bad evaluated-none($(ret_evaluated "$RD"))"
 if [ -z "$rd_bad" ]; then
   ok "stubs the hook wrote and nobody changed are archived by their last entry, and edited, rewritten, recent or untracked ones stay"
