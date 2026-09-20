@@ -6524,13 +6524,30 @@ fi
 # out, and this asks for the contract both defences exist for rather than for
 # either of them, because the locale a scheduler hands the runner is not
 # something any of these jobs models.
-if locale -a 2>/dev/null | LC_ALL=C grep -qi '^c\.utf-*8$'; then
+#
+# The locale is probed for rather than named, and the probe is the vacuity
+# guard. This used to ask for C.UTF-8, which collates in codepoint order by
+# design, so the very pattern the defect lived in behaves correctly there and
+# the control passed against the original buggy code as happily as against the
+# fixed one. What is needed is a locale where a range really does pick up the
+# upper case, and the way to know is to ask it.
+#
+# A locale that is not installed makes bash fall back to C, where the test
+# below exits 1, so an absent candidate filters itself out.
+rl_loc=''
+for rl_cand in en_US.UTF-8 en_GB.UTF-8 de_DE.UTF-8 fr_FR.UTF-8 en_US.utf8 de_DE.utf8; do
+  if LC_ALL="$rl_cand" bash -c 'case PM in *[!a-z0-9]*) exit 1 ;; *) exit 0 ;; esac' 2>/dev/null; then
+    rl_loc="$rl_cand"
+    break
+  fi
+done
+if [ -n "$rl_loc" ]; then
   RL="$(ret_copy locale-ranges)"
   ret_journal "$RL" "dream-${RET_DATE[90]}.md" "tier: medium"
   ret_journal "$RL" "dream-${RET_DATE[99]}-PM.md" "tier: medium"
   ret_dream_commit "$RL" "dream-${RET_DATE[90]}.md" "dream-${RET_DATE[99]}-PM.md"
   rl_bad=''
-  rl_rc="$(RET_LC=C.UTF-8 ret_run "$RL" --dry-run)"
+  rl_rc="$(RET_LC="$rl_loc" ret_run "$RL" --dry-run)"
   [ "$rl_rc" = 0 ] || rl_bad="$rl_bad rc:$rl_rc"
   # The suffix test, which fails towards archiving when a range picks up the
   # upper case.
@@ -6538,14 +6555,16 @@ if locale -a 2>/dev/null | LC_ALL=C grep -qi '^c\.utf-*8$'; then
     || rl_bad="$rl_bad suffix-accepted"
   # The index flag test, where the same cause refuses every candidate instead.
   ret_says "$RL" "index flag" && rl_bad="$rl_bad everything-index-flagged"
+  ran locale-collation-verdicts
   if [ -z "$rl_bad" ]; then
-    ran "retention verdicts under a UTF-8 locale"
-    ok "the runner reaches the same verdicts under a locale whose collating order is not byte order"
+    ok "the runner reaches the same verdicts under $rl_loc, where a range does pick up the upper case"
   else
-    bad "a UTF-8 locale changed the runner's verdicts --$rl_bad rc $rl_rc log: [$(tr '\n' '|' < "$(ret_log "$RL")" 2>/dev/null | cut -c1-500)]"
+    bad "the locale $rl_loc changed the runner's verdicts --$rl_bad rc $rl_rc log: [$(tr '\n' '|' < "$(ret_log "$RL")" 2>/dev/null | cut -c1-500)]"
   fi
 else
-  skip "C.UTF-8" "retention verdicts under a UTF-8 locale"
+  # The same id as the ran above. This used to skip under the locale's name,
+  # so the two never matched and no job could require either.
+  skip locale-collation-verdicts 'the verdicts under a collating locale: no installed locale makes a range pick up the upper case, so the question cannot be asked here'
 fi
 
 # --- a stub the runner archived, then written again by the hook ---
@@ -7387,12 +7406,16 @@ collation_hits() {  # collation_hits <file> - prints file:line for each range
 # of the grep -P defect this whole suite was built around.
 cr_probe="$TMP/collation-probe.sh"
 printf 'case "$n" in\n  *[!a-z0-9]*) return 1 ;;\nesac\n' > "$cr_probe"
+ran collating-range-probe
 if [ -n "$(collation_hits "$cr_probe")" ]; then
   ok "the collating-range scan finds a known-bad shell case pattern"
 else
   bad "the collating-range scan read a known-bad pattern and said nothing, so its silence about the shipped scripts means nothing"
 fi
-cr_files=".claude/scripts/vault-retention.sh .claude/scripts/vault-check.sh .claude/scripts/dream-pass.sh .claude/scripts/promotion-pass.sh .claude/scripts/lib/runner-common.sh .claude/hooks/vault-lint.sh .claude/hooks/read-guard.sh .claude/hooks/postcompact-wrap-up.sh .claude/hooks/instructions-loaded-log.sh"
+# The commit gate is shell too, and was not in this list. It is the one piece
+# that decides whether a violating note reaches history, so a range reading
+# differently there is worth the same scan as the runners get.
+cr_files=".claude/scripts/vault-retention.sh .claude/scripts/vault-check.sh .claude/scripts/dream-pass.sh .claude/scripts/promotion-pass.sh .claude/scripts/lib/runner-common.sh .claude/hooks/vault-lint.sh .claude/hooks/read-guard.sh .claude/hooks/postcompact-wrap-up.sh .claude/hooks/instructions-loaded-log.sh .claude/githooks/pre-commit"
 cr_found=''
 cr_missing=''
 cr_seen=0
@@ -7405,6 +7428,7 @@ for cr_f in $cr_files; do
     cr_missing="$cr_missing $cr_f"
   fi
 done
+ran collating-range-scan
 if [ -n "$cr_missing" ]; then
   bad "the collating-range scan could not read --$cr_missing"
 elif [ "$cr_seen" -eq 0 ]; then
