@@ -6534,6 +6534,16 @@ fi
 #
 # A locale that is not installed makes bash fall back to C, where the test
 # below exits 1, so an absent candidate filters itself out.
+#
+# Installing one is not the fix it looks like, which was learned by doing it.
+# bash 5 sets globasciiranges by default and that holds range expressions to
+# ASCII whatever the locale says, so on any bash 5 the probe fails for every
+# candidate and generating a locale changes nothing. Measured in CI run
+# 35491897527, where locale-gen reported en_US.UTF-8 done and the control
+# skipped regardless. The two macOS jobs can ask the question only because
+# macOS ships bash 3.2 as /bin/bash and the option did not exist yet. So the
+# exposure this control covers is the old shell, which is also the one the
+# project supports and the one a range in a case pattern can still bite.
 rl_loc=''
 for rl_cand in en_US.UTF-8 en_GB.UTF-8 de_DE.UTF-8 fr_FR.UTF-8 en_US.utf8 de_DE.utf8; do
   if LC_ALL="$rl_cand" bash -c 'case PM in *[!a-z0-9]*) exit 1 ;; *) exit 0 ;; esac' 2>/dev/null; then
@@ -6564,7 +6574,18 @@ if [ -n "$rl_loc" ]; then
 else
   # The same id as the ran above. This used to skip under the locale's name,
   # so the two never matched and no job could require either.
-  skip locale-collation-verdicts 'the verdicts under a collating locale: no installed locale makes a range pick up the upper case, so the question cannot be asked here'
+  #
+  # Two different reasons arrive here and they want opposite responses, so the
+  # skip says which one it is. Installing a locale answers the first and can do
+  # nothing at all about the second, and reporting the second as the first is
+  # what sent one round of this work off to generate a locale that changed no
+  # outcome.
+  if shopt -q globasciiranges 2>/dev/null; then
+    rl_why='this bash holds range expressions to ASCII through globasciiranges, which it sets by default, so no locale can move them and installing one does not help'
+  else
+    rl_why='no installed locale makes a range pick up the upper case'
+  fi
+  skip locale-collation-verdicts "the verdicts under a collating locale: $rl_why, so the question cannot be asked here"
 fi
 
 # --- a stub the runner archived, then written again by the hook ---
