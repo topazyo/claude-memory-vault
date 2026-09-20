@@ -807,7 +807,22 @@ INFLIGHT_REL=".claude/logs/runner-inflight"
 steering_filter() {
   # Every test is a plain anchored pattern: the BWK awk that macOS ships does not
   # reliably treat $ or ^ as anchors inside an alternation group.
-  awk '
+  #
+  # LC_ALL=C, and it is load bearing rather than tidiness. Every name below is
+  # compared as a literal after tolower, and tolower folds in whatever locale
+  # the ambient session happens to have. Under tr_TR.UTF-8 or az_AZ.UTF-8 a
+  # capital I folds to a dotless i, so tolower("GEMINI.md") is gemini.md with
+  # the dot missing, the literal test fails, and a planted steering file is
+  # reported by the fence and then left in place to load into the next session
+  # as instructions. Measured on 2026-09-20 against this function: under that
+  # locale GEMINI.md was not contained while CLAUDE.md and AGENTS.md were,
+  # because only a name holding a capital I folds wrong.
+  #
+  # Pinning here rather than in the runners, because this is a containment
+  # decision and it has to hold however it is reached. The retention runner
+  # never calls this function at all, so a pin in the two passes that do call
+  # it would leave anyone checking the third with the wrong answer.
+  LC_ALL=C awk '
     function steer(lp, islink) {
       if (lp == ".runner-line-break-names") return 1
       if (lp == ".claude/logs" || lp ~ /^\.claude\/logs\//) return 0
