@@ -1792,6 +1792,46 @@ if grep -q 'runner-tmp\.-_\.~x!' "$rl/vault.snap" 2>/dev/null && ! grep -q 'runn
 else
   bad "the fence listing and the steering filter disagree on run-log temporary names -- listed: [$(grep -i 'runner-tmp' "$rl/vault.snap" 2>/dev/null | tr '\n' '|')], steering: [$(printf '%s' "$rl_case" | tr '\n' '|')]"
 fi
+# A steering file is still recognised under a locale that folds case its own
+# way. steering_filter compares every name as a literal after tolower, and
+# tolower folds in the ambient locale, so under tr_TR.UTF-8 or az_AZ.UTF-8 a
+# capital I becomes a dotless i and GEMINI.md stops matching gemini.md. The
+# file is then reported by the fence and left in place, to load into the next
+# session as instructions, which is a containment control failing open.
+#
+# The locale is probed for rather than named, and the probe is the vacuity
+# guard. Naming one would pass wherever it is missing, since an absent locale
+# falls back to C and C folds the way the test wants.
+#
+# CLAUDE.md and AGENTS.md go through with it as the negative control. Neither
+# holds a capital I, so both survive the bad fold, and a control asserting only
+# that something came back would pass against the defect.
+sf_loc=''
+for sf_cand in tr_TR.UTF-8 az_AZ.UTF-8 tr_TR.utf8 az_AZ.utf8; do
+  if LC_ALL="$sf_cand" awk 'BEGIN { exit (tolower("I") == "i") }' 2>/dev/null; then
+    sf_loc="$sf_cand"
+    break
+  fi
+done
+if [ -n "$sf_loc" ]; then
+  sf_out="$( . "$RV/.claude/scripts/lib/runner-common.sh"
+    export LC_ALL="$sf_loc"
+    printf 'GEMINI.md\nCLAUDE.md\nAGENTS.md\n20-projects/_logs/ordinary.md\n' | steering_filter )"
+  sf_bad=''
+  for sf_want in GEMINI.md CLAUDE.md AGENTS.md; do
+    printf '%s\n' "$sf_out" | grep -qxF "$sf_want" || sf_bad="$sf_bad missed:$sf_want"
+  done
+  printf '%s\n' "$sf_out" | grep -qxF '20-projects/_logs/ordinary.md' && sf_bad="$sf_bad swept-an-ordinary-note"
+  ran steering-locale-fold
+  if [ -z "$sf_bad" ]; then
+    ok "a steering file is recognised under $sf_loc, where tolower folds a capital I to a dotless one"
+  else
+    bad "the steering filter folds case by locale --$sf_bad under $sf_loc, returned: [$(printf '%s' "$sf_out" | tr '\n' '|')]"
+  fi
+else
+  skip steering-locale-fold 'a steering file under a locale that folds I to a dotless i: no installed locale makes this awk fold a capital I differently, so the question cannot be asked here'
+fi
+
 # The run log keeps the mode it had, and a new one gets the umask's mode.
 rm -rf "$rl/logs" "$rl/log"
 mkdir -p "$rl/logs"
