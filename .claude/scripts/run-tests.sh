@@ -6378,15 +6378,23 @@ mkdir -p "$AI/99-archive/20-projects/_logs"
 printf 'a different note that happens to carry the same name\n' > "$AI/99-archive/20-projects/_logs/dream-${RET_DATE[90]}.md"
 ret_git "$AI" add -- "99-archive/20-projects/_logs/dream-${RET_DATE[90]}.md" >/dev/null 2>&1
 rm -f "$AI/99-archive/20-projects/_logs/dream-${RET_DATE[90]}.md"
+# Both halves of "is this really the case it claims to be" are measured here,
+# before the pass runs, and remembered. Asking afterwards reads a world the
+# runner has changed: when the index test is missing the journal is archived to
+# exactly this path, so the destination is on disk again and the guard blames
+# the fixture for the defect firing. A mutation run said precisely that, and it
+# is the second time this shape has been written in this suite.
 ai_staged=0
+ai_ondisk=0
 ret_git "$AI" ls-files -- "99-archive/20-projects/_logs/dream-${RET_DATE[90]}.md" 2>/dev/null | grep -q . && ai_staged=1
+[ -e "$AI/99-archive/20-projects/_logs/dream-${RET_DATE[90]}.md" ] && ai_ondisk=1
 ai_rc="$(ret_run "$AI")"
 ai_bad=''
 # The fixture is only the case it claims to be while the name really is in the
 # index and really is off the disk. Either half slipping turns this into one of
 # the collision cases that were already covered.
 [ "$ai_staged" = 1 ] || ai_bad="$ai_bad not-staged"
-[ -e "$AI/99-archive/20-projects/_logs/dream-${RET_DATE[90]}.md" ] && ai_bad="$ai_bad on-disk"
+[ "$ai_ondisk" = 0 ] || ai_bad="$ai_bad was-on-disk"
 [ "$ai_rc" = 0 ] || ai_bad="$ai_bad rc:$ai_rc"
 ret_says "$AI" "REFUSED: 20-projects/_logs/dream-${RET_DATE[90]}.md (destination exists" || ai_bad="$ai_bad no-reason"
 ret_stayed "$AI" "dream-${RET_DATE[90]}.md" || ai_bad="$ai_bad moved"
