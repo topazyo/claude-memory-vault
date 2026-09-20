@@ -6432,6 +6432,15 @@ tail -n 1 "$rd_stub-nul.md" | tr -d '\n' >> "$rd_stub-nul.tmp"
 printf '\000' >> "$rd_stub-nul.tmp"
 printf 'smuggled single spaced prose\n' >> "$rd_stub-nul.tmp"
 mv -f "$rd_stub-nul.tmp" "$rd_stub-nul.md"
+# Whether the fixture carries the byte is a question about the fixture, so it
+# is answered here rather than after the pass has run. Asking afterwards reads
+# the work tree, and a stub that was wrongly archived is no longer in the work
+# tree, so the guard reported that the fixture had lost the byte when what had
+# actually happened was the defect firing. A mutation run said exactly that.
+rd_nb="$(LC_ALL=C wc -c < "$rd_stub-nul.md" 2>/dev/null | tr -d ' ')"
+rd_nz="$(LC_ALL=C tr -d '\000' < "$rd_stub-nul.md" 2>/dev/null | LC_ALL=C wc -c | tr -d ' ')"
+rd_nul_planted=0
+[ -n "$rd_nb" ] && [ -n "$rd_nz" ] && [ "$rd_nb" != "$rd_nz" ] && rd_nul_planted=1
 ret_git "$RD" -c core.autocrlf=false add -- "20-projects/_logs/compaction-capped.md" "20-projects/_logs/compaction-crlf.md" \
   "20-projects/_logs/compaction-prose.md" "20-projects/_logs/compaction-rewritten.md" \
   "20-projects/_logs/compaction-nul.md" >/dev/null 2>&1
@@ -6475,18 +6484,17 @@ ret_says "$RD" "REFUSED: 20-projects/_logs/compaction-rewritten.md (stub rewritt
 # Staying is satisfied by any refusal at all, and the whole point is that this
 # file is refused for holding the byte rather than for looking edited.
 #
-# Guarded on the fixture still carrying the byte. A filesystem or a git filter
-# that dropped it would leave an ordinary well-formed stub, and an ordinary
-# stub is archived, so that case is caught by the moved:nul assertion above and
-# this one says out loud that it could not ask.
-rd_nb="$(LC_ALL=C wc -c < "$rd_stub-nul.md" 2>/dev/null | tr -d ' ')"
-rd_nz="$(LC_ALL=C tr -d '\000' < "$rd_stub-nul.md" 2>/dev/null | LC_ALL=C wc -c | tr -d ' ')"
-if [ -n "$rd_nb" ] && [ -n "$rd_nz" ] && [ "$rd_nb" != "$rd_nz" ]; then
+# Guarded on the fixture having carried the byte, measured before the pass ran
+# rather than now. A filesystem or a git filter that dropped it would leave an
+# ordinary well-formed stub, and an ordinary stub is archived, so that case is
+# caught by the moved:nul assertion above and this one says out loud that it
+# could not ask.
+if [ "$rd_nul_planted" -eq 1 ]; then
   ran stub-nul-refused
   ret_says "$RD" "REFUSED: 20-projects/_logs/compaction-nul.md (stub rewritten, because a committed version holds a NUL byte" \
     || rd_bad="$rd_bad reason:nul"
 else
-  skip stub-nul-refused 'a committed stub version holding a NUL byte: the fixture no longer carries the byte, so the question cannot be asked here'
+  skip stub-nul-refused 'a committed stub version holding a NUL byte: the byte did not survive into the fixture, so the question cannot be asked here'
 fi
 [ "$(ret_evaluated "$RD")" -gt 0 ] 2>/dev/null || rd_bad="$rd_bad evaluated-none($(ret_evaluated "$RD"))"
 if [ -z "$rd_bad" ]; then
