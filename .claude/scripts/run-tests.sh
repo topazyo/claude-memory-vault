@@ -6354,6 +6354,48 @@ else
   bad "the keep rule or the cap is wrong --$rb_bad log: [$(tr '\n' '|' < "$(ret_log "$RB")" 2>/dev/null | cut -c1-900)]"
 fi
 
+# --- a journal older than the trailers, edited by hand after they began ---
+# The branch that sends such a journal to LEGACY puts its question to the
+# commit that added the file, not to the newest one to touch it. Asking the
+# newest refuses it as though a sync plugin had raced the runner, and a refusal
+# takes it out of LEGACY and so beyond --adopt-legacy for good, which is a
+# permanent exclusion rather than a postponement.
+#
+# Nothing covered that. Every legacy journal in the other fixtures is committed
+# once and never touched again, so the commit that added it is also the newest
+# one and both readings agree. This is the vault where they differ, and the
+# verdict is the only place they can be told apart.
+CE="$(ret_copy legacy-edited)"
+ret_journal "$CE" "dream-${RET_DATE[100]}.md" "tier: medium"
+ret_human_commit "$CE" "a journal from before any pass ran" "20-projects/_logs/dream-${RET_DATE[100]}.md" >/dev/null 2>&1
+# Eight recent dates carrying the first trailer this vault has seen. They do
+# two jobs: they fix the point the runners began, and they fill the newest
+# eight so that the old journal is held back by nothing but its own verdict.
+ce_batch=""
+for ce_i in 2 3 4 5 6 7 8 9; do
+  ret_journal "$CE" "dream-${RET_DATE[$ce_i]}.md" "tier: medium"
+  ce_batch="$ce_batch dream-${RET_DATE[$ce_i]}.md"
+done
+# shellcheck disable=SC2086
+ret_dream_commit "$CE" $ce_batch
+# The hand edit, after the trailers began. This is what moves the newest commit
+# past the first trailer while the adding commit stays before it.
+printf 'a line somebody added years later\n' >> "$CE/20-projects/_logs/dream-${RET_DATE[100]}.md"
+ret_human_commit "$CE" "tidying an old journal" "20-projects/_logs/dream-${RET_DATE[100]}.md" >/dev/null 2>&1
+ce_rc="$(ret_run "$CE" --dry-run)"
+ce_bad=''
+[ "$ce_rc" = 0 ] || ce_bad="$ce_bad rc:$ce_rc"
+# Both halves, because the exit code is 0 either way. A refusal is an ordinary
+# outcome for this runner, so only the verdict says which commit was asked.
+ret_says "$CE" "LEGACY: 20-projects/_logs/dream-${RET_DATE[100]}.md" || ce_bad="$ce_bad not-legacy"
+ret_says "$CE" "added after the runners began" && ce_bad="$ce_bad refused-as-raced"
+ran legacy-asks-the-adding-commit
+if [ -z "$ce_bad" ]; then
+  ok "a journal added before the trailers and edited by hand afterwards is still legacy, because the question goes to the commit that added it"
+else
+  bad "the legacy test asked the wrong commit --$ce_bad log: [$(tr '\n' '|' < "$(ret_log "$CE")" 2>/dev/null | cut -c1-500)]"
+fi
+
 # --- adopting journals from before the runner trailers ---
 RC="$(ret_copy legacy)"
 ret_journal "$RC" "dream-${RET_DATE[80]}.md" "tier: medium"
