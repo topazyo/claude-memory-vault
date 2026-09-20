@@ -2433,7 +2433,23 @@ verify_moves() {
     [ "$(idx_blob "${SRCS[$k]}")" = - ] || ok=0
     k=$((k + 1))
   done
-  rgit diff --quiet -- "${DSTS[@]}" 2>/dev/null || ok=0
+  # The only git call in the run that reads the work tree without the watchdog,
+  # and the work tree is the part that can stall. A slow or wedged file system
+  # here held the whole pass with nothing in the log to say where it stopped,
+  # while every other call that could hang was already watched.
+  #
+  # The status is read in two parts rather than one. watched_git answers yes
+  # only when git exited 0 in time, and diff --quiet exits 1 when it found a
+  # difference, which is an answer and not a failure. Folding them together
+  # would report a watchdog timeout as the work tree disagreeing with the
+  # index, which tells the owner a thing nobody established. Those two want
+  # different words, in the same way the runner's own exit codes do.
+  watched_git "$SNAP_DIR/vmdiff.out" /dev/null diff --quiet -- "${DSTS[@]}"
+  if [ "$RUN_TIMED_OUT" -ne 0 ]; then
+    say "PARTIAL: the check that the moved files match the index did not finish in time, so whether they match is unknown and the vault is being put back."
+    return 1
+  fi
+  [ "$RUN_RC" -eq 0 ] || ok=0
   [ "$ok" -eq 1 ] && return 0
   say "PARTIAL: after the move the index does not hold what was judged, so the vault is being put back."
   return 1

@@ -6702,7 +6702,7 @@ cat > "$RET/fake-git/git" <<'GIT_EOF'
 # counts of each subcommand are kept beside RET_GIT_COUNT.
 sub=""
 for a in "$@"; do
-  case "$a" in mv|commit|cat-file|ls-files) sub="$a"; break ;; esac
+  case "$a" in mv|commit|cat-file|ls-files|diff) sub="$a"; break ;; esac
 done
 n=0
 if [ -n "$sub" ]; then
@@ -6737,6 +6737,12 @@ case "${RET_GIT_MODE:-}:$sub:$n" in
     echo "fatal: Unable to create '.git/index.lock': File exists." >&2
     exit 128 ;;
   mv-slow:mv:1) : > "$RET_GIT_MARK"; sleep 20; exec "$RET_REAL_GIT" "$@" ;;
+  # A work-tree read that stalls. verify_moves asks git to compare the moved
+  # files against the index, and that is the one question in the run that
+  # touches the work tree, which is the part of a machine that hangs. The moves
+  # are already staged by the time it is asked, so the run reaches it on its
+  # own without the mode having to arrange anything earlier.
+  verify-slow:diff:*) sleep 20; exec "$RET_REAL_GIT" "$@" ;;
   # Commits a file of its own the moment the moves are staged, which is before
   # do_commit builds its index.
   #
@@ -6894,6 +6900,36 @@ if [ "$re2_rc" = 0 ] && ret_moved "$RET/moves-mid-run" "$RE_J1" && [ "$re2_mid" 
   ok "a commit that landed while the run was moving is still whole after the run commits its own work on top"
 else
   bad "the archiving commit reverted a commit that landed during the run -- rc $re2_rc midrun-survived:$re2_mid log: [$(tr '\n' '|' < "$(ret_log "$RET/moves-mid-run")" 2>/dev/null | cut -c1-400)]"
+fi
+
+# The work-tree check verify_moves makes is under the watchdog, and a stall in
+# it is reported as not knowing rather than as a mismatch.
+#
+# This was the last git call in the run that read the work tree without the
+# watchdog, while every other call that could hang was already watched. A
+# stalled file system there held the whole pass with nothing in the log saying
+# where it stopped.
+#
+# Two assertions, because the exit code alone does not separate the fix from
+# its absence in the way that matters. Reverting the watchdog leaves the run
+# waiting out the stall and then succeeding, so rc 3 with the journals put back
+# is what the watchdog buys. The message is asserted as well, because folding
+# a timeout into the existing mismatch line would tell the owner the work tree
+# disagreed with the index when nothing had been compared, and rc 3 is the same
+# either way.
+rv_rc="$(ret_case moves-verify-slow verify-slow RET_GIT_TIMEOUT=3)"
+rv_bad=''
+[ "$rv_rc" = 3 ] || rv_bad="$rv_bad rc:$rv_rc"
+ret_case_check "$RET/moves-verify-slow" stayed || rv_bad="$rv_bad not-put-back"
+ret_says "$RET/moves-verify-slow" "PARTIAL: the check that the moved files match the index did not finish in time" \
+  || rv_bad="$rv_bad reason"
+ret_says "$RET/moves-verify-slow" "after the move the index does not hold what was judged" \
+  && rv_bad="$rv_bad reported-as-mismatch"
+ran verify-diff-watchdog
+if [ -z "$rv_bad" ]; then
+  ok "a stalled work-tree check is stopped by the watchdog, and the run says the match is unknown rather than wrong"
+else
+  bad "the stalled work-tree check was mishandled --$rv_bad log: [$(tr '\n' '|' < "$(ret_log "$RET/moves-verify-slow")" 2>/dev/null | cut -c1-500)]"
 fi
 
 # A commit that lands and then hangs is stopped, and never put back.
