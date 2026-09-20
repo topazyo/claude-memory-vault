@@ -1829,7 +1829,7 @@ if [ -n "$sf_loc" ]; then
     bad "the steering filter folds case by locale --$sf_bad under $sf_loc, returned: [$(printf '%s' "$sf_out" | tr '\n' '|')]"
   fi
 else
-  skip steering-locale-fold 'a steering file under a locale that folds I to a dotless i: no such locale is installed, so the question cannot be asked here'
+  skip steering-locale-fold 'a steering file under a locale that folds I to a dotless i: no installed locale makes this awk fold a capital I differently, so the question cannot be asked here'
 fi
 
 # The run log keeps the mode it had, and a new one gets the umask's mode.
