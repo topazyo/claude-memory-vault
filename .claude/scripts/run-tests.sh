@@ -7214,6 +7214,27 @@ fi
 # run looked, which made this the normal path rather than a corner of it.
 re_rc="$(ret_case moves-landed-later catfile-after-commit)"
 re_v="$RET/moves-landed-later"
+# What that first run said, asked here because the log is emptied three lines
+# down and the answer is gone after that.
+#
+# This mode makes every object question fail once the commit has landed, so the
+# run reaches the branch where the commit was made and HEAD could not be
+# confirmed to hold it. head_holds_moves answers false for that and for a HEAD
+# that genuinely disagrees, and the line used to say the second whichever had
+# happened, which tells the owner to go looking for a disagreement that may not
+# exist. The exit code is 71 either way, so only the words can carry it, and
+# the control that already uses this fixture asserts the code alone.
+hu_bad=''
+ret_says "$re_v" "whether HEAD holds what was judged could not be established" \
+  || hu_bad="$hu_bad no-unknown-line"
+ret_says "$re_v" "but HEAD does not hold what was judged" \
+  && hu_bad="$hu_bad claimed-a-disagreement"
+ran head-holds-unknown
+if [ -z "$hu_bad" ]; then
+  ok "a commit whose moves could not be confirmed in HEAD is reported as not established, rather than as HEAD disagreeing"
+else
+  bad "the unconfirmed commit was reported as a disagreement --$hu_bad log: [$(tr '\n' '|' < "$(ret_log "$re_v")" 2>/dev/null | cut -c1-400)]"
+fi
 printf -- '---\ntier: short\ntype: daily\n---\n\nthe owner writes after the moves landed\n' > "$re_v/10-daily/day.md"
 ret_human_commit "$re_v" "a note of the owner's own, on top of the moves" "10-daily/day.md" >/dev/null 2>&1
 : > "$(ret_log "$re_v")"
