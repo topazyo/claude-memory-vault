@@ -6446,7 +6446,13 @@ for tp_i in 2 3 4 5 6 7 8 9; do
 done
 # shellcheck disable=SC2086
 ret_dream_commit "$TP" $tp_batch
-tp_rc="$(ret_run "$TP" --dry-run)"
+# A real run rather than a dry one. Under --dry-run nothing is ever moved, so
+# the assertion that the journal stayed cannot fail and reads as coverage while
+# catching nothing. The first mutation run showed exactly that, failing on the
+# reason alone while the stayed assertion sat there being true either way. A
+# real run also shows what the missing comparison costs, which is the journal
+# archived on the strength of trailers describing some other commit.
+tp_rc="$(ret_run "$TP")"
 tp_bad=''
 [ "$tp_nt" = 2 ] || tp_bad="$tp_bad trailers:$tp_nt"
 [ "$tp_nc" = 2 ] || tp_bad="$tp_bad changed:$tp_nc"
