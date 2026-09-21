@@ -102,6 +102,11 @@ RETENTION_NONCE=""
 # that reaches a tripwire goes through such a call, which means the marker was
 # not merely unread, it could never survive to be read.
 MV_REPORTED_OK=0
+# Set when head_holds_moves could not get an answer at all, as against getting
+# one that says no. Both come back as false, because the safe move is the same
+# either way, but they are not the same thing to tell the owner and only one of
+# them is a statement about the vault.
+HEAD_HOLDS_UNKNOWN=0
 # Archive folders this run made, deepest last, so a put-back can remove them.
 MADE_DIRS=""
 
@@ -2468,6 +2473,7 @@ verify_moves() {
 # source at all. Asked fresh rather than from the batch taken before the move.
 head_holds_moves() {
   local k=0 ok=1
+  HEAD_HOLDS_UNKNOWN=0
   # Both files are truncated, the way head_of_sources does it. Leaving the
   # answer map from a previous call is the asymmetry the next edit trips on.
   : > "$SNAP_DIR/after"
@@ -2480,7 +2486,14 @@ head_holds_moves() {
   # watched_git rather than rgit, because rgit goes through safe_git, which
   # gives every command /dev/null for standard input. A batch question asked
   # that way is no question at all, and every answer comes back missing.
-  watched_git "$SNAP_DIR/after.out" "$SNAP_DIR/after.in" cat-file --batch-check || return 1
+  # A batch that could not be read answers nothing, and saying no on its behalf
+  # is a claim about the vault that nobody established. The return stays false,
+  # because the careful move is the same either way, and the caller that puts
+  # the answer into words is told which of the two it had.
+  if ! watched_git "$SNAP_DIR/after.out" "$SNAP_DIR/after.in" cat-file --batch-check; then
+    HEAD_HOLDS_UNKNOWN=1
+    return 1
+  fi
   # An answer that is present but is not a blob becomes ? rather than -, because
   # - is the word for absent and every caller tests it that way. A source path
   # HEAD holds as a tree would otherwise pass the test that no source is left
@@ -2631,7 +2644,16 @@ settle_outcome() {
       return 0
     fi
     write_recovery commit-mismatch
-    say "RECOVERY-NEEDED: the commit was made but HEAD does not hold what was judged, so it is left alone. $STATE/retention-inflight says what was being moved."
+    # Two different things to have found, and the same careful outcome. One
+    # says the vault disagrees with what was judged. The other says nobody got
+    # to ask, which is where a timed out or unreadable batch lands, and telling
+    # the owner the first when it was the second sends them looking for a
+    # disagreement that may not exist.
+    if [ "$HEAD_HOLDS_UNKNOWN" -eq 1 ]; then
+      say "RECOVERY-NEEDED: the commit was made and whether HEAD holds what was judged could not be established, so it is left alone. $STATE/retention-inflight says what was being moved."
+    else
+      say "RECOVERY-NEEDED: the commit was made but HEAD does not hold what was judged, so it is left alone. $STATE/retention-inflight says what was being moved."
+    fi
     MOVING=0
     return 71
   fi
