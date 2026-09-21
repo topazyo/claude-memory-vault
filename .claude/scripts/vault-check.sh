@@ -321,7 +321,11 @@ if [ "${#NAMED[@]}" -eq 0 ]; then
   if [ -f "$tmpl_manifest" ] && [ -r "$tmpl_manifest" ]; then
     tmpl_version="$(LC_ALL=C awk '{ sub(/\r$/, "") } $1 == "version" { print $2; exit }' "$tmpl_manifest")"
     if [ -n "$tmpl_version" ]; then
-      tmpl_line="This vault records template version $tmpl_version. Run vault-update.sh --status for what has changed since."
+      # Spelled as a command that runs. Every other command in this repository
+      # is written with its path, and three documents quote this line verbatim,
+      # so a bare script name would appear four times as something that gives
+      # "command not found" when it is pasted.
+      tmpl_line="This vault records template version $tmpl_version. Run bash .claude/scripts/vault-update.sh --status for what has changed since."
     else
       tmpl_line="$ROOT/.claude/template-manifest names no version, so which template version this vault came from is unknown."
     fi

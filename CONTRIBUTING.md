@@ -72,11 +72,23 @@ script committed from Windows lands as `100644`; fix it in the index with
 Two artifacts have to keep up, and CI fails when they do not.
 
 **`.claude/manifest-rules` decides what happens to every tracked file in somebody else's vault.**
-It has no catch-all rule on purpose, so a file matching none of them fails generation by name. Add
-a rule for whatever you add. The classes are `owned` (template machinery this project maintains),
-`seed` (shipped once, then the reader's — examples, scaffolds, Obsidian config) and `excluded`
-(belongs to this project rather than to a vault, such as the workflows and this file). The first
-matching rule wins, so specific rules go above general ones.
+It has no catch-all rule on purpose, so a file matching none of them fails generation by name.
+
+Most additions need no rule at all, because they already fall under a glob — a new page under
+`docs/` is covered by `owned docs/*`. Add a rule only when nothing above would catch your file, or
+when something above would catch it *wrongly*. The classes are `owned` (template machinery this
+project maintains), `seed` (shipped once, then the reader's — examples, scaffolds, Obsidian config)
+and `excluded` (belongs to this project rather than to a vault, such as the workflows and this file).
+
+**Match order beats the class blocks.** The file is grouped by class so it can be read, but the
+matcher takes the first line that matches. A rule that has to beat a broader one goes physically
+above it, even when that means leaving its own block. The four per-tier `templates/` rules sit above
+the tier `seed` rules for exactly that reason.
+
+One more thing if you add a file under a content tier that the template is meant to keep
+maintaining. The `machinery()` function inside `vault-update.sh` holds the same set as five exact
+strings, so that nothing a manifest says can widen it, and the two have to agree. The
+`tmpl-exempt-set-matches-the-tree` control fails when they do not.
 
 **`.claude/template-manifest` is generated from those rules, and goes stale the moment you edit a
 shipped file.** Regenerate it in the same commit:
@@ -86,12 +98,17 @@ VAULT_TEMPLATE_MAINTAINER=1 bash .claude/scripts/vault-update.sh --generate
 bash .claude/scripts/vault-update.sh --verify-manifest
 ```
 
-The environment variable is not ceremony. Run in somebody's vault, `--generate` takes that vault's
-notes in as template entries and restamps every hash from the current files, after which every
-file reads as untouched and the record of what they had changed is gone.
+The environment variable is not ceremony. Inside somebody's vault, `--generate` takes that vault's
+notes in as template entries and restamps every hash from the current files, after which every file
+reads as untouched and the record of what they had changed is gone.
 
 Expect a conflict in the hash lines when two pull requests touch the same file. Regenerate after
 merging rather than resolving the hashes by hand — a hand-edited hash is a claim nobody checked.
+
+The CI step that verifies the manifest is guarded to this repository, because "Use this template"
+copies the whole workflow into somebody's vault where their tree and the manifest diverge on their
+first note. So it runs on your **pull request**, where the base repository is this one, and it does
+**not** run on pushes to your own fork. Watching it skip there does not mean it is unenforced.
 
 ## Cutting a release
 
@@ -100,7 +117,10 @@ merging rather than resolving the hashes by hand — a hand-edited hash is a cla
    control suite fails a release without it. Say "nothing to do" in as many words when that is the
    answer, because a note nobody wrote and a release that needs nothing look identical otherwise.
 3. Regenerate the manifest, so its `version` header matches `VERSION`.
-4. Tag and publish a GitHub release. That release is the notification channel — downstream vaults
+4. Run `bash .claude/scripts/run-tests.sh`. `tmpl-version-agrees` fails a release whose three
+   statements of the version disagree, and `tmpl-changelog-adopting` fails one whose newest entry
+   carries no adopting note. Neither fires unless somebody runs the suite.
+5. Tag and publish a GitHub release. That release is the notification channel — downstream vaults
    find out by watching it, and nothing in this repository makes a network call.
 
 ## Changing the documentation

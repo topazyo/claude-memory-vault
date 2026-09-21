@@ -15,9 +15,10 @@
 # opposite direction from `.gitattributes`, where the last match wins and a
 # trailing catch-all silently overrides everything above it, which this
 # repository has already been bitten by. The direction here is the one a `case`
-# statement already has, which is what the matcher is, and `--generate` prints
-# the rule that classified each path so the mapping is never something a reader
-# has to work out.
+# statement already has, which is what the matcher is. A path's class is
+# whatever the first matching rule below says, and the generated manifest
+# records the class each path got, so read it back after generating to confirm
+# a new rule landed where you meant it to.
 #
 # THERE IS NO CATCH-ALL, on purpose. A file matching no rule fails generation
 # and fails CI, naming the path. That is the whole honesty mechanism: nobody can

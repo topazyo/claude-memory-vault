@@ -156,15 +156,15 @@ A passing run looks like this, with a **non-zero** file count (on the vault as s
 vault-check: 0 violation(s) across 9 file(s) checked (as of 2026-01-15).
 vault-check: 99-archive/ holds 0 note(s) on disk.
 vault-check: No retention pass is in this repository's history.
-vault-check: This vault records template version 1.0.0. Run vault-update.sh --status for what has changed since.
+vault-check: This vault records template version X.Y.Z. Run bash .claude/scripts/vault-update.sh --status for what has changed since.
 ```
 
 The three lines after the count report rather than judge, and none of them changes a count or the
-exit code. The last one names the template version this vault was created from, and says
-`No template provenance marker` when the vault has none. The second one names the last retention
-pass and how many notes it moved once one has run, and says
-the last pass is unknown when git cannot answer. Neither line changes the exit code. A scan
-narrowed with `--` prints only the count.
+exit code. The first says how many notes the retention pass has taken out of the live tiers. The
+second names the last retention pass and how many notes it moved once one has run, and says the last
+pass is unknown when git cannot answer. The third names the template version this vault was created
+from, and says `No template provenance marker` when the vault has none. A scan narrowed with `--`
+prints only the count.
 
 `0 violations across 0 files` is not a pass, and the script exits **2** with a `VACUOUS` message
 when it happens. It means the scan matched nothing — wrong working directory, a wrong
@@ -194,8 +194,10 @@ rather than matching its wording. A check that greps for the prefix `evaluated `
 `.claude/template-manifest`, under `--adopt` and `--generate`. It never replaces a hook, a rule, a
 doc or a note, it never reaches the network, and it never runs anything out of the folder it is
 pointed at. Adopting a change is a human act here, for the same reason resolving a contradiction
-between two notes is. **Never schedule it.** [`docs/updating.md`](docs/updating.md) is the whole
-explanation, including what it does not protect against.
+between two notes is. **Never schedule it**, because an adopter running unattended would be doing on
+a timer precisely what the runners' snapshot fence exists to catch.
+[`docs/updating.md`](docs/updating.md) is the whole explanation, including what it does not protect
+against.
 
 The dream and promotion passes run the `dream-agent` and `promotion-agent` definitions in
 `.claude/agents/`. The dream agent **proposes only**: its single write is one dated journal, and it

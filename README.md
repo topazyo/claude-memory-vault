@@ -557,8 +557,8 @@ never reaches the network, never runs anything out of that folder, and never ove
 you — it names what is safe to take and prints the copy commands for you to read first.
 
 ```bash
-git clone https://github.com/<owner>/claude-memory-vault.git /tmp/template-new
-bash .claude/scripts/vault-update.sh --check --from /tmp/template-new
+git clone https://github.com/<owner>/claude-memory-vault.git ../template-new
+bash .claude/scripts/vault-update.sh --check --from ../template-new
 ```
 
 [`docs/updating.md`](docs/updating.md) explains it fully, including what it does **not** protect

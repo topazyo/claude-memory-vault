@@ -440,13 +440,7 @@ rewrite.
 
 > **The merge route above and `vault-update.sh` are alternatives, not layers.** Running both
 > double-applies and leaves you resolving conflicts against files the other one already moved.
-> Take the merge route if you forked, keep your vault in git, and are comfortable with
-> `git mergetool`, because git does a real three-way merge and is genuinely better at merging.
-> Take `vault-update.sh` otherwise, which is most people: it is the only route that works when the
-> vault is not a git repository at all, and the only one that knows which files are the template's
-> and which are yours. `git merge template/main` will happily carry template changes into
-> `30-knowledge/moc/ARCH-INDEX.md`, a scaffold section 1 told you to rewrite, and conflict there
-> for no reason. [`updating.md`](updating.md) covers the choice and the tool.
+> [`updating.md` §4](updating.md) covers which to pick and why.
 
 **If you want to contribute changes back from the same working copy**, uncomment the note
 exclusion block already present in `.gitignore`:

@@ -3,10 +3,10 @@
 What has changed in this template, and what a vault made from it has to do about each change.
 
 Every entry carries an **Adopting this** note. That note is the only part of a release that can
-carry a *semantic* change, because `vault-update.sh` moves bytes and cannot know that your
-customized `TIERS=` line now needs a seventh entry. When a release needs nothing from you, the
-note says so in as many words, because "nothing to do" and "nobody wrote the note" look identical
-otherwise.
+carry a *semantic* change, because `vault-update.sh` moves bytes and cannot know that the `TIERS=`
+line you customized inside `vault-check.sh` (see [`docs/customizing.md` §2](docs/customizing.md))
+now needs a seventh entry. When a release needs nothing from you, the note says so in as many words,
+because "nothing to do" and "nobody wrote the note" look identical otherwise.
 
 **Apply the notes in release order.** A vault three releases behind applies three notes, oldest
 first. A note may undo something an earlier note asked for, and reading them out of order gives a
@@ -16,7 +16,9 @@ How to see where you stand, and what moved:
 
 ```bash
 bash .claude/scripts/vault-update.sh --status
-bash .claude/scripts/vault-update.sh --check --from ../claude-memory-vault
+# then fetch a newer copy yourself, and compare against it
+git clone https://github.com/<owner>/claude-memory-vault.git ../template-new
+bash .claude/scripts/vault-update.sh --check --from ../template-new
 ```
 
 [`docs/updating.md`](docs/updating.md) explains both, and says what they do not protect against.
@@ -53,14 +55,20 @@ earlier has no record of where it came from.
 
 **Nothing, if your vault was created from this version or later.** You already have the manifest.
 
-**If your vault predates this release**, it has no manifest, so `--status` cannot tell you
-anything. Record a baseline once:
+**If your vault predates this release**, it has no manifest, so `--status` cannot tell you anything.
+1.0.0 is the first version that ships one, so 1.0.0 is the only thing there is to adopt against.
+Fetch a copy yourself and record a baseline once:
 
 ```bash
-bash .claude/scripts/vault-update.sh --adopt --from ../claude-memory-vault
+git clone https://github.com/<owner>/claude-memory-vault.git ../template-new
+bash .claude/scripts/vault-update.sh --adopt --from ../template-new
 ```
 
 Read what it prints. Adopting records the template's hashes as your starting point, so **any
-template file you had already changed is recorded as though the template shipped it that way**,
-and it will read as untouched from then on. Adopt against the oldest release you might plausibly
-have started from, and treat the first `--check` report as a starting point rather than a verdict.
+template file you had already changed is recorded as though the template shipped it that way**, and
+it will read as untouched from then on. Nothing recovers that — the hashes were never written down.
+Treat the first `--check` report as a starting point rather than a verdict.
+
+From the next release onward the advice changes, because there will then be older releases to choose
+between: adopt against the oldest one you might plausibly have started from, so the tool
+over-reports what you changed rather than under-reporting it.
