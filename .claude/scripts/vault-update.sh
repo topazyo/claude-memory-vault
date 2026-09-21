@@ -94,39 +94,36 @@ HASH_PROBE_DIGEST="f67809800160c86cb48e4ff916b49e2a050d95689987373cfd9ba9797893b
 say()  { printf 'vault-update: %s\n' "$1"; }
 warn() { printf 'vault-update: %s\n' "$1" >&2; }
 
-# The top-level folders a manifest is never allowed to call template machinery,
-# whatever it says. The eight content tiers plus Obsidian's own configuration.
+# WHERE THIS TEMPLATE IS ALLOWED TO SHIP MACHINERY. Everything else a manifest
+# calls owned is forced back to the owner's, whatever the manifest says.
 #
-# The shipped names are compiled in and the names this vault actually uses are
-# read out of vault-check.sh's TIERS= line, and the two are UNIONED. A rename is
-# a documented customization here, and docs/customizing.md sends the renamer to
-# that line, so it is the one place in a vault where the current tier names are
-# written down in a form a script can read. Reading it rather than replacing the
-# compiled-in list keeps a vault that renamed nothing exactly as protected as it
-# was, and keeps a vault that renamed something protected under both names. A
-# vault-check.sh that cannot be read costs the extra names and nothing else,
-# which is why this does not refuse when it is missing.
-NARROW_ROOTS="01-inbox 10-daily 20-projects 30-knowledge 31-standards 40-llm-wiki 90-auto-memory 99-archive .obsidian"
-build_narrow_roots() {
-  local vc extra
-  vc="$(dirname "$0")/vault-check.sh"
-  [ -f "$vc" ] && [ -r "$vc" ] || return 0
-  # Everything outside the character set a folder name may hold is stripped
-  # rather than parsed, which takes the quotes off whichever way they were
-  # written and leaves a plain list of words.
-  extra="$(LC_ALL=C awk '
-    { sub(/\r$/, "") }
-    /^TIERS=/ {
-      line = $0
-      sub(/^TIERS=/, "", line)
-      gsub(/[^-A-Za-z0-9._ ]/, "", line)
-      print line
-      exit
-    }' "$vc" 2>/dev/null)"
-  [ -n "$extra" ] || return 0
-  NARROW_ROOTS="$(printf '%s %s' "$NARROW_ROOTS" "$extra" | LC_ALL=C tr 'A-Z' 'a-z')"
-}
-build_narrow_roots
+# This is an ALLOWLIST, and it replaced a denylist of the content tiers. The
+# denylist answered the wrong question. It asked where the owner's files live,
+# which is unbounded and unknowable, so everything outside the tier folders was
+# machinery by default and a source manifest could name any path the tiers did
+# not cover. The sharpest instance was .github/workflows/pwn.yml, which is not
+# under a tier, is not one of the owner's folders, and would have been printed
+# in the copy plan under "safe to take" - after which a paste installs a
+# workflow that runs unattended on GitHub's runners with that repository's
+# secrets. .claude/manifest-rules names that exact outcome as the reason those
+# paths are excluded, so the writer refused to generate them while the reader
+# accepted them, which is the same asymmetry path_is_writable_to_a_manifest was
+# added to close, one artefact along. .vscode/tasks.json and
+# .devcontainer/devcontainer.json are the same shape and both auto-execute.
+#
+# The question an allowlist asks instead is where the TEMPLATE may ship
+# machinery, which is short, knowable, and ours to state. A release that adds a
+# machinery root an older script has never heard of is narrowed by that older
+# script and warned about rather than offered, which is the fail-closed
+# direction, and the owner can still copy it by hand.
+#
+# It also makes the tier names irrelevant to this decision, so a vault that
+# renamed a tier is protected without the tool having to learn the new name.
+#
+# Compared with case folded, because Windows and macOS fold it for you when the
+# copy plan is pasted.
+MACHINERY_ROOTS=".agents/ .claude/ .codex/ .cursor/ .gemini/ .windsurf/ docs/ .github/hooks/"
+MACHINERY_FILES="agents.md changelog.md claude.md license version .aider.conf.yml .cursorignore .geminiignore .gitattributes .gitignore opencode.json"
 
 usage() {
   cat <<'USAGE'
@@ -141,7 +138,10 @@ vault-update.sh - which template version this vault carries, and what has moved.
                             mechanism existed. Writes only the manifest.
   --generate                Maintainer only. Rewrites the manifest from the
                             rules. Needs VAULT_TEMPLATE_MAINTAINER=1.
-  --verify-manifest         Fails when the manifest has drifted from the tree.
+  --verify-manifest         Maintainer only. Fails when the manifest has
+                            drifted from the tree. Needs
+                            VAULT_TEMPLATE_MAINTAINER=1, because it rebuilds
+                            from the whole tracked tree and so reads your notes.
   --help                    This text.
 
 Two environment variables, for when the hashing itself is the problem.
@@ -584,41 +584,41 @@ read_manifest() {
   local file="$1" tag="$2" out="$3" meta="$4"
   [ -f "$file" ] && [ -r "$file" ] || return 1
   : > "$meta"
-  LC_ALL=C awk -v tag="$tag" -v meta="$meta" -v tiers="$NARROW_ROOTS" '
-    # Compared after folding case, because Windows and macOS fold it for you
-    # when the copy plan is pasted. 31-Standards/evil.md would otherwise miss
-    # this list, stay template machinery, and land in the real folder.
+  LC_ALL=C awk -v tag="$tag" -v meta="$meta" -v roots="$MACHINERY_ROOTS" -v topfiles="$MACHINERY_FILES" '
+    # May this path be template machinery at all. Everything this answers no to
+    # is forced back to the owner and kept out of the copy plan, whatever class
+    # the manifest gave it. The list is compiled in, so an incoming manifest can
+    # only ever narrow what this treats as the template, never widen it.
     #
-    # The list arrives from the shell rather than being written out here,
-    # because the tier folder names are a customization point this repository
-    # invites people to use. docs/customizing.md says in as many words that they
-    # are independently hardcoded across many files and tells a renamer to edit
-    # the TIERS= line in vault-check.sh, so that line is where this reads them
-    # from as well. It is a UNION with the names this template ships, never a
-    # replacement, because this list decides what a manifest is NOT allowed to
-    # claim, and dropping a name from it could only ever widen that.
-    function tiered(p,   part, n, h) {
-      n = split(p, part, "/")
-      h = tolower(part[1])
-      return (index(" " tiers " ", " " h " ") > 0)
-    }
-    # THE EXEMPT SET IS FIVE FIXED STRINGS, matched exactly.
-    #
-    # It used to be a predicate over the incoming path, asking whether any
-    # component was called templates. That is a WIDENING test evaluated against
-    # text the other side chooses, and it was the hole: a manifest claiming
-    # 31-standards/templates/house-style.md passed it, was never narrowed, and
-    # was then printed under "safe to take" with a copy command for a folder
-    # every agent is told to mirror. Durable prompt injection into a trusted
-    # tier, through the one write path this design accepts.
-    #
-    # Five strings cannot be widened by anything a manifest says.
-    function machinery(p) {
-      return (p == "30-knowledge/moc/VAULT-INDEX.md" \
-           || p == "10-daily/templates/short-term-daily.md" \
-           || p == "20-projects/_logs/templates/medium-term-project-log.md" \
-           || p == "31-standards/templates/long-term-standard.md" \
-           || p == "40-llm-wiki/wiki/templates/llm-wiki-entity.md")
+    # Everything is compared with case folded, because Windows and macOS fold it
+    # for you when the copy plan is pasted, so 31-Standards/evil.md would
+    # otherwise miss a case-sensitive test and land in the real folder.
+    function may_be_machinery(p,   lp, i, nr, part, r) {
+      lp = tolower(p)
+      # THE FIVE EXACT PATHS the template ships as machinery inside a content
+      # tier, matched whole. These used to be a predicate asking whether any
+      # component was called templates, which is a WIDENING test evaluated
+      # against text the other side chooses, and it was a hole: a manifest
+      # claiming 31-standards/templates/house-style.md passed it and was then
+      # printed with a copy command for a folder every agent is told to mirror.
+      # Five strings cannot be widened by anything a manifest says, and a tier
+      # templates FOLDER is deliberately not a root below for the same reason.
+      if (lp == "30-knowledge/moc/vault-index.md" \
+       || lp == "10-daily/templates/short-term-daily.md" \
+       || lp == "20-projects/_logs/templates/medium-term-project-log.md" \
+       || lp == "31-standards/templates/long-term-standard.md" \
+       || lp == "40-llm-wiki/wiki/templates/llm-wiki-entity.md") return 1
+      # A top-level file the template ships, matched whole.
+      if (index(lp, "/") == 0) return (index(" " topfiles " ", " " lp " ") > 0)
+      # A path under a folder the template ships machinery in. The trailing
+      # slash is part of the token on both sides, so .github/hooks/ cannot be
+      # satisfied by .github/hooksomething/x.
+      nr = split(roots, part, " ")
+      for (i = 1; i <= nr; i++) {
+        r = tolower(part[i])
+        if (length(r) && substr(lp, 1, length(r)) == r) return 1
+      }
+      return 0
     }
     { sub(/\r$/, "") }
     /^#/ { next }
@@ -654,7 +654,7 @@ read_manifest() {
       # any component ending in a dot, because all three spell "./".
       if (path == "." || index(path, "./") > 0 || substr(path, length(path)) == ".") { print "escape " path >> meta; next }
       if (path ~ /[^-A-Za-z0-9._\/]/) { print "badchar " path >> meta; next }
-      if (cls == "owned" && tiered(path) && !machinery(path)) {
+      if (cls == "owned" && !may_be_machinery(path)) {
         print "narrowed " path >> meta
         cls = "seed"
       }
@@ -664,25 +664,45 @@ read_manifest() {
   return 0
 }
 
+# The first few of a list, and HOW MANY THERE WERE.
+#
+# Every one of these lists used to be `head -n 3`, which is fine until a source
+# manifest claims five hundred paths and the reader is told about three and
+# never told there were five hundred. This repository's whole reporting
+# doctrine is that a reader should be able to read the numbers, so a truncated
+# list that does not say it is truncated is the wrong shape for it.
+name_a_few() {  # name_a_few <list-file>
+  local n
+  n="$(awk 'END { print NR + 0 }' "$1")"
+  if [ "$n" -le 3 ]; then
+    tr '\n' ' ' < "$1"
+  else
+    printf '%s and %s more' "$(head -n 3 "$1" | tr '\n' ' ')" "$((n - 3))"
+  fi
+}
+
 load_manifest() {  # load_manifest <file> <tag> <out> <meta>
   local file="$1" tag="$2" out="$3" meta="$4" bad
   read_manifest "$file" "$tag" "$out" "$meta" || return 1
-  bad="$(LC_ALL=C awk '$1 == "escape" { print $2 }' "$meta" | head -n 3 | tr '\n' ' ')"
+  LC_ALL=C awk '$1 == "escape" { print $2 }' "$meta" > "$TMPD/lm.list"
+  bad="$(name_a_few "$TMPD/lm.list")"
   if [ -n "$bad" ]; then
     warn "PATH-BLOCKED - $file names a path that resolves outside the vault: $bad"
     warn "Nothing was compared. A manifest is only ever allowed to name paths inside the vault it describes."
     exit 6
   fi
-  bad="$(LC_ALL=C awk '$1 == "malformed" || $1 == "badclass" || $1 == "badhash" || $1 == "badchar" || $1 == "badversion" { print $1 "=" $2 }' "$meta" | head -n 3 | tr '\n' ' ')"
+  LC_ALL=C awk '$1 == "malformed" || $1 == "badclass" || $1 == "badhash" || $1 == "badchar" || $1 == "badversion" { print $1 "=" $2 }' "$meta" > "$TMPD/lm.list"
+  bad="$(name_a_few "$TMPD/lm.list")"
   if [ -n "$bad" ]; then
     warn "MANIFEST-MALFORMED - $file holds entries this cannot read: $bad"
     warn "Nothing was compared, because a manifest that cannot be parsed says nothing about the vault."
     exit 1
   fi
-  bad="$(LC_ALL=C awk '$1 == "narrowed" { print $2 }' "$meta" | head -n 3 | tr '\n' ' ')"
+  LC_ALL=C awk '$1 == "narrowed" { print $2 }' "$meta" > "$TMPD/lm.list"
+  bad="$(name_a_few "$TMPD/lm.list")"
   if [ -n "$bad" ]; then
-    warn "NARROWED - $file classes these paths as template machinery and they sit under your notes, so they were treated as yours instead: $bad"
-    warn "This never treats a path under a content tier as the template's, whatever a manifest says."
+    warn "NARROWED - $file classes these paths as template machinery and they are not places this template ships machinery, so they were treated as yours instead: $bad"
+    warn "The list of places a template may ship machinery is compiled into this script, so a manifest can only ever narrow what it reaches and never widen it. A release that adds a new one is narrowed by an older copy of this script rather than offered, and you can still take it by hand."
   fi
   return 0
 }
@@ -781,12 +801,36 @@ load_rules() {
     exit 2
   fi
   LC_ALL=C awk '{ sub(/\r$/, ""); print }' "$file" > "$TMPD/rules.clean"
-  bad="$(LC_ALL=C awk -F'\t' '/^[a-z]/ && index($2, "**") > 0 { print $2 }' "$TMPD/rules.clean" | head -n 3 | tr '\n' ' ')"
+
+  # THE VALIDATORS AND THE PARSER HAVE TO AGREE ABOUT WHICH LINES ARE RULES, and
+  # they did not. The validators selected with /^[a-z]/ and split on tabs with
+  # -F, while the parse loop below skips only a blank line and a comment and
+  # reads with `IFS=<tab> read -r cls pat`, which puts THE WHOLE REMAINDER of
+  # the line into pat. Two lines slipped through every check and were then used:
+  #
+  #   Owned<TAB>docs/*            a class no validator looked at, because the
+  #                               line does not begin with a lower-case letter.
+  #                               It reached the manifest, where every
+  #                               downstream vault refuses the whole file as
+  #                               badclass - loud, but only after release.
+  #   owned<TAB>docs/*<TAB>junk   a third field the validators never see,
+  #                               because they only ever inspect $2.
+  #
+  # So the selection here is now the same one the parser uses, a line that is
+  # neither blank nor a comment, and the field count is checked rather than
+  # assumed.
+  bad="$(LC_ALL=C awk -F'\t' '!/^#/ && NF > 0 && length($1) && NF != 2 { print "line-" NR }' "$TMPD/rules.clean" | head -n 3 | tr '\n' ' ')"
+  if [ -n "$bad" ]; then
+    warn "RULE-FIELDS - a rule is exactly two tab-separated fields, a class and a pattern, and these lines are not: $bad"
+    warn "A third field would be read as part of the pattern and would then match nothing. Nothing was classified."
+    exit 1
+  fi
+  bad="$(LC_ALL=C awk -F'\t' '!/^#/ && length($1) && index($2, "**") > 0 { print $2 }' "$TMPD/rules.clean" | head -n 3 | tr '\n' ' ')"
   if [ -n "$bad" ]; then
     warn "RULE-DOUBLE-STAR - these patterns hold a double star, and here a single star already crosses a slash, so the two would read differently to a person and the same to the matcher: $bad"
     exit 1
   fi
-  bad="$(LC_ALL=C awk -F'\t' '/^[a-z]/ && $1 != "owned" && $1 != "seed" && $1 != "excluded" { print $1 }' "$TMPD/rules.clean" | head -n 3 | tr '\n' ' ')"
+  bad="$(LC_ALL=C awk -F'\t' '!/^#/ && length($1) && $1 != "owned" && $1 != "seed" && $1 != "excluded" { print $1 }' "$TMPD/rules.clean" | head -n 3 | tr '\n' ' ')"
   if [ -n "$bad" ]; then
     warn "RULE-CLASS - these are not classes this understands: $bad"
     exit 1
@@ -814,7 +858,7 @@ load_rules() {
   # character set classifies nothing whatever it matches, and it is far more
   # likely to be a typed quote, a stray tab or a Windows backslash than an
   # intention. Refusing it by name beats leaving it in the file matching nothing.
-  bad="$(LC_ALL=C awk -F'\t' '/^[a-z]/ && length($2) && $2 ~ /[^-A-Za-z0-9._\/*?]/ { print $2 }' "$TMPD/rules.clean" | head -n 3 | tr '\n' ' ')"
+  bad="$(LC_ALL=C awk -F'\t' '!/^#/ && length($1) && length($2) && $2 ~ /[^-A-Za-z0-9._\/*?]/ { print $2 }' "$TMPD/rules.clean" | head -n 3 | tr '\n' ' ')"
   if [ -n "$bad" ]; then
     warn "RULE-CHARACTER - these patterns hold a character a pattern may not hold, and a pattern may hold only the characters a manifest path may hold plus a star and a question mark: $bad"
     warn "A rule can only usefully name paths a manifest can carry, so a pattern outside that set would classify nothing whatever it matched. Nothing was classified."
@@ -1039,6 +1083,22 @@ do_verify_manifest() {
   # verification run there would be comparing the manifest against a tree that
   # is half of two states. --generate was given these for the same reason.
   refuse_if_held
+  # The same guard --generate takes, and for a reason that is not obvious from
+  # the fact that this one writes nothing.
+  #
+  # It runs the SAME build_manifest, which asks git for every tracked file in
+  # the tree. In a vault that still has the rules file on disk - and being
+  # excluded from the manifest is not the same as being absent from the tree -
+  # that means the owner's own notes are classified, hashed, and then printed
+  # by name in the stale-manifest diff, which breaches the one boundary this
+  # tool is built around. Worse, it then prints the regenerate command, which
+  # is exactly the command --generate's guard exists to keep out of reach, so a
+  # user following the tool's own advice destroys their provenance record.
+  if [ "${VAULT_TEMPLATE_MAINTAINER:-}" != "1" ]; then
+    warn "NOT-THE-TEMPLATE - --verify-manifest rebuilds the manifest from the whole tracked tree to compare against, so in a vault it reads and names your own notes, and what it prints next is the command that rewrites your provenance record."
+    warn "It answers for the template project rather than for a vault. If you really are working on the template itself, set VAULT_TEMPLATE_MAINTAINER=1 and run it again. To see what this vault carries, run --status instead."
+    exit 64
+  fi
   if [ ! -f "$ROOT/$MANIFEST_REL" ]; then
     warn "NO-MANIFEST - $MANIFEST_REL is not there, so there was nothing to verify."
     exit 2
@@ -1204,12 +1264,21 @@ load_local_manifest() {
   fi
 }
 
-report_local() {  # report_local <state-file>
-  local st="$1" drifted deleted unreadable seed_drift
+report_local() {  # report_local <state-file> <unreadable-list>
+  local st="$1" unread="$2" drifted deleted unreadable seed_drift
 
   drifted="$(verdict_count "$st" drifted owned)"
   deleted="$(verdict_count "$st" deleted owned)"
-  unreadable="$(verdict_count "$st" unreadable owned)"
+  # Counted from the LIST rather than from the verdict, and that is the fix for
+  # two separate holes. A path the source no longer ships is judged retired
+  # before the unreadable test can see it, so under --check it never carried the
+  # verdict at all, and a seed path that could not be opened carried it with the
+  # wrong class and was swept into the seed summary, whose sentence says
+  # "changed, been deleted, or moved upstream" and can express none of them.
+  # Whether a file could be opened is a fact about the instrument rather than
+  # about who owns the file, so it is counted once, for every class.
+  unreadable="$(awk 'END { print NR + 0 }' "$unread" 2>/dev/null)"
+  [ -n "$unreadable" ] || unreadable=0
   # EVERY seed verdict, not the four that happened to be thought of first. A
   # release that adds an example note, retires one, or lands one where the owner
   # already has a file produced no number and no line anywhere, so the run said
@@ -1219,8 +1288,7 @@ report_local() {  # report_local <state-file>
   seed_drift=$(( $(verdict_count "$st" drifted seed) + $(verdict_count "$st" merge seed) \
                + $(verdict_count "$st" deleted seed) + $(verdict_count "$st" take seed) \
                + $(verdict_count "$st" new seed) + $(verdict_count "$st" retired seed) \
-               + $(verdict_count "$st" collision seed) + $(verdict_count "$st" converged seed) \
-               + $(verdict_count "$st" unreadable seed) ))
+               + $(verdict_count "$st" collision seed) + $(verdict_count "$st" converged seed) ))
 
   if [ "$drifted" -gt 0 ]; then
     printf '\nTemplate files you have changed (%s):\n' "$drifted"
@@ -1234,8 +1302,8 @@ report_local() {  # report_local <state-file>
   # finding about the vault, they are the tool saying which files it could not
   # open, and the run leaves on 2 because of them.
   if [ "$unreadable" -gt 0 ]; then
-    printf '\nTemplate files that are on the disk and could not be read (%s). Nothing is known about these, and nothing below or above counts them as changed, deleted or matching:\n' "$unreadable"
-    list_paths "$st" unreadable owned | LC_ALL=C sed 's/^/  /'
+    printf '\nFiles that are on the disk and could not be read (%s). Nothing is known about these, and nothing above counts them as changed, deleted or matching:\n' "$unreadable"
+    LC_ALL=C sed 's/^/  /' "$unread"
   fi
   # Summarised rather than listed. Obsidian rewrites its own config whenever the
   # interface changes and the docs tell you to delete the example notes, so every
@@ -1266,7 +1334,7 @@ do_status() {
   same="$(verdict_count "$TMPD/st.state" same owned)"
   drifted="$(verdict_count "$TMPD/st.state" drifted owned)"
   deleted="$(verdict_count "$TMPD/st.state" deleted owned)"
-  unreadable="$(verdict_count "$TMPD/st.state" unreadable owned)"
+  unreadable="$(awk 'END { print NR + 0 }' "$TMPD/st.hashes.unreadable")"
 
   say "this vault records template version $LOCAL_VERSION."
   say "$same of $owned template file(s) match that record, $drifted changed here, $deleted deleted, $unreadable could not be read."
@@ -1279,7 +1347,7 @@ do_status() {
   # baseline is recorded, and --check against the copy you took it from is what
   # tells the two apart.
   say "Taking a file from a newer template copy also shows up here as one you changed, because this mode has nothing to compare against but the record."
-  report_local "$TMPD/st.state"
+  report_local "$TMPD/st.state" "$TMPD/st.hashes.unreadable"
 
   # Ahead of the 10, because a file that could not be opened is this saying it
   # could not look, and that has to outrank a finding drawn from the files it
@@ -1334,56 +1402,7 @@ load_source() {  # load_source <dir>
   # whole tree is read. --diff in particular used to hash the lot and only then
   # be told the pair could not be ordered.
   guard_versions "$dir"
-  refuse_source_claims_your_folders "$dir"
   verify_source "$dir" || exit 2
-}
-
-# refuse_source_claims_your_folders <dir>
-#
-# The second half of the narrowing, and the half that does not depend on a list
-# of folder names. tiered() knows the tier roots this template ships and the
-# ones vault-check.sh names, which covers a vault that kept them and a vault
-# that renamed them in the documented place. It does not cover a vault that
-# renamed a tier somewhere else, or one whose owner made their own top-level
-# folder and filled it with notes.
-#
-# What this vault's OWN record says is not guessable by a source. So a source
-# entry claiming machinery inside a top-level folder that exists here and that
-# this vault's record has never held machinery in is refused rather than
-# narrowed. A genuinely new machinery folder in a release cannot trip it,
-# because a folder that is new upstream does not exist here yet.
-#
-# A folder tiered() ALREADY knows about is skipped, and that exclusion is what
-# keeps this from firing on ordinary releases. The five paths machinery() names
-# are template machinery sitting inside a content tier on purpose, so a release
-# that starts shipping one of them into a vault whose baseline predates it
-# would otherwise be refused outright. Those folders are governed by the
-# narrowing and by the five fixed strings, which fail closed on their own. This
-# is only for a top-level folder the narrowing has never heard of, which is
-# what a tier renamed somewhere other than the documented place looks like.
-refuse_source_claims_your_folders() {
-  local dir="$1" r
-  [ -s "$TMPD/local.entries" ] || return 0
-  LC_ALL=C awk '$2 == "owned" { n = split($4, part, "/"); if (n > 1) print part[1] }' \
-    "$TMPD/local.entries" | LC_ALL=C sort -u > "$TMPD/ls.ownroots"
-  LC_ALL=C awk -v rf="$TMPD/ls.ownroots" -v tiers="$NARROW_ROOTS" '
-    BEGIN { while ((getline l < rf) > 0) { sub(/\r$/, "", l); own[l] = 1 } }
-    $2 == "owned" {
-      n = split($4, part, "/")
-      if (n < 2) next
-      if (index(" " tiers " ", " " tolower(part[1]) " ") > 0) next
-      if (part[1] in own) next
-      print part[1]
-    }' "$TMPD/src.entries" | LC_ALL=C sort -u > "$TMPD/ls.newroots"
-  : > "$TMPD/ls.bad"
-  while IFS= read -r r; do
-    [ -n "$r" ] || continue
-    [ -d "$ROOT/$r" ] && printf '%s\n' "$r" >> "$TMPD/ls.bad"
-  done < "$TMPD/ls.newroots"
-  [ -s "$TMPD/ls.bad" ] || return 0
-  warn "SOURCE-CLAIMS-YOUR-FOLDER - $dir calls files inside these folders template machinery, and they are folders you already have that this vault's own record has never held any machinery in: $(tr '\n' ' ' < "$TMPD/ls.bad" | cut -c1-200)"
-  warn "A renamed tier looks exactly like this, and so does a folder of your own notes that a template copy has decided it owns. Nothing was compared."
-  exit 2
 }
 
 # Whether two versions this understands are the same version.
@@ -1549,7 +1568,11 @@ do_check() {  # do_check <dir>
     # Collisions are counted here too. They are new files under another name,
     # and leaving them out would let two copies that disagree only about files
     # the user already occupies be compared by their version numbers anyway.
-    differing="$(LC_ALL=C awk '$1 == "take" || $1 == "merge" || $1 == "new" || $1 == "retired" || $1 == "collision" || $1 == "converged" { n++ } END { print n + 0 }' "$TMPD/ck.state")"
+    # deleted counts here too. It is a manifest disagreement like any other, and
+    # leaving it out let two copies that both claim one version and differ only
+    # about files the owner had deleted walk past this guard and be compared by
+    # their version numbers anyway.
+    differing="$(LC_ALL=C awk '$1 != "same" { n++ } END { print n + 0 }' "$TMPD/ck.state")"
     if [ "$differing" -gt 0 ]; then
       warn "SAME-VERSION-DISAGREES - this vault and $dir both say they are $SOURCE_VERSION and their manifests differ in $differing file(s), so their version numbers cannot be compared."
       warn "One of them is most likely a copy of the default branch taken between releases. Nothing was concluded about which is newer."
@@ -1563,7 +1586,7 @@ do_check() {  # do_check <dir>
   retired="$(verdict_count "$TMPD/ck.state" retired owned)"
   collision="$(verdict_count "$TMPD/ck.state" collision owned)"
   converged="$(verdict_count "$TMPD/ck.state" converged owned)"
-  unreadable="$(verdict_count "$TMPD/ck.state" unreadable owned)"
+  unreadable="$(awk 'END { print NR + 0 }' "$TMPD/ck.hashes.unreadable")"
 
   # Four numbers, because three left one of the sections below with no number
   # above it. A run whose only finding was converged printed nothing moved
@@ -1595,7 +1618,7 @@ do_check() {  # do_check <dir>
     list_paths "$TMPD/ck.state" converged owned | LC_ALL=C sed 's/^/  /'
   fi
 
-  report_local "$TMPD/ck.state"
+  report_local "$TMPD/ck.state" "$TMPD/ck.hashes.unreadable"
 
   if [ "$(( take + new ))" -gt 0 ]; then
     printf '\nTo take the safe ones, read them first and then run these from the vault root:\n'
@@ -1607,8 +1630,18 @@ do_check() {  # do_check <dir>
     # stops a path that begins with a dash presenting itself as an option.
     { list_paths "$TMPD/ck.state" take owned; list_paths "$TMPD/ck.state" new owned; } \
       | LC_ALL=C sort \
-      | LC_ALL=C awk -v d="$dir" '
-          BEGIN { q = sprintf("%c", 39) }
+      | vu_from="$dir" LC_ALL=C awk '
+          # The folder comes in through the ENVIRONMENT rather than through
+          # -v, and that is not a style choice. POSIX requires a -v assignment
+          # to undergo string-literal escape processing, and every awk in this
+          # matrix does it, so a perfectly ordinary Windows path like
+          # C:\temp\new has its \t and \n turned into a tab and a newline
+          # before the plan is printed. Worse, \047 is octal for a single
+          # quote, and from_is_printable allows a backslash and digits on
+          # purpose for Windows paths, so a crafted --from could close the very
+          # quoting that function exists to apply. ENVIRON values are not
+          # escape-processed.
+          BEGIN { q = sprintf("%c", 39); d = ENVIRON["vu_from"] }
           {
             p = $0
             n = split(p, part, "/")
@@ -1660,8 +1693,22 @@ do_diff() {  # do_diff <dir>
   join_state yes "$TMPD/local.entries" "$TMPD/src.entries" "$TMPD/df.now" "$TMPD/df.unread" "$TMPD/df.norm" > "$TMPD/df.joined"
   mark_collisions "$TMPD/df.joined" "$TMPD/df.state"
 
+  # The same could-not-look answer the other two modes give, and it was missing
+  # here. --diff built the unreadable stream exactly like them and then read it
+  # nowhere, so a vault whose one interesting template file could not be opened
+  # was told there was nothing to show, on exit 0, while --status on the same
+  # vault said it could not look and left on 2.
+  df_unreadable="$(awk 'END { print NR + 0 }' "$TMPD/df.hashes.unreadable")"
+  if [ "$df_unreadable" -gt 0 ]; then
+    warn "UNREADABLE - these are on disk and could not be read, so what follows is not the whole answer: $(tr '\n' ' ' < "$TMPD/df.hashes.unreadable" | cut -c1-200)"
+  fi
+
   LC_ALL=C awk '($1 == "take" || $1 == "merge" || $1 == "new" || $1 == "collision") && $2 == "owned" { print $3 }' "$TMPD/df.state" > "$TMPD/df.list"
   if [ ! -s "$TMPD/df.list" ]; then
+    if [ "$df_unreadable" -gt 0 ]; then
+      warn "Nothing could be shown for the files above, so this is not saying the two copies agree."
+      return 2
+    fi
     # Worded against what this actually established, which is not what it used
     # to claim. A run where every moved file is one the reader already took
     # reaches here, and the template side does differ from the RECORD in every
@@ -1720,6 +1767,10 @@ do_diff() {  # do_diff <dir>
   if [ "$trouble" -eq 1 ]; then
     warn "DIFF-TROUBLE - diff could not read one or more of the pairs above, so what it printed is not the whole answer."
     exit 2
+  fi
+  if [ "$df_unreadable" -gt 0 ]; then
+    warn "What was printed leaves out the files above that could not be read, so it is not the whole answer."
+    return 2
   fi
   return 10
 }

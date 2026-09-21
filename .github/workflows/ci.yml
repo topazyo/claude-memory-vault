@@ -305,8 +305,16 @@ jobs:
       # same rules, so a wrong rule stays self-consistent and this stays green.
       # The hand-written table in run-tests.sh, registered as tmpl-class-table,
       # is the control that can fail on that.
+      # VAULT_TEMPLATE_MAINTAINER is set for the same reason --generate needs
+      # it. Verification rebuilds the manifest from the whole tracked tree, so
+      # in somebody's vault it would read and name their own notes and then
+      # print the command that rewrites their provenance record. This job runs
+      # in the template repository, which is exactly where that is the right
+      # thing to do.
       - name: The template manifest matches the tree
         if: github.repository == 'topazyo/claude-memory-vault'
+        env:
+          VAULT_TEMPLATE_MAINTAINER: '1'
         run: bash .claude/scripts/vault-update.sh --verify-manifest
 
       # This repo is a framework. A pull request should never carry someone's

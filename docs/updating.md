@@ -47,7 +47,7 @@ changed.
 
 ```
 vault-update: this vault records template version X.Y.Z.
-vault-update: 69 of 72 template file(s) match that record, 2 changed here, 1 deleted.
+vault-update: 69 of 72 template file(s) match that record, 2 changed here, 1 deleted, 0 could not be read.
 vault-update: That record is what the template shipped at X.Y.Z. It is not a claim about what the template holds now.
 ```
 
@@ -78,7 +78,7 @@ bash .claude/scripts/vault-update.sh --check --from ../template-new
 ```
 
 `--check` compares three things. What the template shipped at your version, what is on your disk
-now, and what the newer copy ships. That gives six answers.
+now, and what the newer copy ships. That gives nine answers.
 
 | Bucket | Meaning |
 | --- | --- |
@@ -88,6 +88,9 @@ now, and what the newer copy ships. That gives six answers.
 | **Already carrying the newer copy** | You took this one at some point. Nothing to do, and it is not asked about again. |
 | **No longer shipped** | The template retired it. Your copy is left exactly where it is, because nothing here deletes. |
 | **Shipped once and yours now** | Example notes, scaffolds, Obsidian settings. Reported as a count, because every vault drifts here and listing it every time would teach you to stop reading. |
+| **You changed it** | A template file whose bytes differ from the record. `--status` reports these too, and it is the same list. |
+| **You deleted it** | A template file the record names and your disk does not have. Deleting one is a normal thing to do and nothing puts it back. |
+| **Could not be read** | It is on the disk and could not be opened, so nothing is known about it. This is the tool refusing to answer rather than a finding, and any file in this state makes the whole run leave on `2`. |
 
 `--check` ends with a ready-to-paste list of `cp` commands for the safe ones. Read the diff before
 you run them.
@@ -186,12 +189,18 @@ What the tool does do:
   `vault-check.sh` names on its `TIERS=` line**, which is where [`customizing.md`](customizing.md)
   sends you if you rename a tier. The two lists are unioned rather than swapped, so renaming
   nothing costs nothing and renaming something is covered under both names.
-- **It refuses a source that claims machinery inside a top-level folder of your own.** If a source
-  calls files under a folder you already have template machinery, and your own record has never
-  held any machinery there, the comparison stops (`SOURCE-CLAIMS-YOUR-FOLDER`). That is what a tier
-  renamed somewhere other than the documented place looks like, and what a folder of your notes
-  looks like when a template copy decides it owns it. A folder that is genuinely new upstream
-  cannot trip it, because it does not exist in your vault yet.
+- **It carries a list of the places a template is allowed to ship machinery**, and forces anything
+  else back to yours. That list is an *allowlist* — the folders and top-level files this template
+  ships, plus five exact paths under content tiers — rather than a list of where your files live,
+  because the second one is unbounded and the first is ours to state. The difference is not
+  academic. Under the earlier shape, anything outside the content tiers was machinery by default,
+  so a source manifest could name `.github/workflows/anything.yml`, have it printed under *safe to
+  take*, and a paste would install a workflow that runs unattended on GitHub's runners with your
+  repository's secrets. `.vscode/tasks.json` and `.devcontainer/devcontainer.json` are the same
+  shape and both auto-execute. All of them are now narrowed and warned about instead.
+  A release that adds a machinery folder an older copy of the script has never heard of is narrowed
+  by that older copy rather than offered, which is the fail-closed direction, and you can still take
+  it by hand.
 - **It checks that the folder you pointed at holds what its own manifest says it holds**, and
   refuses the whole comparison when it does not. Without that, "safe to take" would be that copy's
   unverified claim about itself and the copy commands would move bytes nothing had looked at. It is
@@ -202,9 +211,11 @@ What the tool does do:
   **symbolic link is refused outright**, because every existence test here follows a link and the
   copy command you paste would move whatever the link points at rather than anything the source
   contained.
-- **It refuses while a scheduled pass is running**, and refuses while a runner tripwire is set. The
-  two maintainer modes in §7 are exempt, because they run in the template repository where there is
-  no pass to collide with.
+- **It refuses while a scheduled pass is running**, and refuses while a runner tripwire is set.
+  The two maintainer modes in §7 take the same refusals, and are deliberately **not** exempt. Both
+  ask git for the tracked file list, and a pass mid-commit is exactly the moment that list is a
+  snapshot of something in motion, so rewriting or checking the provenance record there is what
+  those two codes exist to prevent.
 
 Four limits inside those guarantees, stated rather than left implied.
 
@@ -256,8 +267,8 @@ timer precisely what the runners' snapshot fence exists to catch.
 | --- | --- |
 | `0` | It could look, and there is nothing to adopt. |
 | `10` | It could look, and there **is** something to adopt, or `--status` found local drift. |
-| `2` | It could **not** look, so it is saying nothing about the template. No manifest (`NO-MANIFEST`), no working hash tool (`HASH-UNAVAILABLE`), a hash tool named by `VAULT_HASH_TOOL` that is not one of the four (`HASH-TOOL-UNKNOWN`), an unreadable or non-template source (`NO-SOURCE`, `NOT-A-TEMPLATE`), a hash algorithm it does not know (`UNKNOWN-ALGORITHM`), a source older than this vault (`SOURCE-IS-OLDER`), a comparison of zero files on either side (`VACUOUS`, `SOURCE-VACUOUS`), a source that disagrees with its own manifest (`SOURCE-DISAGREES`), a source shipping an entry as a symbolic link or naming one it cannot open (`SOURCE-SYMLINK`, `SOURCE-UNREADABLE`), a source claiming machinery inside a folder of your own (`SOURCE-CLAIMS-YOUR-FOLDER`), a file of your own this could not open (`UNREADABLE`), or two copies that both claim one version and differ (`SAME-VERSION-DISAGREES`). |
-| `1` | This vault has a problem. The manifest cannot be parsed (`MANIFEST-MALFORMED`), `--verify-manifest` found it stale (`MANIFEST-STALE`), or the rules file cannot be used (`RULE-CLASS`, `RULE-DOUBLE-STAR`, `RULE-CHARACTER`). `--generate` also answers 1 when it refuses to write (`UNCLASSIFIED`, `BINARY`, `MISSING-TRACKED`, `UNWRITABLE-PATH`, `CASE-COLLISION`, `NO-VERSION`). |
+| `2` | It could **not** look, so it is saying nothing about the template. No manifest (`NO-MANIFEST`), no working hash tool (`HASH-UNAVAILABLE`), a hash tool named by `VAULT_HASH_TOOL` that is not one of the four (`HASH-TOOL-UNKNOWN`), an unreadable or non-template source (`NO-SOURCE`, `NOT-A-TEMPLATE`), a hash algorithm it does not know (`UNKNOWN-ALGORITHM`), a source older than this vault (`SOURCE-IS-OLDER`), a comparison of zero files on either side (`VACUOUS`, `SOURCE-VACUOUS`), a source that disagrees with its own manifest (`SOURCE-DISAGREES`), a source shipping an entry as a symbolic link or naming one it cannot open (`SOURCE-SYMLINK`, `SOURCE-UNREADABLE`), a file of your own this could not open (`UNREADABLE`), or two copies that both claim one version and differ (`SAME-VERSION-DISAGREES`). |
+| `1` | This vault has a problem. The manifest cannot be parsed (`MANIFEST-MALFORMED`), `--verify-manifest` found it stale (`MANIFEST-STALE`), or the rules file cannot be used (`RULE-FIELDS`, `RULE-CLASS`, `RULE-DOUBLE-STAR`, `RULE-CHARACTER`). `--generate` also answers 1 when it refuses to write (`UNCLASSIFIED`, `BINARY`, `MISSING-TRACKED`, `UNWRITABLE-PATH`, `CASE-COLLISION`, `NO-VERSION`). |
 | `11` | Refused because of the state of the vault rather than the command line. `--adopt` where a baseline already exists (`ALREADY-ADOPTED`). To adopt a different baseline on purpose, delete `.claude/template-manifest` and run it again. It is `11` rather than `3` because the retention runner already answers `3` for a partial pass, and the numbering [`reference.md` §10](reference.md#10-exit-codes-and-log-locations) publishes is one numbering across all four scripts, so that a caller reading a code does not have to know which of them it ran. |
 | `6` | A manifest entry named a path outside the vault (`PATH-BLOCKED`). |
 | `64` | The command line was wrong, or `--generate` was run without `VAULT_TEMPLATE_MAINTAINER=1` (`NOT-THE-TEMPLATE`). |
@@ -311,8 +322,14 @@ Two modes exist for the template repository and not for a vault.
 
 ```bash
 VAULT_TEMPLATE_MAINTAINER=1 bash .claude/scripts/vault-update.sh --generate
-bash .claude/scripts/vault-update.sh --verify-manifest
+VAULT_TEMPLATE_MAINTAINER=1 bash .claude/scripts/vault-update.sh --verify-manifest
 ```
+
+**Both** need the variable, and `--verify-manifest` needs it even though it writes nothing. It
+rebuilds the manifest from the whole tracked tree in order to have something to compare against,
+so inside a vault it classifies, hashes and then prints the names of the owner's own notes, which
+is the one boundary this tool is built around. It would also finish by printing the `--generate`
+command, which is precisely the command the other variable exists to keep out of reach.
 
 `--generate` rewrites the manifest from `.claude/manifest-rules` and the tracked tree. It needs
 `VAULT_TEMPLATE_MAINTAINER=1` because running it inside a vault would take that vault's notes in as

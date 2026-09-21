@@ -8940,47 +8940,59 @@ else
     skip tmpl-source-symlink "a symbolic link could not be created here, so the fixture could not be built"
   fi
 
-  # A source claiming machinery inside a top-level folder this vault already has
-  # and has never held machinery in. That is what a tier renamed outside the
-  # documented place looks like, and what a folder of somebody's own notes looks
-  # like when a template copy decides it owns them. The second half of the
-  # control is the one that keeps it honest: the same source against a vault
-  # WITHOUT that folder must be compared normally, or this would be a refusal
-  # that fires on every release.
+  # THE ALLOWLIST. A manifest may only call a path machinery where this template
+  # actually ships machinery, and everything else is forced back to the owner's
+  # whatever the manifest says.
+  #
+  # Three vectors, and the first is the one that matters most. A workflow file
+  # is what .claude/manifest-rules names as the worst case in as many words,
+  # because a pasted copy installs something that runs unattended on GitHub's
+  # runners with that repository's secrets. The old shape of this check asked
+  # whether a path was under a content tier, so .github/workflows/ was not under
+  # one, was never narrowed, and was printed under "safe to take". The second is
+  # an editor folder that auto-executes on open. The third is a folder of the
+  # owner's own notes, which the vault does not have to already possess.
   vu_d="$VU/claims"
   vu_make "$vu_d" 1.0.0
-  mkdir -p "$vu_d/my-notes"
-  printf 'the owner wrote this\n' > "$vu_d/my-notes/n.md"
-  vu_plain="$VU/claims-plain"
-  vu_make "$vu_plain" 1.0.0
   vu_src="$VU/claims-src"
   vu_make "$vu_src" 1.1.0
-  mkdir -p "$vu_src/my-notes"
+  mkdir -p "$vu_src/.github/workflows" "$vu_src/.vscode" "$vu_src/my-notes"
+  printf 'on: push\njobs: {}\n' > "$vu_src/.github/workflows/pwn.yml"
+  printf '{ "version": "2.0.0" }\n' > "$vu_src/.vscode/tasks.json"
   printf 'the template says it owns this now\n' > "$vu_src/my-notes/n.md"
-  printf 'owned\tmy-notes/*\n' >> "$vu_src/.claude/manifest-rules"
+  {
+    printf 'owned\t.github/workflows/*\n'
+    printf 'owned\t.vscode/*\n'
+    printf 'owned\tmy-notes/*\n'
+  } >> "$vu_src/.claude/manifest-rules"
   vu_git "$vu_src"
   vu_gen "$vu_src"
-  vu_claims_class="$(awk '$3 == "my-notes/n.md" { print $1; exit }' "$vu_src/.claude/template-manifest")"
+  # Measured at fixture-build time. All three must GENERATE as owned, or the
+  # narrowing is never asked the question and the vectors prove nothing.
+  vu_cl_bad=''
+  vu_cl_n=0
+  for vu_cp in '.github/workflows/pwn.yml' '.vscode/tasks.json' 'my-notes/n.md'; do
+    vu_cl_n=$((vu_cl_n + 1))
+    vu_cc="$(awk -v p="$vu_cp" '$3 == p { print $1; exit }' "$vu_src/.claude/template-manifest")"
+    [ "$vu_cc" = owned ] || vu_cl_bad="$vu_cl_bad fixture-[$vu_cp]-generated-[${vu_cc:-absent}]"
+  done
   vu_rc_cl="$(vu_rc "$vu_d" --check --from "$vu_src")"
-  vu_cl_refused=0
-  vu_says 'SOURCE-CLAIMS-YOUR-FOLDER' && vu_cl_refused=1
-  vu_cl_plan=0
-  grep -F 'cp ' "$VU_OUT" 2>/dev/null | grep -qF 'my-notes/n.md' && vu_cl_plan=1
-  vu_rc_cl2="$(vu_rc "$vu_plain" --check --from "$vu_src")"
-  vu_cl2_refused=0
-  vu_says 'SOURCE-CLAIMS-YOUR-FOLDER' && vu_cl2_refused=1
-  vu_bad=''
-  [ "$vu_claims_class" = owned ] || vu_bad="$vu_bad fixture-generated-[${vu_claims_class:-absent}]-not-owned"
-  [ "$vu_rc_cl" = 2 ] || vu_bad="$vu_bad withfolder-rc:$vu_rc_cl"
-  [ "$vu_cl_refused" = 1 ] || vu_bad="$vu_bad withfolder-no-reason"
-  [ "$vu_cl_plan" = 1 ] && vu_bad="$vu_bad withfolder-offered-in-the-copy-plan"
-  [ "$vu_rc_cl2" = 10 ] || vu_bad="$vu_bad withoutfolder-rc:$vu_rc_cl2"
-  [ "$vu_cl2_refused" = 1 ] && vu_bad="$vu_bad withoutfolder-refused-too"
+  for vu_cp in '.github/workflows/pwn.yml' '.vscode/tasks.json' 'my-notes/n.md'; do
+    grep -F 'cp ' "$VU_OUT" 2>/dev/null | grep -qF "$vu_cp" \
+      && vu_cl_bad="$vu_cl_bad [$vu_cp]IN-THE-COPY-PLAN"
+    LC_ALL=C awk '/^Safe to take/ { s = 1; next } /^$/ { s = 0 } s' "$VU_OUT" 2>/dev/null \
+      | grep -qF "$vu_cp" && vu_cl_bad="$vu_cl_bad [$vu_cp]listed-as-safe-to-take"
+  done
+  # The run has to have reached the comparison, or three absences are satisfied
+  # by a tool that refused on its first line. VERSION moved, so there is a plan.
+  [ "$vu_rc_cl" = 10 ] || vu_cl_bad="$vu_cl_bad did-not-reach-the-comparison:$vu_rc_cl"
+  grep -F 'cp ' "$VU_OUT" 2>/dev/null | grep -qF 'VERSION' || vu_cl_bad="$vu_cl_bad no-plan-was-produced"
+  vu_says 'NARROWED' || vu_cl_bad="$vu_cl_bad no-narrowed-warning"
   ran tmpl-claims-your-folder
-  if [ -z "$vu_bad" ]; then
-    ok "a source claiming machinery inside a folder of your own is refused, and the same source against a vault without that folder is compared normally"
+  if [ -z "$vu_cl_bad" ]; then
+    ok "none of the $vu_cl_n paths outside the places this template ships machinery reaches the copy plan, on a run that did produce one"
   else
-    bad "the claims-your-folder refusal did not behave --$vu_bad [$(vu_excerpt)]"
+    bad "a path outside the machinery allowlist was presented as the template's --$vu_cl_bad [$(vu_excerpt)]"
   fi
 
   # -- the rules file is an execution surface -------------------------------
@@ -9405,65 +9417,58 @@ fi
 
 # Every entry in the changelog carries an adopting note. A release whose note
 # nobody wrote and a release that needs nothing done look identical otherwise.
-# The exempt set lives in two places that have to agree. `.claude/manifest-rules`
-# decides which paths under a content tier ship as machinery, and the
-# `machinery()` function inside vault-update.sh decides which of them the tool
-# will still treat as machinery when a manifest names them. If the rules ship a
-# sixth one and the function does not know it, the template ships a file its own
-# tool narrows away, and it is never offered to anybody. That fails closed,
-# which is why it is safe, and silent, which is why it needs a control.
+# The allowlist and the shipped manifest have to agree, and the direction that
+# matters is this one: every path this template SHIPS as machinery must be a
+# path its own reader will still accept as machinery. If it is not, the template
+# ships a file its own tool narrows away, so the file is never offered to
+# anybody. That fails closed, which is why it is safe, and it is silent, which
+# is why it needs a control.
+#
+# The allowlist is read out of the two shell variables and the five exact
+# strings inside may_be_machinery, so this compares what the script will
+# actually do rather than a restatement of it.
 if [ "$VU_IS_TEMPLATE" != 1 ]; then
   skip tmpl-exempt-set-matches-the-tree "this is a vault rather than the template project, so the shipped manifest is not this vault's to answer for"
 elif [ ! -f "$VU_REAL" ] || [ ! -f "$VU_SH" ]; then
-  skip tmpl-exempt-set-matches-the-tree "the shipped manifest or the script is not present, so the two lists could not be compared"
+  skip tmpl-exempt-set-matches-the-tree "the shipped manifest or the script is not present, so the two could not be compared"
 else
-  # Every path the shipped manifest calls owned that sits under a content tier.
-  vu_tiered_owned="$(LC_ALL=C awk '
-    $1 == "owned" {
-      n = split($3, part, "/")
-      h = part[1]
-      if (h == "01-inbox" || h == "10-daily" || h == "20-projects" || h == "30-knowledge" \
-       || h == "31-standards" || h == "40-llm-wiki" || h == "90-auto-memory" || h == "99-archive" \
-       || h == ".obsidian") print $3
-    }' "$VU_REAL" | LC_ALL=C sort)"
-  # The strings the script actually honours, read out of the machinery() body
-  # rather than from anywhere in the file. A grep over the whole script is
-  # satisfied by a literal sitting in a comment, and this function is the one
-  # place the value is used.
-  vu_script_exempt="$(LC_ALL=C awk '
-    /^ *function machinery\(p\)/ { inb = 1 }
+  vu_allow_roots="$(LC_ALL=C sed -n 's/^MACHINERY_ROOTS="\(.*\)"$/\1/p' "$VU_SH" | head -n 1)"
+  vu_allow_files="$(LC_ALL=C sed -n 's/^MACHINERY_FILES="\(.*\)"$/\1/p' "$VU_SH" | head -n 1)"
+  vu_allow_exact="$(LC_ALL=C awk '
+    /^ *function may_be_machinery\(/ { inb = 1 }
     inb {
       line = $0
-      while (match(line, /p == "[^"]*"/)) {
-        print substr(line, RSTART + 6, RLENGTH - 7)
+      while (match(line, /lp == "[^"]*"/)) {
+        print substr(line, RSTART + 7, RLENGTH - 8)
         line = substr(line, RSTART + RLENGTH)
       }
     }
-    inb && /^ *}/ { inb = 0 }
-  ' "$VU_SH" | LC_ALL=C sort -u)"
-  vu_script_n="$(printf '%s\n' "$vu_script_exempt" | LC_ALL=C awk 'length { n++ } END { print n + 0 }')"
-
-  vu_exempt_missing=''
-  vu_tiered_n=0
-  for vu_p in $vu_tiered_owned; do
-    vu_tiered_n=$((vu_tiered_n + 1))
-    printf '%s\n' "$vu_script_exempt" | grep -qxF "$vu_p" || vu_exempt_missing="$vu_exempt_missing $vu_p"
-  done
-  # BOTH directions, because only one of them was ever checked and the one that
-  # was missing is the dangerous one. A sixth string added to machinery() that
-  # the shipped manifest does not carry widens what a hostile manifest is
-  # allowed to claim as machinery inside a content tier, and nothing would have
-  # noticed. A stale string left behind by a retired path does the same.
-  vu_exempt_extra=''
-  for vu_p in $vu_script_exempt; do
-    printf '%s\n' "$vu_tiered_owned" | grep -qxF "$vu_p" || vu_exempt_extra="$vu_exempt_extra $vu_p"
-  done
+    inb && /^ *}$/ { inb = 0 }
+  ' "$VU_SH" | LC_ALL=C sort -u | tr '\n' ' ')"
+  # Every owned path the shipped manifest carries, put to the same three tests
+  # the script applies, in the same order and with the same case folding.
+  vu_allow_rejected="$(LC_ALL=C awk -v roots="$vu_allow_roots" -v files="$vu_allow_files" -v exact="$vu_allow_exact" '
+    function allowed(p,   lp, i, nr, part, r) {
+      lp = tolower(p)
+      if (index(" " exact " ", " " lp " ") > 0) return 1
+      if (index(lp, "/") == 0) return (index(" " files " ", " " lp " ") > 0)
+      nr = split(roots, part, " ")
+      for (i = 1; i <= nr; i++) {
+        r = tolower(part[i])
+        if (length(r) && substr(lp, 1, length(r)) == r) return 1
+      }
+      return 0
+    }
+    $1 == "owned" && !allowed($3) { print $3 }
+  ' "$VU_REAL" | tr '\n' ' ')"
+  vu_owned_n="$(LC_ALL=C awk '$1 == "owned" { n++ } END { print n + 0 }' "$VU_REAL")"
+  vu_exact_n="$(printf '%s' "$vu_allow_exact" | LC_ALL=C awk '{ print NF }')"
   ran tmpl-exempt-set-matches-the-tree
-  if [ "$vu_tiered_n" -ge 1 ] && [ "${vu_script_n:-0}" -ge 1 ] \
-     && [ -z "$vu_exempt_missing" ] && [ -z "$vu_exempt_extra" ]; then
-    ok "the $vu_tiered_n path(s) the manifest ships as machinery under a content tier and the $vu_script_n string(s) in the script's machinery() are the same set"
+  if [ "${vu_owned_n:-0}" -ge 20 ] && [ -n "$vu_allow_roots" ] && [ -n "$vu_allow_files" ] \
+     && [ "${vu_exact_n:-0}" = 5 ] && [ -z "$vu_allow_rejected" ]; then
+    ok "all $vu_owned_n owned path(s) the template ships are ones its own reader still accepts as machinery, across ${vu_exact_n} exact paths and the shipped roots"
   else
-    bad "the shipped manifest and the script's machinery() disagree -- tiered-owned:$vu_tiered_n in-machinery:${vu_script_n:-0} missing-from-the-script:${vu_exempt_missing:- none} in-the-script-only:${vu_exempt_extra:- none}"
+    bad "the shipped manifest and the script's allowlist disagree -- owned:${vu_owned_n:-0} exact-strings:${vu_exact_n:-0} roots:[${vu_allow_roots:-absent}] narrowed-away:${vu_allow_rejected:- none}"
   fi
 fi
 
