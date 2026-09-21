@@ -6405,6 +6405,61 @@ else
   bad "a staged-only destination was not seen --$ai_bad log: [$(tr '\n' '|' < "$(ret_log "$AI")" 2>/dev/null | cut -c1-500)]"
 fi
 
+# --- trailers that name a path the commit did not change ---
+# trailer_check asks three things of the commit that added a journal: that it
+# carries one trailer for this path with the blob that was judged, that it
+# carries as many trailers as it changed paths, and that the two sets are the
+# same paths. The count test has a control. The set test had none, and a commit
+# whose trailers name one path while it changed another passes every other test
+# it meets.
+#
+# Both refusals read the same in the log, so the counts are pinned here, at the
+# commit, before anything runs. Without that this control passes just as
+# happily on a fixture where the counts differ, which is the test that was
+# already covered, and it would look like coverage of the one that was not.
+TP="$(ret_copy trailer-pathset)"
+tp_a="20-projects/_logs/dream-${RET_DATE[90]}.md"
+tp_c="10-daily/${RET_DATE[90]}-daily.md"
+tp_ghost="20-projects/_logs/dream-${RET_DATE[91]}.md"
+ret_journal "$TP" "dream-${RET_DATE[90]}.md" "tier: medium"
+mkdir -p "$TP/10-daily"
+printf 'a daily note changed by the same commit\n' > "$TP/$tp_c"
+tp_blob="$(ret_git "$TP" hash-object -- "$tp_a" 2>/dev/null | tr -d ' \r')"
+# One trailer for the journal carrying its real blob, so the first test passes,
+# and one for a path this commit never touches, so the sets differ while the
+# counts do not.
+{
+  printf 'dream pass: %s\n\n' "$tp_a"
+  printf 'Vault-Pass: dream\n'
+  printf 'Vault-Pass-Blob: %s %s\n' "$tp_blob" "$tp_a"
+  printf 'Vault-Pass-Blob: %s %s\n' "$tp_blob" "$tp_ghost"
+} > "$RET/trailer-pathset.msg"
+ret_git "$TP" add -- "$tp_a" "$tp_c" >/dev/null 2>&1
+ret_git "$TP" commit -q -F "$RET/trailer-pathset.msg" -- "$tp_a" "$tp_c" >/dev/null 2>&1
+tp_nt="$(ret_git "$TP" log -1 --format=%B 2>/dev/null | grep -c '^Vault-Pass-Blob: ')"
+tp_nc="$(ret_git "$TP" show --name-only --format= HEAD 2>/dev/null | grep -c .)"
+# Eight newer journals, or the candidate never reaches the trailer test at all.
+tp_batch=""
+for tp_i in 2 3 4 5 6 7 8 9; do
+  ret_journal "$TP" "dream-${RET_DATE[$tp_i]}.md" "tier: medium"
+  tp_batch="$tp_batch dream-${RET_DATE[$tp_i]}.md"
+done
+# shellcheck disable=SC2086
+ret_dream_commit "$TP" $tp_batch
+tp_rc="$(ret_run "$TP" --dry-run)"
+tp_bad=''
+[ "$tp_nt" = 2 ] || tp_bad="$tp_bad trailers:$tp_nt"
+[ "$tp_nc" = 2 ] || tp_bad="$tp_bad changed:$tp_nc"
+[ "$tp_rc" = 0 ] || tp_bad="$tp_bad rc:$tp_rc"
+ret_says "$TP" "REFUSED: $tp_a (trailers do not match the commit" || tp_bad="$tp_bad no-reason"
+ret_stayed "$TP" "dream-${RET_DATE[90]}.md" || tp_bad="$tp_bad moved"
+ran trailer-path-set
+if [ -z "$tp_bad" ]; then
+  ok "a commit whose trailers name as many paths as it changed, but not the same paths, is refused"
+else
+  bad "the trailer path sets were not compared --$tp_bad log: [$(tr '\n' '|' < "$(ret_log "$TP")" 2>/dev/null | cut -c1-500)]"
+fi
+
 # --- a journal older than the trailers, edited by hand after they began ---
 # The branch that sends such a journal to LEGACY puts its question to the
 # commit that added the file, not to the newest one to touch it. Asking the
