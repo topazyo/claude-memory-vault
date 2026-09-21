@@ -309,6 +309,39 @@ if [ "${#NAMED[@]}" -eq 0 ]; then
     fi
   fi
   printf 'vault-check: %s\n' "$pass_line"
+
+  # Which template version this vault records, in the same shape as the two
+  # lines above: it reports, it does not judge, and it changes no count and no
+  # exit code. Deliberately it does NOT hash anything. Reading every template
+  # file would put dozens of file reads into the command people run most often,
+  # and would give this script a second job. `vault-update.sh --status` answers
+  # the drift question, and this line says where to ask it.
+  tmpl_line="No template provenance marker, so which template version this vault came from is unknown."
+  tmpl_manifest="$ROOT/.claude/template-manifest"
+  if [ -f "$tmpl_manifest" ] && [ -r "$tmpl_manifest" ]; then
+    # Filtered to digits and dots, not merely read. This line goes into the
+    # command people run most often and its wording is quoted in three
+    # documents, and a field with no whitespace in it can still carry escape
+    # bytes. An unfiltered version could therefore repaint or erase the report
+    # around it. Anything else falls through to the line that says the manifest
+    # names no version, which is true of a version this cannot print.
+    tmpl_version="$(LC_ALL=C awk '
+      { sub(/\r$/, "") }
+      $1 == "version" {
+        if ($2 ~ /^[0-9][0-9.]*$/ && index($2, "..") == 0 && substr($2, length($2)) != ".") print $2
+        exit
+      }' "$tmpl_manifest")"
+    if [ -n "$tmpl_version" ]; then
+      # Spelled as a command that runs. Every other command in this repository
+      # is written with its path, and three documents quote this line verbatim,
+      # so a bare script name would appear four times as something that gives
+      # "command not found" when it is pasted.
+      tmpl_line="This vault records template version $tmpl_version. Run bash .claude/scripts/vault-update.sh --status for what has changed since."
+    else
+      tmpl_line="$ROOT/.claude/template-manifest names no version, so which template version this vault came from is unknown."
+    fi
+  fi
+  printf 'vault-check: %s\n' "$tmpl_line"
 fi
 
 [ "$violations" -gt 0 ] && exit 1

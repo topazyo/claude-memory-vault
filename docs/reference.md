@@ -314,7 +314,14 @@ correct output is:
 vault-check: 0 violation(s) across 9 file(s) checked (as of YYYY-MM-DD).
 vault-check: 99-archive/ holds 0 note(s) on disk.
 vault-check: No retention pass is in this repository's history.
+vault-check: This vault records template version X.Y.Z. Run bash .claude/scripts/vault-update.sh --status for what has changed since.
 ```
+
+The last line reads `.claude/template-manifest` for the version and nothing else. It hashes
+nothing, because reading every template file would put dozens of file reads into the command
+people run most often. `vault-update.sh --status` answers the drift question, and § 4.5 covers it.
+A vault with no manifest gets `No template provenance marker` instead, and the exit code is
+unchanged either way.
 
 `run-tests.sh` asserts against `across 0 file` explicitly.
 
@@ -1125,6 +1132,115 @@ you copy them into `.claude/githooks/`; and the checker reads the working tree, 
 an unstaged bad note blocks a commit too. `.gitattributes` pins the folder to LF endings, because
 the hook has no `.sh` extension and a CR in its shebang would break it.
 
+### 4.5 `vault-update.sh` — what version this vault came from, and what has moved
+
+Report only. The only file it ever writes is `.claude/template-manifest`, under `--adopt` and
+`--generate`. It never reaches the network and never runs anything out of the folder it is pointed
+at. [`updating.md`](updating.md) is the reader-facing version of this section.
+
+| Mode | What it does |
+| --- | --- |
+| `--status` | Offline. Names the recorded template version and which template files have changed here. Needs no source, no git and no network |
+| `--check --from <dir>` | Compares against a template copy the owner fetched themselves. Splits what moved into safe to take, moved-and-changed-here, a collision, and retired upstream, then prints a copy plan for the safe ones |
+| `--diff --from <dir>` | The changes themselves, per file |
+| `--adopt --from <dir>` | Records a baseline in a vault created before this existed. Writes only the manifest |
+| `--generate` | Maintainer. Rewrites the manifest from `.claude/manifest-rules` and the tracked tree. Refuses without `VAULT_TEMPLATE_MAINTAINER=1` |
+| `--verify-manifest` | Maintainer and CI. Fails when the manifest has drifted from the tree |
+
+**The manifest is the baseline, not a claim about now.** `.claude/template-manifest` records what
+the template shipped at the version in its header. The difference between that and what is on disk
+is exactly what the owner has changed. A hash edited there to make a report go quiet clears the
+alarm without establishing anything, which is the unearned-`last_verified` failure §1 warns about
+for notes, applied to machinery.
+
+**Three classes, decided by `.claude/manifest-rules`, which has no catch-all.** `owned` is
+template machinery. `seed` was shipped once and is the owner's now, so its drift is reported as a
+count rather than a list — Obsidian rewrites its own config whenever the interface changes, and
+the docs tell people to delete the example notes, so every vault drifts there. `excluded` belongs
+to the template project and is left out of the manifest entirely, so no code path can reach it.
+`.github/workflows/` is excluded for a concrete reason, which is that a vault does not want the
+template's continuous integration and a future `--apply` writing one would be installing code that
+runs unattended on somebody's runners with their secrets. A tracked file matching no rule fails
+generation and fails CI, by name. That is the mechanism that keeps the list honest as files are
+added.
+
+**A manifest can only narrow what the tool touches, never widen it.** The script carries its own
+list of **the places a template may ship machinery**, compared with case folded, and refuses to
+treat anything outside that list as template machinery whatever an incoming manifest says.
+
+That it is an allowlist rather than a list of the content tiers is the whole of it. A list of the
+tiers answers where the *owner's* files live, which is unbounded, so everything outside the tiers
+was machinery by default and a manifest naming `.github/workflows/anything.yml` reached the copy
+plan under *safe to take*. `.claude/manifest-rules` names that exact outcome as the reason those
+paths are `excluded`, so the writer refused to generate them while the reader accepted them.
+`.vscode/` and `.devcontainer/` are the same shape and both auto-execute. An allowlist answers
+where the *template's* files live, which is short and knowable.
+
+Inside a content tier the allowance is **five exact strings** — `30-knowledge/moc/VAULT-INDEX.md`
+and the four per-tier note templates, which are the templates under `10-daily/`,
+`20-projects/_logs/`, `31-standards/` and `40-llm-wiki/wiki/` — rather than a rule about the shape
+of a path, because a rule about the shape is a widening test evaluated against text the other side
+chooses. A hostile copy that reclassifies one of the owner's standards as the template's
+is reported and downgraded rather than obeyed, and the same refusal catches a path with a dot
+component or a folded case. That refusal lives in the running script and not in the data.
+
+**The source is checked against its own manifest** before anything is compared, so the "safe to
+take" list and the bytes the copy plan moves are the same object. It is a coherence check rather
+than a defence, since whoever can rewrite a file there can rewrite its manifest line too. What it
+buys is that the manifest becomes the one artefact worth reading, and that a half-finished download
+is refused rather than presented as an update.
+
+**Hashing.** SHA-256 of the content with carriage returns removed, so one commit gives one digest
+on every platform. Four tools are tried — `sha256sum`, `shasum -a 256`, `openssl dgst -sha256`,
+`cksum -a sha256` — and each is **probed functionally**, by hashing a known string and comparing
+against its known digest, because `shasum` is a perl script that can be present and unable to
+start and `cksum -a sha256` only exists in coreutils 9 and later. With none of them working it
+exits 2 naming all four, and never reports up to date. There is no `cksum` CRC32 fallback, even
+though the runners' snapshot fence uses one. That fence compares a tree against itself minutes
+later. This decides whether a file somebody spent an afternoon on has been touched.
+`VAULT_HASH_TOOL` forces one candidate and `VAULT_FORCE_NO_SHA=1` forces the refusal. **Only the
+refusal is exercised in CI**, by `tmpl-no-hash-tool`. An earlier version of this sentence said both
+branches were, which was the kind of claim that makes a reader stop checking. `VAULT_HASH_TOOL` is
+validated against the four names before it is used, because the candidate word is expanded
+unquoted and would otherwise be a glob as well as a name, and a value that is not one of the four
+is `HASH-TOOL-UNKNOWN` rather than a silent fall-through to the others.
+
+**The refusal tags**, published here for the same reason § 4.3's are, so that output can be grepped
+against a document. `HASH-PROBE` is the one a reader meets during an otherwise successful run, when
+a tool was present and did not answer.
+
+`HASH-PROBE` · `HASH-UNAVAILABLE` · `HASH-TOOL-UNKNOWN` · `HASH-READ` · `HASH-PAIRING` ·
+`HASH-PARSE` · `HASH-COUNT` · `NO-MANIFEST` · `MANIFEST-MALFORMED` · `MANIFEST-STALE` ·
+`PATH-BLOCKED` · `NARROWED` · `VACUOUS` · `UNREADABLE` · `NO-SOURCE` · `NOT-A-TEMPLATE` ·
+`SOURCE-VACUOUS` · `SOURCE-DISAGREES` · `SOURCE-IS-OLDER` · `SOURCE-SYMLINK` ·
+`SOURCE-UNREADABLE` · `SAME-VERSION-DISAGREES` · `UNKNOWN-ALGORITHM` · `ALREADY-ADOPTED` ·
+`NOT-THE-TEMPLATE` · `UNCLASSIFIED` · `UNWRITABLE-PATH` · `BINARY` · `CASE-COLLISION` ·
+`MISSING-TRACKED` · `NO-VERSION` · `NO-RULES` · `RULE-FIELDS` · `RULE-CLASS` ·
+`RULE-DOUBLE-STAR` · `RULE-CHARACTER` · `RULE-IDLE` · `NO-GIT` · `NO-DIFF-TOOL` ·
+`DIFF-TROUBLE` · `TRIPWIRE` · `PASS-IN-FLIGHT`
+
+There is deliberately no `VERSION-UNREADABLE` here any more. It was published while the refusal
+that produced it could not fire, because `read_manifest` applies the same version grammar to a
+manifest header and refuses anything else as `MANIFEST-MALFORMED` long before the ordering is
+reached. A tag a reader can grep for and never see is a claim that a check exists.
+
+`RULE-IDLE` is the one warning in the list that is not a refusal. It names rules that classified no
+tracked file during a `--generate`, which is almost always a pattern left behind by a path that was
+renamed or retired, and it changes no exit code.
+
+`--generate` and `--verify-manifest` both take the tripwire and pass-in-flight refusals. Neither
+writes outside a temporary directory during the comparison, but both ask git for the tracked file
+list, and a scheduled pass mid-commit is exactly when that list is a snapshot of something in
+motion.
+
+**Two limits worth stating.** The version a manifest declares is filtered as strictly as a path,
+because it is printed by `vault-check.sh` on every full scan and an unfiltered field could carry
+escape bytes and repaint the report around it. And `PATH-BLOCKED` is a test on the text of a path
+rather than a containment check on where it resolves, so a symlinked directory the vault's own owner
+created — `docs` pointing at `/etc`, say — is followed. The vault's own links are not attacker
+controlled, which is why that is a limit rather than a hole, but the claim is about the shape of a
+path and not about where it lands.
+
 ---
 
 ## 5. Skills
@@ -1338,6 +1454,7 @@ while a note under `40-llm-wiki/wiki/` is covered by the six-tier rules only.
 | `.claude/scripts/dream-pass.sh` / `.cmd` | `0` OK · `1` NO-ARTIFACT · `2` VIOLATION · `3` REFUSED · `4` COMMIT-FAILED · `5` CHECK-FAILED · `64` unknown `VAULT_AGENT` · `70` TRIPWIRE-ERROR · `75` LOCKED · `78` TRIPWIRE · `124` TIMEOUT · `125` STALLED · `127` `claude`, wrapper or Git Bash not found · otherwise the agent's code | `.claude/logs/dream-agent.log` · agent output in `dream-agent.run.log` · `dream-pass.git-state.txt` · `dream-pass.prompt.md` in command mode · `runner-tripwire` after a contained violation or a `KILL_FAILED` stop · `dream-pass.interrupted.run` in the state directory after a signal or a `KILL_FAILED` stop, or when the run log could not be written, or `dream-pass.interrupted.run.<six characters>` beside it when something was in the way |
 | `.claude/scripts/promotion-pass.sh` / `.cmd` | `0` OK · `1` NO-ARTIFACT · `2` VIOLATION · `3` REFUSED · `4` COMMIT-FAILED · `5` CHECK-FAILED · `64` unknown `VAULT_AGENT` · `70` TRIPWIRE-ERROR · `75` LOCKED · `78` TRIPWIRE · `124` TIMEOUT · `125` STALLED · `127` `claude`, wrapper or Git Bash not found · otherwise the agent's code | `.claude/logs/promotion-agent.log` · agent output added to `promotion-agent.run.log` · `promotion-pass.git-state.txt` · `promotion-pass.prompt.md` in command mode · `runner-tripwire` after a contained violation or a `KILL_FAILED` stop · `promotion-pass.interrupted.run` in the state directory after a signal or a `KILL_FAILED` stop, or when the run log could not be written, or `promotion-pass.interrupted.run.<six characters>` beside it when something was in the way |
 | `.claude/scripts/vault-retention.sh` / `.cmd` | `0` OK · `1` setup, git or repository shape · `2` REPORT-REFUSED · `3` PARTIAL · `4` COMMIT-FAILED · `6` PATH-BLOCKED · `64` usage · `70` TRIPWIRE-ERROR · `71` RECOVERY-NEEDED · `75` LOCKED · `78` TRIPWIRE · `127` Git Bash not found (from the `.cmd`) | `.claude/logs/vault-retention.log` · in the state directory `retention-legacy-<date>-<hash8>.txt` and the `retention-legacy.hashes` index of reports it wrote, and `retention-inflight` while a move is in flight, which is left behind on exit 71 and holds later runs back · no run log and no prompt file, because it starts no agent |
+| `.claude/scripts/vault-update.sh` | `0` it could look and there is nothing to adopt · `10` it could look and there **is** something to adopt, meaning `--status` found local drift, `--check` found something upstream, or `--diff` printed a difference · `2` it could **not** look, meaning no manifest, no working hash tool, a file it could not read, an unreadable or non-template source, an unknown hash algorithm, a source older than this vault, a comparison of zero files on either side (`VACUOUS`, `SOURCE-VACUOUS`), a source that disagrees with its own manifest, a source shipping an entry as a symbolic link or naming one it cannot open, a source claiming machinery inside a folder of your own, or two copies claiming one version and disagreeing · `1` this vault has a problem, meaning a manifest that cannot be parsed, a version it will not print, a rules file it will not use, or a stale manifest under `--verify-manifest` · `11` refused for the state of the vault rather than the command line, meaning `--adopt` where a baseline already exists, and numbered away from the `3` the retention runner spends on a partial pass · `6` a manifest entry named a path outside the vault · `64` the command line was wrong, or `--generate` was run without `VAULT_TEMPLATE_MAINTAINER=1` · `75` a pass is in flight · `78` a runner tripwire is set · `130` interrupted · `143` terminated | stdout and stderr only. Writes `.claude/template-manifest` under `--adopt` and `--generate`, and nothing else, ever |
 | `.claude/githooks/pre-commit` | `vault-check.sh`'s status: `0` commit proceeds · `1` commit refused | stdout/stderr only |
 | `dream-agent` | n/a (agent) | one file: `20-projects/_logs/dream-<YYYY-MM-DD>.md` |
 | `promotion-agent` | n/a (agent) | `31-standards/`, `40-llm-wiki/wiki/`, optionally `20-projects/_logs/promotion-*.md`, committed by its runner |

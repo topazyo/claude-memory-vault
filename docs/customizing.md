@@ -438,6 +438,10 @@ rewrite.
 3. Keep framework changes in their own commits, separate from note commits. That is what makes
    contributing a fix back upstream a cherry-pick rather than an excavation.
 
+> **The merge route above and `vault-update.sh` are alternatives, not layers.** Running both
+> double-applies and leaves you resolving conflicts against files the other one already moved.
+> [`updating.md` §4](updating.md) covers which to pick and why.
+
 **If you want to contribute changes back from the same working copy**, uncomment the note
 exclusion block already present in `.gitignore`:
 

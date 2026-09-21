@@ -1,7 +1,15 @@
 # Catch-all FIRST. In .gitattributes the LAST matching line wins, so a trailing
 # `* text=auto` would silently override every specific rule below it — and a CR
 # smuggled into a shell script's shebang gives "bad interpreter" on Linux.
-* text=auto
+#
+# `eol=lf` on the catch-all, and it is load bearing rather than tidiness. The
+# template manifest records a hash per shipped file, and a file whose bytes
+# depend on which platform checked it out cannot have one hash. Without the pin,
+# every file named by no specific rule below — a .toml, a .js, LICENSE — checks
+# out CRLF under Git for Windows' default core.autocrlf, and every Windows vault
+# would be told that files nobody had opened were locally modified. Pinning here
+# removes the whole class rather than compensating for it downstream.
+* text=auto eol=lf
 
 # Shell scripts must keep LF endings even when checked out on Windows, or the
 # hooks fail on any machine that actually runs bash.
@@ -18,3 +26,13 @@
 *.json text eol=lf
 *.yml  text eol=lf
 *.yaml text eol=lf
+
+# The version marker and the generated manifest, spelled out even though the
+# catch-all above already reaches them. Neither has an extension that any rule
+# here names, so before the catch-all carried `eol=lf` the manifest checked out
+# CRLF on Windows, every path in it arrived carrying a trailing carriage return,
+# and the comparison reported the entire template as both gone and new at once.
+# Naming them keeps that reasoning attached to the files it is about.
+VERSION                   text eol=lf
+.claude/template-manifest text eol=lf
+.claude/manifest-rules    text eol=lf

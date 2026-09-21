@@ -1,0 +1,132 @@
+# .claude/manifest-rules
+#
+# Which files this template owns, which it hands over, and which belong to the
+# template project rather than to a vault. `.claude/scripts/vault-update.sh
+# --generate` reads this file and writes `.claude/template-manifest` from it.
+#
+# One rule per line, `class<TAB>pattern`. Blank lines and lines starting with a
+# hash are ignored. Patterns are ordinary shell `case` patterns matched against
+# a repository-relative path, so `*` crosses a slash and `docs/*` reaches
+# `docs/harnesses/aider.md` with no recursion syntax. A pattern holding `**` is
+# refused, because a reader arriving from `.gitignore` would expect it to mean
+# something different here and it would not.
+#
+# THE FIRST MATCHING RULE WINS, so the specific rules come first. That is the
+# opposite direction from `.gitattributes`, where the last match wins and a
+# trailing catch-all silently overrides everything above it, which this
+# repository has already been bitten by. The direction here is the one a `case`
+# statement already has, which is what the matcher is. A path's class is
+# whatever the first matching rule below says, and the generated manifest
+# records the class each path got, so read it back after generating to confirm
+# a new rule landed where you meant it to.
+#
+# THERE IS NO CATCH-ALL, on purpose. A file matching no rule fails generation
+# and fails CI, naming the path. That is the whole honesty mechanism: nobody can
+# add a file to this repository without deciding what happens to it in somebody
+# else's vault. Everything else here is delivery.
+#
+# The classes:
+#
+#   owned     Template machinery. The template maintains it and expects to keep
+#             maintaining it. It is listed in the manifest and reported when it
+#             moves.
+#   seed      Shipped once, then yours. Scaffolds, examples, Obsidian config.
+#             Listed in the manifest and reported, but the template does not
+#             expect to maintain your copy, and its drift is summarised rather
+#             than listed line by line.
+#   excluded  Belongs to the template project, not to a vault. Named here so
+#             the decision is recorded, and left out of the manifest entirely so
+#             that no code path can reach it.
+#
+# Anything not tracked by git is absent from all three. That is somebody's
+# notes, and the absence is what makes them unreachable.
+
+# ---------------------------------------------------------------- excluded --
+
+# A vault does not want the template's own continuous integration. This matters
+# beyond tidiness: had these been owned, a later version of the updater would
+# write a workflow file into a user's GitHub repository, where it runs
+# unattended, on GitHub's runners, with that repository's secrets.
+excluded	.github/workflows/*
+excluded	.github/ISSUE_TEMPLATE/*
+
+# Governance for the template project rather than for a vault.
+excluded	CONTRIBUTING.md
+
+# This file and the manifest it produces. The manifest cannot carry its own
+# hash, and these rules are a maintainer's artefact.
+excluded	.claude/manifest-rules
+excluded	.claude/template-manifest
+
+# ------------------------------------------------------------------- owned --
+
+# The per-tier note templates come before the tier rules below, because they are
+# machinery wearing a note's clothes. They describe the same frontmatter
+# contract as `.claude/rules/vault-notes.md`, which is owned, so classing them
+# as yours would mean a release that adds a required key ships new rules and
+# stale templates. `vault-check.sh` prunes `templates/` from its scan, so
+# nothing would catch the drift. The seed failure mode there is silent and the
+# owned failure mode is loud.
+owned	10-daily/templates/*
+owned	20-projects/_logs/templates/*
+owned	31-standards/templates/*
+owned	40-llm-wiki/wiki/templates/*
+
+# The structural dashboards are behaviour, not somebody's map. ARCH-INDEX.md and
+# PROJECT-INDEX.md stay yours, below, because those hold what you know and which
+# projects you have wired up.
+owned	30-knowledge/moc/VAULT-INDEX.md
+
+# The harness hook config, which is a hook a vault does want, unlike the two
+# `.github` folders excluded above.
+owned	.github/hooks/*
+
+owned	.agents/*
+owned	.claude/adapters/*
+owned	.claude/agents/*
+owned	.claude/githooks/*
+owned	.claude/hooks/*
+owned	.claude/rules/*
+owned	.claude/scripts/*
+owned	.claude/settings.json
+owned	.claude/skills/*
+owned	.codex/*
+owned	.cursor/*
+owned	.gemini/*
+owned	.windsurf/*
+owned	docs/*
+
+owned	AGENTS.md
+owned	CHANGELOG.md
+owned	CLAUDE.md
+owned	LICENSE
+owned	VERSION
+owned	.aider.conf.yml
+owned	.cursorignore
+owned	.geminiignore
+owned	.gitattributes
+owned	.gitignore
+owned	opencode.json
+
+# -------------------------------------------------------------------- seed --
+
+# Your vault's front page. You will rewrite it, and the template's copy is of no
+# use to you after the first day.
+seed	README.md
+
+# Obsidian rewrites app.json, appearance.json and graph.json whenever the
+# interface changes, so these drift on every vault. That is why seed drift is
+# reported as a count rather than a list.
+seed	.obsidian/*
+
+# Everything else under a content tier: the example notes the docs tell you to
+# delete, the scaffolds you are meant to rewrite, and the .gitkeep files that
+# hold the empty folders open.
+seed	01-inbox/*
+seed	10-daily/*
+seed	20-projects/*
+seed	30-knowledge/*
+seed	31-standards/*
+seed	40-llm-wiki/*
+seed	90-auto-memory/*
+seed	99-archive/*
