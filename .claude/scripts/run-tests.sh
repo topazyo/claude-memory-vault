@@ -6860,6 +6860,15 @@ case "${RET_GIT_MODE:-}:$sub:$n" in
   # the same shape catfile-after-commit uses. This is the one way to reach a
   # put-back that cannot read the index, which used to be indistinguishable
   # from an index holding nothing.
+  # A rename that reports success, so the record carries its done marker, and
+  # then an index nothing can read, which sends the run to the put-back and the
+  # put-back to a failure. Every other failing mode makes the rename itself
+  # report failure, so this is the only way to reach the tripwire with the
+  # marker present, and without it that half of the message has no fixture.
+  done-then-noindex:mv:*) exec "$RET_REAL_GIT" "$@" ;;
+  done-then-noindex:ls-files:*)
+    if [ -s "$RET_GIT_COUNT.mv" ]; then exit 1; fi
+    exec "$RET_REAL_GIT" "$@" ;;
   putback-noindex:mv:1) "$RET_REAL_GIT" "$@"; exit 1 ;;
   putback-noindex:ls-files:*)
     if [ -s "$RET_GIT_COUNT.mv" ]; then exit 1; fi
@@ -7085,6 +7094,31 @@ if [ "$re_rc:$re_rc2:$re_rc3" = 71:78:0 ] && ret_moved "$re_v" "$RE_J1" && [ ! -
 else
   bad "a failed put-back was not held back and released as it should be -- rc $re_rc then $re_rc2 then $re_rc3 recovery: $([ -e "$re_v.state/retention-inflight" ] && echo yes || echo no)"
 fi
+# The tripwire says what the record knows about the rename, which is the one
+# thing the vault cannot answer afterwards. Where the files are is visible for
+# as long as anyone cares to look, and whether git said the rename worked is
+# gone the moment the run is. Those are different incidents to walk into, and
+# a partial rename that reported failure is the one the per-file lines are
+# worth reading hardest for.
+#
+# Both wordings are asserted, and from two vaults, because a message that says
+# the same thing whatever happened is worth nothing. The absent half comes free
+# from the put-back vault above, whose rename reported failure.
+re_rc="$(ret_case moves-donefail done-then-noindex)"
+re_v="$RET/moves-donefail"
+re_rc2="$(RET_STATE="$re_v.state" ret_run "$re_v")"
+rd7_bad=''
+[ "$re_rc2" = 78 ] || rd7_bad="$rd7_bad rc2:$re_rc2"
+ret_says "$re_v" "the record says the rename reported success" || rd7_bad="$rd7_bad no-done-line"
+ret_says "$RET/moves-putback" "the record does not say the rename reported success" \
+  || rd7_bad="$rd7_bad no-absent-line"
+ran tripwire-says-rename-outcome
+if [ -z "$rd7_bad" ]; then
+  ok "a tripwire says whether the record's rename reported success, and says the opposite where it did not"
+else
+  bad "the tripwire did not report what the record knew --$rd7_bad rc $re_rc then $re_rc2 log: [$(tr '\n' '|' < "$(ret_log "$re_v")" 2>/dev/null | cut -c1-500)]"
+fi
+
 # The same again, except the owner commits something of their own while the
 # record is open. The put-back asks HEAD what a source should hold, and the
 # check that clears the record has to ask the same question or the two disagree

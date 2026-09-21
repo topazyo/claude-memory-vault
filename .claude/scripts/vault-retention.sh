@@ -2657,7 +2657,7 @@ settle_outcome() {
 # back where it started. Anything else stops the run, because a second set of
 # moves on top of an unknown first one is how a vault loses a note.
 recovery_check() {
-  local f="$STATE/retention-inflight" key rest rhead rnonce headnow undone=1 n=0
+  local f="$STATE/retention-inflight" key rest rhead rnonce headnow undone=1 n=0 rdone=0
   [ -e "$f" ] || return 0
   if [ ! -f "$f" ] || [ ! -r "$f" ]; then
     say "TRIPWIRE: $f is not a readable file, so what an earlier run was doing cannot be established. Look at it, then remove it."
@@ -2672,6 +2672,14 @@ recovery_check() {
     case "$key" in
       head) rhead="$rest" ;;
       nonce) rnonce="$rest" ;;
+      # Written by the mover the moment git mv reported success. It decides
+      # nothing here, and it must not: every branch below asks the vault what
+      # is actually true, which is stronger than any marker. It is read so the
+      # tripwire can say one thing the state cannot, which is what git said at
+      # the time. Afterwards you can see where the files are and never learn
+      # whether the rename reported success, and those are different incidents
+      # to walk into.
+      done) rdone=1 ;;
       move)
         n=$((n + 1))
         SRCS[${#SRCS[@]}]="$(printf '%s' "$rest" | cut -f1)"
@@ -2771,6 +2779,16 @@ recovery_check() {
   fi
   say "TRIPWIRE: an earlier run could not say what its moves did, and the vault does not yet show either outcome. Nothing is moved until this is settled."
   say "  the record is $f, and HEAD was $rhead when it was written"
+  # Said carefully. The marker means the rename reported success, not that
+  # files moved, and its absence covers a rename that never ran as well as one
+  # that ran and reported failure. A git mv that moved some of its files and
+  # then failed lands in the second wording, and it is the case the per-file
+  # lines below are worth reading hardest for.
+  if [ "$rdone" -eq 1 ]; then
+    say "  the record says the rename reported success, so the work tree had already been changed when the run stopped"
+  else
+    say "  the record does not say the rename reported success, so it either never ran or ran and reported failure, and either may still have moved files"
+  fi
   local k=0
   while [ "$k" -lt "${#SRCS[@]}" ]; do
     say "  $(printf '%s' "${SRCS[$k]}") work tree $([ -e "$ROOT/${SRCS[$k]}" ] && echo present || echo absent), index $(idx_blob "${SRCS[$k]}")"
