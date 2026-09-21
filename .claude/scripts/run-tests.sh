@@ -8966,18 +8966,31 @@ else
   # mode where a second write is EXPECTED to be absent rather than obviously
   # wrong. The three read-only modes are the ones nobody would look at.
   #
-  # Run on the adopted vault, which now has a baseline, so each mode has real
-  # work to do rather than refusing at the door.
+  # On their OWN fixture pair rather than on the adopted vault above, and the
+  # reason is worth stating because the adopted vault was tried first and does
+  # not work. Adopting records the source's manifest wholesale, so that vault
+  # then claims the source's version, and --check against the same source is
+  # two copies claiming one version and differing, which is a refusal. The
+  # modes never reach their work, their own guard says so, and nothing is
+  # proved. An ordinary older vault against a newer source gives all three of
+  # them something real to do.
+  vu_ro="$VU/writesnothing"
+  vu_make "$vu_ro" 1.0.0
+  vu_ro_src="$VU/writesnothing-src"
+  vu_make "$vu_ro_src" 1.1.0
+  printf 'doc a, moved upstream\n' > "$vu_ro_src/docs/a.md"
+  vu_git "$vu_ro_src"
+  vu_gen "$vu_ro_src"
   vu_ao_modes=0
   for vu_ao_mode in status check diff; do
     vu_ao_modes=$((vu_ao_modes + 1))
-    vu_tree_state "$vu_d" > "$TMP/adopt.ro.before"
+    vu_tree_state "$vu_ro" > "$TMP/adopt.ro.before"
     case "$vu_ao_mode" in
-      status) vu_rc_ao="$(vu_rc "$vu_d" --status)" ;;
-      check)  vu_rc_ao="$(vu_rc "$vu_d" --check --from "$vu_src")" ;;
-      diff)   vu_rc_ao="$(vu_rc "$vu_d" --diff  --from "$vu_src")" ;;
+      status) vu_rc_ao="$(vu_rc "$vu_ro" --status)" ;;
+      check)  vu_rc_ao="$(vu_rc "$vu_ro" --check --from "$vu_ro_src")" ;;
+      diff)   vu_rc_ao="$(vu_rc "$vu_ro" --diff  --from "$vu_ro_src")" ;;
     esac
-    vu_tree_state "$vu_d" > "$TMP/adopt.ro.after"
+    vu_tree_state "$vu_ro" > "$TMP/adopt.ro.after"
     vu_ao_changed="$(LC_ALL=C awk -v bf="$TMP/adopt.ro.before" '
       BEGIN { while ((getline l < bf) > 0) { split(l, a, " "); b[a[2]] = a[1] } }
       { if (!($2 in b) || b[$2] != $1) print $2 }' "$TMP/adopt.ro.after" | tr '\n' ' ')"
@@ -10438,10 +10451,15 @@ else
     # The step the failing check tells the reader to run. If this did not work
     # the check would be a wall with no door in it.
     vu_bad=''
-    vu_rl_before="$(git -C "$vu_d" tag -l 2>/dev/null | LC_ALL=C awk '$0 == "1.1.0" { n++ } END { print n + 0 }')"
-    # The prefixed tag has to go first, because refusing it is the whole point
-    # of the control above and it would refuse this run too.
+    # Both tags the controls above planted have to go first. The prefixed one
+    # because refusing it is the whole point of the control above and it would
+    # refuse this run too, and 1.1.0 because the superseded-version arm tagged
+    # it and there is nothing to cut for a version that already has a tag. The
+    # count below is taken AFTER both deletions for that reason, and it is what
+    # says the fixture really is in the state this control needs.
     git -C "$vu_d" tag -d v2.0.0 >/dev/null 2>&1
+    git -C "$vu_d" tag -d 1.1.0 >/dev/null 2>&1
+    vu_rl_before="$(git -C "$vu_d" tag -l 2>/dev/null | LC_ALL=C awk '$0 == "1.1.0" { n++ } END { print n + 0 }')"
     vu_rl_rc_cut="$(vu_rel "$vu_d" --tag)"
     vu_rl_after="$(git -C "$vu_d" tag -l 2>/dev/null | LC_ALL=C awk '$0 == "1.1.0" { n++ } END { print n + 0 }')"
     vu_rl_msg="$(git -C "$vu_d" tag -l -n99 1.1.0 2>/dev/null | tr '\n' ' ')"
