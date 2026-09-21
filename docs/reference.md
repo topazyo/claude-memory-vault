@@ -1165,11 +1165,22 @@ generation and fails CI, by name. That is the mechanism that keeps the list hone
 added.
 
 **A manifest can only narrow what the tool touches, never widen it.** The script carries its own
-list of the content-tier roots, compared with case folded, and refuses to treat anything under them
-as template machinery whatever an incoming manifest says. The exempt set is **five exact strings** —
-`30-knowledge/moc/VAULT-INDEX.md` and the four per-tier note templates — rather than a rule about
-the shape of a path, because a rule about the shape is a widening test evaluated against text the
-other side chooses. A hostile copy that reclassifies one of the owner's standards as the template's
+list of **the places a template may ship machinery**, compared with case folded, and refuses to
+treat anything outside that list as template machinery whatever an incoming manifest says.
+
+That it is an allowlist rather than a list of the content tiers is the whole of it. A list of the
+tiers answers where the *owner's* files live, which is unbounded, so everything outside the tiers
+was machinery by default and a manifest naming `.github/workflows/anything.yml` reached the copy
+plan under *safe to take*. `.claude/manifest-rules` names that exact outcome as the reason those
+paths are `excluded`, so the writer refused to generate them while the reader accepted them.
+`.vscode/` and `.devcontainer/` are the same shape and both auto-execute. An allowlist answers
+where the *template's* files live, which is short and knowable.
+
+Inside a content tier the allowance is **five exact strings** — `30-knowledge/moc/VAULT-INDEX.md`
+and the four per-tier note templates, which are the templates under `10-daily/`,
+`20-projects/_logs/`, `31-standards/` and `40-llm-wiki/wiki/` — rather than a rule about the shape
+of a path, because a rule about the shape is a widening test evaluated against text the other side
+chooses. A hostile copy that reclassifies one of the owner's standards as the template's
 is reported and downgraded rather than obeyed, and the same refusal catches a path with a dot
 component or a folded case. That refusal lives in the running script and not in the data.
 
@@ -1185,7 +1196,7 @@ on every platform. Four tools are tried — `sha256sum`, `shasum -a 256`, `opens
 against its known digest, because `shasum` is a perl script that can be present and unable to
 start and `cksum -a sha256` only exists in coreutils 9 and later. With none of them working it
 exits 2 naming all four, and never reports up to date. There is no `cksum` CRC32 fallback, even
-though the runners' snapshot fence uses one: that fence compares a tree against itself minutes
+though the runners' snapshot fence uses one. That fence compares a tree against itself minutes
 later. This decides whether a file somebody spent an afternoon on has been touched.
 `VAULT_HASH_TOOL` forces one candidate and `VAULT_FORCE_NO_SHA=1` forces the refusal. **Only the
 refusal is exercised in CI**, by `tmpl-no-hash-tool`. An earlier version of this sentence said both

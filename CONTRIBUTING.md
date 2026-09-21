@@ -85,10 +85,14 @@ matcher takes the first line that matches. A rule that has to beat a broader one
 above it, even when that means leaving its own block. The four per-tier `templates/` rules sit above
 the tier `seed` rules for exactly that reason.
 
-One more thing if you add a file under a content tier that the template is meant to keep
-maintaining. The `machinery()` function inside `vault-update.sh` holds the same set as five exact
-strings, so that nothing a manifest says can widen it, and the two have to agree. The
-`tmpl-exempt-set-matches-the-tree` control fails when they do not.
+One more thing if you add a file the template is meant to keep maintaining. The
+`may_be_machinery()` function, in the awk program inside `read_manifest` in `vault-update.sh`,
+carries the list of places a template is allowed to ship machinery, so that nothing a manifest says
+can widen it, and that list and the rules have to agree. Under a content tier the allowance is five
+exact strings, and outside one it is `MACHINERY_ROOTS` and `MACHINERY_FILES` near the top of the
+same script. The `tmpl-exempt-set-matches-the-tree` control fails when a path the rules ship as
+`owned` is one that list would narrow away, which would mean the template shipped a file its own
+tool never offers to anybody.
 
 **`.claude/template-manifest` is generated from those rules, and goes stale the moment you edit a
 shipped file.** Regenerate it in the same commit:

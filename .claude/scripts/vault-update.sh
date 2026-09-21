@@ -1826,7 +1826,7 @@ do_diff() {  # do_diff <dir>
 do_adopt() {  # do_adopt <dir>
   local dir="$1" adopt_absent arel
   refuse_if_held
-  # A hash tool is required even though adopting only copies a manifest, because
+  # A hash tool is required even though adopting writes one file, because
   # a baseline that cannot then be compared against is not worth recording, and
   # finding that out now is kinder than finding it out on the first --status.
   need_hash_tool

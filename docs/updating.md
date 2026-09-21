@@ -40,6 +40,10 @@ this project does not want one. Put a quarterly reminder somewhere instead.
 bash .claude/scripts/vault-update.sh --status
 ```
 
+Run it from the vault root, and unpiped, because a pipe reports the pager's exit status rather
+than this script's, and the exit codes are the point of §6. On Windows run it from Git Bash, as
+with every other script here.
+
 No network, no git, no second copy of the template. It reads
 `.claude/template-manifest` — which shipped with your vault and records what the template's files
 looked like at the version you have — hashes your copies, and tells you which of them you have
@@ -72,10 +76,22 @@ Files you have changed are expected. [`customizing.md`](customizing.md) invites 
 You fetch the new template yourself. That is the security boundary, and it is deliberate.
 
 ```bash
-git clone https://github.com/<owner>/claude-memory-vault.git ../template-new
-# or download the release zip from GitHub and unpack it somewhere
+# <owner> is the repository your vault was generated from. Your repository's
+# GitHub page names it under the title, and `git remote get-url template`
+# answers it if you followed customizing.md section 8.
+git clone --depth 1 --branch 1.1.0 https://github.com/<owner>/claude-memory-vault.git ../template-new
 bash .claude/scripts/vault-update.sh --check --from ../template-new
 ```
+
+**Clone the release tag rather than the default branch.** A plain `git clone` takes whatever the
+default branch holds at that moment, which is routinely ahead of the last release while still
+carrying that release's version number, and two copies that claim one version and differ is the
+`SAME-VERSION-DISAGREES` refusal in §6. Following the untagged command is the most likely way to
+meet it.
+
+A release zip works just as well. Point `--from` at the folder that **contains `.claude/`**, which
+for a zip is the folder inside the archive rather than the folder you unpacked into. Pointing it
+one level too high gives `NOT-A-TEMPLATE` and says nothing about why.
 
 `--check` compares three things. What the template shipped at your version, what is on your disk
 now, and what the newer copy ships. That gives nine answers.
@@ -85,15 +101,18 @@ now, and what the newer copy ships. That gives nine answers.
 | **Safe to take** | It moved upstream and you never touched your copy, so copying loses nothing. |
 | **Moved upstream and changed here** | Both sides moved. Nothing will overwrite it. Read it with `--diff` and merge it yourself. |
 | **Already yours, and now shipped too** | The template has started shipping a file at a path you already occupy. **Not safe to take**, and kept out of the copy plan. The record has never held that path, so nothing here can tell your file from an old copy of theirs. Open both yourself. |
-| **Already carrying the newer copy** | You took this one at some point. Nothing to do, and it is not asked about again. |
+| **Already carrying the newer copy** | You took this one at some point. Nothing to do. It is counted on the sentinel line and never listed for a decision. |
 | **No longer shipped** | The template retired it. Your copy is left exactly where it is, because nothing here deletes. |
 | **Shipped once and yours now** | Example notes, scaffolds, Obsidian settings. Reported as a count, because every vault drifts here and listing it every time would teach you to stop reading. |
 | **You changed it** | A template file whose bytes differ from the record. `--status` reports these too, and it is the same list. |
 | **You deleted it** | A template file the record names and your disk does not have. Deleting one is a normal thing to do and nothing puts it back. |
 | **Could not be read** | It is on the disk and could not be opened, so nothing is known about it. This is the tool refusing to answer rather than a finding, and any file in this state makes the whole run leave on `2`. |
 
-`--check` ends with a ready-to-paste list of `cp` commands for the safe ones. Read the diff before
-you run them.
+`--check` ends with a ready-to-paste list of `cp` commands for the safe ones. **"Safe to take"
+means you have not changed your copy, not that the incoming file is safe.** Most of what the
+template owns lives under `.claude/`, which is what your harness reads to decide what code to run,
+so read the diff before you paste anything and read [§5](#5-what-this-does-not-protect-against)
+before you read the diff.
 
 ```bash
 bash .claude/scripts/vault-update.sh --diff --from ../template-new
@@ -252,6 +271,11 @@ What it does not do:
   and never listed. The one exception is a file the newer template has started shipping at a path
   you already occupy, which is named on purpose — that is the collision warning, and naming it is
   the whole point of it.
+- Offer you machinery the template has started shipping somewhere your copy of this script does not
+  yet know about. The list of those places is compiled into the script **you** are running, which is
+  what stops a source widening it, and the price is that a genuinely new location is narrowed to
+  *yours* and left out of the copy plan rather than offered. The `NARROWED` line names it, and you
+  can still take the file by hand.
 
 **Do not schedule it.** It is not wired into any scheduled pass, ships no `.cmd` wrapper, and is
 documented here as the one thing not to automate. An adopter running unattended would be doing on a
@@ -267,7 +291,7 @@ timer precisely what the runners' snapshot fence exists to catch.
 | --- | --- |
 | `0` | It could look, and there is nothing to adopt. |
 | `10` | It could look, and there **is** something to adopt, or `--status` found local drift. |
-| `2` | It could **not** look, so it is saying nothing about the template. No manifest (`NO-MANIFEST`), no working hash tool (`HASH-UNAVAILABLE`), a hash tool named by `VAULT_HASH_TOOL` that is not one of the four (`HASH-TOOL-UNKNOWN`), an unreadable or non-template source (`NO-SOURCE`, `NOT-A-TEMPLATE`), a hash algorithm it does not know (`UNKNOWN-ALGORITHM`), a source older than this vault (`SOURCE-IS-OLDER`), a comparison of zero files on either side (`VACUOUS`, `SOURCE-VACUOUS`), a source that disagrees with its own manifest (`SOURCE-DISAGREES`), a source shipping an entry as a symbolic link or naming one it cannot open (`SOURCE-SYMLINK`, `SOURCE-UNREADABLE`), a file of your own this could not open (`UNREADABLE`), or two copies that both claim one version and differ (`SAME-VERSION-DISAGREES`). |
+| `2` | It could **not** look, so it is saying nothing about the template. No manifest (`NO-MANIFEST`), no working hash tool (`HASH-UNAVAILABLE`), a hash tool named by `VAULT_HASH_TOOL` that is not one of the four (`HASH-TOOL-UNKNOWN`), an unreadable or non-template source (`NO-SOURCE`, `NOT-A-TEMPLATE`), a hash algorithm it does not know (`UNKNOWN-ALGORITHM`), a source older than this vault (`SOURCE-IS-OLDER`), a comparison of zero files on either side (`VACUOUS`, `SOURCE-VACUOUS`), a source that disagrees with its own manifest (`SOURCE-DISAGREES`), a source shipping an entry as a symbolic link or naming one it cannot open (`SOURCE-SYMLINK`, `SOURCE-UNREADABLE`), a file of your own this could not open (`UNREADABLE`), a rules file that is not readable or that holds no rules (`NO-RULES`), or two copies that both claim one version and differ (`SAME-VERSION-DISAGREES`). |
 | `1` | This vault has a problem. The manifest cannot be parsed (`MANIFEST-MALFORMED`), `--verify-manifest` found it stale (`MANIFEST-STALE`), or the rules file cannot be used (`RULE-FIELDS`, `RULE-CLASS`, `RULE-DOUBLE-STAR`, `RULE-CHARACTER`). `--generate` also answers 1 when it refuses to write (`UNCLASSIFIED`, `BINARY`, `MISSING-TRACKED`, `UNWRITABLE-PATH`, `CASE-COLLISION`, `NO-VERSION`). |
 | `11` | Refused because of the state of the vault rather than the command line. `--adopt` where a baseline already exists (`ALREADY-ADOPTED`). To adopt a different baseline on purpose, delete `.claude/template-manifest` and run it again. It is `11` rather than `3` because the retention runner already answers `3` for a partial pass, and the numbering [`reference.md` §10](reference.md#10-exit-codes-and-log-locations) publishes is one numbering across all four scripts, so that a caller reading a code does not have to know which of them it ran. |
 | `6` | A manifest entry named a path outside the vault (`PATH-BLOCKED`). |
@@ -282,8 +306,12 @@ version number whose content is ahead of it. Two copies that both say `1.0.0` an
 ordered by their version numbers, and being told that is better than being given a confident wrong
 answer.
 
-Every refusal prints a tag like those above as the first word after `vault-update:`, so the output
-is greppable against this table.
+Every refusal prints a tag as the first word after `vault-update:`. The table above names the ones
+a vault owner meets, which is not all of them — the generation-time and diff-time tags are not
+here, because they belong to the two maintainer modes in §7 and to a missing `diff`.
+[`reference.md` §4.5](reference.md) lists every tag, and that is the one to grep against. Saying
+this table was the complete list would send a reader who found something else to the conclusion
+that the tool had printed something undocumented.
 
 `10` rather than `1` for "there is something to adopt", on purpose.
 [`reference.md` §10](reference.md#10-exit-codes-and-log-locations) records that `1` means *the
@@ -339,7 +367,7 @@ the tool can do, and an environment variable is what stops it being reachable by
 
 `--verify-manifest` runs in CI and fails when the manifest has drifted from the tree. It catches a
 maintainer who edited a file and forgot to regenerate, which is the mistake that actually happens.
-It does **not** check that the classification is *right*: both sides run the same rules, so a wrong
+It does **not** check that the classification is *right*, because both sides run the same rules, so a wrong
 rule is perfectly self-consistent. A hand-maintained table in `run-tests.sh` names specific paths
 and their expected class, and that is the control that can fail.
 
