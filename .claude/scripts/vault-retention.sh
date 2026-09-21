@@ -95,6 +95,13 @@ RETENTION_GIT_INDEX=""
 # the Windows stop sweep looks for on a command line, and giving it this run's
 # identifier would point the sweep at whatever else happened to carry it.
 RETENTION_NONCE=""
+# Whether git mv reported success, carried so that write_recovery can put it in
+# the record every time it writes one. It used to be appended to the record
+# file directly after the rename, and write_recovery builds its record from
+# scratch and replaces the file, so the very next call erased it. Every path
+# that reaches a tripwire goes through such a call, which means the marker was
+# not merely unread, it could never survive to be read.
+MV_REPORTED_OK=0
 # Archive folders this run made, deepest last, so a put-back can remove them.
 MADE_DIRS=""
 
@@ -2108,6 +2115,7 @@ write_recovery() {
     printf 'state %s\n' "$1"
     printf 'head %s\n' "$HEAD_BEFORE"
     printf 'nonce %s\n' "$RETENTION_NONCE"
+    if [ "$MV_REPORTED_OK" -eq 1 ]; then printf 'done\n'; fi
     while [ "$k" -lt "${#SRCS[@]}" ]; do
       printf 'move %s\t%s\t%s\n' "${SRCS[$k]}" "${DSTS[$k]}" "${MBLOBS[$k]}"
       k=$((k + 1))
@@ -2201,7 +2209,7 @@ do_moves() {
   fi
   index_lock_wait
   if watched_git "$SNAP_DIR/mv.out" /dev/null mv -- "${SRCS[@]}" "$ARCH_REL/"; then
-    printf 'done\n' >> "$STATE/retention-inflight" 2>/dev/null
+    MV_REPORTED_OK=1
     return 0
   fi
   # run_with_watchdog clears its stop result at the top of every call, so what
@@ -2221,7 +2229,7 @@ do_moves() {
     say "The index was locked by another git process, so the move waits for it."
     index_lock_wait
     if watched_git "$SNAP_DIR/mv.out" /dev/null mv -- "${SRCS[@]}" "$ARCH_REL/"; then
-      printf 'done\n' >> "$STATE/retention-inflight" 2>/dev/null
+      MV_REPORTED_OK=1
       return 0
     fi
     [ "${RUN_KILL_FAILED:-0}" -eq 1 ] && kill_failed=1
@@ -2672,13 +2680,13 @@ recovery_check() {
     case "$key" in
       head) rhead="$rest" ;;
       nonce) rnonce="$rest" ;;
-      # Written by the mover the moment git mv reported success. It decides
-      # nothing here, and it must not: every branch below asks the vault what
-      # is actually true, which is stronger than any marker. It is read so the
-      # tripwire can say one thing the state cannot, which is what git said at
-      # the time. Afterwards you can see where the files are and never learn
-      # whether the rename reported success, and those are different incidents
-      # to walk into.
+      # Put in the record by write_recovery whenever git mv has reported
+      # success. It decides nothing here, and it must not: every branch below
+      # asks the vault what is actually true, which is stronger than any
+      # marker. It is read so the tripwire can say one thing the state cannot,
+      # which is what git said at the time. Afterwards you can see where the
+      # files are and never learn whether the rename reported success, and
+      # those are different incidents to walk into.
       done) rdone=1 ;;
       move)
         n=$((n + 1))
