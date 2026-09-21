@@ -153,11 +153,13 @@ vault-update.sh - which template version this vault carries, and what has moved.
                             from the whole tracked tree and so reads your notes.
   --help                    This text.
 
-Two environment variables, for when the hashing itself is the problem.
+Three environment variables, for when a tool this leans on is the problem.
   VAULT_HASH_TOOL=<name>    Force one candidate: sha256sum, shasum, openssl or
                             cksum-sha256. Useful when one of them is broken.
   VAULT_FORCE_NO_SHA=1      Refuse to hash at all, to see the could-not-look
                             answer on purpose.
+  VAULT_FORCE_NO_DIFF=1     Take the no-diff-tool path under --diff even where
+                            git or diff is installed, for the same reason.
 
 This never reaches the network and never runs anything out of <dir>. Fetch a
 template copy with git clone or a browser download, then point --from at it.
@@ -314,6 +316,22 @@ pick_hash_tool() {
   return 1
 }
 
+# Whether anything here can render a difference. A machine carrying neither git
+# nor diff is a real configuration and the refusal below is the answer it gets,
+# and there is no way to build that machine inside a test on a runner that has
+# both. So the seam is here, around the question "is one available", rather than
+# at the refusal, which stays the one the real condition reaches. It is the same
+# kind of seam as VAULT_FORCE_NO_SHA and as VAULT_FORCE_NO_JQ in the hooks, and
+# it exists because without it that refusal had no control at all. Deleting it
+# printed empty sections under headings and called them no change, in the one
+# mode people use to decide whether to copy a file.
+have_diff_tool() {
+  [ -z "${VAULT_FORCE_NO_DIFF:-}" ] || return 1
+  command -v git >/dev/null 2>&1 && return 0
+  command -v diff >/dev/null 2>&1 && return 0
+  return 1
+}
+
 need_hash_tool() {
   pick_hash_tool && return 0
   warn "HASH-UNAVAILABLE - none of sha256sum, shasum -a 256, openssl dgst -sha256 or cksum -a sha256 returned the expected digest for a known string, so nothing was hashed and nothing was compared."
@@ -348,7 +366,7 @@ existing_paths() {
     fi
   done < "$list"
   if [ -s "$unread" ]; then
-    warn "UNREADABLE - these are on disk and could not be read, so nothing is known about them: $(tr '\n' ' ' < "$unread" | cut -c1-200)"
+    warn "UNREADABLE - these are on disk and could not be read, so nothing is known about them: $(name_a_few "$unread")"
   fi
 }
 
@@ -1502,7 +1520,7 @@ guard_versions() {  # guard_versions <dir>
 # manifest becomes the single artefact worth reading, and that a half-finished
 # download or a partial clone is caught rather than presented as an update.
 verify_source() {  # verify_source <dir>
-  local dir="$1" missing differing rel
+  local dir="$1" missing differing rel walk rest
   LC_ALL=C awk '{ print $4 }' "$TMPD/src.entries" > "$TMPD/vs.paths"
 
   # A symlinked entry is refused outright, before anything is hashed or offered.
@@ -1512,13 +1530,34 @@ verify_source() {  # verify_source <dir>
   # have the printed copy plan copy the target's bytes into the vault. What the
   # reader was shown and what the plan moves would then both be a file the
   # source never contained. A template ships regular files.
+  #
+  # EVERY COMPONENT, not only the leaf. This used to be a single test of
+  # `$dir/$rel`, which is false when the link is a DIRECTORY on the way to the
+  # file - `[ -L "$dir/docs/a.md" ]` says nothing at all about `$dir/docs`. A
+  # source could therefore ship one link named `docs` and walk every entry
+  # under it past a check whose whole job was to stop exactly that, while
+  # verifying against its own manifest perfectly. The walk is written with
+  # parameter expansion rather than a command substitution per component
+  # because this runs once per manifest entry and a fork there is what made an
+  # earlier version of the hashing unusable on Windows.
   : > "$TMPD/vs.links"
   while IFS= read -r rel; do
     [ -n "$rel" ] || continue
-    [ -L "$dir/$rel" ] && printf '%s\n' "$rel" >> "$TMPD/vs.links"
+    walk="$dir"
+    rest="$rel"
+    while [ -n "$rest" ]; do
+      case "$rest" in
+        */*) walk="$walk/${rest%%/*}"; rest="${rest#*/}" ;;
+        *)   walk="$walk/$rest";       rest='' ;;
+      esac
+      if [ -L "$walk" ]; then
+        printf '%s\n' "$rel" >> "$TMPD/vs.links"
+        break
+      fi
+    done
   done < "$TMPD/vs.paths"
   if [ -s "$TMPD/vs.links" ]; then
-    warn "SOURCE-SYMLINK - $dir ships these as symbolic links rather than as files, so what was hashed and what a copy would move is whatever they point at: $(tr '\n' ' ' < "$TMPD/vs.links" | cut -c1-200)"
+    warn "SOURCE-SYMLINK - $dir reaches these through a symbolic link rather than holding them as files, so what was hashed and what a copy would move is whatever it points at: $(name_a_few "$TMPD/vs.links")"
     warn "A template ships regular files. Nothing was compared."
     return 1
   fi
@@ -1529,7 +1568,7 @@ verify_source() {  # verify_source <dir>
   # and deleted, so a dangling link or an unreadable file was warned about on
   # standard error and the folder was then accepted as a trustworthy update.
   if [ -s "$TMPD/vs.raw.unreadable" ]; then
-    warn "SOURCE-UNREADABLE - $dir names these in its own manifest and they could not be read, so whether it holds what it says it holds is unknown: $(tr '\n' ' ' < "$TMPD/vs.raw.unreadable" | cut -c1-200)"
+    warn "SOURCE-UNREADABLE - $dir names these in its own manifest and they could not be read, so whether it holds what it says it holds is unknown: $(name_a_few "$TMPD/vs.raw.unreadable")"
     warn "A half-finished download and a dangling link both look like this. Fetch it again. Nothing was compared."
     return 1
   fi
@@ -1557,8 +1596,14 @@ verify_source() {  # verify_source <dir>
   fi
   join_state no "$TMPD/vs.entries" "$TMPD/vs.now" "$TMPD/vs.norm" > "$TMPD/vs.state"
 
-  differing="$(LC_ALL=C awk '$1 == "drifted" { print $3 }' "$TMPD/vs.state" | head -n 3 | tr '\n' ' ')"
-  missing="$(LC_ALL=C awk '$1 == "deleted" { print $3 }' "$TMPD/vs.state" | head -n 3 | tr '\n' ' ')"
+  # Through name_a_few rather than head, so a source manifest claiming five
+  # hundred paths tells the reader there were five hundred rather than naming
+  # three and leaving the rest unmentioned. These were the last three lists in
+  # this script still truncating silently.
+  LC_ALL=C awk '$1 == "drifted" { print $3 }' "$TMPD/vs.state" > "$TMPD/vs.differing"
+  LC_ALL=C awk '$1 == "deleted" { print $3 }' "$TMPD/vs.state" > "$TMPD/vs.missing"
+  differing="$(name_a_few "$TMPD/vs.differing")"
+  missing="$(name_a_few "$TMPD/vs.missing")"
   if [ -n "$differing" ] || [ -n "$missing" ]; then
     warn "SOURCE-DISAGREES - $dir does not hold what its own manifest says it holds, so nothing there can be trusted as an update."
     [ -n "$differing" ] && warn "Different from its own record: $differing"
@@ -1585,7 +1630,7 @@ version_older() {  # version_older <a> <b>, true when a is older than b
 }
 
 do_check() {  # do_check <dir>
-  local dir="$1" take merge new retired differing collision converged unreadable
+  local dir="$1" take merge new retired differing collision converged unreadable plan_digests
   refuse_if_held
   need_hash_tool
   load_local_manifest
@@ -1643,9 +1688,34 @@ do_check() {  # do_check <dir>
   say "$(( take + merge + new + collision )) moved upstream, $(( merge + collision )) also changed here, $(( take + new )) safe to take, $converged already taken (recorded $LOCAL_VERSION, source $SOURCE_VERSION)."
 
   if [ "$(( take + new ))" -gt 0 ]; then
-    printf '\nSafe to take (%s). You have not touched these, so copying them loses nothing:\n' "$(( take + new ))"
+    # The digest beside each path is the one this run measured out of the source
+    # folder, from vs.raw, and not the one the source manifest claims. The two
+    # are equal by the time anything is printed, because verify_source refuses
+    # the whole folder when they are not, so the choice is only about which
+    # question the number answers. What a reader can check with sha256sum is
+    # the bytes, so the number printed is the one taken from the bytes.
+    #
+    # This closes the one gap nothing in the script can close on its own.
+    # Between the moment these digests were taken and the moment somebody
+    # pastes the copy plan below there is a person reading, and nothing
+    # re-reads the folder across that gap. Printing the digest turns "trust
+    # that it has not changed" into something the reader can settle in one
+    # command.
+    printf '\nSafe to take (%s). You have not touched these, so copying them loses nothing. The digest beside each one is what this run hashed out of %s, so you can check that what you copy is what was read:\n' "$(( take + new ))" "$dir"
+    # Named into a variable with its absence handled, rather than handed to awk
+    # and hoped for. verify_source always writes this file before anything here
+    # runs, and if that ever stops being true awk would fail to open it, print
+    # nothing at all, and empty the one list a reader acts on. A list that
+    # vanished would read as nothing being safe to take, which is the quiet
+    # direction.
+    plan_digests="$TMPD/vs.raw"
+    [ -f "$plan_digests" ] || plan_digests=/dev/null
     { list_paths "$TMPD/ck.state" take owned; list_paths "$TMPD/ck.state" new owned; } \
-      | LC_ALL=C sort | LC_ALL=C sed 's/^/  /'
+      | LC_ALL=C sort \
+      | LC_ALL=C awk '
+          NR == FNR { h[$2] = $1; next }
+          { printf "  %s  %s\n", (($0 in h) ? h[$0] : "digest-unknown"), $0 }
+        ' "$plan_digests" -
   fi
   if [ "$merge" -gt 0 ]; then
     printf '\nMoved upstream and changed here (%s). Nothing will overwrite these. Read each one with --diff and merge it yourself:\n' "$merge"
@@ -1667,7 +1737,13 @@ do_check() {  # do_check <dir>
   report_local "$TMPD/ck.state" "$TMPD/ck.hashes.unreadable"
 
   if [ "$(( take + new ))" -gt 0 ]; then
-    printf '\nTo take the safe ones, read them first and then run these from the vault root:\n'
+    # The preamble says what the plan is a statement ABOUT. It describes the
+    # folder as it was when this run read it, and nothing re-reads it between
+    # then and whenever somebody pastes the commands. That gap is a person
+    # reading rather than a race inside the script, so it cannot be closed in
+    # code, and a plan that did not say so would be read as a promise about the
+    # folder now.
+    printf '\nTo take the safe ones, read them first and then run these from the vault root. This plan describes %s as it was when this run hashed it, and nothing re-reads that folder between now and whenever you paste, so run --check again if it may have moved since:\n' "$dir"
     # Both sides quoted, and the destination prefixed with ./ . Manifest paths
     # cannot hold whitespace or a shell metacharacter, so that side was already
     # safe, but the source folder comes from --from and is not filtered at all.
@@ -1746,7 +1822,7 @@ do_diff() {  # do_diff <dir>
   # vault said it could not look and left on 2.
   df_unreadable="$(awk 'END { print NR + 0 }' "$TMPD/df.hashes.unreadable")"
   if [ "$df_unreadable" -gt 0 ]; then
-    warn "UNREADABLE - these are on disk and could not be read, so what follows is not the whole answer: $(tr '\n' ' ' < "$TMPD/df.hashes.unreadable" | cut -c1-200)"
+    warn "UNREADABLE - these are on disk and could not be read, so what follows is not the whole answer: $(name_a_few "$TMPD/df.hashes.unreadable")"
   fi
 
   LC_ALL=C awk '($1 == "take" || $1 == "merge" || $1 == "new" || $1 == "collision") && $2 == "owned" { print $3 }' "$TMPD/df.state" > "$TMPD/df.list"
@@ -1763,8 +1839,8 @@ do_diff() {  # do_diff <dir>
     return 0
   fi
 
-  if ! command -v git >/dev/null 2>&1 && ! command -v diff >/dev/null 2>&1; then
-    warn "NO-DIFF-TOOL - neither git nor diff is installed, so the changes could not be shown. --check still names the files."
+  if ! have_diff_tool; then
+    warn "NO-DIFF-TOOL - neither git nor diff could be used to show the changes, so they were not shown. --check still names the files."
     exit 2
   fi
 

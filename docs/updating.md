@@ -114,6 +114,18 @@ template owns lives under `.claude/`, which is what your harness reads to decide
 so read the diff before you paste anything and read [§5](#5-what-this-does-not-protect-against)
 before you read the diff.
 
+The safe-to-take list prints the SHA-256 of each file beside its path, and it is the digest this
+run took out of the folder rather than the one that folder's manifest claims. The two agree by the
+time anything is printed, because a folder that disagrees with its own manifest is refused whole.
+What the digest is for is the gap the tool cannot close on its own. Between the moment those bytes
+were read and the moment you paste the copy commands there is you, reading, and nothing re-reads
+the folder across that gap. The plan says so in its own preamble, and the digest is what lets you
+settle it in one command rather than trust it:
+
+```bash
+sha256sum ../template-new/.claude/hooks/vault-lint.sh
+```
+
 ```bash
 bash .claude/scripts/vault-update.sh --diff --from ../template-new
 ```
@@ -229,7 +241,8 @@ What the tool does do:
   cannot open is a refusal rather than a warning it carries on past, and an entry shipped as a
   **symbolic link is refused outright**, because every existence test here follows a link and the
   copy command you paste would move whatever the link points at rather than anything the source
-  contained.
+  contained. Every component of the path is tested and not only the last one, because a link named
+  `docs` walks every entry under it past a check that only ever asked about `docs/a.md`.
 - **It refuses while a scheduled pass is running**, and refuses while a runner tripwire is set.
   The two maintainer modes in §7 take the same refusals, and are deliberately **not** exempt. Both
   ask git for the tracked file list, and a pass mid-commit is exactly the moment that list is a
@@ -291,7 +304,7 @@ timer precisely what the runners' snapshot fence exists to catch.
 | --- | --- |
 | `0` | It could look, and there is nothing to adopt. |
 | `10` | It could look, and there **is** something to adopt, or `--status` found local drift. |
-| `2` | It could **not** look, so it is saying nothing about the template. No manifest (`NO-MANIFEST`), no working hash tool (`HASH-UNAVAILABLE`), a hash tool named by `VAULT_HASH_TOOL` that is not one of the four (`HASH-TOOL-UNKNOWN`), an unreadable or non-template source (`NO-SOURCE`, `NOT-A-TEMPLATE`), a hash algorithm it does not know (`UNKNOWN-ALGORITHM`), a source older than this vault (`SOURCE-IS-OLDER`), a comparison of zero files on either side (`VACUOUS`, `SOURCE-VACUOUS`), a source that disagrees with its own manifest (`SOURCE-DISAGREES`), a source shipping an entry as a symbolic link or naming one it cannot open (`SOURCE-SYMLINK`, `SOURCE-UNREADABLE`), a file of your own this could not open (`UNREADABLE`), a rules file that is not readable or that holds no rules (`NO-RULES`), or two copies that both claim one version and differ (`SAME-VERSION-DISAGREES`). |
+| `2` | It could **not** look, so it is saying nothing about the template. No manifest (`NO-MANIFEST`), no working hash tool (`HASH-UNAVAILABLE`), a hash tool named by `VAULT_HASH_TOOL` that is not one of the four (`HASH-TOOL-UNKNOWN`), an unreadable or non-template source (`NO-SOURCE`, `NOT-A-TEMPLATE`), a hash algorithm it does not know (`UNKNOWN-ALGORITHM`), a source older than this vault (`SOURCE-IS-OLDER`), a comparison of zero files on either side (`VACUOUS`, `SOURCE-VACUOUS`), a source that disagrees with its own manifest (`SOURCE-DISAGREES`), a source reaching an entry through a symbolic link at any point in its path or naming one it cannot open (`SOURCE-SYMLINK`, `SOURCE-UNREADABLE`), a file of your own this could not open (`UNREADABLE`), a rules file that is not readable or that holds no rules (`NO-RULES`), or two copies that both claim one version and differ (`SAME-VERSION-DISAGREES`). |
 | `1` | This vault has a problem. The manifest cannot be parsed (`MANIFEST-MALFORMED`), `--verify-manifest` found it stale (`MANIFEST-STALE`), or the rules file cannot be used (`RULE-FIELDS`, `RULE-CLASS`, `RULE-DOUBLE-STAR`, `RULE-CHARACTER`). `--generate` also answers 1 when it refuses to write (`UNCLASSIFIED`, `BINARY`, `MISSING-TRACKED`, `UNWRITABLE-PATH`, `CASE-COLLISION`, `NO-VERSION`). |
 | `11` | Refused because of the state of the vault rather than the command line. `--adopt` where a baseline already exists (`ALREADY-ADOPTED`). To adopt a different baseline on purpose, delete `.claude/template-manifest` and run it again. It is `11` rather than `3` because the retention runner already answers `3` for a partial pass, and the numbering [`reference.md` §10](reference.md#10-exit-codes-and-log-locations) publishes is one numbering across all four scripts, so that a caller reading a code does not have to know which of them it ran. |
 | `6` | A manifest entry named a path outside the vault (`PATH-BLOCKED`). |
