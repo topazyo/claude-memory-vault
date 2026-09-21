@@ -50,6 +50,13 @@
 excluded	.github/workflows/*
 excluded	.github/ISSUE_TEMPLATE/*
 
+# The release check the workflow above runs. It asks whether this project has
+# published a release for what it ships, which is a question only this project
+# has, so it sits beside the workflow rather than under `.claude/scripts/`,
+# where every file is owned and would be shipped into vaults that have no
+# releases to cut.
+excluded	.github/release-check.sh
+
 # Governance for the template project rather than for a vault.
 excluded	CONTRIBUTING.md
 

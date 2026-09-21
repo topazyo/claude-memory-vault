@@ -116,7 +116,30 @@ first note. So it runs on your **pull request**, where the base repository is th
 
 ## Cutting a release
 
-1. Set `VERSION`.
+**Every merge that changes a file this template ships is a release.** That is a policy rather than
+a side effect of one, and CI enforces it, so it is worth knowing before you open a pull request
+that touches a shipped file.
+
+The reason is that a release is the only way anybody downstream finds out. `vault-update.sh` tells
+a vault what moved by comparing manifests, and `docs/updating.md` tells the reader to hear about a
+newer copy by watching this repository's releases. A merge that edited a shipped file, left
+`VERSION` alone and was never tagged produced a template whose newest content no vault could
+discover, while the manifest still verified and CI still went green. Version 1.0.0 was itself
+merged first and tagged afterwards by hand, because somebody remembered.
+
+**The tag is the source of truth.** `VERSION`, the manifest header and the newest changelog entry
+are three claims about a release that any single commit can rewrite together. The tag is the only
+one that becomes immutable once pushed and the only one a vault can fetch. So `tmpl-version-agrees`
+checks that the three claims agree with each other, and `.github/release-check.sh` checks that what
+they agree on has actually been published.
+
+**The tag is spelled `1.0.0`, with no `v`.** `CHANGELOG.md` heads its entries that way and the
+clone example in `docs/updating.md` names a tag that way. A prefix would have to move in all three
+at once, so a tag that looks like a prefixed version is refused by name rather than skipped.
+
+In a pull request that changes a shipped file:
+
+1. Set `VERSION` to a number above the newest tag.
 2. Add a `CHANGELOG.md` entry with an **Adopting this** note. Every entry needs one, and the
    control suite fails a release without it. Say "nothing to do" in as many words when that is the
    answer, because a note nobody wrote and a release that needs nothing look identical otherwise.
@@ -124,8 +147,36 @@ first note. So it runs on your **pull request**, where the base repository is th
 4. Run `bash .claude/scripts/run-tests.sh`. `tmpl-version-agrees` fails a release whose three
    statements of the version disagree, and `tmpl-changelog-adopting` fails one whose newest entry
    carries no adopting note. Neither fires unless somebody runs the suite.
-5. Tag and publish a GitHub release. That release is the notification channel — downstream vaults
-   find out by watching it, and nothing in this repository makes a network call.
+
+After it merges, `main` carries a version that names no tag, and the hygiene job goes red saying
+so. Clear it with one command:
+
+```bash
+bash .github/release-check.sh --tag
+```
+
+That writes the annotated tag, with the changelog entry as its message, and prints the two
+commands that publish it. Those two are the only steps in cutting a release that reach the
+network, which is why they are printed rather than run. Re-run the failed hygiene job afterwards,
+because tagging does not re-trigger the workflow.
+
+You can run the check itself at any time, from anywhere in the repository:
+
+```bash
+bash .github/release-check.sh
+```
+
+It exits 0 when the release keeps up with what this tree ships, 1 when a release is owed or the
+tree claims a version it is not, and 2 when it could not answer — no git, no tags in the checkout,
+or a tag whose tree holds no manifest. The 2 matters: a shallow clone has no tags and looks exactly
+like a project that has never released one, and those two want opposite responses.
+
+**The CI step is guarded by repository and is not path filtered.** A path filtered step shows as
+skipped on a pull request that touches nothing matching the filter, and a reviewer reading the
+checks list cannot tell a skip from a pass. This one runs on every pull request and every push to
+`main` here, including pull requests from forks, because `github.repository` is still this
+repository for those. It skips only in a repository made with "Use this template", where the
+owner's notes are shipped files by class and their releases are their own business.
 
 ## Changing the documentation
 
