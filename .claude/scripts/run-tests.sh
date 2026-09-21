@@ -8549,7 +8549,16 @@ else
   mkdir -p "$vu_d/.claude"
   cp "$ROOT/$VU_RULES_REL" "$vu_d/.claude/manifest-rules"
   printf '1.0.0\n' > "$vu_d/VERSION"
+  # TWO probes, one at the root and one nested, because one spelling of
+  # unreachable is not the property. A root-level probe alone is survived by
+  # adding `seed */*` to the shipped rules, which classifies every file in every
+  # subdirectory - .claude/, docs/, every tier, everything that matters - and
+  # never matches a path with no slash in it. That is a catch-all in everything
+  # but spelling, which is the exact failure this control was rewritten to stop
+  # testing around.
   printf 'a file the shipped rules are not meant to reach\n' > "$vu_d/zz-unclassifiable.probe"
+  mkdir -p "$vu_d/zz-unclassifiable"
+  printf 'the same, one directory down\n' > "$vu_d/zz-unclassifiable/zz.probe"
   vu_git "$vu_d"
   # Measured when the fixture is built. A rules file that failed to copy would
   # otherwise make this pass for the wrong reason, because an empty one refuses
@@ -8563,11 +8572,17 @@ else
   [ "${vu_rulecount:-0}" -ge 10 ] || vu_bad="$vu_bad fixture-carries-only-${vu_rulecount:-0}-rules"
   [ "$vu_rc_ca" = 1 ] || vu_bad="$vu_bad rc:$vu_rc_ca"
   vu_says 'UNCLASSIFIED' || vu_bad="$vu_bad no-reason"
-  vu_says 'zz-unclassifiable.probe' || vu_bad="$vu_bad not-named"
+  vu_says 'zz-unclassifiable.probe' || vu_bad="$vu_bad root-probe-not-named"
+  vu_says 'zz-unclassifiable/zz.probe' || vu_bad="$vu_bad nested-probe-not-named"
+  # The RULE-IDLE warning lists nearly every shipped rule here, because the
+  # fixture holds four files, and that list contains the string
+  # .claude/template-manifest from the excluded rule. The assertion below is
+  # written with `wrote ` in front of it for that reason, and rewording either
+  # string without the other would make this stop discriminating.
   vu_says 'wrote .claude/template-manifest' && vu_bad="$vu_bad claimed-written"
   ran tmpl-shipped-rules-have-no-catchall
   if [ -z "$vu_bad" ]; then
-    ok "the $vu_rulecount shipped rules still leave an unclassified file failing generation by name, so no rule among them reaches everything"
+    ok "the $vu_rulecount shipped rules leave both an unclassified root file and an unclassified nested one failing generation by name, so no rule among them reaches everything"
   else
     bad "the shipped $VU_RULES_REL classified a file nothing should have classified --$vu_bad [$(vu_excerpt)]"
   fi
@@ -8852,21 +8867,40 @@ else
   vu_unread_built=0
   [ -r "$vu_d/docs/a.md" ] || vu_unread_built=1
   if [ "$vu_unread_built" = 1 ]; then
-    vu_rc_ur="$(vu_rc "$vu_d" --status)"
+    # STDOUT AND STDERR ARE CAPTURED SEPARATELY HERE, and that is the whole
+    # point of this control rather than a detail of it. existing_paths writes
+    # one UNREADABLE warning to stderr that contains the tag, the words "could
+    # not be read" AND the path, so a control reading the two merged is
+    # satisfied by that line alone, before report_local runs at all. The entire
+    # report section could then be deleted and this would stay green, which is
+    # exactly the state the code comment says "was not enough". The section is
+    # asserted on STDOUT, by its heading, because that is what a reader sees.
+    vu_uo="$TMP/unread.out"
+    vu_ue="$TMP/unread.err"
+    vu_rc_ur="$( CLAUDE_PROJECT_DIR="$vu_d" "$VU_BASH" "$VU_SH" --status > "$vu_uo" 2> "$vu_ue"; printf '%s' "$?" )"
     vu_bad=''
     # 2 and never 10. This is the tool saying it could not look at part of the
     # vault, which has to outrank any finding drawn from the part it could.
     [ "$vu_rc_ur" = 2 ] || vu_bad="$vu_bad rc:$vu_rc_ur"
-    vu_says 'UNREADABLE' || vu_bad="$vu_bad no-reason"
-    vu_says 'could not be read' || vu_bad="$vu_bad no-section"
-    vu_says 'docs/a.md' || vu_bad="$vu_bad not-named"
-    vu_says 'you have deleted' && vu_bad="$vu_bad called-it-deleted"
+    grep -qF 'UNREADABLE' "$vu_ue" || vu_bad="$vu_bad no-warning-on-stderr"
+    grep -qF 'Files that are on the disk and could not be read' "$vu_uo" \
+      || vu_bad="$vu_bad no-section-on-stdout"
+    grep -qF 'docs/a.md' "$vu_uo" || vu_bad="$vu_bad not-named-on-stdout"
+    grep -qF 'you have deleted' "$vu_uo" && vu_bad="$vu_bad called-it-deleted"
+    # And the same file under --check, which reaches join_state by a different
+    # route. Retirement is judged before the unreadable test, so an owned path
+    # the source still ships must not come back as anything but unreadable.
+    vu_rc_ur2="$( CLAUDE_PROJECT_DIR="$vu_d" "$VU_BASH" "$VU_SH" --check --from "$vu_newer" > "$vu_uo" 2> "$vu_ue"; printf '%s' "$?" )"
+    [ "$vu_rc_ur2" = 2 ] || vu_bad="$vu_bad check-rc:$vu_rc_ur2"
+    grep -qF 'Files that are on the disk and could not be read' "$vu_uo" \
+      || vu_bad="$vu_bad check-no-section"
+    grep -qF 'you have deleted' "$vu_uo" && vu_bad="$vu_bad check-called-it-deleted"
     chmod 644 "$vu_d/docs/a.md" 2>/dev/null
     ran tmpl-unreadable-not-deleted
     if [ -z "$vu_bad" ]; then
-      ok "a file that could not be read is reported as unreadable and never as one the owner deleted, and the run leaves saying it could not look"
+      ok "a file that could not be read is named in the report on standard output under both --status and --check, never as one the owner deleted, and both runs leave saying they could not look"
     else
-      bad "an unreadable file produced a confident finding --$vu_bad [$(vu_excerpt)]"
+      bad "an unreadable file produced a confident finding --$vu_bad [$(head -c 300 "$vu_uo" | tr '\n' '|')]"
     fi
   else
     chmod 644 "$vu_d/docs/a.md" 2>/dev/null
@@ -8898,12 +8932,27 @@ else
   vu_plant_dst=0
   grep -qF 'PLANTED-BY-THE-SOURCE' "$vu_d/.claude/template-manifest" 2>/dev/null && vu_plant_dst=1
   vu_note_class="$(awk '$3 == "31-standards/note.md" { print $1; exit }' "$vu_d/.claude/template-manifest" 2>/dev/null)"
+  # THE HEADER THIS WROTE, which nothing asserted. The planted line above is a
+  # comment, so read_manifest drops it whatever the rebuild does, and its
+  # absence is therefore guaranteed by the parser rather than by the rebuild.
+  # These three are not: each is a one-line mutation of do_adopt that every
+  # other assertion here survives.
+  vu_hdr_ver="$(awk '$1 == "version" { print $2; exit }' "$vu_d/.claude/template-manifest" 2>/dev/null)"
+  vu_hdr_hash="$(awk '$1 == "hash" { print $2; exit }' "$vu_d/.claude/template-manifest" 2>/dev/null)"
+  vu_src_entries="$(awk '$1 == "owned" || $1 == "seed" { n++ } END { print n + 0 }' "$vu_src/.claude/template-manifest")"
+  vu_dst_entries="$(awk '$1 == "owned" || $1 == "seed" { n++ } END { print n + 0 }' "$vu_d/.claude/template-manifest" 2>/dev/null)"
   vu_bad=''
   [ "$vu_claimed" = 1 ] || vu_bad="$vu_bad fixture-did-not-claim-the-note"
   [ "$vu_plant_src" = 1 ] || vu_bad="$vu_bad fixture-did-not-plant-the-line"
   [ "$vu_rc_ar" = 0 ] || vu_bad="$vu_bad rc:$vu_rc_ar"
   [ "$vu_plant_dst" = 0 ] || vu_bad="$vu_bad copied-the-source-bytes"
   [ "$vu_note_class" = seed ] || vu_bad="$vu_bad note-recorded-as-[${vu_note_class:-absent}]-not-seed"
+  [ "$vu_hdr_ver" = "1.1.0" ] || vu_bad="$vu_bad header-version-[${vu_hdr_ver:-absent}]"
+  [ "$vu_hdr_hash" = sha256 ] || vu_bad="$vu_bad header-hash-[${vu_hdr_hash:-absent}]"
+  # Every entry, not merely the one that was looked at. Writing only the seed
+  # ones, or only the owned ones, leaves every other assertion here untouched.
+  [ "$vu_dst_entries" = "$vu_src_entries" ] \
+    || vu_bad="$vu_bad recorded-$vu_dst_entries-of-$vu_src_entries-entries"
   ran tmpl-adopt-rebuilds-manifest
   if [ -z "$vu_bad" ]; then
     ok "adopting writes back the entries this run validated, so a line the source planted does not survive and a note it claimed is recorded as the reader's"
@@ -9139,7 +9188,13 @@ else
   vu_before="$(cksum < "$vu_d/.claude/template-manifest" | cut -d' ' -f1)"
   vu_gv_bad=''
   vu_gv_n=0
-  for vu_v in '1.0.0 extra' '' 'v1.0.0'; do
+  # The three shapes a reader would refuse outright, plus the three the WRITER
+  # would otherwise wave through into a header the reader then rejects. That
+  # asymmetry is the whole reason this guard exists, and the first three vectors
+  # do not probe it: deleting the double-dot, trailing-dot or leading-dot arm
+  # left every one of them passing while a manifest reading `version 1..0`
+  # shipped and came back MANIFEST-MALFORMED in every vault that adopted it.
+  for vu_v in '1.0.0 extra' '' 'v1.0.0' '1..0' '1.0.' '.1.0'; do
     vu_gv_n=$((vu_gv_n + 1))
     printf '%s\n' "$vu_v" > "$vu_d/VERSION"
     vu_rc_gv="$( cd "$vu_d" && CLAUDE_PROJECT_DIR="$vu_d" VAULT_TEMPLATE_MAINTAINER=1 "$VU_BASH" "$VU_SH" --generate > "$VU_OUT" 2>&1; printf '%s' "$?" )"
@@ -9149,6 +9204,13 @@ else
   done
   vu_after="$(cksum < "$vu_d/.claude/template-manifest" | cut -d' ' -f1)"
   [ "$vu_before" = "$vu_after" ] || vu_gv_bad="$vu_gv_bad manifest-rewritten"
+  # The positive control. A refusal that refuses everything is not a grammar,
+  # and a trailing space is the case a writer-side strip is meant to absorb
+  # rather than reject, so it is asserted as a MUST-SUCCEED vector.
+  printf '1.0.0 \n' > "$vu_d/VERSION"
+  vu_rc_gok="$( cd "$vu_d" && CLAUDE_PROJECT_DIR="$vu_d" VAULT_TEMPLATE_MAINTAINER=1 "$VU_BASH" "$VU_SH" --generate > "$VU_OUT" 2>&1; printf '%s' "$?" )"
+  [ "$vu_rc_gok" = 0 ] || vu_gv_bad="$vu_gv_bad good-version-refused-rc:$vu_rc_gok"
+  vu_says 'NO-VERSION' && vu_gv_bad="$vu_gv_bad good-version-called-bad"
   ran tmpl-generate-needs-a-version
   if [ -z "$vu_gv_bad" ]; then
     ok "none of the $vu_gv_n version shapes the reader would refuse can be written into a manifest header, and the manifest is left as it was"
@@ -9196,15 +9258,41 @@ else
   vu_gen "$vu_src"
   vu_seed_new="$(awk '$1 == "seed" && $3 == "31-standards/example-new.md" { n++ } END { print n + 0 }' "$vu_src/.claude/template-manifest")"
   vu_rc_sc="$(vu_rc "$vu_d" --check --from "$vu_src")"
+  # THE NUMBER, not only the wording. The summary sentence was asserted and the
+  # count in front of it was not, so hardcoding that count left this green, and
+  # the fixture built exactly one of the nine verdict terms so four of them
+  # could be dropped from the sum unnoticed. Two more are built here and the
+  # printed total is read back and compared against what the fixture made.
+  printf 'the owner already has one here\n' > "$vu_d/31-standards/example-collide.md"
+  printf -- '---\ntier: long\ntype: standard\n---\nand one the template ships\n' \
+    > "$vu_src/31-standards/example-collide.md"
+  rm -f "$vu_src/README.md"
+  vu_git "$vu_src"
+  vu_gen "$vu_src"
+  vu_seed_built=0
+  awk '$1 == "seed" && $3 == "31-standards/example-new.md" { n++ } END { exit (n + 0) ? 0 : 1 }' \
+    "$vu_src/.claude/template-manifest" && vu_seed_built=$((vu_seed_built + 1))
+  awk '$1 == "seed" && $3 == "31-standards/example-collide.md" { n++ } END { exit (n + 0) ? 0 : 1 }' \
+    "$vu_src/.claude/template-manifest" && vu_seed_built=$((vu_seed_built + 1))
+  awk '$3 == "README.md" { n++ } END { exit (n + 0) ? 1 : 0 }' \
+    "$vu_src/.claude/template-manifest" && vu_seed_built=$((vu_seed_built + 1))
+  vu_rc_sc="$(vu_rc "$vu_d" --check --from "$vu_src")"
+  vu_seed_said="$(LC_ALL=C sed -n 's/^\([0-9][0-9]*\) file(s) that were shipped once.*/\1/p' "$VU_OUT" | head -n 1)"
   vu_bad=''
   [ "$vu_seed_new" = 1 ] || vu_bad="$vu_bad fixture-did-not-ship-a-new-seed"
+  [ "$vu_seed_built" = 3 ] || vu_bad="$vu_bad fixture-built-only-$vu_seed_built-of-3-seed-moves"
   vu_says 'shipped once and are yours now' || vu_bad="$vu_bad seed-summary-absent"
+  # new seed, collision seed and retired seed, so the count must be at least
+  # three. Read as a number, because a substring match on 3 also matches 13.
+  [ -n "$vu_seed_said" ] && [ "$vu_seed_said" -ge 3 ] \
+    || vu_bad="$vu_bad summary-count:${vu_seed_said:-absent}-wanted-at-least-3"
+  [ "$vu_rc_sc" = 10 ] || vu_bad="$vu_bad rc:$vu_rc_sc"
   # Summarised and never listed, which is the other half of the contract and the
   # reason the summary exists at all.
   vu_says '31-standards/example-new.md' && vu_bad="$vu_bad listed-the-seed-file"
   ran tmpl-seed-verdicts-counted
   if [ -z "$vu_bad" ]; then
-    ok "a seed file the template starts shipping is counted in the summary and is not listed line by line"
+    ok "three different seed moves reach the summary and its count reads $vu_seed_said, and none of them is listed line by line"
   else
     bad "a seed verdict was counted nowhere --$vu_bad [$(vu_excerpt)]"
   fi
@@ -9215,25 +9303,38 @@ else
   # comparator and the sameness test used a string compare, so this pair walked
   # past both guards and was handed a copy plan for two copies nothing could
   # order.
-  vu_d="$VU/vereq"
-  vu_make "$vu_d" 1.0.0
-  vu_src="$VU/vereq-src"
-  vu_make "$vu_src" 1.0
-  printf 'doc a, different content at a numerically equal version\n' > "$vu_src/docs/a.md"
-  vu_git "$vu_src"
-  vu_gen "$vu_src"
-  vu_eq_ver="$(awk '$1 == "version" { print $2; exit }' "$vu_src/.claude/template-manifest")"
-  vu_rc_eq="$(vu_rc "$vu_d" --check --from "$vu_src")"
-  vu_bad=''
-  [ "$vu_eq_ver" = "1.0" ] || vu_bad="$vu_bad fixture-version-is-[${vu_eq_ver:-absent}]"
-  [ "$vu_rc_eq" = 2 ] || vu_bad="$vu_bad rc:$vu_rc_eq"
-  vu_says 'SAME-VERSION-DISAGREES' || vu_bad="$vu_bad no-reason"
-  vu_says 'safe to take' && vu_bad="$vu_bad offered-a-plan"
+  # Both pairs the comment names, because one of them was only ever described.
+  # 1.0 against 1.0.0 differs in field count, 1.01 against 1.1 differs in the
+  # digits themselves, and a string test calls both of them different while the
+  # comparator calls both of them equal.
+  vu_eq_bad=''
+  vu_eq_n=0
+  for vu_pair in '1.0.0:1.0' '1.1:1.01'; do
+    vu_eq_n=$((vu_eq_n + 1))
+    vu_lv="${vu_pair%%:*}"
+    vu_sv="${vu_pair#*:}"
+    vu_d="$VU/vereq$vu_eq_n"
+    vu_make "$vu_d" "$vu_lv"
+    vu_src="$VU/vereq-src$vu_eq_n"
+    vu_make "$vu_src" "$vu_sv"
+    printf 'doc a, different content at a numerically equal version\n' > "$vu_src/docs/a.md"
+    vu_git "$vu_src"
+    vu_gen "$vu_src"
+    vu_eq_ver="$(awk '$1 == "version" { print $2; exit }' "$vu_src/.claude/template-manifest")"
+    vu_rc_eq="$(vu_rc "$vu_d" --check --from "$vu_src")"
+    [ "$vu_eq_ver" = "$vu_sv" ] || vu_eq_bad="$vu_eq_bad [$vu_pair]fixture-version-is-[${vu_eq_ver:-absent}]"
+    [ "$vu_rc_eq" = 2 ] || vu_eq_bad="$vu_eq_bad [$vu_pair]rc:$vu_rc_eq"
+    vu_says 'SAME-VERSION-DISAGREES' || vu_eq_bad="$vu_eq_bad [$vu_pair]no-reason"
+    vu_says 'safe to take' && vu_eq_bad="$vu_eq_bad [$vu_pair]offered-a-plan"
+    # And not the other refusal, which would leave by the same door. A
+    # version_older reverted to a string compare turns these into SOURCE-IS-OLDER.
+    vu_says 'SOURCE-IS-OLDER' && vu_eq_bad="$vu_eq_bad [$vu_pair]called-it-older"
+  done
   ran tmpl-same-version-equivalent
-  if [ -z "$vu_bad" ]; then
-    ok "two copies at 1.0 and 1.0.0 are the same version to the ordering, so their disagreement is refused rather than turned into a copy plan"
+  if [ -z "$vu_eq_bad" ]; then
+    ok "both numerically equal version pairs are refused as the same version rather than turned into a copy plan, and neither is called older"
   else
-    bad "two numerically equal versions were compared anyway --$vu_bad [$(vu_excerpt)]"
+    bad "two numerically equal versions were compared anyway --$vu_eq_bad [$(vu_excerpt)]"
   fi
 
   # -- the refusals --------------------------------------------------------
