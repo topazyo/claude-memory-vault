@@ -33,12 +33,19 @@
 #    2  it could NOT look, so it is saying nothing about the template
 #    1  this vault has a problem. The manifest disagrees with itself, or
 #       --verify-manifest found the manifest stale
-#    3  refused because of the state of the vault rather than the command line.
+#   11  refused because of the state of the vault rather than the command line.
 #       --adopt where a baseline already exists
 #    6  a manifest entry names a path outside the vault
 #   64  the command line was wrong
 #   75  a scheduled pass is in flight, so nothing was done
 #   78  a scheduled pass set the tripwire, so nothing was done
+#
+# Why 11 and not 3 for a refusal about the state of the vault. The retention
+# runner already spends 3 on a partial pass, and docs/reference.md publishes one
+# numbering across all four scripts precisely so that a caller reading a code
+# does not have to know which of them it ran. Two scripts answering 3 with two
+# unrelated meanings is the one thing that numbering exists to prevent, so this
+# refusal sits next to the 10 above it, in the range only this script spends.
 #
 # Why 10 and not 1. vault-check.sh spends twenty lines establishing that 1 means
 # the vault has a problem and 2 means the checker could not run, because those
@@ -86,6 +93,40 @@ HASH_PROBE_DIGEST="f67809800160c86cb48e4ff916b49e2a050d95689987373cfd9ba9797893b
 
 say()  { printf 'vault-update: %s\n' "$1"; }
 warn() { printf 'vault-update: %s\n' "$1" >&2; }
+
+# The top-level folders a manifest is never allowed to call template machinery,
+# whatever it says. The eight content tiers plus Obsidian's own configuration.
+#
+# The shipped names are compiled in and the names this vault actually uses are
+# read out of vault-check.sh's TIERS= line, and the two are UNIONED. A rename is
+# a documented customization here, and docs/customizing.md sends the renamer to
+# that line, so it is the one place in a vault where the current tier names are
+# written down in a form a script can read. Reading it rather than replacing the
+# compiled-in list keeps a vault that renamed nothing exactly as protected as it
+# was, and keeps a vault that renamed something protected under both names. A
+# vault-check.sh that cannot be read costs the extra names and nothing else,
+# which is why this does not refuse when it is missing.
+NARROW_ROOTS="01-inbox 10-daily 20-projects 30-knowledge 31-standards 40-llm-wiki 90-auto-memory 99-archive .obsidian"
+build_narrow_roots() {
+  local vc extra
+  vc="$(dirname "$0")/vault-check.sh"
+  [ -f "$vc" ] && [ -r "$vc" ] || return 0
+  # Everything outside the character set a folder name may hold is stripped
+  # rather than parsed, which takes the quotes off whichever way they were
+  # written and leaves a plain list of words.
+  extra="$(LC_ALL=C awk '
+    { sub(/\r$/, "") }
+    /^TIERS=/ {
+      line = $0
+      sub(/^TIERS=/, "", line)
+      gsub(/[^-A-Za-z0-9._ ]/, "", line)
+      print line
+      exit
+    }' "$vc" 2>/dev/null)"
+  [ -n "$extra" ] || return 0
+  NARROW_ROOTS="$(printf '%s %s' "$NARROW_ROOTS" "$extra" | LC_ALL=C tr 'A-Z' 'a-z')"
+}
+build_narrow_roots
 
 usage() {
   cat <<'USAGE'
@@ -224,7 +265,34 @@ pick_hash_tool() {
     HASH_TOOL=""
     return 1
   fi
-  for candidate in ${VAULT_HASH_TOOL:-sha256sum shasum openssl cksum-sha256}; do
+  # The override is checked against the four names before it is used, because
+  # the loop below has to leave its word unquoted so that the default splits
+  # into four candidates, and an unquoted word is also a glob. VAULT_HASH_TOOL
+  # set to a star would expand against the working directory and hand whatever
+  # it found to command -v, which is a lot of behaviour to reach through a
+  # variable whose documented job is to name one of four tools.
+  if [ -n "${VAULT_HASH_TOOL:-}" ]; then
+    case "$VAULT_HASH_TOOL" in
+      sha256sum|shasum|openssl|cksum-sha256) ;;
+      *)
+        warn "HASH-TOOL-UNKNOWN - VAULT_HASH_TOOL names [$VAULT_HASH_TOOL] and the four this understands are sha256sum, shasum, openssl and cksum-sha256, so nothing was hashed."
+        HASH_TOOL=""
+        return 1
+        ;;
+    esac
+    candidate="$VAULT_HASH_TOOL"
+    if command -v "$(tool_binary "$candidate")" >/dev/null 2>&1; then
+      got="$(printf '%s' "$HASH_PROBE" | hash_stdin_with "$candidate" | hex_digest)" || got=""
+      if [ "$got" = "$HASH_PROBE_DIGEST" ]; then
+        HASH_TOOL="$candidate"
+        return 0
+      fi
+      warn "HASH-PROBE - $candidate did not return the expected digest for a known string, and VAULT_HASH_TOOL named it, so no other candidate was tried."
+    fi
+    HASH_TOOL=""
+    return 1
+  fi
+  for candidate in sha256sum shasum openssl cksum-sha256; do
     command -v "$(tool_binary "$candidate")" >/dev/null 2>&1 || continue
     got="$(printf '%s' "$HASH_PROBE" | hash_stdin_with "$candidate" | hex_digest)" || got=""
     if [ "$got" = "$HASH_PROBE_DIGEST" ]; then
@@ -244,29 +312,34 @@ need_hash_tool() {
   exit 2
 }
 
-# existing_paths <root> <list> <out>
+# existing_paths <root> <list> <out> <unreadable-out>
 # The entries of <list> that are readable regular files, filtered in a bash loop
 # with no forks. Everything downstream relies on this, because a file that is
 # not there would otherwise desynchronise the pairing below.
-# A path that is there and cannot be read is recorded separately, because
-# dropping it silently made the comparison call it deleted, and "the owner
-# removed this on purpose" is a finding while "this could not be read" is a
-# refusal to answer. Conflating the two is the thing the exit codes here exist
-# to prevent.
+#
+# A path that is there and cannot be read goes to <unreadable-out> and the
+# CALLER HAS TO CARRY IT FORWARD, which is the part an earlier version left out.
+# Warning about it and then dropping it was not enough: the path then reached
+# nothing on the disk side of the comparison, the join fell through to its
+# deleted branch, and the report said in as many words that the owner had
+# deleted it on purpose while the truth sat on standard error. "The owner
+# removed this" is a finding and "this could not be read" is a refusal to
+# answer, and keeping those two apart is the whole reason the exit codes here
+# are shaped the way they are.
 existing_paths() {
-  local root="$1" list="$2" out="$3" rel
+  local root="$1" list="$2" out="$3" unread="$4" rel
   : > "$out"
-  : > "$TMPD/ep.unreadable"
+  : > "$unread"
   while IFS= read -r rel; do
     [ -n "$rel" ] || continue
     if [ -f "$root/$rel" ] && [ -r "$root/$rel" ]; then
       printf '%s\n' "$rel" >> "$out"
     elif [ -e "$root/$rel" ] || [ -L "$root/$rel" ]; then
-      printf '%s\n' "$rel" >> "$TMPD/ep.unreadable"
+      printf '%s\n' "$rel" >> "$unread"
     fi
   done < "$list"
-  if [ -s "$TMPD/ep.unreadable" ]; then
-    warn "UNREADABLE - these are on disk and could not be read, so nothing is known about them and they are NOT reported as deleted: $(tr '\n' ' ' < "$TMPD/ep.unreadable" | cut -c1-200)"
+  if [ -s "$unread" ]; then
+    warn "UNREADABLE - these are on disk and could not be read, so nothing is known about them: $(tr '\n' ' ' < "$unread" | cut -c1-200)"
   fi
 }
 
@@ -308,10 +381,13 @@ existing_paths() {
 # first, a file that cannot be read writes only to stderr, and a chunk whose
 # output line count disagrees with its input count is refused rather than
 # mispaired.
+# The paths that were on disk and could not be read are left in <out>.unreadable
+# for the caller to fold into the comparison. They are not this function's to
+# judge, and they must not simply vanish.
 hash_paths() {
   local root="$1" list="$2" out="$3" rel n chunk
   : > "$out"
-  existing_paths "$root" "$list" "$TMPD/hp.exist"
+  existing_paths "$root" "$list" "$TMPD/hp.exist" "$out.unreadable"
   n="$(awk 'END { print NR + 0 }' "$TMPD/hp.exist")"
   [ "$n" -gt 0 ] || return 0
 
@@ -341,7 +417,7 @@ hash_paths() {
 hash_paths_normalised() {
   local root="$1" list="$2" out="$3" rel h st
   : > "$out"
-  existing_paths "$root" "$list" "$TMPD/hpn.exist"
+  existing_paths "$root" "$list" "$TMPD/hpn.exist" "$out.unreadable"
   while IFS= read -r rel; do
     [ -n "$rel" ] || continue
     # pipefail INSIDE the substitution, which is the only thing that works here.
@@ -380,11 +456,22 @@ hash_paths_normalised() {
 }
 
 hash_chunk() {  # hash_chunk <root> <out> <relative-path>...
-  local root="$1" out="$2" want got
+  local root="$1" out="$2" want got p
   shift 2
   want=$#
   [ "$want" -gt 0 ] || return 0
   printf '%s\n' "$@" > "$TMPD/hc.paths"
+  # Handed to the tool with a ./ in front of every path. A tracked file called
+  # -x.md is an ordinary name here and an option to all four tools, and -- is
+  # not the way out, because openssl does not accept it and would take the
+  # dashes as a file name. The prefix is invisible downstream, because the
+  # output is paired with the input by line order and the name in it is never
+  # read back.
+  set --
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    set -- "$@" "./$p"
+  done < "$TMPD/hc.paths"
   ( cd "$root" 2>/dev/null && run_hash_tool "$HASH_TOOL" "$@" ) > "$TMPD/hc.raw" 2>/dev/null
   got="$(awk 'END { print NR + 0 }' "$TMPD/hc.raw")"
   if [ "$got" -ne "$want" ]; then
@@ -420,8 +507,23 @@ hash_chunk() {  # hash_chunk <root> <out> <relative-path>...
 # would not list it, so empty files are filtered out before the question is put
 # rather than being counted as binary - and this template ships six empty
 # .gitkeep files, so getting that wrong would fail generation on a clean tree.
+#
+# THE LIMIT, STATED RATHER THAN HIDDEN. Binary detection happens per buffer and
+# -l stops at the first matching line, so what grep actually reads is the first
+# buffer, which is a few tens of kilobytes. A file whose opening is ordinary
+# text and which turns binary later is therefore listed as text and hashed as
+# text, and this will not name it. Counting every line instead would read the
+# whole file, and it was tried and rejected: BSD grep skips an ignored file
+# entirely rather than reporting a count of zero for it, so the answers could no
+# longer be matched to the files they belong to on macOS. Every file this
+# template ships is a short text file, so the limit costs nothing here and is
+# written down because the next person to add a large file deserves to know it.
+#
+# Paths go to grep with a ./ in front for the same reason they do to the hashing
+# tools: a tracked file called -x.md is an ordinary name and an option. The
+# prefix is taken off again where grep's answer is read.
 binary_files() {
-  local root="$1" list="$2" out="$3" rel chunk=0
+  local root="$1" list="$2" out="$3" rel chunk=0 p
   : > "$out"
   : > "$TMPD/bf.nonempty"
   while IFS= read -r rel; do
@@ -431,24 +533,36 @@ binary_files() {
   [ -s "$TMPD/bf.nonempty" ] || return 0
 
   : > "$TMPD/bf.text"
-  set --
+  : > "$TMPD/bf.chunk"
   while IFS= read -r rel; do
-    set -- "$@" "$rel"
+    printf '%s\n' "$rel" >> "$TMPD/bf.chunk"
     chunk=$((chunk + 1))
     if [ "$chunk" -ge 100 ]; then
-      ( cd "$root" 2>/dev/null && LC_ALL=C grep -I -l -e '' "$@" ) >> "$TMPD/bf.text" 2>/dev/null
+      binary_chunk "$root" "$TMPD/bf.chunk" "$TMPD/bf.text"
+      : > "$TMPD/bf.chunk"
       chunk=0
-      set --
     fi
   done < "$TMPD/bf.nonempty"
   if [ "$chunk" -gt 0 ]; then
-    ( cd "$root" 2>/dev/null && LC_ALL=C grep -I -l -e '' "$@" ) >> "$TMPD/bf.text" 2>/dev/null
+    binary_chunk "$root" "$TMPD/bf.chunk" "$TMPD/bf.text"
   fi
 
   LC_ALL=C awk -v tf="$TMPD/bf.text" '
-    BEGIN { while ((getline l < tf) > 0) { sub(/\r$/, "", l); t[l] = 1 } }
+    BEGIN { while ((getline l < tf) > 0) { sub(/\r$/, "", l); sub(/^\.\//, "", l); t[l] = 1 } }
     { sub(/\r$/, ""); if (!($0 in t)) print }
   ' "$TMPD/bf.nonempty" > "$out"
+  return 0
+}
+
+binary_chunk() {  # binary_chunk <root> <path-list> <append-to>
+  local root="$1" list="$2" out="$3" p
+  set --
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    set -- "$@" "./$p"
+  done < "$list"
+  [ "$#" -gt 0 ] || return 0
+  ( cd "$root" 2>/dev/null && LC_ALL=C grep -I -l -e '' "$@" ) >> "$out" 2>/dev/null
   return 0
 }
 
@@ -470,17 +584,23 @@ read_manifest() {
   local file="$1" tag="$2" out="$3" meta="$4"
   [ -f "$file" ] && [ -r "$file" ] || return 1
   : > "$meta"
-  LC_ALL=C awk -v tag="$tag" -v meta="$meta" '
+  LC_ALL=C awk -v tag="$tag" -v meta="$meta" -v tiers="$NARROW_ROOTS" '
     # Compared after folding case, because Windows and macOS fold it for you
     # when the copy plan is pasted. 31-Standards/evil.md would otherwise miss
     # this list, stay template machinery, and land in the real folder.
+    #
+    # The list arrives from the shell rather than being written out here,
+    # because the tier folder names are a customization point this repository
+    # invites people to use. docs/customizing.md says in as many words that they
+    # are independently hardcoded across many files and tells a renamer to edit
+    # the TIERS= line in vault-check.sh, so that line is where this reads them
+    # from as well. It is a UNION with the names this template ships, never a
+    # replacement, because this list decides what a manifest is NOT allowed to
+    # claim, and dropping a name from it could only ever widen that.
     function tiered(p,   part, n, h) {
       n = split(p, part, "/")
       h = tolower(part[1])
-      if (h == "01-inbox" || h == "10-daily" || h == "20-projects" \
-       || h == "30-knowledge" || h == "31-standards" || h == "40-llm-wiki" \
-       || h == "90-auto-memory" || h == "99-archive" || h == ".obsidian") return 1
-      return 0
+      return (index(" " tiers " ", " " h " ") > 0)
     }
     # THE EXEMPT SET IS FIVE FIXED STRINGS, matched exactly.
     #
@@ -572,6 +692,34 @@ read_version() {
   LC_ALL=C awk '{ sub(/\r$/, ""); gsub(/^[ \t]+|[ \t]+$/, ""); if (length($0)) { print; exit } }' "$ROOT/$VERSION_REL"
 }
 
+# The version as it may be WRITTEN into a manifest header, or nothing.
+#
+# read_version above answers for a reader and says the word unknown when there
+# is no VERSION file. That word must never reach a manifest, and an earlier
+# version of this let it: generation wrote "version unknown" into the header,
+# read_manifest refuses that as badversion, and the shipped manifest was
+# therefore refused as MANIFEST-MALFORMED in every vault that adopted it, while
+# --verify-manifest agreed with itself perfectly because both sides build the
+# same bytes. That is the same asymmetry path_is_writable_to_a_manifest exists
+# to close, one field along.
+#
+# The grammar is the reader's grammar. A line reading "1.0.0 extra" is refused
+# here rather than written, because the reader takes the second field and would
+# silently record 1.0.0, so the file and the manifest would state two different
+# versions and nothing would say so.
+version_for_manifest() {
+  local v
+  [ -f "$ROOT/$VERSION_REL" ] && [ -r "$ROOT/$VERSION_REL" ] || return 1
+  v="$(LC_ALL=C awk '{ sub(/\r$/, ""); gsub(/^[ \t]+|[ \t]+$/, ""); if (length($0)) { print; exit } }' "$ROOT/$VERSION_REL")"
+  [ -n "$v" ] || return 1
+  case "$v" in
+    *[!0-9.]*) return 1 ;;
+    .*|*.) return 1 ;;
+    *..*) return 1 ;;
+  esac
+  printf '%s' "$v"
+}
+
 # ----------------------------------------------------------------- rules --
 
 RULES_CLASS=""
@@ -580,6 +728,7 @@ RULE_N=0
 RULE_CLASS=()
 RULE_PAT=()
 RULE_LINE=()
+RULE_HITS=()
 
 # The rules are read into arrays ONCE rather than re-read per path, and the tab
 # that separates a class from its pattern is built once rather than inside the
@@ -595,11 +744,34 @@ classify() {  # classify <path>
   while [ "$i" -le "$RULE_N" ]; do
     # shellcheck disable=SC2254
     case "$path" in
-      ${RULE_PAT[$i]}) RULES_CLASS="${RULE_CLASS[$i]}"; RULES_LINE="${RULE_LINE[$i]}"; return 0 ;;
+      ${RULE_PAT[$i]})
+        RULES_CLASS="${RULE_CLASS[$i]}"
+        RULES_LINE="${RULE_LINE[$i]}"
+        RULE_HITS[$i]=$(( ${RULE_HITS[$i]} + 1 ))
+        return 0
+        ;;
     esac
     i=$((i + 1))
   done
   return 1
+}
+
+# Rules that classified nothing, reported after a generation rather than
+# refused. A rule matching no path is usually a string left behind by a file
+# that was renamed or retired, and the manifest it produces is perfectly
+# self-consistent without it, so nothing else here would ever mention it. It is
+# a warning and not a failure because a template may legitimately ship a rule
+# for a folder that is empty in the tree it is generated from.
+report_unused_rules() {
+  local i=1 idle=""
+  while [ "$i" -le "$RULE_N" ]; do
+    if [ "${RULE_HITS[$i]}" -eq 0 ]; then
+      idle="$idle line ${RULE_LINE[$i]} [${RULE_CLASS[$i]} ${RULE_PAT[$i]}],"
+    fi
+    i=$((i + 1))
+  done
+  [ -n "$idle" ] || return 0
+  warn "RULE-IDLE - these rules in $RULES_REL matched no tracked file, so they classify nothing and are most likely left over from a path that was renamed or retired:${idle%,}"
 }
 
 load_rules() {
@@ -619,6 +791,20 @@ load_rules() {
     warn "RULE-CLASS - these are not classes this understands: $bad"
     exit 1
   fi
+  # A pattern is expanded UNQUOTED into a case statement, which it has to be or
+  # it would stop being a pattern, and an unquoted case pattern is a great deal
+  # more than a glob. A space in it splits it into two patterns that quietly
+  # classify two different sets, and a case pattern undergoes command
+  # substitution before it is matched, so a dollar and a parenthesis in this
+  # file run a command inside the tool whose entire job is to be the honesty
+  # mechanism. The answer is to let a pattern hold only what a manifest path may
+  # hold, plus the two wildcards the matching needs.
+  bad="$(LC_ALL=C awk -F'\t' '/^[a-z]/ && length($2) && $2 ~ /[^-A-Za-z0-9._\/*?]/ { print $2 }' "$TMPD/rules.clean" | head -n 3 | tr '\n' ' ')"
+  if [ -n "$bad" ]; then
+    warn "RULE-CHARACTER - these patterns hold a character a pattern may not hold, and a pattern may hold only the characters a manifest path may hold plus a star and a question mark: $bad"
+    warn "A space there would silently become two patterns and a dollar-parenthesis would run a command, so this refuses rather than guesses. Nothing was classified."
+    exit 1
+  fi
 
   tab="$(printf '\t')"
   RULE_N=0
@@ -630,6 +816,7 @@ load_rules() {
     RULE_CLASS[$RULE_N]="$cls"
     RULE_PAT[$RULE_N]="$pat"
     RULE_LINE[$RULE_N]="$lineno"
+    RULE_HITS[$RULE_N]=0
   done < "$TMPD/rules.clean"
   if [ "$RULE_N" -eq 0 ]; then
     warn "NO-RULES - $RULES_REL holds no rules, so every file would be unclassified."
@@ -701,6 +888,11 @@ build_manifest() {
   local out="$1" path cls line missing=0 unclassified=0 binary=0 unwritable=0 dupe
 
   load_rules
+  GEN_VERSION="$(version_for_manifest)" || {
+    warn "NO-VERSION - $VERSION_REL is missing, empty, or is not digits separated by dots, and the header of the manifest carries that version into every vault that adopts it."
+    warn "A header this could not read back is refused as malformed there while agreeing with itself perfectly here, so it is refused where it would be written instead. Nothing was written."
+    return 1
+  }
   need_hash_tool
   tracked_files > "$TMPD/gen.tracked" || return 2
 
@@ -732,6 +924,7 @@ build_manifest() {
     [ "$cls" = excluded ] && continue
     printf '%s\n' "$path" >> "$TMPD/gen.hashme"
   done < "$TMPD/gen.tracked"
+  report_unused_rules
 
   # Removing carriage returns before hashing is only meaningful for text, so a
   # byte-for-byte file is refused rather than quietly mishandled. Asked once for
@@ -790,7 +983,7 @@ build_manifest() {
     printf '%s\n' '# Each entry is "<class> <sha256> <path>". owned is template machinery and'
     printf '%s\n' "# seed was shipped once and is yours now. Paths absent from this file are"
     printf '%s\n' "# yours and are never read."
-    printf 'version %s\n' "$(read_version)"
+    printf 'version %s\n' "$GEN_VERSION"
     printf 'hash %s\n' "$HASH_ALGO"
     LC_ALL=C awk -v cf="$TMPD/gen.class" '
       BEGIN { while ((getline l < cf) > 0) { sub(/\r$/, "", l); split(l, a, " "); c[a[3]] = a[1] } }
@@ -819,12 +1012,18 @@ do_generate() {
     warn "could not write $MANIFEST_REL"
     exit 1
   }
-  say "wrote $MANIFEST_REL for version $(read_version): $(LC_ALL=C awk '$1 == "owned" { n++ } END { print n + 0 }' "$ROOT/$MANIFEST_REL") owned, $(LC_ALL=C awk '$1 == "seed" { n++ } END { print n + 0 }' "$ROOT/$MANIFEST_REL") seed, $(LC_ALL=C awk '$1 == "excluded" { n++ } END { print n + 0 }' "$TMPD/gen.class") excluded."
+  say "wrote $MANIFEST_REL for version $GEN_VERSION: $(LC_ALL=C awk '$1 == "owned" { n++ } END { print n + 0 }' "$ROOT/$MANIFEST_REL") owned, $(LC_ALL=C awk '$1 == "seed" { n++ } END { print n + 0 }' "$ROOT/$MANIFEST_REL") seed, $(LC_ALL=C awk '$1 == "excluded" { n++ } END { print n + 0 }' "$TMPD/gen.class") excluded."
   return 0
 }
 
 do_verify_manifest() {
   local rc=0
+  # This one takes the refusals as well, even though it writes nothing itself.
+  # It asks git for the tracked file list, and a scheduled pass mid-commit is
+  # exactly the moment that list is a snapshot of something in motion, so a
+  # verification run there would be comparing the manifest against a tree that
+  # is half of two states. --generate was given these for the same reason.
+  refuse_if_held
   if [ ! -f "$ROOT/$MANIFEST_REL" ]; then
     warn "NO-MANIFEST - $MANIFEST_REL is not there, so there was nothing to verify."
     exit 2
@@ -832,7 +1031,7 @@ do_verify_manifest() {
   build_manifest "$TMPD/gen.manifest" || rc=$?
   [ "$rc" -eq 0 ] || exit "$rc"
   if LC_ALL=C diff -u "$ROOT/$MANIFEST_REL" "$TMPD/gen.manifest" > "$TMPD/verify.diff" 2>/dev/null; then
-    say "the manifest matches the tree at version $(read_version)."
+    say "the manifest matches the tree at version $GEN_VERSION."
     return 0
   fi
   warn "MANIFEST-STALE - $MANIFEST_REL does not match what the rules and the tree produce now."
@@ -863,12 +1062,19 @@ join_state() {
     $1 == "S" { scls[$4] = $2; sh[$4] = $3; seen[$4] = 1; next }
     $1 == "N" { nh[$3] = $2; disk[$3] = 1; next }
     $1 == "M" { mh[$3] = $2; next }
+    $1 == "U" { unread[$2] = 1; next }
     END {
       for (p in seen) {
         inl = (p in lh); ins = (p in sh)
         cls = inl ? lcls[p] : scls[p]
         if (!inl && ins) { out[++k] = "new " cls " " p; continue }
         if (inl && !ins && haveSource == "yes") { out[++k] = "retired " cls " " p; continue }
+        # AHEAD OF DELETED, and that order is the whole point of this verdict.
+        # A file that is on the disk and cannot be opened reaches nothing on the
+        # disk side, so without this it falls into the branch below and the
+        # report states that the owner deleted it, which is a confident finding
+        # about something nothing looked at.
+        if (p in unread) { out[++k] = "unreadable " cls " " p; continue }
         if (!(p in disk)) { out[++k] = "deleted " cls " " p; continue }
         drift = (nh[p] != lh[p])
         # A raw digest that disagrees may be nothing but the line endings this
@@ -883,7 +1089,15 @@ join_state() {
         # decision on every run for ever, because nothing here rewrites the
         # record, and a report that keeps asking about a settled question is how
         # people stop reading reports.
-        if (moved && drift && nh[p] == sh[p]) { out[++k] = "converged " cls " " p; continue }
+        #
+        # The normalised digest counts here too. The record and the source both
+        # hold the digest of the content with carriage returns removed, while nh
+        # is the raw bytes on this disk, so a file that WAS taken from upstream
+        # and then checked out again on a machine that writes CRLF has a raw
+        # digest matching neither. Comparing only the raw one dropped it through
+        # to merge, and it was then asked about on every run for ever, which is
+        # precisely the outcome this branch exists to prevent.
+        if (moved && drift && (nh[p] == sh[p] || ((p in mh) && mh[p] == sh[p]))) { out[++k] = "converged " cls " " p; continue }
         if (moved && drift)  { out[++k] = "merge " cls " " p; continue }
         if (moved && !drift) { out[++k] = "take " cls " " p; continue }
         if (drift)           { out[++k] = "drifted " cls " " p; continue }
@@ -909,7 +1123,7 @@ list_paths() {  # list_paths <state-file> <verdict> <class>
   LC_ALL=C awk -v v="$2" -v c="$3" '$1 == v && $2 == c { print $3 }' "$1"
 }
 
-# mark_collisions <state-file>
+# mark_collisions <state-file> <out>
 # A path the source ships and this vault's manifest has never heard of is new,
 # and new normally means safe to take. Not when something is already sitting
 # there. The user wrote that file, it is absent from the local manifest so it
@@ -917,17 +1131,22 @@ list_paths() {  # list_paths <state-file> <verdict> <class>
 # safe to take and the printed copy plan would tell them to overwrite their own
 # work. This is the one data-loss path in a read-only tool, because the thing
 # that does the writing is the person reading the plan.
+#
+# It reads one file and writes another. The earlier shape copied its result back
+# over the very file the loop had just read, which worked only because the
+# redirection's descriptor was closed by the time the copy ran. That is a fact
+# about when bash closes a file, not about this function, and it is not the sort
+# of thing a later edit is expected to keep in mind.
 mark_collisions() {
-  local st="$1" verdict cls path
-  : > "$TMPD/mc.out"
+  local st="$1" out="$2" verdict cls path
+  : > "$out"
   while read -r verdict cls path; do
     if [ "$verdict" = new ] && { [ -e "$ROOT/$path" ] || [ -L "$ROOT/$path" ]; }; then
-      printf 'collision %s %s\n' "$cls" "$path" >> "$TMPD/mc.out"
+      printf 'collision %s %s\n' "$cls" "$path" >> "$out"
     else
-      printf '%s %s %s\n' "$verdict" "$cls" "$path" >> "$TMPD/mc.out"
+      printf '%s %s %s\n' "$verdict" "$cls" "$path" >> "$out"
     fi
   done < "$st"
-  cp "$TMPD/mc.out" "$st"
 }
 
 # add_normalised <state-file> <out>
@@ -971,12 +1190,22 @@ load_local_manifest() {
 }
 
 report_local() {  # report_local <state-file>
-  local st="$1" drifted deleted seed_drift
+  local st="$1" drifted deleted unreadable seed_drift
 
   drifted="$(verdict_count "$st" drifted owned)"
   deleted="$(verdict_count "$st" deleted owned)"
+  unreadable="$(verdict_count "$st" unreadable owned)"
+  # EVERY seed verdict, not the four that happened to be thought of first. A
+  # release that adds an example note, retires one, or lands one where the owner
+  # already has a file produced no number and no line anywhere, so the run said
+  # nothing had moved and left on exit 0 while the sentence just below promised
+  # the opposite. The rule for this sum is that it is every verdict except same,
+  # because same is the only one that means nothing happened.
   seed_drift=$(( $(verdict_count "$st" drifted seed) + $(verdict_count "$st" merge seed) \
-               + $(verdict_count "$st" deleted seed) + $(verdict_count "$st" take seed) ))
+               + $(verdict_count "$st" deleted seed) + $(verdict_count "$st" take seed) \
+               + $(verdict_count "$st" new seed) + $(verdict_count "$st" retired seed) \
+               + $(verdict_count "$st" collision seed) + $(verdict_count "$st" converged seed) \
+               + $(verdict_count "$st" unreadable seed) ))
 
   if [ "$drifted" -gt 0 ]; then
     printf '\nTemplate files you have changed (%s):\n' "$drifted"
@@ -985,6 +1214,13 @@ report_local() {  # report_local <state-file>
   if [ "$deleted" -gt 0 ]; then
     printf '\nTemplate files you have deleted (%s). Deleting one is a normal thing to do and they are not put back:\n' "$deleted"
     list_paths "$st" deleted owned | LC_ALL=C sed 's/^/  /'
+  fi
+  # Its own section, above the exit code that goes with it. These are not a
+  # finding about the vault, they are the tool saying which files it could not
+  # open, and the run leaves on 2 because of them.
+  if [ "$unreadable" -gt 0 ]; then
+    printf '\nTemplate files that are on the disk and could not be read (%s). Nothing is known about these, and nothing below or above counts them as changed, deleted or matching:\n' "$unreadable"
+    list_paths "$st" unreadable owned | LC_ALL=C sed 's/^/  /'
   fi
   # Summarised rather than listed. Obsidian rewrites its own config whenever the
   # interface changes and the docs tell you to delete the example notes, so every
@@ -998,7 +1234,7 @@ report_local() {  # report_local <state-file>
 # ---------------------------------------------------------------- status --
 
 do_status() {
-  local owned same drifted deleted
+  local owned same drifted deleted unreadable
   refuse_if_held
   need_hash_tool
   load_local_manifest
@@ -1006,20 +1242,37 @@ do_status() {
   LC_ALL=C awk '{ print $4 }' "$TMPD/local.entries" > "$TMPD/st.paths"
   hash_paths "$ROOT" "$TMPD/st.paths" "$TMPD/st.hashes" || exit 2
   LC_ALL=C awk '{ print "N " $1 " " $2 }' "$TMPD/st.hashes" > "$TMPD/st.now"
-  join_state no "$TMPD/local.entries" "$TMPD/st.now" > "$TMPD/st.state0"
+  LC_ALL=C awk '{ print "U " $0 }' "$TMPD/st.hashes.unreadable" > "$TMPD/st.unread"
+  join_state no "$TMPD/local.entries" "$TMPD/st.now" "$TMPD/st.unread" > "$TMPD/st.state0"
   add_normalised "$TMPD/st.state0" "$TMPD/st.norm" || exit 2
-  join_state no "$TMPD/local.entries" "$TMPD/st.now" "$TMPD/st.norm" > "$TMPD/st.state"
+  join_state no "$TMPD/local.entries" "$TMPD/st.now" "$TMPD/st.unread" "$TMPD/st.norm" > "$TMPD/st.state"
 
   owned="$(LC_ALL=C awk '$2 == "owned" { n++ } END { print n + 0 }' "$TMPD/st.state")"
   same="$(verdict_count "$TMPD/st.state" same owned)"
   drifted="$(verdict_count "$TMPD/st.state" drifted owned)"
   deleted="$(verdict_count "$TMPD/st.state" deleted owned)"
+  unreadable="$(verdict_count "$TMPD/st.state" unreadable owned)"
 
   say "this vault records template version $LOCAL_VERSION."
-  say "$same of $owned template file(s) match that record, $drifted changed here, $deleted deleted."
+  say "$same of $owned template file(s) match that record, $drifted changed here, $deleted deleted, $unreadable could not be read."
   say "That record is what the template shipped at $LOCAL_VERSION. It is not a claim about what the template holds now. Fetch a newer copy and run --check --from <dir> to learn that."
+  # Said here because the shape of this mode makes it unavoidable and a reader
+  # would otherwise take the count personally. With no source there is nothing
+  # for a file to have moved towards, so a file you took from a newer template
+  # on somebody's advice is a file that differs from the record, and it is
+  # counted above as one you changed. It stays counted that way until a newer
+  # baseline is recorded, and --check against the copy you took it from is what
+  # tells the two apart.
+  say "Taking a file from a newer template copy also shows up here as one you changed, because this mode has nothing to compare against but the record."
   report_local "$TMPD/st.state"
 
+  # Ahead of the 10, because a file that could not be opened is this saying it
+  # could not look, and that has to outrank a finding drawn from the files it
+  # could.
+  if [ "$unreadable" -gt 0 ]; then
+    warn "Some of what this vault records could not be read, so the counts above describe only the rest of it."
+    return 2
+  fi
   if [ "$drifted" -gt 0 ] || [ "$deleted" -gt 0 ]; then
     return 10
   fi
@@ -1060,36 +1313,94 @@ load_source() {  # load_source <dir>
     warn "SOURCE-VACUOUS - $dir/$MANIFEST_REL holds no entries, so there is nothing there to compare against and this says nothing about whether the template moved."
     exit 2
   fi
+  # Ordered on purpose, cheapest refusal first. verify_source hashes every file
+  # the source ships, and both guards below can turn the folder away outright,
+  # so asking them first means an older or a hostile copy is refused before its
+  # whole tree is read. --diff in particular used to hash the lot and only then
+  # be told the pair could not be ordered.
+  guard_versions "$dir"
+  refuse_source_claims_your_folders "$dir"
   verify_source "$dir" || exit 2
 }
 
-# A version this understands, or nothing. version_older coerces with a leading
-# numeric prefix, so "v1.0.0" reads as zero and sorts before everything, and
-# "1.0.0-rc1" compares equal to "1.0.0" numerically while differing as a string
-# — which walks past the older-source guard and the same-version guard at once.
-# Refusing an unparseable version is the honest answer, because the alternative
-# is a confident ordering of two things that cannot be ordered.
-version_is_sane() {  # version_is_sane <version>
-  case "$1" in
-    ''|*[!0-9.]*) return 1 ;;
-    .*|*.) return 1 ;;
-    *..*) return 1 ;;
-  esac
+# refuse_source_claims_your_folders <dir>
+#
+# The second half of the narrowing, and the half that does not depend on a list
+# of folder names. tiered() knows the tier roots this template ships and the
+# ones vault-check.sh names, which covers a vault that kept them and a vault
+# that renamed them in the documented place. It does not cover a vault that
+# renamed a tier somewhere else, or one whose owner made their own top-level
+# folder and filled it with notes.
+#
+# What this vault's OWN record says is not guessable by a source. So a source
+# entry claiming machinery inside a top-level folder that exists here and that
+# this vault's record has never held machinery in is refused rather than
+# narrowed. A genuinely new machinery folder in a release cannot trip it,
+# because a folder that is new upstream does not exist here yet.
+#
+# A folder tiered() ALREADY knows about is skipped, and that exclusion is what
+# keeps this from firing on ordinary releases. The five paths machinery() names
+# are template machinery sitting inside a content tier on purpose, so a release
+# that starts shipping one of them into a vault whose baseline predates it
+# would otherwise be refused outright. Those folders are governed by the
+# narrowing and by the five fixed strings, which fail closed on their own. This
+# is only for a top-level folder the narrowing has never heard of, which is
+# what a tier renamed somewhere other than the documented place looks like.
+refuse_source_claims_your_folders() {
+  local dir="$1" r
+  [ -s "$TMPD/local.entries" ] || return 0
+  LC_ALL=C awk '$2 == "owned" { n = split($4, part, "/"); if (n > 1) print part[1] }' \
+    "$TMPD/local.entries" | LC_ALL=C sort -u > "$TMPD/ls.ownroots"
+  LC_ALL=C awk -v rf="$TMPD/ls.ownroots" -v tiers="$NARROW_ROOTS" '
+    BEGIN { while ((getline l < rf) > 0) { sub(/\r$/, "", l); own[l] = 1 } }
+    $2 == "owned" {
+      n = split($4, part, "/")
+      if (n < 2) next
+      if (index(" " tiers " ", " " tolower(part[1]) " ") > 0) next
+      if (part[1] in own) next
+      print part[1]
+    }' "$TMPD/src.entries" | LC_ALL=C sort -u > "$TMPD/ls.newroots"
+  : > "$TMPD/ls.bad"
+  while IFS= read -r r; do
+    [ -n "$r" ] || continue
+    [ -d "$ROOT/$r" ] && printf '%s\n' "$r" >> "$TMPD/ls.bad"
+  done < "$TMPD/ls.newroots"
+  [ -s "$TMPD/ls.bad" ] || return 0
+  warn "SOURCE-CLAIMS-YOUR-FOLDER - $dir calls files inside these folders template machinery, and they are folders you already have that this vault's own record has never held any machinery in: $(tr '\n' ' ' < "$TMPD/ls.bad" | cut -c1-200)"
+  warn "A renamed tier looks exactly like this, and so does a folder of your own notes that a template copy has decided it owns. Nothing was compared."
+  exit 2
+}
+
+# Whether two versions this understands are the same version.
+#
+# Asked through the comparator rather than with a string test, because the two
+# were answering different questions. The read-time grammar accepts 1.0 and
+# 1.0.0, which are the same number and different text, so the string test said
+# they differed while version_older said neither was older, and the run went on
+# to print a copy plan for a pair it had no ordering for. 1.01 against 1.1 is
+# the same trick with one field. Equal is the comparator's own answer for it,
+# which is neither one being older than the other.
+versions_equal() {  # versions_equal <a> <b>
+  version_older "$1" "$2" && return 1
+  version_older "$2" "$1" && return 1
   return 0
 }
 
-# Both guards, in one place, so that --diff cannot answer a question --check has
-# already refused. A reader who is told the two copies cannot be compared and
-# then gets a confident diff from the same pair has been told two things.
+# The version guard, in one place, so that --diff cannot answer a question
+# --check has already refused. A reader who is told the two copies cannot be
+# compared and then gets a confident diff from the same pair has been told two
+# things.
+#
+# There is deliberately no branch here for a version this cannot parse. There
+# used to be, and it was unreachable: read_manifest applies this same grammar to
+# the header and refuses anything else as MANIFEST-MALFORMED long before either
+# value arrives here, so the only shapes that reach this are the word unknown
+# and digits separated by dots. A refusal that cannot fire is not a safeguard,
+# it is a claim that there is one.
 guard_versions() {  # guard_versions <dir>
   local dir="$1"
   [ "$LOCAL_VERSION" = unknown ] && return 0
   [ "$SOURCE_VERSION" = unknown ] && return 0
-  if ! version_is_sane "$LOCAL_VERSION" || ! version_is_sane "$SOURCE_VERSION"; then
-    warn "VERSION-UNREADABLE - this vault records [$LOCAL_VERSION] and $dir is [$SOURCE_VERSION], and a version this understands is digits separated by dots."
-    warn "Which of the two is newer cannot be worked out, so nothing was compared."
-    exit 2
-  fi
   if version_older "$SOURCE_VERSION" "$LOCAL_VERSION"; then
     warn "SOURCE-IS-OLDER - this vault records $LOCAL_VERSION and $dir is $SOURCE_VERSION, so there is nothing newer there and nothing was compared."
     exit 2
@@ -1111,9 +1422,37 @@ guard_versions() {  # guard_versions <dir>
 # manifest becomes the single artefact worth reading, and that a half-finished
 # download or a partial clone is caught rather than presented as an update.
 verify_source() {  # verify_source <dir>
-  local dir="$1" missing differing
+  local dir="$1" missing differing rel
   LC_ALL=C awk '{ print $4 }' "$TMPD/src.entries" > "$TMPD/vs.paths"
+
+  # A symlinked entry is refused outright, before anything is hashed or offered.
+  # Every test here is -f or -r, and all of those follow a link, so a source
+  # could ship .claude/hooks/h.sh as a link to anything readable on the machine
+  # doing the checking, have it verify perfectly against its own manifest, and
+  # have the printed copy plan copy the target's bytes into the vault. What the
+  # reader was shown and what the plan moves would then both be a file the
+  # source never contained. A template ships regular files.
+  : > "$TMPD/vs.links"
+  while IFS= read -r rel; do
+    [ -n "$rel" ] || continue
+    [ -L "$dir/$rel" ] && printf '%s\n' "$rel" >> "$TMPD/vs.links"
+  done < "$TMPD/vs.paths"
+  if [ -s "$TMPD/vs.links" ]; then
+    warn "SOURCE-SYMLINK - $dir ships these as symbolic links rather than as files, so what was hashed and what a copy would move is whatever they point at: $(tr '\n' ' ' < "$TMPD/vs.links" | cut -c1-200)"
+    warn "A template ships regular files. Nothing was compared."
+    return 1
+  fi
+
   hash_paths "$dir" "$TMPD/vs.paths" "$TMPD/vs.raw" || return 1
+  # An entry the source names and cannot open is a refusal, not a shrug. This
+  # used to fall through, because the check below only ever refused on drifted
+  # and deleted, so a dangling link or an unreadable file was warned about on
+  # standard error and the folder was then accepted as a trustworthy update.
+  if [ -s "$TMPD/vs.raw.unreadable" ]; then
+    warn "SOURCE-UNREADABLE - $dir names these in its own manifest and they could not be read, so whether it holds what it says it holds is unknown: $(tr '\n' ' ' < "$TMPD/vs.raw.unreadable" | cut -c1-200)"
+    warn "A half-finished download and a dangling link both look like this. Fetch it again. Nothing was compared."
+    return 1
+  fi
   LC_ALL=C awk '{ print "N " $1 " " $2 }' "$TMPD/vs.raw" > "$TMPD/vs.now"
   # Retagged to L, and this is load bearing rather than tidy. Here the source's
   # own manifest IS the record being compared against, so it has to arrive on
@@ -1122,7 +1461,11 @@ verify_source() {  # verify_source <dir>
   # the check reports nothing whatever the folder holds. The control for this
   # caught it.
   LC_ALL=C sed 's/^S /L /' "$TMPD/src.entries" > "$TMPD/vs.entries"
-  join_state no "$TMPD/vs.entries" "$TMPD/vs.now" > "$TMPD/vs.state0" 2>/dev/null
+  # Standard error is NOT discarded here. It used to be, on the one input the
+  # reader controls least, and join_state writes nothing to it in normal
+  # operation, so the only thing the redirection could ever hide was awk failing
+  # on a source manifest somebody else wrote.
+  join_state no "$TMPD/vs.entries" "$TMPD/vs.now" > "$TMPD/vs.state0"
 
   # The same carriage-return retry the local side gets, so a source cloned on a
   # machine that checks out CRLF is not reported as corrupt.
@@ -1162,27 +1505,32 @@ version_older() {  # version_older <a> <b>, true when a is older than b
 }
 
 do_check() {  # do_check <dir>
-  local dir="$1" take merge new retired differing collision converged
+  local dir="$1" take merge new retired differing collision converged unreadable
   refuse_if_held
   need_hash_tool
   load_local_manifest
   load_source "$dir"
 
-  guard_versions "$dir"
-
   LC_ALL=C awk '{ print $4 }' "$TMPD/local.entries" > "$TMPD/ck.paths"
   hash_paths "$ROOT" "$TMPD/ck.paths" "$TMPD/ck.hashes" || exit 2
   LC_ALL=C awk '{ print "N " $1 " " $2 }' "$TMPD/ck.hashes" > "$TMPD/ck.now"
-  join_state yes "$TMPD/local.entries" "$TMPD/src.entries" "$TMPD/ck.now" > "$TMPD/ck.state0"
+  LC_ALL=C awk '{ print "U " $0 }' "$TMPD/ck.hashes.unreadable" > "$TMPD/ck.unread"
+  join_state yes "$TMPD/local.entries" "$TMPD/src.entries" "$TMPD/ck.now" "$TMPD/ck.unread" > "$TMPD/ck.state0"
   add_normalised "$TMPD/ck.state0" "$TMPD/ck.norm" || exit 2
-  join_state yes "$TMPD/local.entries" "$TMPD/src.entries" "$TMPD/ck.now" "$TMPD/ck.norm" > "$TMPD/ck.state"
-  mark_collisions "$TMPD/ck.state"
+  join_state yes "$TMPD/local.entries" "$TMPD/src.entries" "$TMPD/ck.now" "$TMPD/ck.unread" "$TMPD/ck.norm" > "$TMPD/ck.joined"
+  mark_collisions "$TMPD/ck.joined" "$TMPD/ck.state"
 
   # Two copies claiming one version and disagreeing. "Use this template" copies
   # the default branch at that moment, which is routinely ahead of the last
   # release, so a vault can carry 1.0.0 with content from after 1.0.0. Comparing
   # two such copies by their version numbers gives a confident wrong answer.
-  if [ "$LOCAL_VERSION" = "$SOURCE_VERSION" ] && [ "$LOCAL_VERSION" != unknown ]; then
+  #
+  # Sameness is the comparator's answer and not a string test, because the two
+  # disagreed about 1.0 against 1.0.0 and about 1.01 against 1.1. Those pairs
+  # are equal to version_older and different to a string test, so the guard let
+  # them past and the run printed a copy plan for a pair it could not order.
+  if [ "$LOCAL_VERSION" != unknown ] && [ "$SOURCE_VERSION" != unknown ] \
+     && versions_equal "$LOCAL_VERSION" "$SOURCE_VERSION"; then
     # Collisions are counted here too. They are new files under another name,
     # and leaving them out would let two copies that disagree only about files
     # the user already occupies be compared by their version numbers anyway.
@@ -1200,8 +1548,15 @@ do_check() {  # do_check <dir>
   retired="$(verdict_count "$TMPD/ck.state" retired owned)"
   collision="$(verdict_count "$TMPD/ck.state" collision owned)"
   converged="$(verdict_count "$TMPD/ck.state" converged owned)"
+  unreadable="$(verdict_count "$TMPD/ck.state" unreadable owned)"
 
-  say "$(( take + merge + new + collision )) moved upstream, $(( merge + collision )) also changed here, $(( take + new )) safe to take (recorded $LOCAL_VERSION, source $SOURCE_VERSION)."
+  # Four numbers, because three left one of the sections below with no number
+  # above it. A run whose only finding was converged printed nothing moved
+  # upstream, nothing changed here and nothing safe to take, directly above a
+  # section listing files that had moved upstream. Converged is deliberately not
+  # folded into the first number instead, because the exit code hangs off that
+  # number and there is genuinely nothing to do about a file already taken.
+  say "$(( take + merge + new + collision )) moved upstream, $(( merge + collision )) also changed here, $(( take + new )) safe to take, $converged already taken (recorded $LOCAL_VERSION, source $SOURCE_VERSION)."
 
   if [ "$(( take + new ))" -gt 0 ]; then
     printf '\nSafe to take (%s). You have not touched these, so copying them loses nothing:\n' "$(( take + new ))"
@@ -1221,7 +1576,7 @@ do_check() {  # do_check <dir>
     list_paths "$TMPD/ck.state" retired owned | LC_ALL=C sed 's/^/  /'
   fi
   if [ "$converged" -gt 0 ]; then
-    printf '\nAlready carrying the newer copy (%s). You took these at some point, so there is nothing to do and nothing to merge:\n' "$converged"
+    printf '\nAlready carrying the newer copy (%s). You took these at some point, so there is nothing to do and nothing to merge. Until a newer baseline is recorded they still differ from the record, so --status counts them among the files you changed:\n' "$converged"
     list_paths "$TMPD/ck.state" converged owned | LC_ALL=C sed 's/^/  /'
   fi
 
@@ -1243,7 +1598,11 @@ do_check() {  # do_check <dir>
             p = $0
             n = split(p, part, "/")
             if (n > 1) {
-              sub("/" part[n] "$", "", p)
+              # Cut by length rather than by building a regex out of the file
+              # name. sub() would read the dots in that name as wildcards, and
+              # it would match the LAST place the pattern happened to fit,
+              # which is the same place only by luck.
+              p = substr(p, 1, length(p) - length(part[n]) - 1)
               printf "  mkdir -p %s./%s%s && cp %s%s/%s%s %s./%s%s\n", \
                 q, p, q, q, d, $0, q, q, $0, q
             } else {
@@ -1253,6 +1612,14 @@ do_check() {  # do_check <dir>
     printf '\nCopying a file out of %s puts whoever wrote it in charge of what your harness runs. Read the diff first.\n' "$dir"
   fi
 
+  # The could-not-look answer outranks both of the others, for the same reason
+  # it does under --status. A file that could not be opened is missing from
+  # every count above, so those counts describe part of the vault and the exit
+  # code has to say so.
+  if [ "$unreadable" -gt 0 ]; then
+    warn "Some of what this vault records could not be read, so the counts above describe only the rest of it."
+    return 2
+  fi
   if [ "$(( take + merge + new + collision ))" -gt 0 ]; then
     return 10
   fi
@@ -1268,19 +1635,23 @@ do_diff() {  # do_diff <dir>
   need_hash_tool
   load_local_manifest
   load_source "$dir"
-  guard_versions "$dir"
 
   LC_ALL=C awk '{ print $4 }' "$TMPD/local.entries" > "$TMPD/df.paths"
   hash_paths "$ROOT" "$TMPD/df.paths" "$TMPD/df.hashes" || exit 2
   LC_ALL=C awk '{ print "N " $1 " " $2 }' "$TMPD/df.hashes" > "$TMPD/df.now"
-  join_state yes "$TMPD/local.entries" "$TMPD/src.entries" "$TMPD/df.now" > "$TMPD/df.state0"
+  LC_ALL=C awk '{ print "U " $0 }' "$TMPD/df.hashes.unreadable" > "$TMPD/df.unread"
+  join_state yes "$TMPD/local.entries" "$TMPD/src.entries" "$TMPD/df.now" "$TMPD/df.unread" > "$TMPD/df.state0"
   add_normalised "$TMPD/df.state0" "$TMPD/df.norm" || exit 2
-  join_state yes "$TMPD/local.entries" "$TMPD/src.entries" "$TMPD/df.now" "$TMPD/df.norm" > "$TMPD/df.state"
-  mark_collisions "$TMPD/df.state"
+  join_state yes "$TMPD/local.entries" "$TMPD/src.entries" "$TMPD/df.now" "$TMPD/df.unread" "$TMPD/df.norm" > "$TMPD/df.joined"
+  mark_collisions "$TMPD/df.joined" "$TMPD/df.state"
 
   LC_ALL=C awk '($1 == "take" || $1 == "merge" || $1 == "new" || $1 == "collision") && $2 == "owned" { print $3 }' "$TMPD/df.state" > "$TMPD/df.list"
   if [ ! -s "$TMPD/df.list" ]; then
-    say "nothing on the template side differs from what this vault records."
+    # Worded against what this actually established, which is not what it used
+    # to claim. A run where every moved file is one the reader already took
+    # reaches here, and the template side does differ from the RECORD in every
+    # one of those cases. What it does not differ from is the disk.
+    say "nothing to show, because nothing the template ships differs from what this vault already carries."
     return 0
   fi
 
@@ -1341,7 +1712,7 @@ do_diff() {  # do_diff <dir>
 # ----------------------------------------------------------------- adopt --
 
 do_adopt() {  # do_adopt <dir>
-  local dir="$1"
+  local dir="$1" adopt_absent arel
   refuse_if_held
   # A hash tool is required even though adopting only copies a manifest, because
   # a baseline that cannot then be compared against is not worth recording, and
@@ -1350,16 +1721,52 @@ do_adopt() {  # do_adopt <dir>
   if [ -f "$ROOT/$MANIFEST_REL" ]; then
     warn "ALREADY-ADOPTED - this vault already has $MANIFEST_REL, so there is a baseline to compare against and --adopt would replace it."
     warn "Run --status to see what it says. To adopt a different baseline on purpose, delete $MANIFEST_REL first and run this again. Nothing was written."
-    # 3 rather than 64, because the command line was perfectly well formed and
+    # 11 rather than 64, because the command line was perfectly well formed and
     # this is a refusal about the state of the vault. A caller reading 64 would
-    # be told to check its arguments, which is the wrong thing to check.
-    exit 3
+    # be told to check its arguments, which is the wrong thing to check. And 11
+    # rather than 3, because the retention runner already answers 3 for a
+    # partial pass and docs/reference.md publishes one numbering across all four
+    # scripts so that a caller need not know which it ran.
+    exit 11
   fi
   load_source "$dir"
-  cp "$dir/$MANIFEST_REL" "$ROOT/$MANIFEST_REL" || {
+
+  # The manifest is REBUILT from the entries this run validated, rather than
+  # copied byte for byte out of the source.
+  #
+  # The bytes were never verified and could not have been. verify_source hashes
+  # the ENTRIES of the source manifest, and the manifest is excluded from every
+  # manifest by design, so it is the one file in that folder no hash of this
+  # run ever reaches. Copying it made those unverified bytes into this vault's
+  # permanent provenance record, which every later --status and every
+  # vault-check.sh full scan then reads. Writing the parsed entries back out
+  # means what is recorded is exactly what this run accepted, after the path
+  # validation and after the narrowing, and a line this run would have refused
+  # cannot be in the file.
+  {
+    printf '%s\n' "# .claude/template-manifest"
+    printf '%s\n' "#"
+    printf '%s\n' "# Recorded by .claude/scripts/vault-update.sh --adopt as this vault's"
+    printf '%s\n' "# baseline. Do not hand edit."
+    printf '%s\n' "#"
+    printf '%s\n' "# This records what the template shipped at the version named below. It is"
+    printf '%s\n' "# NOT a claim about what is on this disk now."
+    printf '%s\n' "#"
+    printf '%s\n' '# Each entry is "<class> <sha256> <path>". owned is template machinery and'
+    printf '%s\n' "# seed was shipped once and is yours now. Paths absent from this file are"
+    printf '%s\n' "# yours and are never read."
+    # Omitted rather than written as the word unknown when the source names no
+    # version. read_manifest refuses that word as a malformed header, so writing
+    # it would produce a baseline this vault could never read back.
+    [ "$SOURCE_VERSION" = unknown ] || printf 'version %s\n' "$SOURCE_VERSION"
+    printf 'hash %s\n' "$HASH_ALGO"
+    LC_ALL=C awk '{ print $2 " " $3 " " $4 }' "$TMPD/src.entries" | LC_ALL=C sort -k3,3
+  } > "$TMPD/adopt.manifest"
+  cp "$TMPD/adopt.manifest" "$ROOT/$MANIFEST_REL" || {
     warn "could not write $MANIFEST_REL"
     exit 1
   }
+
   # VERSION is deliberately NOT copied, even though a vault that predates all of
   # this has none. Six places in this repository say the manifest is the only
   # file this ever writes, and one of them is the line printed immediately
@@ -1367,8 +1774,24 @@ do_adopt() {  # do_adopt <dir>
   # read. Nothing needs VERSION either: the version this tool reports comes from
   # the manifest's own header, and so does the line vault-check.sh prints.
   # Writing one is a person's job and takes one command.
+  #
+  # What that costs has to be said out loud, and it was not. Every owned entry
+  # naming a file this vault does not have reads as deleted from the next
+  # --status onwards, and VERSION is the one almost every pre-manifest vault is
+  # missing precisely because this refuses to write it. A count nobody was
+  # warned about is a report that looks like a finding.
+  LC_ALL=C awk '$2 == "owned" { print $4 }' "$TMPD/src.entries" > "$TMPD/adopt.owned"
+  adopt_absent=0
+  while IFS= read -r arel; do
+    [ -n "$arel" ] || continue
+    [ -e "$ROOT/$arel" ] || adopt_absent=$((adopt_absent + 1))
+  done < "$TMPD/adopt.owned"
+
   say "recorded $SOURCE_VERSION as this vault's baseline, from $dir. Only the manifest was written and no other file was touched."
   say "READ THIS. Every template file you had already changed before now is recorded as though the template shipped it that way, so from here on it reads as untouched."
+  if [ "$adopt_absent" -gt 0 ]; then
+    say "$adopt_absent template file(s) named by that baseline are not in this vault, so --status will report them as deleted until you either add them or accept the count. VERSION is normally one of them, because this does not write it for you."
+  fi
   say "Adopt against the oldest release you might have started from, then run --status to see what the baseline now claims."
   return 0
 }
@@ -1389,10 +1812,15 @@ trap 'cleanup; exit 143' TERM
 
 MODE=""
 FROM=""
-LOCAL_VERSION=""
+# unknown rather than empty, because guard_versions reads it and --adopt runs
+# with no local manifest at all. Empty made that guard compare the source
+# against nothing and refuse the one mode whose whole purpose is to run in a
+# vault that has no baseline yet.
+LOCAL_VERSION="unknown"
 LOCAL_ALGO=""
-SOURCE_VERSION=""
+SOURCE_VERSION="unknown"
 SOURCE_ALGO=""
+GEN_VERSION=""
 
 while [ "$#" -gt 0 ]; do
   case "$1" in

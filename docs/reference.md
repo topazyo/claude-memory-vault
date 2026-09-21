@@ -1187,23 +1187,40 @@ start and `cksum -a sha256` only exists in coreutils 9 and later. With none of t
 exits 2 naming all four, and never reports up to date. There is no `cksum` CRC32 fallback, even
 though the runners' snapshot fence uses one: that fence compares a tree against itself minutes
 later. This decides whether a file somebody spent an afternoon on has been touched.
-`VAULT_HASH_TOOL` forces one candidate and `VAULT_FORCE_NO_SHA=1` forces the refusal, so both
-branches are exercised in CI.
+`VAULT_HASH_TOOL` forces one candidate and `VAULT_FORCE_NO_SHA=1` forces the refusal. **Only the
+refusal is exercised in CI**, by `tmpl-no-hash-tool`. An earlier version of this sentence said both
+branches were, which was the kind of claim that makes a reader stop checking. `VAULT_HASH_TOOL` is
+validated against the four names before it is used, because the candidate word is expanded
+unquoted and would otherwise be a glob as well as a name, and a value that is not one of the four
+is `HASH-TOOL-UNKNOWN` rather than a silent fall-through to the others.
 
 **The refusal tags**, published here for the same reason § 4.3's are, so that output can be grepped
 against a document. `HASH-PROBE` is the one a reader meets during an otherwise successful run, when
 a tool was present and did not answer.
 
-`HASH-PROBE` · `HASH-UNAVAILABLE` · `HASH-READ` · `HASH-PAIRING` · `HASH-PARSE` · `HASH-COUNT` ·
-`NO-MANIFEST` · `MANIFEST-MALFORMED` · `MANIFEST-STALE` · `PATH-BLOCKED` · `NARROWED` · `VACUOUS` ·
-`NO-SOURCE` · `NOT-A-TEMPLATE` · `SOURCE-VACUOUS` · `SOURCE-DISAGREES` · `SOURCE-IS-OLDER` ·
-`SAME-VERSION-DISAGREES` · `VERSION-UNREADABLE` · `UNKNOWN-ALGORITHM` · `ALREADY-ADOPTED` ·
-`NOT-THE-TEMPLATE` · `UNCLASSIFIED` · `UNWRITABLE-PATH` · `BINARY` · `CASE-COLLISION` ·
-`MISSING-TRACKED` · `NO-RULES` · `RULE-CLASS` · `RULE-DOUBLE-STAR` · `NO-GIT` · `NO-DIFF-TOOL` ·
+`HASH-PROBE` · `HASH-UNAVAILABLE` · `HASH-TOOL-UNKNOWN` · `HASH-READ` · `HASH-PAIRING` ·
+`HASH-PARSE` · `HASH-COUNT` · `NO-MANIFEST` · `MANIFEST-MALFORMED` · `MANIFEST-STALE` ·
+`PATH-BLOCKED` · `NARROWED` · `VACUOUS` · `UNREADABLE` · `NO-SOURCE` · `NOT-A-TEMPLATE` ·
+`SOURCE-VACUOUS` · `SOURCE-DISAGREES` · `SOURCE-IS-OLDER` · `SOURCE-SYMLINK` ·
+`SOURCE-UNREADABLE` · `SOURCE-CLAIMS-YOUR-FOLDER` · `SAME-VERSION-DISAGREES` ·
+`UNKNOWN-ALGORITHM` · `ALREADY-ADOPTED` · `NOT-THE-TEMPLATE` · `UNCLASSIFIED` ·
+`UNWRITABLE-PATH` · `BINARY` · `CASE-COLLISION` · `MISSING-TRACKED` · `NO-VERSION` · `NO-RULES` ·
+`RULE-CLASS` · `RULE-DOUBLE-STAR` · `RULE-CHARACTER` · `RULE-IDLE` · `NO-GIT` · `NO-DIFF-TOOL` ·
 `DIFF-TROUBLE` · `TRIPWIRE` · `PASS-IN-FLIGHT`
 
-`--generate` takes the tripwire and pass-in-flight refusals, because it is the one mode that writes
-unconditionally. `--verify-manifest` does not, because it only reads.
+There is deliberately no `VERSION-UNREADABLE` here any more. It was published while the refusal
+that produced it could not fire, because `read_manifest` applies the same version grammar to a
+manifest header and refuses anything else as `MANIFEST-MALFORMED` long before the ordering is
+reached. A tag a reader can grep for and never see is a claim that a check exists.
+
+`RULE-IDLE` is the one warning in the list that is not a refusal. It names rules that classified no
+tracked file during a `--generate`, which is almost always a pattern left behind by a path that was
+renamed or retired, and it changes no exit code.
+
+`--generate` and `--verify-manifest` both take the tripwire and pass-in-flight refusals. Neither
+writes outside a temporary directory during the comparison, but both ask git for the tracked file
+list, and a scheduled pass mid-commit is exactly when that list is a snapshot of something in
+motion.
 
 **Two limits worth stating.** The version a manifest declares is filtered as strictly as a path,
 because it is printed by `vault-check.sh` on every full scan and an unfiltered field could carry
@@ -1426,7 +1443,7 @@ while a note under `40-llm-wiki/wiki/` is covered by the six-tier rules only.
 | `.claude/scripts/dream-pass.sh` / `.cmd` | `0` OK · `1` NO-ARTIFACT · `2` VIOLATION · `3` REFUSED · `4` COMMIT-FAILED · `5` CHECK-FAILED · `64` unknown `VAULT_AGENT` · `70` TRIPWIRE-ERROR · `75` LOCKED · `78` TRIPWIRE · `124` TIMEOUT · `125` STALLED · `127` `claude`, wrapper or Git Bash not found · otherwise the agent's code | `.claude/logs/dream-agent.log` · agent output in `dream-agent.run.log` · `dream-pass.git-state.txt` · `dream-pass.prompt.md` in command mode · `runner-tripwire` after a contained violation or a `KILL_FAILED` stop · `dream-pass.interrupted.run` in the state directory after a signal or a `KILL_FAILED` stop, or when the run log could not be written, or `dream-pass.interrupted.run.<six characters>` beside it when something was in the way |
 | `.claude/scripts/promotion-pass.sh` / `.cmd` | `0` OK · `1` NO-ARTIFACT · `2` VIOLATION · `3` REFUSED · `4` COMMIT-FAILED · `5` CHECK-FAILED · `64` unknown `VAULT_AGENT` · `70` TRIPWIRE-ERROR · `75` LOCKED · `78` TRIPWIRE · `124` TIMEOUT · `125` STALLED · `127` `claude`, wrapper or Git Bash not found · otherwise the agent's code | `.claude/logs/promotion-agent.log` · agent output added to `promotion-agent.run.log` · `promotion-pass.git-state.txt` · `promotion-pass.prompt.md` in command mode · `runner-tripwire` after a contained violation or a `KILL_FAILED` stop · `promotion-pass.interrupted.run` in the state directory after a signal or a `KILL_FAILED` stop, or when the run log could not be written, or `promotion-pass.interrupted.run.<six characters>` beside it when something was in the way |
 | `.claude/scripts/vault-retention.sh` / `.cmd` | `0` OK · `1` setup, git or repository shape · `2` REPORT-REFUSED · `3` PARTIAL · `4` COMMIT-FAILED · `6` PATH-BLOCKED · `64` usage · `70` TRIPWIRE-ERROR · `71` RECOVERY-NEEDED · `75` LOCKED · `78` TRIPWIRE · `127` Git Bash not found (from the `.cmd`) | `.claude/logs/vault-retention.log` · in the state directory `retention-legacy-<date>-<hash8>.txt` and the `retention-legacy.hashes` index of reports it wrote, and `retention-inflight` while a move is in flight, which is left behind on exit 71 and holds later runs back · no run log and no prompt file, because it starts no agent |
-| `.claude/scripts/vault-update.sh` | `0` it could look and there is nothing to adopt · `10` it could look and there **is** something to adopt, meaning `--status` found local drift, `--check` found something upstream, or `--diff` printed a difference · `2` it could **not** look, meaning no manifest, no working hash tool, a file it could not read, an unreadable or non-template source, an unknown hash algorithm, a source older than this vault, a version it cannot order, a comparison of zero files on either side (`VACUOUS`, `SOURCE-VACUOUS`), a source that disagrees with its own manifest, or two copies claiming one version and disagreeing · `1` this vault has a problem, meaning a manifest that cannot be parsed, a version it will not print, or a stale manifest under `--verify-manifest` · `3` refused for the state of the vault rather than the command line, meaning `--adopt` where a baseline already exists · `6` a manifest entry named a path outside the vault · `64` the command line was wrong, or `--generate` was run without `VAULT_TEMPLATE_MAINTAINER=1` · `75` a pass is in flight · `78` a runner tripwire is set · `130` interrupted · `143` terminated | stdout and stderr only. Writes `.claude/template-manifest` under `--adopt` and `--generate`, and nothing else, ever |
+| `.claude/scripts/vault-update.sh` | `0` it could look and there is nothing to adopt · `10` it could look and there **is** something to adopt, meaning `--status` found local drift, `--check` found something upstream, or `--diff` printed a difference · `2` it could **not** look, meaning no manifest, no working hash tool, a file it could not read, an unreadable or non-template source, an unknown hash algorithm, a source older than this vault, a comparison of zero files on either side (`VACUOUS`, `SOURCE-VACUOUS`), a source that disagrees with its own manifest, a source shipping an entry as a symbolic link or naming one it cannot open, a source claiming machinery inside a folder of your own, or two copies claiming one version and disagreeing · `1` this vault has a problem, meaning a manifest that cannot be parsed, a version it will not print, a rules file it will not use, or a stale manifest under `--verify-manifest` · `11` refused for the state of the vault rather than the command line, meaning `--adopt` where a baseline already exists, and numbered away from the `3` the retention runner spends on a partial pass · `6` a manifest entry named a path outside the vault · `64` the command line was wrong, or `--generate` was run without `VAULT_TEMPLATE_MAINTAINER=1` · `75` a pass is in flight · `78` a runner tripwire is set · `130` interrupted · `143` terminated | stdout and stderr only. Writes `.claude/template-manifest` under `--adopt` and `--generate`, and nothing else, ever |
 | `.claude/githooks/pre-commit` | `vault-check.sh`'s status: `0` commit proceeds · `1` commit refused | stdout/stderr only |
 | `dream-agent` | n/a (agent) | one file: `20-projects/_logs/dream-<YYYY-MM-DD>.md` |
 | `promotion-agent` | n/a (agent) | `31-standards/`, `40-llm-wiki/wiki/`, optionally `20-projects/_logs/promotion-*.md`, committed by its runner |

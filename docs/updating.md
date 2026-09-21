@@ -106,7 +106,7 @@ bash .claude/scripts/vault-update.sh --adopt --from ../template-new
 ```
 
 It writes `.claude/template-manifest` and touches nothing else. It needs a working SHA-256 tool even
-though it only copies a file, because a baseline you cannot then compare against is not worth
+though it writes a single file, because a baseline you cannot then compare against is not worth
 recording, and finding that out now is kinder than finding it out on the first `--status`.
 
 Be clear about what it costs: **every template file you had already changed is recorded as though
@@ -115,10 +115,18 @@ that — the hashes were never written down, and no design recovers information 
 Adopt against the oldest release you might plausibly have started from, so the tool over-reports
 what you changed rather than under-reporting it.
 
-It copies that folder's manifest as it stands. If the manifest claimed one of your notes was
-template machinery you will have seen a `NARROWED` warning, and the claim stays in the file — it is
-refused again every time the file is read, because that refusal lives in the script rather than in
-the record.
+It does **not** copy that folder's manifest. It writes a new one out of the entries this run read
+and accepted, after the path validation and after the narrowing. That distinction is worth the
+sentence: the source manifest is excluded from every manifest by design, so it is the one file in
+that folder no hash of the run ever reaches, and copying it would have made bytes nothing verified
+into this vault's permanent record. If the source claimed one of your notes was template machinery
+you will have seen a `NARROWED` warning, and what gets written down is the narrowed class, so the
+claim does not survive into your baseline at all.
+
+One consequence to expect. Every file the baseline names that your vault does not have reads as
+deleted from the next `--status` onwards, and `VERSION` is normally one of them, because this
+writes only the manifest and leaves writing a `VERSION` file to you. `--adopt` counts them and
+says so before you see them reported.
 
 ---
 
@@ -174,22 +182,55 @@ What the tool does do:
   is forced back to *yours*, and the tier names are compared with case folded because Windows and
   macOS fold it for you when a copy command is pasted. That refusal lives in the running script and
   not in the data, so a hostile copy can only ever narrow what this treats as the template's.
+  The folder names it protects are the ones this template ships **plus the ones your own
+  `vault-check.sh` names on its `TIERS=` line**, which is where [`customizing.md`](customizing.md)
+  sends you if you rename a tier. The two lists are unioned rather than swapped, so renaming
+  nothing costs nothing and renaming something is covered under both names.
+- **It refuses a source that claims machinery inside a top-level folder of your own.** If a source
+  calls files under a folder you already have template machinery, and your own record has never
+  held any machinery there, the comparison stops (`SOURCE-CLAIMS-YOUR-FOLDER`). That is what a tier
+  renamed somewhere other than the documented place looks like, and what a folder of your notes
+  looks like when a template copy decides it owns it. A folder that is genuinely new upstream
+  cannot trip it, because it does not exist in your vault yet.
 - **It checks that the folder you pointed at holds what its own manifest says it holds**, and
   refuses the whole comparison when it does not. Without that, "safe to take" would be that copy's
   unverified claim about itself and the copy commands would move bytes nothing had looked at. It is
   a coherence check rather than a defence — somebody who can rewrite a file there can rewrite its
   manifest line too — and what it buys is that the manifest becomes the one artefact worth reading,
-  and that a half-finished download is caught rather than presented as an update.
+  and that a half-finished download is caught rather than presented as an update. An entry it
+  cannot open is a refusal rather than a warning it carries on past, and an entry shipped as a
+  **symbolic link is refused outright**, because every existence test here follows a link and the
+  copy command you paste would move whatever the link points at rather than anything the source
+  contained.
 - **It refuses while a scheduled pass is running**, and refuses while a runner tripwire is set. The
   two maintainer modes in §7 are exempt, because they run in the template repository where there is
   no pass to collide with.
 
-Two limits inside those guarantees, stated rather than left implied. A file that is on disk and
-cannot be read is reported as **unreadable** and not as one you deleted, because "the owner removed
-this" is a finding and "this could not be read" is a refusal to answer, and those want different
-responses. And `PATH-BLOCKED` tests the *text* of a path rather than resolving it, so a symlinked
-folder you created yourself is followed — your own links are not the threat this guards against, but
-the guard is about the shape of a path rather than about where it lands.
+Four limits inside those guarantees, stated rather than left implied.
+
+A file that is on disk and cannot be read is reported as **unreadable** and not as one you deleted,
+because "the owner removed this" is a finding and "this could not be read" is a refusal to answer,
+and those want different responses. Any file in that state also makes the whole run leave on `2`,
+because the counts it printed then describe part of your vault rather than all of it.
+
+`PATH-BLOCKED` tests the *text* of a path rather than resolving it, so a symlinked folder you
+created yourself is followed — your own links are not the threat this guards against, but the
+guard is about the shape of a path rather than about where it lands.
+
+**Binary detection reads the start of a file, not all of it.** Generation refuses a tracked file
+holding a NUL byte, and it asks that question with one `grep` for a whole batch, which stops at the
+first matching line. A file whose opening is ordinary text and which turns binary tens of kilobytes
+in is therefore hashed as text and not named. Counting every line instead would read the whole file
+and was rejected, because BSD `grep` skips an ignored file rather than reporting a zero for it and
+the answers could then no longer be matched to the files they belong to on macOS. Every file this
+template ships is short text, so the limit costs nothing here.
+
+**A file the template hands over from machinery to yours is still reported as machinery.** When a
+path is in both manifests the class is taken from *your* record, which is what stops a source
+widening `seed` into `owned` before the narrowing even runs. The same rule means a release that
+reclassifies one of its own files the other way is reported and planned as `owned` until your
+baseline is renewed. That is the safe direction of the same decision, and it is worth knowing so
+the listing is not mistaken for the template disagreeing with itself.
 
 What it does not do:
 
@@ -215,9 +256,9 @@ timer precisely what the runners' snapshot fence exists to catch.
 | --- | --- |
 | `0` | It could look, and there is nothing to adopt. |
 | `10` | It could look, and there **is** something to adopt, or `--status` found local drift. |
-| `2` | It could **not** look, so it is saying nothing about the template. No manifest (`NO-MANIFEST`), no working hash tool (`HASH-UNAVAILABLE`), an unreadable or non-template source (`NO-SOURCE`, `NOT-A-TEMPLATE`), a hash algorithm it does not know (`UNKNOWN-ALGORITHM`), a source older than this vault (`SOURCE-IS-OLDER`), a version it cannot order (`VERSION-UNREADABLE`), a comparison of zero files on either side (`VACUOUS`, `SOURCE-VACUOUS`), a source that disagrees with its own manifest (`SOURCE-DISAGREES`), or two copies that both claim one version and differ (`SAME-VERSION-DISAGREES`). |
-| `1` | This vault has a problem. The manifest cannot be parsed (`MANIFEST-MALFORMED`), or `--verify-manifest` found it stale (`MANIFEST-STALE`). |
-| `3` | Refused because of the state of the vault rather than the command line. `--adopt` where a baseline already exists (`ALREADY-ADOPTED`). To adopt a different baseline on purpose, delete `.claude/template-manifest` and run it again. |
+| `2` | It could **not** look, so it is saying nothing about the template. No manifest (`NO-MANIFEST`), no working hash tool (`HASH-UNAVAILABLE`), a hash tool named by `VAULT_HASH_TOOL` that is not one of the four (`HASH-TOOL-UNKNOWN`), an unreadable or non-template source (`NO-SOURCE`, `NOT-A-TEMPLATE`), a hash algorithm it does not know (`UNKNOWN-ALGORITHM`), a source older than this vault (`SOURCE-IS-OLDER`), a comparison of zero files on either side (`VACUOUS`, `SOURCE-VACUOUS`), a source that disagrees with its own manifest (`SOURCE-DISAGREES`), a source shipping an entry as a symbolic link or naming one it cannot open (`SOURCE-SYMLINK`, `SOURCE-UNREADABLE`), a source claiming machinery inside a folder of your own (`SOURCE-CLAIMS-YOUR-FOLDER`), a file of your own this could not open (`UNREADABLE`), or two copies that both claim one version and differ (`SAME-VERSION-DISAGREES`). |
+| `1` | This vault has a problem. The manifest cannot be parsed (`MANIFEST-MALFORMED`), `--verify-manifest` found it stale (`MANIFEST-STALE`), or the rules file cannot be used (`RULE-CLASS`, `RULE-DOUBLE-STAR`, `RULE-CHARACTER`). `--generate` also answers 1 when it refuses to write (`UNCLASSIFIED`, `BINARY`, `MISSING-TRACKED`, `UNWRITABLE-PATH`, `CASE-COLLISION`, `NO-VERSION`). |
+| `11` | Refused because of the state of the vault rather than the command line. `--adopt` where a baseline already exists (`ALREADY-ADOPTED`). To adopt a different baseline on purpose, delete `.claude/template-manifest` and run it again. It is `11` rather than `3` because the retention runner already answers `3` for a partial pass, and the numbering [`reference.md` §10](reference.md#10-exit-codes-and-log-locations) publishes is one numbering across all four scripts, so that a caller reading a code does not have to know which of them it ran. |
 | `6` | A manifest entry named a path outside the vault (`PATH-BLOCKED`). |
 | `64` | The command line was wrong, or `--generate` was run without `VAULT_TEMPLATE_MAINTAINER=1` (`NOT-THE-TEMPLATE`). |
 | `75` | A scheduled pass is in flight, so nothing was done (`PASS-IN-FLIGHT`). |
@@ -249,8 +290,18 @@ difference, which is its ordinary outcome.
 Read the counts line rather than matching the words around it:
 
 ```
-vault-update: 7 moved upstream, 2 also changed here, 5 safe to take (recorded 1.0.0, source 1.1.0).
+vault-update: 7 moved upstream, 2 also changed here, 5 safe to take, 1 already taken (recorded 1.0.0, source 1.1.0).
 ```
+
+The fourth number counts files that moved upstream and that you already carry, because you took
+them at some point. They are deliberately left out of the first number, because the exit code
+hangs off that number and there is nothing to do about a file you already have. Without a number
+of their own a run whose only finding was one of these printed three zeros directly above a
+section listing files that had moved.
+
+A file you took from upstream keeps reading as one you changed under `--status`, which has no
+source to compare against and so cannot tell the two apart. `--check` against the copy you took it
+from is what separates them, and `--status` says so in its own output.
 
 ---
 
