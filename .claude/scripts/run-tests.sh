@@ -8985,57 +8985,59 @@ else
 
   # -- the rules file is an execution surface -------------------------------
 
-  # A rule pattern is expanded UNQUOTED into a case statement, which it has to
-  # be, and a case pattern undergoes command substitution before it is matched.
-  # The canary is proved able to fire through a real case statement first,
-  # because a canary that could never fire would let this pass over a version
-  # that runs everything in the rules file.
+  # A rule pattern is expanded unquoted into a case statement, and a round two
+  # report called that an execution surface. IT IS NOT, and the first two
+  # assertions below are the measurement that says so rather than a repetition
+  # of the claim. Expansion is not recursive, so a command substitution arriving
+  # through a variable is matched as text and never run, and a value holding two
+  # words is one pattern holding a space rather than two alternatives.
+  #
+  # They are ASSERTIONS and not a skip gate. If a future shell ever does perform
+  # either expansion, this control goes red and the comment in load_rules that
+  # rests on the measurement is wrong and has to be rewritten. That is the
+  # outcome worth being told about.
   vu_rule_canary="$TMP/vu-rule-canary"
   rm -f "$vu_rule_canary"
   vu_rule_pat='$(touch '"$vu_rule_canary"')x'
   # shellcheck disable=SC2254
   case "zzz" in $vu_rule_pat) ;; *) ;; esac
-  vu_rule_canary_works=0
-  [ -e "$vu_rule_canary" ] && vu_rule_canary_works=1
+  vu_subst_from_a_variable_ran=0
+  [ -e "$vu_rule_canary" ] && vu_subst_from_a_variable_ran=1
   rm -f "$vu_rule_canary"
 
-  vu_d="$VU/rulechar"
-  vu_make "$vu_d" 1.0.0
-  vu_before="$(cksum < "$vu_d/.claude/template-manifest" | cut -d' ' -f1)"
-  printf 'owned\t%s\n' "$vu_rule_pat" >> "$vu_d/.claude/manifest-rules"
-  vu_rc_rc1="$( cd "$vu_d" && CLAUDE_PROJECT_DIR="$vu_d" VAULT_TEMPLATE_MAINTAINER=1 "$VU_BASH" "$VU_SH" --generate > "$VU_OUT" 2>&1; printf '%s' "$?" )"
-  vu_rc_fired=0
-  [ -e "$vu_rule_canary" ] && vu_rc_fired=1
-  vu_rc_said=0
-  vu_says 'RULE-CHARACTER' && vu_rc_said=1
-  rm -f "$vu_rule_canary"
+  vu_two_words='aaa bbb'
+  vu_split_into_two=0
+  # shellcheck disable=SC2254
+  case "bbb" in $vu_two_words) vu_split_into_two=1 ;; *) ;; esac
 
-  # And the quieter half of the same hole. A pattern holding a space becomes two
-  # patterns, which classifies a set nobody wrote down.
-  vu_d2="$VU/rulespace"
-  vu_make "$vu_d2" 1.0.0
-  printf 'owned\tdocs/a.md docs/b.md\n' >> "$vu_d2/.claude/manifest-rules"
-  vu_rc_rc2="$( cd "$vu_d2" && CLAUDE_PROJECT_DIR="$vu_d2" VAULT_TEMPLATE_MAINTAINER=1 "$VU_BASH" "$VU_SH" --generate > "$VU_OUT" 2>&1; printf '%s' "$?" )"
-  vu_rc_said2=0
-  vu_says 'RULE-CHARACTER' && vu_rc_said2=1
-  vu_after="$(cksum < "$vu_d/.claude/template-manifest" | cut -d' ' -f1)"
+  # The refusal itself, which stays for the reason it can actually carry. A rule
+  # only usefully names paths a manifest could hold, so a pattern outside that
+  # character set classifies nothing whatever it matches, and it is far likelier
+  # to be a typo than an intention. Three shapes, each on its own fixture,
+  # because the first refusal ends the run.
+  vu_rule_bad=''
+  vu_rule_n=0
+  for vu_rp in '$(touch /tmp/x)y' 'docs/a.md docs/b.md' 'docs\evil.md'; do
+    vu_rule_n=$((vu_rule_n + 1))
+    vu_d="$VU/rulechar$vu_rule_n"
+    vu_make "$vu_d" 1.0.0
+    vu_before="$(cksum < "$vu_d/.claude/template-manifest" | cut -d' ' -f1)"
+    printf 'owned\t%s\n' "$vu_rp" >> "$vu_d/.claude/manifest-rules"
+    vu_rc_rp="$( cd "$vu_d" && CLAUDE_PROJECT_DIR="$vu_d" VAULT_TEMPLATE_MAINTAINER=1 "$VU_BASH" "$VU_SH" --generate > "$VU_OUT" 2>&1; printf '%s' "$?" )"
+    vu_after="$(cksum < "$vu_d/.claude/template-manifest" | cut -d' ' -f1)"
+    [ "$vu_rc_rp" = 1 ] || vu_rule_bad="$vu_rule_bad [$vu_rp]rc:$vu_rc_rp"
+    vu_says 'RULE-CHARACTER' || vu_rule_bad="$vu_rule_bad [$vu_rp]no-reason"
+    vu_says 'wrote .claude/template-manifest' && vu_rule_bad="$vu_rule_bad [$vu_rp]claimed-written"
+    [ "$vu_before" = "$vu_after" ] || vu_rule_bad="$vu_rule_bad [$vu_rp]manifest-rewritten"
+  done
 
-  vu_bad=''
-  [ "$vu_rc_rc1" = 1 ] || vu_bad="$vu_bad substitution-rc:$vu_rc_rc1"
-  [ "$vu_rc_said" = 1 ] || vu_bad="$vu_bad substitution-no-reason"
-  [ "$vu_rc_fired" = 1 ] && vu_bad="$vu_bad THE-RULES-FILE-RAN-A-COMMAND"
-  [ "$vu_rc_rc2" = 1 ] || vu_bad="$vu_bad space-rc:$vu_rc_rc2"
-  [ "$vu_rc_said2" = 1 ] || vu_bad="$vu_bad space-no-reason"
-  [ "$vu_before" = "$vu_after" ] || vu_bad="$vu_bad manifest-rewritten"
-  if [ "$vu_rule_canary_works" != 1 ] && [ -z "$vu_bad" ]; then
-    skip tmpl-rules-character "a case pattern did not run a command substitution on this shell, so the canary staying silent proves nothing"
+  [ "$vu_subst_from_a_variable_ran" = 1 ] && vu_rule_bad="$vu_rule_bad A-CASE-PATTERN-FROM-A-VARIABLE-NOW-RUNS-COMMANDS"
+  [ "$vu_split_into_two" = 1 ] && vu_rule_bad="$vu_rule_bad A-TWO-WORD-PATTERN-NOW-SPLITS-INTO-TWO"
+  ran tmpl-rules-character
+  if [ -z "$vu_rule_bad" ]; then
+    ok "all $vu_rule_n rules patterns outside the character set are refused by name with the manifest untouched, and a pattern from a variable still neither runs a command nor splits in two"
   else
-    ran tmpl-rules-character
-    if [ -z "$vu_bad" ]; then
-      ok "a rules pattern holding a command substitution or a space is refused by name, the manifest is untouched, and the substitution never ran although it was proved able to"
-    else
-      bad "the rules file reached the matcher unfiltered --$vu_bad [$(vu_excerpt)]"
-    fi
+    bad "the rules file reached the matcher unfiltered, or the measurement behind its comment has changed --$vu_rule_bad [$(vu_excerpt)]"
   fi
 
   # -- what generation refuses to write -------------------------------------

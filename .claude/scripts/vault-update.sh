@@ -791,18 +791,33 @@ load_rules() {
     warn "RULE-CLASS - these are not classes this understands: $bad"
     exit 1
   fi
-  # A pattern is expanded UNQUOTED into a case statement, which it has to be or
-  # it would stop being a pattern, and an unquoted case pattern is a great deal
-  # more than a glob. A space in it splits it into two patterns that quietly
-  # classify two different sets, and a case pattern undergoes command
-  # substitution before it is matched, so a dollar and a parenthesis in this
-  # file run a command inside the tool whose entire job is to be the honesty
-  # mechanism. The answer is to let a pattern hold only what a manifest path may
-  # hold, plus the two wildcards the matching needs.
+  # A pattern is expanded unquoted into a case statement, which it has to be or
+  # it would stop being a pattern.
+  #
+  # AN EARLIER VERSION OF THIS COMMENT CALLED THAT AN EXECUTION SURFACE, AND
+  # THAT WAS WRONG. A reviewer asserted it, a canary in the control contradicted
+  # them, and the question was then settled by measurement rather than by
+  # argument. On bash 5.3 on 2026-09-21:
+  #
+  #   a command substitution written literally in the pattern text   runs
+  #   the same text arriving through a variable                      does NOT run
+  #   a value holding two words                                      is one pattern holding a space
+  #
+  # Expansion is not recursive. What the array holds is matched as a pattern and
+  # never expanded a second time, so neither the command substitution nor the
+  # split into two patterns is reachable from this file. Leaving the old reason
+  # in place would have been the same defect as publishing a refusal that cannot
+  # fire, one level up.
+  #
+  # The check stays for the smaller reason it can actually carry. A rule is only
+  # useful when it names paths a manifest could hold, so a pattern outside that
+  # character set classifies nothing whatever it matches, and it is far more
+  # likely to be a typed quote, a stray tab or a Windows backslash than an
+  # intention. Refusing it by name beats leaving it in the file matching nothing.
   bad="$(LC_ALL=C awk -F'\t' '/^[a-z]/ && length($2) && $2 ~ /[^-A-Za-z0-9._\/*?]/ { print $2 }' "$TMPD/rules.clean" | head -n 3 | tr '\n' ' ')"
   if [ -n "$bad" ]; then
     warn "RULE-CHARACTER - these patterns hold a character a pattern may not hold, and a pattern may hold only the characters a manifest path may hold plus a star and a question mark: $bad"
-    warn "A space there would silently become two patterns and a dollar-parenthesis would run a command, so this refuses rather than guesses. Nothing was classified."
+    warn "A rule can only usefully name paths a manifest can carry, so a pattern outside that set would classify nothing whatever it matched. Nothing was classified."
     exit 1
   fi
 
