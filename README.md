@@ -534,6 +534,36 @@ The numeric prefixes exist to keep the tiers in reading order in Obsidian's file
 do not care about that ordering, changing them is the least valuable customization available and
 the most expensive.
 
+Renaming a tier also reaches `.claude/manifest-rules`, which is the list deciding which files this
+template owns and which it hands over. A renamed tier that no rule names fails
+`vault-update.sh --verify-manifest`, loudly, which is the one place in that list where a miss is
+caught for you rather than by you.
+
+---
+
+## Keeping up with the template
+
+This repository carries a `VERSION`, a [`CHANGELOG.md`](CHANGELOG.md) whose every entry says what
+a vault has to do about that release, and a manifest recording what each file looked like when it
+shipped. Your vault carries that manifest too, so it can answer "which version did I come from,
+and what have I changed since" with no network and no git:
+
+```bash
+bash .claude/scripts/vault-update.sh --status
+```
+
+To see what has moved, fetch a newer copy of the template yourself and point the tool at it. It
+never reaches the network, never runs anything out of that folder, and never overwrites a file for
+you — it names what is safe to take and prints the copy commands for you to read first.
+
+```bash
+git clone https://github.com/<owner>/claude-memory-vault.git /tmp/template-new
+bash .claude/scripts/vault-update.sh --check --from /tmp/template-new
+```
+
+[`docs/updating.md`](docs/updating.md) explains it fully, including what it does **not** protect
+against. Watch this repository's releases to be told when there is something to look at.
+
 ---
 
 ## Documentation
@@ -545,6 +575,8 @@ the most expensive.
 | [`docs/concepts.md`](docs/concepts.md) | The tier model, the promotion path, and why each boundary sits where it does |
 | [`docs/reference.md`](docs/reference.md) | Full reference: frontmatter keys, the C1–C5 invariants, the hooks, the skills, and the agents |
 | [`docs/customizing.md`](docs/customizing.md) | Renaming tiers, adding a tier, changing the frontmatter contract |
+| [`docs/updating.md`](docs/updating.md) | Finding out when this template moves, seeing which files changed and which of those you touched, and what none of it protects against |
+| [`CHANGELOG.md`](CHANGELOG.md) | What changed in each version, and an *Adopting this* note per entry saying what a vault has to do about it |
 | [`docs/harnesses/`](docs/harnesses/README.md) | One guide per coding-agent harness: the shipped config, what it enforces, one-time setup, and an onboarding prompt with checks |
 | [`docs/agent-onboarding.md`](docs/agent-onboarding.md) | Copy-paste prompts for running the vault with an agent: install check, onboarding a codebase, capture, promotion, consolidation |
 | [`AGENTS.md`](AGENTS.md) | What a coding agent should read first, the rules it must not break, and how it verifies its own work |

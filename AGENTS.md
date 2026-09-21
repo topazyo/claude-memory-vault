@@ -156,10 +156,13 @@ A passing run looks like this, with a **non-zero** file count (on the vault as s
 vault-check: 0 violation(s) across 9 file(s) checked (as of 2026-01-15).
 vault-check: 99-archive/ holds 0 note(s) on disk.
 vault-check: No retention pass is in this repository's history.
+vault-check: This vault records template version 1.0.0. Run vault-update.sh --status for what has changed since.
 ```
 
-The two archive lines come after the count on a full scan, and they report rather than judge. The
-second one names the last retention pass and how many notes it moved once one has run, and says
+The three lines after the count report rather than judge, and none of them changes a count or the
+exit code. The last one names the template version this vault was created from, and says
+`No template provenance marker` when the vault has none. The second one names the last retention
+pass and how many notes it moved once one has run, and says
 the last pass is unknown when git cannot answer. Neither line changes the exit code. A scan
 narrowed with `--` prints only the count.
 
@@ -182,8 +185,17 @@ rather than matching its wording. A check that greps for the prefix `evaluated `
 | `bash .claude/scripts/dream-pass.sh` | Nightly consolidation pass (`.cmd` wrapper for Task Scheduler) | One dated journal in `20-projects/_logs/`, committed with a `Vault-Pass: dream` trailer in a git vault; exit 0 |
 | `bash .claude/scripts/promotion-pass.sh` | Weekly medium → long promotion (`.cmd` wrapper) | A `PROMOTION-SUMMARY:` line or long-tier notes, committed with a `Vault-Pass: promotion` trailer in a git vault; exit 0 |
 | `bash .claude/scripts/vault-retention.sh` | Weekly archiving of aged dream journals and compaction stubs from `20-projects/_logs/` to `99-archive/20-projects/_logs/`, `--dry-run` to see the judgement first (`.cmd` wrapper) | The moved files committed with a `Vault-Pass: retention` trailer in a git vault, or a log line saying nothing was eligible, exit 0 |
+| `bash .claude/scripts/vault-update.sh --status` | Which template version this vault records, and which template files have changed here. Offline, with no git and no network | A recorded version and a count line; exit 0 when nothing has drifted, 10 when something has |
+| `bash .claude/scripts/vault-update.sh --check --from <dir>` | What moved in a newer template copy the owner fetched themselves, split into safe to take, needs a merge, a collision, and retired | A counts line and a copy plan; exit 0 when nothing moved, 10 when something did, 2 when it could not look |
 | `bash .claude/hooks/vault-lint.sh <file>...` | Advisory lint of the named notes: frontmatter and invisible characters | Silence for a clean note; always exit 0 |
 | `git config core.hooksPath .claude/githooks` | Opt-in pre-commit gate that runs `vault-check.sh` | A commit with a violating note is refused |
+
+`vault-update.sh` is **report only**. The only file it ever writes is
+`.claude/template-manifest`, under `--adopt` and `--generate`. It never replaces a hook, a rule, a
+doc or a note, it never reaches the network, and it never runs anything out of the folder it is
+pointed at. Adopting a change is a human act here, for the same reason resolving a contradiction
+between two notes is. **Never schedule it.** [`docs/updating.md`](docs/updating.md) is the whole
+explanation, including what it does not protect against.
 
 The dream and promotion passes run the `dream-agent` and `promotion-agent` definitions in
 `.claude/agents/`. The dream agent **proposes only**: its single write is one dated journal, and it
@@ -238,6 +250,7 @@ there. The table below is the summary.
 | Skills | Slash commands | Read natively from `.agents/skills/` by Codex, Gemini CLI, Cursor, Copilot, OpenCode and Hermes; elsewhere follow `SKILL.md` as a checklist |
 | Scheduled passes | `VAULT_AGENT=claude` (default); the agents' `tools:` allowlists are enforced | `VAULT_AGENT=command` with your own wrapper. **Refused** (exit 3) until `VAULT_ALLOW_UNENFORCED_TOOLS=1`, which you set only after sandboxing the wrapper so that neither pass has a shell or network access. The runner does the git work itself |
 | Retention pass | No agent and no `VAULT_AGENT`, so nothing to select or sandbox. Plain git and shell | The same in every harness |
+| Template updates | No agent, no harness wiring and no schedule. A person runs `vault-update.sh` | The same in every harness. It reads and reports, writes only the manifest, reaches no network, and runs nothing out of the folder it is given |
 
 The runners' snapshot fence works the same under every harness, but it only sees files that change
 inside the vault. It cannot see a shell command, network traffic, or a write outside the vault.

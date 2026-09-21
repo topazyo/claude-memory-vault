@@ -380,11 +380,14 @@ A full scan looks like this:
 vault-check: 0 violation(s) across 9 file(s) checked (as of 2026-01-01).
 vault-check: 99-archive/ holds 0 note(s) on disk.
 vault-check: No retention pass is in this repository's history.
+vault-check: This vault records template version 1.0.0. Run vault-update.sh --status for what has changed since.
 ```
 
-The count is the line to read. The two after it report what the retention pass has taken out of the
-live tiers, so an archived vault can be told apart from one that lost notes, and neither changes
-the exit code. See `docs/reference.md` § 4.3.1.
+The count is the line to read. The three after it report rather than judge, and none of them
+changes the exit code. Two of them say what the retention pass has taken out of the live tiers, so
+an archived vault can be told apart from one that lost notes. The last names the template version
+this vault was created from. See `docs/reference.md` § 4.3.1 and
+[`updating.md`](updating.md).
 
 ### The one output you must not misread
 

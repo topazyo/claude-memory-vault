@@ -67,6 +67,42 @@ a shebang gives `bad interpreter` on Linux. Windows has no executable bit, so a
 script committed from Windows lands as `100644`; fix it in the index with
 `git update-index --chmod=+x <file>` and verify with `git ls-files -s`.
 
+## Adding or removing a file
+
+Two artifacts have to keep up, and CI fails when they do not.
+
+**`.claude/manifest-rules` decides what happens to every tracked file in somebody else's vault.**
+It has no catch-all rule on purpose, so a file matching none of them fails generation by name. Add
+a rule for whatever you add. The classes are `owned` (template machinery this project maintains),
+`seed` (shipped once, then the reader's — examples, scaffolds, Obsidian config) and `excluded`
+(belongs to this project rather than to a vault, such as the workflows and this file). The first
+matching rule wins, so specific rules go above general ones.
+
+**`.claude/template-manifest` is generated from those rules, and goes stale the moment you edit a
+shipped file.** Regenerate it in the same commit:
+
+```bash
+VAULT_TEMPLATE_MAINTAINER=1 bash .claude/scripts/vault-update.sh --generate
+bash .claude/scripts/vault-update.sh --verify-manifest
+```
+
+The environment variable is not ceremony. Run in somebody's vault, `--generate` takes that vault's
+notes in as template entries and restamps every hash from the current files, after which every
+file reads as untouched and the record of what they had changed is gone.
+
+Expect a conflict in the hash lines when two pull requests touch the same file. Regenerate after
+merging rather than resolving the hashes by hand — a hand-edited hash is a claim nobody checked.
+
+## Cutting a release
+
+1. Set `VERSION`.
+2. Add a `CHANGELOG.md` entry with an **Adopting this** note. Every entry needs one, and the
+   control suite fails a release without it. Say "nothing to do" in as many words when that is the
+   answer, because a note nobody wrote and a release that needs nothing look identical otherwise.
+3. Regenerate the manifest, so its `version` header matches `VERSION`.
+4. Tag and publish a GitHub release. That release is the notification channel — downstream vaults
+   find out by watching it, and nothing in this repository makes a network call.
+
 ## Changing the documentation
 
 Docs live in `docs/` and should stay accurate rather than aspirational. If a step needs manual
