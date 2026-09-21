@@ -7899,6 +7899,12 @@ vu_make() {  # vu_make <dir> <version>
     printf 'owned\t.claude/hooks/*\n'
     printf 'owned\tdocs/*\n'
     printf 'owned\tVERSION\n'
+    # Above the tier rule, mirroring the shipped rules, and load bearing for the
+    # narrowing controls. Without it a templates path under a tier generates as
+    # seed, a seed entry is never narrowed and a new seed is counted nowhere, so
+    # the vector covering the hole round one found passed no matter what the
+    # narrowing did.
+    printf 'owned\t31-standards/templates/*\n'
     printf 'seed\tREADME.md\n'
     printf 'seed\t31-standards/*\n'
   } > "$d/.claude/manifest-rules"
@@ -7933,6 +7939,11 @@ if ! command -v git >/dev/null 2>&1; then
   skip tmpl-adopt-writes-one-file "the template update controls build git fixtures, and git is not installed"
   skip tmpl-version-filtered "the template update controls build git fixtures, and git is not installed"
   skip tmpl-generate-under-tripwire "the template update controls build git fixtures, and git is not installed"
+  skip tmpl-exempt-set-is-behavioural "the template update controls build git fixtures, and git is not installed"
+  skip tmpl-converged-not-a-merge "the template update controls build git fixtures, and git is not installed"
+  skip tmpl-already-adopted "the template update controls build git fixtures, and git is not installed"
+  skip tmpl-unknown-algorithm "the template update controls build git fixtures, and git is not installed"
+  skip tmpl-source-not-a-template "the template update controls build git fixtures, and git is not installed"
   skip tmpl-hostile-manifest-narrows "the template update controls build git fixtures, and git is not installed"
   skip tmpl-path-escape "the template update controls build git fixtures, and git is not installed"
   skip tmpl-collision-not-safe "the template update controls build git fixtures, and git is not installed"
@@ -8083,6 +8094,11 @@ else
   vu_rc_a="$(vu_rc "$vu_same" --check --from "$VU_BASE")"
   vu_t_uptodate=0;  vu_says 'nothing has moved upstream' && vu_t_uptodate=1
   vu_n_a="$(vu_moved_count)"
+  # The up-to-date answer must also offer nothing. Relaxing the guard around the
+  # plan in do_check would otherwise print an empty safe-to-take section and the
+  # plan preamble while still saying nothing had moved.
+  vu_t_a_plan=0; vu_says 'Safe to take' && vu_t_a_plan=1
+  vu_t_a_cp=0;   vu_says 'cp ' && vu_t_a_cp=1
 
   vu_rc_b="$(vu_rc "$vu_same" --check --from "$vu_newer")"
   vu_n_b="$(vu_moved_count)"
@@ -8106,6 +8122,8 @@ else
   [ -n "$vu_n_b" ] && [ "$vu_n_b" -ge 1 ] || vu_bad="$vu_bad update-count:${vu_n_b:-absent}"
   [ "$vu_t_b_plan" = 1 ] || vu_bad="$vu_bad update-offered-no-plan"
   [ "$vu_t_b_uptodate" = 1 ] && vu_bad="$vu_bad update-said-uptodate"
+  [ "$vu_t_a_plan" = 1 ] && vu_bad="$vu_bad uptodate-offered-a-plan"
+  [ "$vu_t_a_cp" = 1 ] && vu_bad="$vu_bad uptodate-printed-cp-commands"
   [ "$vu_t_c_nolook" = 1 ] || vu_bad="$vu_bad nolook-text"
   [ "$vu_t_c_counts" = 1 ] && vu_bad="$vu_bad nolook-printed-counts"
   [ "$vu_t_c_uptodate" = 1 ] && vu_bad="$vu_bad nolook-said-uptodate"
@@ -8209,39 +8227,194 @@ else
   vu_make "$vu_d" 1.0.0
   vu_src="$VU/vectors-src"
   vu_make "$vu_src" 1.1.0
-  mkdir -p "$vu_src/31-standards/templates"
+  # Two shapes the source really holds, so the run reaches the narrowing instead
+  # of being refused before it. A templates path under a tier that is not one of
+  # the five the template ships, and the same tier name with its case folded.
+  # The folded one reuses an existing entry's digest so the source agrees with
+  # its own manifest, and it lands in the same directory on a filesystem that
+  # folds case, which is the platform the vector is about.
+  mkdir -p "$vu_src/31-standards/templates" "$vu_src/31-Standards"
   printf 'house style, authored by whoever holds the template\n' > "$vu_src/31-standards/templates/house-style.md"
+  cp "$vu_src/docs/a.md" "$vu_src/31-Standards/evil.md"
   vu_git "$vu_src"
   vu_gen "$vu_src"
+  vu_a_hash="$(awk '$3 == "docs/a.md" { print $2; exit }' "$vu_src/.claude/template-manifest")"
+  # Measured at fixture-build time, into a variable, because without the rule
+  # that puts templates above the tier this generates as seed and the vector
+  # passes whatever the narrowing does.
+  vu_hs_class="$(awk '$3 == "31-standards/templates/house-style.md" { print $1; exit }' "$vu_src/.claude/template-manifest")"
+  cp "$vu_src/.claude/template-manifest" "$TMP/vec.base"
+
   vu_vec_bad=''
+  [ "$vu_hs_class" = owned ] || vu_vec_bad="$vu_vec_bad fixture-generated-house-style-as-[${vu_hs_class:-absent}]-not-owned"
+  [ -n "$vu_a_hash" ] || vu_vec_bad="$vu_vec_bad fixture-has-no-digest-to-reuse"
+
+  # Each vector states the answer it must get, because accepting any of several
+  # codes lets a run that could not look at all satisfy every one of them.
+  #   reached   the narrowing ran, so exit 10 and the path kept out of the plan
+  #   blocked   refused at validation, so exit 6 and PATH-BLOCKED
   vu_vec_n=0
-  for vu_v in '31-standards/templates/house-style.md' './31-standards/evil.md' '31-Standards/evil.md' '31-standards./evil.md'; do
+  for vu_case in \
+    "reached:31-standards/templates/house-style.md" \
+    "blocked:./31-standards/evil.md" \
+    "reached:31-Standards/evil.md" \
+    "blocked:31-standards./evil.md" ; do
     vu_vec_n=$((vu_vec_n + 1))
-    cp "$vu_src/.claude/template-manifest" "$TMP/vec.manifest"
-    # The first vector is already in the manifest as owned, so it needs no
-    # planting. The other three name files the source does not hold, and they
-    # are planted as owned entries.
+    vu_want="${vu_case%%:*}"
+    vu_v="${vu_case#*:}"
+    cp "$TMP/vec.base" "$vu_src/.claude/template-manifest"
     case "$vu_v" in
       '31-standards/templates/house-style.md') : ;;
-      *) printf 'owned 0000000000000000000000000000000000000000000000000000000000000000 %s\n' "$vu_v" >> "$vu_src/.claude/template-manifest" ;;
+      '31-Standards/evil.md') printf 'owned %s %s\n' "$vu_a_hash" "$vu_v" >> "$vu_src/.claude/template-manifest" ;;
+      *) printf 'owned %s %s\n' "$vu_a_hash" "$vu_v" >> "$vu_src/.claude/template-manifest" ;;
     esac
     vu_rc_v="$(vu_rc "$vu_d" --check --from "$vu_src")"
-    # Refused outright, or compared and kept out of the plan. Both are correct
-    # answers. Being named in a cp line is the only wrong one.
     if grep -F 'cp ' "$VU_OUT" 2>/dev/null | grep -qF "$vu_v"; then
       vu_vec_bad="$vu_vec_bad [$vu_v]in-the-copy-plan"
     fi
-    case "$vu_rc_v" in
-      0|2|6|10) ;;
-      *) vu_vec_bad="$vu_vec_bad [$vu_v]rc:$vu_rc_v" ;;
-    esac
-    cp "$TMP/vec.manifest" "$vu_src/.claude/template-manifest"
+    if [ "$vu_want" = reached ]; then
+      [ "$vu_rc_v" = 10 ] || vu_vec_bad="$vu_vec_bad [$vu_v]rc:$vu_rc_v-wanted-10"
+      # The plan was produced at all, established before its silence is read as
+      # evidence. VERSION moved between 1.0.0 and 1.1.0, so it must be offered.
+      grep -F 'cp ' "$VU_OUT" 2>/dev/null | grep -qF 'VERSION' \
+        || vu_vec_bad="$vu_vec_bad [$vu_v]no-plan-was-produced"
+    else
+      [ "$vu_rc_v" = 6 ] || vu_vec_bad="$vu_vec_bad [$vu_v]rc:$vu_rc_v-wanted-6"
+      grep -qF 'PATH-BLOCKED' "$VU_OUT" 2>/dev/null \
+        || vu_vec_bad="$vu_vec_bad [$vu_v]not-path-blocked"
+    fi
   done
+  cp "$TMP/vec.base" "$vu_src/.claude/template-manifest"
   ran tmpl-narrowing-vectors
   if [ -z "$vu_vec_bad" ]; then
-    ok "none of the $vu_vec_n paths a hostile manifest can spell to look like machinery reaches the copy plan"
+    ok "none of the $vu_vec_n paths a hostile manifest can spell to look like machinery reaches the copy plan, and the two that reach the comparison produced one"
   else
     bad "a hostile path shape was presented as safe to take --$vu_vec_bad"
+  fi
+
+  # The behavioural counterpart to the grep over the script's own text. A source
+  # manifest claims all five paths the template genuinely ships as machinery,
+  # plus a sixth that it does not, and the five must survive while the sixth is
+  # narrowed. This is the control an added widening clause cannot pass, which a
+  # grep for five literals can.
+  vu_d="$VU/exempt"
+  vu_make "$vu_d" 1.0.0
+  vu_src="$VU/exempt-src"
+  vu_make "$vu_src" 1.1.0
+  printf 'the shape a standard takes, maintained upstream\n' > "$vu_src/31-standards/templates/long-term-standard.md"
+  printf 'a sixth templates file the template does not ship\n' > "$vu_src/31-standards/templates/house-style.md"
+  vu_git "$vu_src"
+  vu_gen "$vu_src"
+  vu_ex_five="$(awk '$3 == "31-standards/templates/long-term-standard.md" { print $1; exit }' "$vu_src/.claude/template-manifest")"
+  vu_ex_six="$(awk '$3 == "31-standards/templates/house-style.md" { print $1; exit }' "$vu_src/.claude/template-manifest")"
+  vu_rc_ex="$(vu_rc "$vu_d" --check --from "$vu_src")"
+  vu_bad=''
+  [ "$vu_ex_five" = owned ] || vu_bad="$vu_bad fixture-five-is-[${vu_ex_five:-absent}]"
+  [ "$vu_ex_six" = owned ] || vu_bad="$vu_bad fixture-six-is-[${vu_ex_six:-absent}]"
+  [ "$vu_rc_ex" = 10 ] || vu_bad="$vu_bad rc:$vu_rc_ex"
+  # The one the template ships is machinery and is offered. The one it does not
+  # is narrowed and is not.
+  grep -F 'cp ' "$VU_OUT" 2>/dev/null | grep -qF '31-standards/templates/long-term-standard.md' \
+    || vu_bad="$vu_bad shipped-template-not-offered"
+  grep -F 'cp ' "$VU_OUT" 2>/dev/null | grep -qF '31-standards/templates/house-style.md' \
+    && vu_bad="$vu_bad unshipped-template-offered"
+  vu_says 'NARROWED' || vu_bad="$vu_bad no-narrowed-warning"
+  ran tmpl-exempt-set-is-behavioural
+  if [ -z "$vu_bad" ]; then
+    ok "a path the template genuinely ships under a tier stays machinery, and a sixth one the manifest invents is narrowed"
+  else
+    bad "the exempt set is not what the script actually honours --$vu_bad [$(vu_excerpt)]"
+  fi
+
+  # The converged branch, which nothing produced. Deleting it left every control
+  # green while a file the owner had already taken was reported for a human
+  # merge on every run for ever.
+  vu_d="$VU/converged"
+  vu_make "$vu_d" 1.0.0
+  vu_src="$VU/converged-src"
+  vu_make "$vu_src" 1.1.0
+  printf 'doc a, the newer copy\n' > "$vu_src/docs/a.md"
+  vu_git "$vu_src"
+  vu_gen "$vu_src"
+  printf 'doc a, the newer copy\n' > "$vu_d/docs/a.md"
+  vu_rc_cv="$(vu_rc "$vu_d" --check --from "$vu_src")"
+  vu_bad=''
+  vu_says 'Already carrying the newer copy' || vu_bad="$vu_bad no-converged-heading"
+  vu_says 'Moved upstream and changed here' && vu_bad="$vu_bad asked-for-a-merge"
+  grep -F 'cp ' "$VU_OUT" 2>/dev/null | grep -qF 'docs/a.md' && vu_bad="$vu_bad offered-in-the-copy-plan"
+  ran tmpl-converged-not-a-merge
+  if [ -z "$vu_bad" ]; then
+    ok "a file the reader already took is reported as settled rather than asked about again (exit $vu_rc_cv)"
+  else
+    bad "a file already carrying the newer copy was reported as needing a merge --$vu_bad [$(vu_excerpt)]"
+  fi
+
+  # Adopting twice. The refusal that protects an existing baseline had no
+  # control, because the fixture for the one-file property deletes the manifest
+  # first so it can never reach it.
+  vu_d="$VU/adopttwice"
+  vu_make "$vu_d" 1.0.0
+  rm -f "$vu_d/.claude/template-manifest"
+  vu_src="$VU/adopttwice-src"
+  vu_make "$vu_src" 1.1.0
+  vu_rc_a1="$(vu_rc "$vu_d" --adopt --from "$vu_src")"
+  vu_m1="$(cksum < "$vu_d/.claude/template-manifest" | cut -d' ' -f1)"
+  vu_rc_a2="$(vu_rc "$vu_d" --adopt --from "$vu_src")"
+  vu_m2="$(cksum < "$vu_d/.claude/template-manifest" | cut -d' ' -f1)"
+  vu_bad=''
+  [ "$vu_rc_a1" = 0 ] || vu_bad="$vu_bad first-rc:$vu_rc_a1"
+  [ "$vu_rc_a2" = 3 ] || vu_bad="$vu_bad second-rc:$vu_rc_a2"
+  vu_says 'ALREADY-ADOPTED' || vu_bad="$vu_bad no-reason"
+  [ "$vu_m1" = "$vu_m2" ] || vu_bad="$vu_bad replaced-the-baseline"
+  ran tmpl-already-adopted
+  if [ -z "$vu_bad" ]; then
+    ok "adopting a second time is refused with its own code and the existing baseline is byte for byte what it was"
+  else
+    bad "a second adopt was not refused --$vu_bad [$(vu_excerpt)]"
+  fi
+
+  # A hash algorithm this does not understand, on the source side. A
+  # one-character edit to the comparison would otherwise go unnoticed and the
+  # digests would be compared as though they meant the same thing.
+  vu_d="$VU/algo"
+  vu_make "$vu_d" 1.0.0
+  vu_src="$VU/algo-src"
+  vu_make "$vu_src" 1.1.0
+  LC_ALL=C sed 's|^hash sha256$|hash blake3|' "$vu_src/.claude/template-manifest" > "$vu_src/.claude/template-manifest.new"
+  mv "$vu_src/.claude/template-manifest.new" "$vu_src/.claude/template-manifest"
+  vu_planted=0
+  grep -qF 'hash blake3' "$vu_src/.claude/template-manifest" && vu_planted=1
+  vu_rc_al="$(vu_rc "$vu_d" --check --from "$vu_src")"
+  vu_bad=''
+  [ "$vu_planted" = 1 ] || vu_bad="$vu_bad fixture-did-not-plant-the-algorithm"
+  [ "$vu_rc_al" = 2 ] || vu_bad="$vu_bad rc:$vu_rc_al"
+  vu_says 'UNKNOWN-ALGORITHM' || vu_bad="$vu_bad no-reason"
+  vu_says 'safe to take' && vu_bad="$vu_bad compared-anyway"
+  ran tmpl-unknown-algorithm
+  if [ -z "$vu_bad" ]; then
+    ok "a manifest whose digests are not the algorithm this understands is refused rather than compared"
+  else
+    bad "digests of an unknown algorithm were compared anyway --$vu_bad [$(vu_excerpt)]"
+  fi
+
+  # The two commonest mistakes a reader can make with --from.
+  vu_d="$VU/nosrc"
+  vu_make "$vu_d" 1.0.0
+  vu_rc_ns="$(vu_rc "$vu_d" --check --from "$VU/there-is-no-such-folder")"
+  vu_nt="$VU/notatemplate"
+  rm -rf "$vu_nt"
+  mkdir -p "$vu_nt"
+  printf 'just a folder\n' > "$vu_nt/readme.txt"
+  vu_rc_nt="$(vu_rc "$vu_d" --check --from "$vu_nt")"
+  vu_bad=''
+  [ "$vu_rc_ns" = 2 ] || vu_bad="$vu_bad missing-rc:$vu_rc_ns"
+  [ "$vu_rc_nt" = 2 ] || vu_bad="$vu_bad notatemplate-rc:$vu_rc_nt"
+  vu_says 'NOT-A-TEMPLATE' || vu_bad="$vu_bad no-notatemplate-reason"
+  ran tmpl-source-not-a-template
+  if [ -z "$vu_bad" ]; then
+    ok "a folder that is not there and a folder that is not a template copy are both refused as could not look"
+  else
+    bad "a bad --from was not refused --$vu_bad [$(vu_excerpt)]"
   fi
 
   # The second data-loss route, and until now nothing produced the merge verdict
@@ -8302,8 +8475,13 @@ else
   # own. Appending one catch-all line to the real file would leave all of them
   # green while every future file silently became somebody else's problem.
   ran tmpl-shipped-rules-have-no-catchall
-  vu_catchall="$(LC_ALL=C awk -F'\t' '/^[a-z]/ && ($2 == "*" || $2 == "**" || $2 == "*/*") { n++ } END { print n + 0 }' "$ROOT/$VU_RULES_REL" 2>/dev/null)"
-  vu_rulecount="$(LC_ALL=C awk -F'\t' '/^[a-z]/ && length($2) { n++ } END { print n + 0 }' "$ROOT/$VU_RULES_REL" 2>/dev/null)"
+  # The CR strip is not decoration here. On a checkout made before the eol pin in
+  # .gitattributes this file can carry carriage returns, and a real catch-all
+  # line then reads as the pattern followed by one, which is not the pattern, so
+  # it would not be counted and this control would report that no catch-all
+  # exists while one did. Every other awk in this section opens the same way.
+  vu_catchall="$(LC_ALL=C awk -F'\t' '{ sub(/\r$/, "") } /^[a-z]/ && ($2 == "*" || $2 == "**" || $2 == "*/*") { n++ } END { print n + 0 }' "$ROOT/$VU_RULES_REL" 2>/dev/null)"
+  vu_rulecount="$(LC_ALL=C awk -F'\t' '{ sub(/\r$/, "") } /^[a-z]/ && length($2) { n++ } END { print n + 0 }' "$ROOT/$VU_RULES_REL" 2>/dev/null)"
   if [ "${vu_rulecount:-0}" -ge 10 ] && [ "${vu_catchall:-1}" = 0 ]; then
     ok "the shipped $VU_RULES_REL carries $vu_rulecount rules and none of them is a catch-all, so a new file still has to be classified by hand"
   else
@@ -8458,18 +8636,31 @@ else
   rm -f "$vu_d/.claude/template-manifest" "$vu_d/VERSION"
   vu_src="$VU/adoptone-src"
   vu_make "$vu_src" 1.1.0
-  ( cd "$vu_d" && LC_ALL=C find . -path ./.git -prune -o -type f -print ) | LC_ALL=C sort > "$TMP/adopt.before"
+  # Every file's digest, not only the set of names. Comparing names alone sees a
+  # file appearing and is blind to a write INTO one that was already there, so a
+  # second cp into README.md would have left this green.
+  vu_tree_state() {  # vu_tree_state <dir>
+    ( cd "$1" && LC_ALL=C find . -path ./.git -prune -o -type f -print ) \
+      | LC_ALL=C sort \
+      | while IFS= read -r vu_f; do
+          [ -n "$vu_f" ] || continue
+          printf '%s %s\n' "$(cksum < "$1/$vu_f" | cut -d' ' -f1)" "$vu_f"
+        done
+  }
+  vu_tree_state "$vu_d" > "$TMP/adopt.before"
   vu_rc_ad="$(vu_rc "$vu_d" --adopt --from "$vu_src")"
-  ( cd "$vu_d" && LC_ALL=C find . -path ./.git -prune -o -type f -print ) | LC_ALL=C sort > "$TMP/adopt.after"
-  vu_appeared="$(LC_ALL=C awk -v bf="$TMP/adopt.before" '
-    BEGIN { while ((getline l < bf) > 0) b[l] = 1 }
-    { if (!($0 in b)) print }' "$TMP/adopt.after" | tr '\n' ' ')"
+  vu_tree_state "$vu_d" > "$TMP/adopt.after"
+  vu_changed="$(LC_ALL=C awk -v bf="$TMP/adopt.before" '
+    BEGIN { while ((getline l < bf) > 0) { split(l, a, " "); b[a[2]] = a[1] } }
+    { if (!($2 in b) || b[$2] != $1) print $2 }' "$TMP/adopt.after" | tr '\n' ' ')"
+  vu_before_n="$(awk 'END { print NR + 0 }' "$TMP/adopt.before")"
   vu_bad=''
+  [ "${vu_before_n:-0}" -ge 5 ] || vu_bad="$vu_bad fixture-had-only-${vu_before_n:-0}-files"
   [ "$vu_rc_ad" = 0 ] || vu_bad="$vu_bad rc:$vu_rc_ad"
-  [ "$vu_appeared" = "./.claude/template-manifest " ] || vu_bad="$vu_bad appeared:[${vu_appeared:-nothing}]"
+  [ "$vu_changed" = "./.claude/template-manifest " ] || vu_bad="$vu_bad changed:[${vu_changed:-nothing}]"
   ran tmpl-adopt-writes-one-file
   if [ -z "$vu_bad" ]; then
-    ok "adopting a baseline makes exactly one file appear, and it is the manifest"
+    ok "adopting a baseline changes exactly one file out of $vu_before_n, by digest and not only by name, and it is the manifest"
   else
     bad "adopting wrote something other than the manifest alone --$vu_bad [$(vu_excerpt)]"
   fi
@@ -8714,22 +8905,33 @@ else
   git -C "$vu_d" config --unset diff.external >/dev/null 2>&1
   rm -f "$vu_canary" "$vu_d/.gitattributes"
 
+  # A positive control that could not fire is a gap in the fixture, not a defect
+  # in the tool, so it is a SKIP naming which canary was silent rather than a
+  # failure. Reporting it as a violation would be this repository's own rule
+  # inverted: a check that could not run has to say so. Platforms where git
+  # cannot run an external diff at all - a noexec temp folder, an exec bit that
+  # does not take - would otherwise fail a tool that is behaving perfectly.
+  vu_cannot=''
+  [ "$vu_canary_works" = 1 ] || vu_cannot="$vu_cannot the-canary-script-itself"
+  [ -n "$vu_ext_cfg" ] || vu_cannot="$vu_cannot diff.external-did-not-land-in-the-repo-config"
+  [ "$vu_ext_works" = 1 ] || vu_cannot="$vu_cannot diff.external"
+  [ "$vu_tc_works" = 1 ] || vu_cannot="$vu_cannot textconv"
   vu_bad=''
-  [ "$vu_canary_works" = 1 ] || vu_bad="$vu_bad canary-cannot-fire"
-  [ -n "$vu_ext_cfg" ] || vu_bad="$vu_bad diff-external-not-in-the-repo-config"
-  [ "$vu_ext_works" = 1 ] || vu_bad="$vu_bad diff-external-never-fires-here"
-  [ "$vu_tc_works" = 1 ] || vu_bad="$vu_bad textconv-never-fires-here"
   # Both runs must have had something to do, or an unfired canary proves only
   # that nothing was compared.
   [ "$vu_rc_cn" = 10 ] || vu_bad="$vu_bad check-had-nothing-to-compare:$vu_rc_cn"
   [ "$vu_rc_cn2" = 10 ] || vu_bad="$vu_bad diff-had-nothing-to-diff:$vu_rc_cn2"
   [ "$vu_fired_check" = 1 ] && vu_bad="$vu_bad check-executed-it"
   [ "$vu_fired_diff" = 1 ] && vu_bad="$vu_bad diff-ran-a-configured-command"
-  ran tmpl-no-execution-from-source
-  if [ -z "$vu_bad" ]; then
-    ok "neither --check nor --diff runs anything out of the source folder, and --diff runs neither a diff.external nor a textconv command, both proved able to fire first"
+  if [ -n "$vu_cannot" ] && [ -z "$vu_bad" ]; then
+    skip tmpl-no-execution-from-source "these canaries could not be made to fire on this machine, so their silence during the run proves nothing --$vu_cannot"
   else
-    bad "something was executed that should not have been --$vu_bad"
+    ran tmpl-no-execution-from-source
+    if [ -z "$vu_bad" ]; then
+      ok "neither --check nor --diff runs anything out of the source folder, and --diff runs neither a diff.external nor a textconv command, both proved able to fire first"
+    else
+      bad "something was executed that should not have been --$vu_bad${vu_cannot:+ (and these canaries could not fire:$vu_cannot)}"
+    fi
   fi
 fi
 fi

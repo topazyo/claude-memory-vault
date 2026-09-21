@@ -59,6 +59,16 @@
 
 set -u
 
+# Every range in a shell pattern below is meant as ASCII. bash 5 holds them there
+# with globasciiranges, which it sets by default, but bash 3.2 predates the option
+# and macOS ships 3.2 as /bin/bash. Under a UTF-8 collation there a byte above
+# 0x7f can fall inside A-Za-z, so a negated class stops rejecting it, the path is
+# written into the manifest, and every downstream vault then refuses the whole
+# manifest because the reader's awk does pin the locale. Pinning collation here is
+# what keeps the writer and the reader agreeing about what a path may contain.
+LC_COLLATE=C
+export LC_COLLATE
+
 ROOT="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "$0")/../.." && pwd)}"
 RULES_REL=".claude/manifest-rules"
 MANIFEST_REL=".claude/template-manifest"
@@ -334,18 +344,34 @@ hash_paths_normalised() {
   existing_paths "$root" "$list" "$TMPD/hpn.exist"
   while IFS= read -r rel; do
     [ -n "$rel" ] || continue
-    h="$(tr -d '\r' < "$root/$rel" | hash_stdin_with "$HASH_TOOL" | hex_digest)"
-    # The status of the READ, not of the pipeline. A file that cannot be opened
-    # makes tr fail and hands the hash tool an empty stream, and the digest of
-    # nothing is a perfectly well formed digest - it is already in this
-    # repository's own manifest six times, for the empty .gitkeep files. So an
-    # unreadable file would be recorded as byte-identical to an empty one and
-    # nothing downstream could tell them apart. On Windows this is not
-    # hypothetical: -r is a permission test and does not see a file held open
-    # by Obsidian or a scanner.
-    st=${PIPESTATUS[0]}
-    if [ "${st:-1}" -ne 0 ] || [ -z "$h" ]; then
+    # pipefail INSIDE the substitution, which is the only thing that works here.
+    # A file that cannot be opened makes the redirection fail and hands the hash
+    # tool an empty stream, and the digest of nothing is a perfectly well formed
+    # digest - it is already in this repository's own manifest six times, for the
+    # empty .gitkeep files. So an unreadable file would be recorded as
+    # byte-identical to an empty one and nothing downstream could tell them
+    # apart. On Windows that is not hypothetical, because -r is a permission test
+    # and does not see a file held open by Obsidian or a scanner.
+    #
+    # Reading PIPESTATUS after the assignment does NOT work, and that was the
+    # first attempt at this. The pipeline runs in the subshell the substitution
+    # creates, so its PIPESTATUS never reaches this shell, and what is left is
+    # the status of the assignment, which is the status of the LAST stage. The
+    # failure being guarded against is in the first. Measured 2026-09-21 against
+    # a file that is not there: PIPESTATUS[0] was 0 and the digest was the one
+    # for an empty stream, so the guard never fired.
+    #
+    # pipefail was the second attempt and is not right either. It says some stage
+    # failed without saying which, and the whole point of the two messages below
+    # is that a file that could not be read and a tool that gave no usable answer
+    # are different refusals. The read gets its own checked redirection.
+    if ! tr -d '\r' < "$root/$rel" > "$TMPD/hpn.one" 2>/dev/null; then
       warn "HASH-READ - $rel could not be read, so no digest was taken for it and nothing was compared."
+      return 1
+    fi
+    h="$(hash_stdin_with "$HASH_TOOL" < "$TMPD/hpn.one" | hex_digest)"
+    if [ -z "$h" ]; then
+      warn "HASH-PARSE - the hashing tool gave no usable digest for $rel, so nothing was compared."
       return 1
     fi
     printf '%s %s\n' "$h" "$rel" >> "$out"
@@ -632,14 +658,37 @@ tracked_files() {
 # because both sides build the same line and neither parses it, while every
 # downstream vault refuses the whole manifest as malformed. The artefact that
 # breaks is the shipped one, and it breaks after release.
+# The character class does the work. It already rejects a tab, a space, a
+# backslash and a colon, so the separate clauses that used to test those are gone
+# along with the command substitution one of them ran once per tracked file -
+# which is the fork cost load_rules carries a comment about paying by accident.
+# Only the shapes the class cannot see are tested on their own.
 path_is_writable_to_a_manifest() {  # path_is_writable_to_a_manifest <path>
   case "$1" in
-    /*|[A-Za-z]:*) return 1 ;;
-    *'\'*|*' '*|*"$(printf '\t')"*) return 1 ;;
+    /*) return 1 ;;
     ..|../*|*/../*|*/..) return 1 ;;
-  esac
-  case "$1" in
+    .|./*|*/./*|*/.) return 1 ;;
+    # A component that ends in a dot, anywhere, and a path that does. The reader
+    # rejects both, through one index() for "./" plus a trailing-dot test, and
+    # the writer has to reject exactly what the reader rejects or a manifest
+    # ships that every vault refuses whole.
+    *./*|*.) return 1 ;;
     *[!-A-Za-z0-9._/]*) return 1 ;;
+  esac
+  return 0
+}
+
+# The folder named by --from, which until now was the one value from outside that
+# reached standard output unfiltered. It is interpolated into the copy plan, and
+# that plan is a command a person is told to paste, so a folder whose name holds
+# a single quote closes the quoting the plan puts around it and the rest of the
+# line becomes shell syntax of somebody else's choosing. Control bytes there can
+# also repaint the very refusal lines the reader is told to read. A path is
+# accepted here on the same terms a manifest path is, plus the separators a real
+# folder needs.
+from_is_printable() {  # from_is_printable <dir>
+  case "$1" in
+    *[!-A-Za-z0-9._/\\:~\ ]*) return 1 ;;
   esac
   return 0
 }
@@ -1066,7 +1115,14 @@ verify_source() {  # verify_source <dir>
   LC_ALL=C awk '{ print $4 }' "$TMPD/src.entries" > "$TMPD/vs.paths"
   hash_paths "$dir" "$TMPD/vs.paths" "$TMPD/vs.raw" || return 1
   LC_ALL=C awk '{ print "N " $1 " " $2 }' "$TMPD/vs.raw" > "$TMPD/vs.now"
-  join_state no "$TMPD/src.entries" "$TMPD/vs.now" > "$TMPD/vs.state0" 2>/dev/null
+  # Retagged to L, and this is load bearing rather than tidy. Here the source's
+  # own manifest IS the record being compared against, so it has to arrive on
+  # the side join_state treats as the record. Left tagged S it lands on the
+  # upstream side with nothing opposite it, every path comes back as new, and
+  # the check reports nothing whatever the folder holds. The control for this
+  # caught it.
+  LC_ALL=C sed 's/^S /L /' "$TMPD/src.entries" > "$TMPD/vs.entries"
+  join_state no "$TMPD/vs.entries" "$TMPD/vs.now" > "$TMPD/vs.state0" 2>/dev/null
 
   # The same carriage-return retry the local side gets, so a source cloned on a
   # machine that checks out CRLF is not reported as corrupt.
@@ -1076,7 +1132,7 @@ verify_source() {  # verify_source <dir>
     hash_paths_normalised "$dir" "$TMPD/vs.normlist" "$TMPD/vs.normhash" || return 1
     LC_ALL=C awk '{ print "M " $1 " " $2 }' "$TMPD/vs.normhash" > "$TMPD/vs.norm"
   fi
-  join_state no "$TMPD/src.entries" "$TMPD/vs.now" "$TMPD/vs.norm" > "$TMPD/vs.state"
+  join_state no "$TMPD/vs.entries" "$TMPD/vs.now" "$TMPD/vs.norm" > "$TMPD/vs.state"
 
   differing="$(LC_ALL=C awk '$1 == "drifted" { print $3 }' "$TMPD/vs.state" | head -n 3 | tr '\n' ' ')"
   missing="$(LC_ALL=C awk '$1 == "deleted" { print $3 }' "$TMPD/vs.state" | head -n 3 | tr '\n' ' ')"
@@ -1365,6 +1421,7 @@ case "$MODE" in
   --verify-manifest) do_verify_manifest; exit $? ;;
   --check|--diff|--adopt)
     [ -n "$FROM" ] || die_usage "$MODE needs --from <dir>, a template copy you fetched yourself."
+    from_is_printable "$FROM" || die_usage "the folder named by --from holds a character this will not print. A quote or a control byte there would land in the copy commands this prints for you to run, so move the folder somewhere plainly named and try again."
     case "$MODE" in
       --check) do_check "$FROM"; exit $? ;;
       --diff)  do_diff  "$FROM"; exit $? ;;
