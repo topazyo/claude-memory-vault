@@ -71,10 +71,19 @@ set -u
 # and macOS ships 3.2 as /bin/bash. Under a UTF-8 collation there a byte above
 # 0x7f can fall inside A-Za-z, so a negated class stops rejecting it, the path is
 # written into the manifest, and every downstream vault then refuses the whole
-# manifest because the reader's awk does pin the locale. Pinning collation here is
-# what keeps the writer and the reader agreeing about what a path may contain.
-LC_COLLATE=C
-export LC_COLLATE
+# manifest because the reader's awk does pin the locale. Pinning the locale here
+# is what keeps the writer and the reader agreeing about what a path may contain.
+#
+# LC_ALL rather than LC_COLLATE, which is what this used to set and which was a
+# no-op for anyone with LC_ALL exported at all, because LC_ALL overrides every
+# individual category. The three runners beside this script each reached that
+# conclusion already and each carries a comment saying so, and the case patterns
+# this protects are on the WRITER side while the reader's awk pins LC_ALL on
+# every invocation. So the half that was unprotected was the half that decides
+# what gets shipped. Nothing here reads a translated message, because what it
+# parses is paths, digests and version numbers.
+LC_ALL=C
+export LC_ALL
 
 ROOT="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "$0")/../.." && pwd)}"
 RULES_REL=".claude/manifest-rules"
@@ -526,10 +535,26 @@ binary_files() {
   local root="$1" list="$2" out="$3" rel chunk=0 p
   : > "$out"
   : > "$TMPD/bf.nonempty"
+  : > "$TMPD/bf.unreadable"
   while IFS= read -r rel; do
     [ -n "$rel" ] || continue
-    [ -s "$root/$rel" ] && printf '%s\n' "$rel" >> "$TMPD/bf.nonempty"
+    [ -s "$root/$rel" ] || continue
+    # READABILITY IS TESTED HERE, and it has to be, because the decision below
+    # is made by ABSENCE from grep's output. grep does not list a file it could
+    # not open, its complaint goes to a discarded stderr, and the file would
+    # therefore be reported as holding a NUL byte - a confident finding, with a
+    # reason that is not the reason. On Windows that is not hypothetical, since
+    # a file held open by Obsidian or a scanner is exactly this case.
+    if [ -r "$root/$rel" ]; then
+      printf '%s\n' "$rel" >> "$TMPD/bf.nonempty"
+    else
+      printf '%s\n' "$rel" >> "$TMPD/bf.unreadable"
+    fi
   done < "$list"
+  if [ -s "$TMPD/bf.unreadable" ]; then
+    warn "UNREADABLE - these are tracked and could not be read, so whether they are text could not be decided: $(name_a_few "$TMPD/bf.unreadable")"
+    return 1
+  fi
   [ -s "$TMPD/bf.nonempty" ] || return 0
 
   : > "$TMPD/bf.text"
@@ -932,10 +957,28 @@ path_is_writable_to_a_manifest() {  # path_is_writable_to_a_manifest <path>
 # also repaint the very refusal lines the reader is told to read. A path is
 # accepted here on the same terms a manifest path is, plus the separators a real
 # folder needs.
+# Written as a REFUSAL of the two shapes that do harm rather than as an allowed
+# set of characters, which is how it started and which refused a great many
+# ordinary folders. C:\Program Files (x86)\ has parentheses, a folder Windows
+# has duplicated ends in (1), and every accented or non-Latin path on earth is
+# outside ASCII word characters. None of those can hurt anything: the plan puts
+# single quotes on both sides of this value, and inside single quotes every one
+# of them is literal.
+#
+# What is not literal inside single quotes is a single quote, which closes the
+# quoting and hands the rest of the line to the shell. Control bytes are the
+# other one, because they can repaint the very refusal lines the reader is told
+# to read. Those two are refused and nothing else is.
 from_is_printable() {  # from_is_printable <dir>
   case "$1" in
-    *[!-A-Za-z0-9._/\\:~\ ]*) return 1 ;;
+    *"'"*) return 1 ;;
   esac
+  # One fork, on a path that runs once per invocation, rather than a range
+  # inside a case pattern. A range there is the very construct the locale pin
+  # at the top of this script exists to protect, so using one here to defend
+  # against bad bytes would rest the defence on the thing being defended.
+  [ "$(printf '%s' "$1" | LC_ALL=C tr -d '[:cntrl:]' | wc -c)" \
+    -eq "$(printf '%s' "$1" | wc -c)" ] || return 1
   return 0
 }
 
@@ -989,7 +1032,10 @@ build_manifest() {
   # byte-for-byte file is refused rather than quietly mishandled. Asked once for
   # the whole set rather than once per file, because process start-up on Windows
   # is what makes the naive shape unusable.
-  binary_files "$ROOT" "$TMPD/gen.hashme" "$TMPD/gen.binary"
+  # A non-zero return means it could not decide rather than that it decided
+  # binary, and the two want different answers, so it leaves by the could-not-
+  # look door rather than being folded into the tally below.
+  binary_files "$ROOT" "$TMPD/gen.hashme" "$TMPD/gen.binary" || return 2
   if [ -s "$TMPD/gen.binary" ]; then
     while IFS= read -r path; do
       warn "BINARY - $path holds a NUL byte and this hashes text. Class it excluded, or keep binaries out of the template."
@@ -1868,6 +1914,21 @@ TMPD="$(mktemp -d 2>/dev/null || mktemp -d -t vaultupdate)" || {
   warn "could not create a temporary directory"
   exit 2
 }
+# Asserted once, because a backslash here would be silent and would fail in the
+# reassuring direction. Several awk programs receive a temporary file's path
+# through -v, and a -v assignment is escape processed, so a Windows-form TMPDIR
+# would have awk write its findings to a mangled path. Every later read of that
+# file then comes back empty, and the escape, malformed, badhash and narrowed
+# refusals all go quiet at once while the run reports success. mktemp gives a
+# forward-slash path on all five platforms, so this never fires in practice,
+# which is exactly why it would not be noticed if it did.
+case "$TMPD" in
+  *\\*)
+    warn "TMPDIR-BACKSLASH - the temporary directory is [$TMPD] and a backslash there is read as an escape by the tools this hands it to, so findings would be written somewhere nothing reads them back."
+    warn "Set TMPDIR to a path written with forward slashes and run this again. Nothing was compared."
+    exit 2
+    ;;
+esac
 cleanup() {
   cd / 2>/dev/null || true
   [ -n "${TMPD:-}" ] && rm -rf "$TMPD" 2>/dev/null

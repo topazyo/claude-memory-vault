@@ -7975,6 +7975,8 @@ if ! command -v git >/dev/null 2>&1; then
   skip tmpl-retired-listed "the template update controls build git fixtures, and git is not installed"
   skip tmpl-seed-verdicts-counted "the template update controls build git fixtures, and git is not installed"
   skip tmpl-same-version-equivalent "the template update controls build git fixtures, and git is not installed"
+  skip tmpl-plan-quoting "the template update controls build git fixtures, and git is not installed"
+  skip tmpl-verify-manifest-guarded "the template update controls build git fixtures, and git is not installed"
   # This one grew a git fixture when it stopped grepping the rules file for a
   # spelling and started putting it in front of the real generator.
   skip tmpl-shipped-rules-have-no-catchall "the template update controls build git fixtures, and git is not installed"
@@ -8025,7 +8027,10 @@ else
   vu_make "$vu_d" 1.0.0
   printf 'doc a, edited and not regenerated\n' > "$vu_d/docs/a.md"
   vu_before="$(cksum < "$vu_d/.claude/template-manifest" | cut -d' ' -f1)"
-  vu_rc_v="$(vu_rc "$vu_d" --verify-manifest)"
+  # The maintainer variable, because verification now takes the same guard
+  # --generate does. It rebuilds from the whole tracked tree to have something
+  # to compare against, so in a vault it reads and names the owner's own notes.
+  vu_rc_v="$( cd "$vu_d" && CLAUDE_PROJECT_DIR="$vu_d" VAULT_TEMPLATE_MAINTAINER=1 "$VU_BASH" "$VU_SH" --verify-manifest > "$VU_OUT" 2>&1; printf '%s' "$?" )"
   vu_after="$(cksum < "$vu_d/.claude/template-manifest" | cut -d' ' -f1)"
   vu_bad=''
   [ "$vu_rc_v" = 1 ] || vu_bad="$vu_bad rc:$vu_rc_v"
@@ -8041,6 +8046,31 @@ else
     ok "an edited file makes --verify-manifest name it as stale, and it does not say the manifest matches"
   else
     bad "a stale manifest was not reported --$vu_bad [$(vu_excerpt)]"
+  fi
+
+  # Verification takes the maintainer guard too, and the reason is not obvious
+  # from the fact that it writes nothing. It rebuilds from the whole tracked
+  # tree in order to have something to compare against, so inside a vault it
+  # classifies, hashes and then PRINTS BY NAME the owner's own notes, which is
+  # the one boundary this tool is built around. It would then finish by printing
+  # the --generate command, which is exactly the command the other guard exists
+  # to keep out of reach. Both halves are asserted, because the refusal alone
+  # would still be satisfied by a version that had already printed the notes.
+  vu_d="$VU/verifyguard"
+  vu_make "$vu_d" 1.0.0
+  printf -- '---\ntier: long\ntype: standard\n---\nthe owner wrote this\n' > "$vu_d/31-standards/private.md"
+  vu_git "$vu_d"
+  vu_rc_vg="$(vu_rc "$vu_d" --verify-manifest)"
+  vu_bad=''
+  [ "$vu_rc_vg" = 64 ] || vu_bad="$vu_bad rc:$vu_rc_vg"
+  vu_says 'NOT-THE-TEMPLATE' || vu_bad="$vu_bad no-reason"
+  vu_says '31-standards/private.md' && vu_bad="$vu_bad named-the-owners-note"
+  vu_says 'VAULT_TEMPLATE_MAINTAINER=1 bash' && vu_bad="$vu_bad printed-the-regenerate-command"
+  ran tmpl-verify-manifest-guarded
+  if [ -z "$vu_bad" ]; then
+    ok "--verify-manifest without the maintainer variable refuses, never names a note of the owner's, and does not hand them the command that rewrites the record"
+  else
+    bad "--verify-manifest read a vault it should not have --$vu_bad [$(vu_excerpt)]"
   fi
 
   # --generate rewrites the record of what the template shipped. Run inside a
@@ -8993,6 +9023,52 @@ else
     ok "none of the $vu_cl_n paths outside the places this template ships machinery reaches the copy plan, on a run that did produce one"
   else
     bad "a path outside the machinery allowlist was presented as the template's --$vu_cl_bad [$(vu_excerpt)]"
+  fi
+
+  # The copy plan is a command a person pastes, and nothing exercised its
+  # quoting. Every fixture here lives under mktemp's output, which has no space
+  # on any of the five platforms, while the case the quoting was written for is
+  # a vault under "C:\Users\Some One\". So this one builds the source under a
+  # path that does have a space, and then checks the printed line by RUNNING it
+  # in a scratch directory rather than by matching its text, because what
+  # matters is that a shell resolves it back to the file.
+  vu_sp="$VU/with a space"
+  rm -rf "$vu_sp"
+  mkdir -p "$vu_sp"
+  vu_d="$VU/plan"
+  vu_make "$vu_d" 1.0.0
+  vu_src="$vu_sp/src"
+  vu_make "$vu_src" 1.1.0
+  printf 'doc a, moved upstream\n' > "$vu_src/docs/a.md"
+  vu_git "$vu_src"
+  vu_gen "$vu_src"
+  # The owner has not touched docs/a.md, so it is safe to take and reaches the
+  # plan. Measured at fixture-build time that the path really holds a space.
+  vu_sp_has_space=0
+  case "$vu_src" in *' '*) vu_sp_has_space=1 ;; esac
+  vu_rc_sp="$(vu_rc "$vu_d" --check --from "$vu_src")"
+  LC_ALL=C grep -F 'cp ' "$VU_OUT" 2>/dev/null | grep -F 'docs/a.md' > "$TMP/plan.line"
+  vu_sp_ran=0
+  vu_sp_dir="$TMP/planrun"
+  rm -rf "$vu_sp_dir"
+  mkdir -p "$vu_sp_dir"
+  if [ -s "$TMP/plan.line" ]; then
+    ( cd "$vu_sp_dir" && "$VU_BASH" "$TMP/plan.line" ) >/dev/null 2>&1
+    [ -f "$vu_sp_dir/docs/a.md" ] && vu_sp_ran=1
+  fi
+  vu_bad=''
+  [ "$vu_sp_has_space" = 1 ] || vu_bad="$vu_bad fixture-path-holds-no-space"
+  [ "$vu_rc_sp" = 10 ] || vu_bad="$vu_bad rc:$vu_rc_sp"
+  [ -s "$TMP/plan.line" ] || vu_bad="$vu_bad no-plan-line-for-docs-a"
+  [ "$vu_sp_ran" = 1 ] || vu_bad="$vu_bad the-printed-command-did-not-copy-the-file"
+  if [ "$vu_sp_ran" = 1 ]; then
+    cmp -s "$vu_src/docs/a.md" "$vu_sp_dir/docs/a.md" || vu_bad="$vu_bad copied-the-wrong-bytes"
+  fi
+  ran tmpl-plan-quoting
+  if [ -z "$vu_bad" ]; then
+    ok "the printed copy command survives a source folder whose path holds a space, and running it lands the template's bytes at the right path"
+  else
+    bad "the copy plan a person pastes did not resolve back to the file --$vu_bad [$(vu_excerpt)]"
   fi
 
   # -- the rules file is an execution surface -------------------------------
