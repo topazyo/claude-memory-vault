@@ -25,6 +25,43 @@ bash .claude/scripts/vault-update.sh --check --from ../template-new
 
 ---
 
+## 1.1.0 — 2026-09-22
+
+Mostly a release about releases. 1.0.0 shipped a mechanism that tells a vault what moved upstream
+and relies on a release being cut whenever something does, and nothing enforced that. 1.0.0 was
+itself merged first and tagged afterwards by hand.
+
+### Added
+
+- `.claude/scripts/vault-update.sh --check` now prints the SHA-256 of each file in the safe-to-take
+  list, and says in the copy plan's own preamble that the plan describes the source folder as it
+  was when the check read it. Nothing re-reads that folder between then and whenever you paste, and
+  that gap is you reading rather than a race inside the script, so it cannot be closed in code. The
+  digest is what lets you settle it in one command instead.
+- `VAULT_FORCE_NO_DIFF=1`, which makes `--diff` take its no-diff-tool refusal on a machine that has
+  one. It is the same kind of seam as `VAULT_FORCE_NO_SHA` beside it, and it exists so that refusal
+  can have a control.
+
+### Changed
+
+- The source symlink refusal tests **every component of a path** rather than only its last one. A
+  source could otherwise ship one symbolic link named `docs` and walk every entry beneath it past a
+  check whose whole purpose was to stop that, while verifying against its own manifest perfectly.
+- The truncated lists in the source checks say how many entries there were, the way every other
+  list in that script already did.
+
+### Adopting this
+
+**Nothing to do.** No frontmatter key, tier, folder or exit code has changed, and no command you
+run takes different arguments. `--check` prints one extra column and one extra sentence, so a
+script of your own that reads its output by position rather than by the counts line is the one
+thing worth glancing at.
+
+If you keep your vault in git and you fetched this release with `--check`, read the digests in the
+safe-to-take list against the folder you are about to copy out of. That is what they are for.
+
+---
+
 ## 1.0.0 — 2026-09-21
 
 The first version with a version. Everything before this shipped unnumbered, so a vault created
