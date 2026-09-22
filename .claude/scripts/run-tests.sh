@@ -7959,7 +7959,13 @@ vu_make() {  # vu_make <dir> <version>
   # missing one makes every measurement read [absent], which is the shape both
   # of the last two red runs took. Recorded here as it happens and asserted
   # once at the end, rather than repeated in forty places.
-  [ -s "$d/.claude/template-manifest" ] || VU_MAKE_BROKEN="$VU_MAKE_BROKEN [$d wanted $v]"
+  # The .git folder as well as the manifest, because cp -R swallows its errors
+  # just above and a copy that carried the manifest and missed the repository
+  # would leave every later vu_git re-initialising an empty one and every later
+  # generation reading an empty tracked list. Four controls take their own
+  # tracked counts and would catch that, and the rest would not.
+  [ -s "$d/.claude/template-manifest" ] || VU_MAKE_BROKEN="$VU_MAKE_BROKEN [$d wanted $v, no manifest]"
+  [ -e "$d/.git" ] || VU_MAKE_BROKEN="$VU_MAKE_BROKEN [$d wanted $v, no git]"
 }
 
 # Runs the real script against a fixture and prints its exit code. The output
@@ -7973,6 +7979,40 @@ vu_rc() {  # vu_rc <dir> <arg>...
 }
 vu_says()    { grep -qF -- "$1" "$VU_OUT"; }
 vu_excerpt() { tr '\n' '|' < "$VU_OUT" | cut -c1-400; }
+
+# "It offered something", asserted against BOTH sentences that could say so,
+# because the two are one letter apart and do not mean the same thing. The
+# counts line says "N safe to take," in lower case and the copy plan's heading
+# says "Safe to take (N)." with a capital.
+#
+# Eight refusal controls used to assert only the lower-case spelling, and a
+# refusal suppresses the counts line anyway, so what they actually held was
+# "the report never ran" rather than "no plan was printed". Rewording the
+# counts line would have turned all eight into assertions that can never fire,
+# and nothing in the suite would have noticed, because a negative that cannot
+# match looks exactly like a negative that passed.
+vu_offered() {
+  grep -qF -- 'Safe to take (' "$VU_OUT" || grep -qF -- ' safe to take,' "$VU_OUT"
+}
+
+# A SHA-256 of a file, or of standard input when given a dash, taken with
+# whichever of the tools this machine has. macOS ships shasum and not
+# sha256sum, so a control that named one of them would silently measure
+# nothing on two of these five jobs. It prints nothing at all when no tool is
+# present, and the controls that use it say so rather than passing on the
+# absence.
+vu_digest_of() {  # vu_digest_of <file>, or - for standard input
+  local f="$1" out=''
+  if command -v sha256sum >/dev/null 2>&1; then
+    if [ "$f" = - ]; then out="$(sha256sum 2>/dev/null)"; else out="$(sha256sum "$f" 2>/dev/null)"; fi
+  elif command -v shasum >/dev/null 2>&1; then
+    if [ "$f" = - ]; then out="$(shasum -a 256 2>/dev/null)"; else out="$(shasum -a 256 "$f" 2>/dev/null)"; fi
+  elif command -v openssl >/dev/null 2>&1; then
+    if [ "$f" = - ]; then out="$(openssl dgst -sha256 2>/dev/null)"; else out="$(openssl dgst -sha256 "$f" 2>/dev/null)"; fi
+  fi
+  printf '%s' "$out" \
+    | LC_ALL=C awk '{ for (i = 1; i <= NF; i++) if (length($i) == 64 && $i ~ /^[0-9a-f]*$/) { print $i; exit } }'
+}
 
 # The release check, run against a fixture the same way vu_rc runs the updater.
 vu_rel() {  # vu_rel <dir> <arg>...
@@ -8053,6 +8093,10 @@ if ! command -v git >/dev/null 2>&1; then
   skip tmpl-no-source "the template update controls build git fixtures, and git is not installed"
   skip tmpl-in-flight-state-copy "the template update controls build git fixtures, and git is not installed"
   skip tmpl-plan-digests "the template update controls build git fixtures, and git is not installed"
+  skip tmpl-source-dir-symlink "the template update controls build git fixtures, and git is not installed"
+  skip tmpl-release-version-spelling "the release controls build a tagged git fixture, and git is not installed"
+  skip tmpl-release-comparators-agree "the release controls build a tagged git fixture, and git is not installed"
+  skip tmpl-release-cannot-look "the release controls build a tagged git fixture, and git is not installed"
   # This one grew a git fixture when it stopped grepping the rules file for a
   # spelling and started putting it in front of the real generator.
   skip tmpl-shipped-rules-have-no-catchall "the template update controls build git fixtures, and git is not installed"
@@ -8594,7 +8638,7 @@ else
   [ "$vu_planted" = 1 ] || vu_bad="$vu_bad fixture-did-not-plant-the-algorithm"
   [ "$vu_rc_al" = 2 ] || vu_bad="$vu_bad source-rc:$vu_rc_al"
   vu_says 'UNKNOWN-ALGORITHM' || vu_bad="$vu_bad source-gave-no-reason"
-  vu_says 'safe to take' && vu_bad="$vu_bad compared-anyway"
+  vu_offered && vu_bad="$vu_bad compared-anyway"
 
   # And the LOCAL side, which is a separate block of code in a separate reader
   # and had no control at all. Deleting it was green everywhere, and a vault
@@ -8852,7 +8896,7 @@ else
   vu_bad=''
   [ "$vu_rc_sv" = 2 ] || vu_bad="$vu_bad rc:$vu_rc_sv"
   vu_says 'SAME-VERSION-DISAGREES' || vu_bad="$vu_bad no-reason"
-  vu_says 'safe to take' && vu_bad="$vu_bad offered-a-plan"
+  vu_offered && vu_bad="$vu_bad offered-a-plan"
   ran tmpl-same-version-disagrees
   if [ -z "$vu_bad" ]; then
     ok "two copies claiming one version and disagreeing is refused, and no copy plan is offered"
@@ -8896,7 +8940,7 @@ else
   vu_says 'SOURCE-DISAGREES' || vu_bad="$vu_bad no-reason"
   vu_says 'docs/a.md' || vu_bad="$vu_bad not-named"
   vu_says 'Different from its own record' || vu_bad="$vu_bad did-not-say-which-way"
-  vu_says 'safe to take' && vu_bad="$vu_bad offered-a-plan"
+  vu_offered && vu_bad="$vu_bad offered-a-plan"
 
   # The OTHER arm of the same refusal. A source manifest names a file and the
   # folder does not hold it, which is what a half-finished download looks like,
@@ -8918,7 +8962,7 @@ else
   vu_says 'SOURCE-DISAGREES' || vu_bad="$vu_bad missing-gave-no-reason"
   vu_says 'Named by its record and not on its disk' || vu_bad="$vu_bad missing-did-not-say-which-way"
   vu_says 'docs/b.md' || vu_bad="$vu_bad missing-not-named"
-  vu_says 'safe to take' && vu_bad="$vu_bad missing-offered-a-plan"
+  vu_offered && vu_bad="$vu_bad missing-offered-a-plan"
 
   ran tmpl-source-disagrees
   if [ -z "$vu_bad" ]; then
@@ -8981,14 +9025,20 @@ else
   printf 'doc a, moved upstream\n' > "$vu_ro_src/docs/a.md"
   vu_git "$vu_ro_src"
   vu_gen "$vu_ro_src"
+  # --verify-manifest is in the loop and it is the one that matters most. It
+  # rebuilds the whole manifest from the tracked tree in order to have
+  # something to compare against, so it is the mode with the most to write, and
+  # the only thing watching it was a checksum of the manifest file itself. A
+  # cache left anywhere else in the vault by that mode was caught by nothing.
   vu_ao_modes=0
-  for vu_ao_mode in status check diff; do
+  for vu_ao_mode in status check diff verify; do
     vu_ao_modes=$((vu_ao_modes + 1))
     vu_tree_state "$vu_ro" > "$TMP/adopt.ro.before"
     case "$vu_ao_mode" in
       status) vu_rc_ao="$(vu_rc "$vu_ro" --status)" ;;
       check)  vu_rc_ao="$(vu_rc "$vu_ro" --check --from "$vu_ro_src")" ;;
       diff)   vu_rc_ao="$(vu_rc "$vu_ro" --diff  --from "$vu_ro_src")" ;;
+      verify) vu_rc_ao="$( cd "$vu_ro" && CLAUDE_PROJECT_DIR="$vu_ro" VAULT_TEMPLATE_MAINTAINER=1 "$VU_BASH" "$VU_SH" --verify-manifest > "$VU_OUT" 2>&1; printf '%s' "$?" )" ;;
     esac
     vu_tree_state "$vu_ro" > "$TMP/adopt.ro.after"
     vu_ao_changed="$(LC_ALL=C awk -v bf="$TMP/adopt.ro.before" '
@@ -8997,6 +9047,12 @@ else
     # The mode reached its work, established before its silence is read as
     # evidence. A mode that refused at the door writes nothing either, and that
     # would satisfy the line below while proving nothing at all.
+    #
+    # The fixture is freshly generated, so --verify-manifest finds the manifest
+    # matching its tree and leaves on 0 like the rest. A 1 here would mean it
+    # judged the tree stale, which is still the mode finishing its work, but it
+    # would also mean this fixture is not what this control believes it is, so
+    # it is reported rather than accepted.
     case "$vu_rc_ao" in
       0|10) : ;;
       *) vu_bad="$vu_bad [--$vu_ao_mode]rc:$vu_rc_ao-so-it-never-reached-its-work" ;;
@@ -9272,7 +9328,7 @@ else
     [ "$vu_rc_sl" = 2 ] || vu_bad="$vu_bad rc:$vu_rc_sl"
     vu_says 'SOURCE-SYMLINK' || vu_bad="$vu_bad no-reason"
     vu_says 'docs/a.md' || vu_bad="$vu_bad not-named"
-    vu_says 'safe to take' && vu_bad="$vu_bad offered-a-plan"
+    vu_offered && vu_bad="$vu_bad offered-a-plan"
     ran tmpl-source-symlink
     if [ -z "$vu_bad" ]; then
       ok "a source shipping an entry as a symbolic link is refused by name, and no copy plan is offered"
@@ -9281,6 +9337,45 @@ else
     fi
   else
     skip tmpl-source-symlink "a symbolic link could not be created here, so the fixture could not be built"
+  fi
+
+  # The same refusal, with the link a DIRECTORY on the way to the file rather
+  # than the file itself. The test used to be a single one of the whole path,
+  # and `[ -L "$dir/docs/a.md" ]` says nothing whatever about `$dir/docs`, so a
+  # source could ship one link named docs and walk every entry beneath it past
+  # the check whose only purpose was to stop that, while verifying against its
+  # own manifest perfectly. The hole was closed without a control, and a fixed
+  # hole with no control can reopen.
+  vu_d="$VU/dirsymlink"
+  vu_make "$vu_d" 1.0.0
+  vu_src="$VU/dirsymlink-src"
+  vu_make "$vu_src" 1.1.0
+  # The real folder is moved aside and a link put in its place, so every path
+  # the manifest names under docs/ is now reached through the link while the
+  # bytes behind them are unchanged and every entry still verifies.
+  mv "$vu_src/docs" "$vu_src/elsewhere" >/dev/null 2>&1
+  ( cd "$vu_src" && ln -s elsewhere docs ) >/dev/null 2>&1
+  vu_dl_built=0
+  { [ -L "$vu_src/docs" ] && [ -f "$vu_src/docs/a.md" ]; } && vu_dl_built=1
+  # And the leaf is NOT a link, which is what makes this a different question
+  # from the control above rather than the same one twice.
+  vu_dl_leaf_is_link=0
+  [ -L "$vu_src/docs/a.md" ] && vu_dl_leaf_is_link=1
+  if [ "$vu_dl_built" = 1 ] && [ "$vu_dl_leaf_is_link" = 0 ]; then
+    vu_rc_dl="$(vu_rc "$vu_d" --check --from "$vu_src")"
+    vu_bad=''
+    [ "$vu_rc_dl" = 2 ] || vu_bad="$vu_bad rc:$vu_rc_dl"
+    vu_says 'SOURCE-SYMLINK' || vu_bad="$vu_bad no-reason"
+    vu_says 'docs/a.md' || vu_bad="$vu_bad not-named"
+    vu_offered && vu_bad="$vu_bad offered-a-plan"
+    ran tmpl-source-dir-symlink
+    if [ -z "$vu_bad" ]; then
+      ok "a source reaching its entries through a symbolic link one folder above them is refused by name, not only one whose last component is the link"
+    else
+      bad "a source folder that was a symbolic link was accepted --$vu_bad [$(vu_excerpt)]"
+    fi
+  else
+    skip tmpl-source-dir-symlink "a folder could not be replaced by a symbolic link here -- link:$vu_dl_built leaf-is-also-a-link:$vu_dl_leaf_is_link, so the fixture could not be built"
   fi
 
   # THE ALLOWLIST. A manifest may only call a path machinery where this template
@@ -9589,7 +9684,7 @@ else
     [ "$vu_eq_ver" = "$vu_sv" ] || vu_eq_bad="$vu_eq_bad [$vu_pair]fixture-version-is-[${vu_eq_ver:-absent}]"
     [ "$vu_rc_eq" = 2 ] || vu_eq_bad="$vu_eq_bad [$vu_pair]rc:$vu_rc_eq"
     vu_says 'SAME-VERSION-DISAGREES' || vu_eq_bad="$vu_eq_bad [$vu_pair]no-reason"
-    vu_says 'safe to take' && vu_eq_bad="$vu_eq_bad [$vu_pair]offered-a-plan"
+    vu_offered && vu_eq_bad="$vu_eq_bad [$vu_pair]offered-a-plan"
     # And not the other refusal, which would leave by the same door. A
     # version_older reverted to a string compare turns these into SOURCE-IS-OLDER.
     vu_says 'SOURCE-IS-OLDER' && vu_eq_bad="$vu_eq_bad [$vu_pair]called-it-older"
@@ -9666,9 +9761,15 @@ else
     [ -f "$vu_if_state/runner-inflight" ] && vu_if_state_ok=1
   fi
   if [ "$vu_if_state_ok" = 1 ]; then
+    # The vault's own copy is absent, measured before the run. Without this the
+    # control establishes only that SOMETHING produced the 75, and the clause
+    # it exists to exercise is the one it could not name.
+    vu_if_in_vault=0
+    { [ -e "$vu_d/.claude/logs/runner-inflight" ] || [ -L "$vu_d/.claude/logs/runner-inflight" ]; } && vu_if_in_vault=1
     vu_rc_if2="$(vu_rc "$vu_d" --check --from "$vu_newer")"
     rm -f "$vu_if_state/runner-inflight"
     vu_bad=''
+    [ "$vu_if_in_vault" = 0 ] || vu_bad="$vu_bad the-vault-also-held-a-marker-so-either-clause-could-have-fired"
     [ "$vu_rc_if2" = 75 ] || vu_bad="$vu_bad rc:$vu_rc_if2"
     vu_says 'PASS-IN-FLIGHT' || vu_bad="$vu_bad no-reason"
     vu_says 'moved upstream,' && vu_bad="$vu_bad compared-anyway"
@@ -9698,8 +9799,14 @@ else
     [ -f "$vu_state/runner-tripwire" ] && vu_state_ok=1
   fi
   if [ "$vu_state_ok" = 1 ]; then
+    # The vault's own copy is absent, for the same reason its sibling above
+    # measures it. Otherwise this establishes only that something produced the
+    # 78, and the state-directory clause is the one thing it cannot name.
+    vu_ts_in_vault=0
+    { [ -e "$vu_d/.claude/logs/runner-tripwire" ] || [ -L "$vu_d/.claude/logs/runner-tripwire" ]; } && vu_ts_in_vault=1
     vu_rc_ts="$(vu_rc "$vu_d" --status)"
     vu_bad=''
+    [ "$vu_ts_in_vault" = 0 ] || vu_bad="$vu_bad the-vault-also-held-a-tripwire-so-either-clause-could-have-fired"
     [ "$vu_rc_ts" = 78 ] || vu_bad="$vu_bad rc:$vu_rc_ts"
     vu_says 'TRIPWIRE' || vu_bad="$vu_bad no-reason"
     vu_says 'records template version' && vu_bad="$vu_bad answered-anyway"
@@ -9829,20 +9936,35 @@ else
   # was hashed and the moment somebody pastes the copy plan there is a person
   # reading, and nothing re-reads the folder across that gap. Printing the
   # digest turns "trust that it has not moved" into something a reader settles
-  # in one command, and a digest that did not match the bytes would be worse
-  # than none at all, so it is asserted against the source's own manifest
-  # rather than against itself.
+  # in one command.
+  #
+  # WHICH digest is the whole question, and the first version of this control
+  # asserted the wrong one. It compared the printed value against the SOURCE
+  # MANIFEST'S record, and those two are equal only for a file holding no
+  # carriage returns, which is the only kind the fixture had. The manifest
+  # records the digest of the content with carriage returns removed, because a
+  # manifest has to mean the same thing on a machine that checks out CRLF. The
+  # plan has to print the digest of the BYTES, because the bytes are what a
+  # reader copies and what `sha256sum <file>` will hand them back.
+  #
+  # So the fixture now ships a file that carries carriage returns, and the
+  # control asserts both halves: the printed digest IS the raw one, and it is
+  # NOT the manifest's. Asserting only the first would pass just as well if the
+  # two were ever collapsed into one.
   vu_d="$VU/plandigest"
   vu_make "$vu_d" 1.0.0
   vu_src="$VU/plandigest-src"
   vu_make "$vu_src" 1.1.0
-  printf 'doc a, moved upstream\n' > "$vu_src/docs/a.md"
+  printf 'doc a, moved upstream\r\nwith a carriage return on every line\r\n' > "$vu_src/docs/a.md"
   vu_git "$vu_src"
   vu_gen "$vu_src"
-  # Measured when the fixture is built. The verdict compares what the plan
-  # prints against this, so if the fixture never produced a digest the control
-  # would be comparing two absences and agreeing with itself.
-  vu_pd_want="$(LC_ALL=C awk '$3 == "docs/a.md" { print $2; exit }' "$vu_src/.claude/template-manifest" 2>/dev/null)"
+  # All three measured when the fixture is built, into variables the verdict
+  # alone reads. A fixture whose file lost its carriage returns would make the
+  # raw and the recorded digest equal, and then the control would agree with
+  # itself whichever one the plan printed.
+  vu_pd_recorded="$(LC_ALL=C awk '$3 == "docs/a.md" { print $2; exit }' "$vu_src/.claude/template-manifest" 2>/dev/null)"
+  vu_pd_raw="$(vu_digest_of "$vu_src/docs/a.md")"
+  vu_pd_stripped="$(tr -d '\r' < "$vu_src/docs/a.md" | vu_digest_of -)"
   vu_rc_pd="$(vu_rc "$vu_d" --check --from "$vu_src")"
   vu_pd_line="$(LC_ALL=C awk '
     /^Safe to take/ { s = 1; next }
@@ -9850,10 +9972,20 @@ else
     s && $2 == "docs/a.md" { print $1; exit }
   ' "$VU_OUT" 2>/dev/null)"
   vu_bad=''
-  [ -n "$vu_pd_want" ] || vu_bad="$vu_bad the-source-manifest-carries-no-digest-for-docs/a.md"
+  [ -n "$vu_pd_recorded" ] || vu_bad="$vu_bad the-source-manifest-carries-no-digest-for-docs/a.md"
+  [ -n "$vu_pd_raw" ] || vu_bad="$vu_bad no-hash-tool-here-so-the-raw-digest-could-not-be-taken"
+  # The fixture really does carry carriage returns, established by the two
+  # digests differing rather than by looking for a carriage return, because
+  # neither grep nor awk can see a trailing one on Git Bash.
+  [ "${vu_pd_raw:-a}" != "${vu_pd_stripped:-a}" ] \
+    || vu_bad="$vu_bad the-fixture-file-carries-no-carriage-returns-so-nothing-below-distinguishes-anything"
+  [ "${vu_pd_recorded:-a}" = "${vu_pd_stripped:-b}" ] \
+    || vu_bad="$vu_bad the-manifest-does-not-record-the-stripped-digest"
   [ "$vu_rc_pd" = 10 ] || vu_bad="$vu_bad rc:$vu_rc_pd"
-  [ "${vu_pd_line:-absent}" = "${vu_pd_want:-unset}" ] \
-    || vu_bad="$vu_bad the-plan-printed-[${vu_pd_line:-nothing}]-against-[${vu_pd_want:-nothing}]"
+  [ "${vu_pd_line:-absent}" = "${vu_pd_raw:-unset}" ] \
+    || vu_bad="$vu_bad the-plan-printed-[${vu_pd_line:-nothing}]-against-the-raw-[${vu_pd_raw:-nothing}]"
+  [ "${vu_pd_line:-absent}" != "${vu_pd_recorded:-unset}" ] \
+    || vu_bad="$vu_bad the-plan-printed-the-manifest-record-rather-than-the-bytes"
   # Never the placeholder, which is what a path the run never hashed would get
   # and which would mean the reader is being handed a line they cannot check.
   vu_says 'digest-unknown' && vu_bad="$vu_bad printed-a-placeholder-digest"
@@ -9909,29 +10041,43 @@ else
   # A name a manifest entry could not carry. A manifest line is three
   # whitespace-separated fields, so a name holding anything outside the set a
   # path may hold writes a line that generation and verification both build and
-  # neither parses, while every vault refuses the whole file as malformed. The
-  # plus sign is used rather than a space because a space is a folder separator
-  # problem of its own on one of these platforms and this is asking about the
-  # character class rather than about quoting.
-  vu_d="$VU/unwritable"
-  vu_make "$vu_d" 1.0.0
-  printf 'doc plus\n' > "$vu_d/docs/a+b.md"
-  vu_git "$vu_d"
-  vu_uw_tracked="$(git -C "$vu_d" ls-files 2>/dev/null | LC_ALL=C awk '$0 == "docs/a+b.md" { n++ } END { print n + 0 }')"
-  vu_before="$(cksum < "$vu_d/.claude/template-manifest" | cut -d' ' -f1)"
-  vu_rc_uw="$( cd "$vu_d" && CLAUDE_PROJECT_DIR="$vu_d" VAULT_TEMPLATE_MAINTAINER=1 "$VU_BASH" "$VU_SH" --generate > "$VU_OUT" 2>&1; printf '%s' "$?" )"
-  vu_after="$(cksum < "$vu_d/.claude/template-manifest" | cut -d' ' -f1)"
-  vu_bad=''
-  [ "${vu_uw_tracked:-0}" = 1 ] || vu_bad="$vu_bad the-index-does-not-name-it"
-  [ "$vu_rc_uw" = 1 ] || vu_bad="$vu_bad rc:$vu_rc_uw"
-  vu_says 'UNWRITABLE-PATH' || vu_bad="$vu_bad no-reason"
-  vu_says 'docs/a+b.md' || vu_bad="$vu_bad did-not-name-the-file"
-  # And not the other writer-side refusal, which would leave by the same door.
-  vu_says 'UNCLASSIFIED' && vu_bad="$vu_bad called-it-unclassified"
-  [ "$vu_before" = "$vu_after" ] || vu_bad="$vu_bad the-manifest-was-rewritten-anyway"
+  # neither parses, while every vault refuses the whole file as malformed.
+  #
+  # TWO VECTORS, and the second one is the vector that matters. A plus sign is
+  # outside the permitted class and so is refused, but a plus sign would round
+  # trip a manifest line perfectly well - "owned <sha> docs/a+b.md" is still
+  # three fields. Widening the class by one character to let a SPACE through
+  # keeps the plus refused, keeps a control asserting only the plus green, and
+  # ships exactly the four-field line the refusal's own comment says every
+  # vault refuses whole. A space is the character the production comment names,
+  # it is legal in a filename on all three platforms, and it is the one this
+  # was missing.
+  vu_uw_bad=''
+  vu_uw_n=0
+  for vu_uw_name in 'docs/a+b.md' 'docs/a b.md'; do
+    vu_uw_n=$((vu_uw_n + 1))
+    vu_d="$VU/unwritable$vu_uw_n"
+    vu_make "$vu_d" 1.0.0
+    printf 'doc with a name a manifest could not carry\n' > "$vu_d/$vu_uw_name"
+    vu_git "$vu_d"
+    vu_uw_tracked="$(vu_uw_want="$vu_uw_name" git -C "$vu_d" ls-files 2>/dev/null \
+      | LC_ALL=C awk '$0 == ENVIRON["vu_uw_want"] { n++ } END { print n + 0 }')"
+    vu_before="$(cksum < "$vu_d/.claude/template-manifest" | cut -d' ' -f1)"
+    vu_rc_uw="$( cd "$vu_d" && CLAUDE_PROJECT_DIR="$vu_d" VAULT_TEMPLATE_MAINTAINER=1 "$VU_BASH" "$VU_SH" --generate > "$VU_OUT" 2>&1; printf '%s' "$?" )"
+    vu_after="$(cksum < "$vu_d/.claude/template-manifest" | cut -d' ' -f1)"
+    [ "${vu_uw_tracked:-0}" = 1 ] || vu_uw_bad="$vu_uw_bad [$vu_uw_name]the-index-does-not-name-it"
+    [ "$vu_rc_uw" = 1 ] || vu_uw_bad="$vu_uw_bad [$vu_uw_name]rc:$vu_rc_uw"
+    vu_says 'UNWRITABLE-PATH' || vu_uw_bad="$vu_uw_bad [$vu_uw_name]no-reason"
+    vu_says "$vu_uw_name" || vu_uw_bad="$vu_uw_bad [$vu_uw_name]did-not-name-the-file"
+    # And not the other writer-side refusal, which would leave by the same door.
+    vu_says 'UNCLASSIFIED' && vu_uw_bad="$vu_uw_bad [$vu_uw_name]called-it-unclassified"
+    [ "$vu_before" = "$vu_after" ] || vu_uw_bad="$vu_uw_bad [$vu_uw_name]the-manifest-was-rewritten-anyway"
+  done
+  vu_bad="$vu_uw_bad"
+  [ "$vu_uw_n" = 2 ] || vu_bad="$vu_bad only-$vu_uw_n-vector(s)-were-tried"
   ran tmpl-unwritable-name
   if [ -z "$vu_bad" ]; then
-    ok "a tracked name a manifest line could not carry fails generation by name, rather than writing a line this side reads back and every vault refuses"
+    ok "a tracked name a manifest line could not carry fails generation by name, for a character outside the class and for the space that would write a fourth field, rather than writing a line this side reads back and every vault refuses"
   else
     bad "a name a manifest cannot carry did not stop generation --$vu_bad [$(vu_excerpt)]"
   fi
@@ -9947,30 +10093,52 @@ else
   # git holding the new name beside the old one. The file is written as well,
   # so that on a filesystem that does NOT fold both spellings are readable and
   # the missing-from-disk refusal cannot be the one that fires instead.
-  vu_d="$VU/casecollide"
-  vu_make "$vu_d" 1.0.0
-  printf 'doc a\n' > "$vu_d/docs/A.md"
-  vu_git "$vu_d"
-  vu_cc_blob="$(git -C "$vu_d" hash-object -w docs/a.md 2>/dev/null)"
-  git -C "$vu_d" update-index --add --cacheinfo "100644,$vu_cc_blob,docs/A.md" >/dev/null 2>&1
-  vu_cc_seen="$(git -C "$vu_d" ls-files 2>/dev/null | LC_ALL=C awk '$0 == "docs/a.md" || $0 == "docs/A.md" { n++ } END { print n + 0 }')"
-  vu_cc_ondisk=0
-  [ -f "$vu_d/docs/a.md" ] && vu_cc_ondisk=$((vu_cc_ondisk + 1))
-  [ -f "$vu_d/docs/A.md" ] && vu_cc_ondisk=$((vu_cc_ondisk + 1))
-  if [ "${vu_cc_seen:-0}" != 2 ] || [ "$vu_cc_ondisk" != 2 ]; then
-    skip tmpl-case-collision "both spellings of one path could not be put in the index and left readable here -- the index names ${vu_cc_seen:-0} of them and ${vu_cc_ondisk} are readable, so the collision the control asks about was never built"
-  else
+  # TWO VECTORS. The first differs in the last component and the second in a
+  # DIRECTORY component, and only the second asks whether the whole path is
+  # folded. The production check folds the whole path, and that is what catches
+  # the realistic accident, which is somebody renaming a folder on a filesystem
+  # that folds case and git recording the new spelling beside the old one.
+  vu_cc_bad=''
+  vu_cc_n=0
+  vu_cc_built=0
+  for vu_cc_pair in 'docs/a.md:docs/A.md' 'docs/sub/a.md:docs/Sub/a.md'; do
+    vu_cc_n=$((vu_cc_n + 1))
+    vu_cc_have="${vu_cc_pair%%:*}"
+    vu_cc_also="${vu_cc_pair#*:}"
+    vu_d="$VU/casecollide$vu_cc_n"
+    vu_make "$vu_d" 1.0.0
+    mkdir -p "$(dirname "$vu_d/$vu_cc_have")" "$(dirname "$vu_d/$vu_cc_also")" 2>/dev/null
+    printf 'one file, two spellings\n' > "$vu_d/$vu_cc_have"
+    printf 'one file, two spellings\n' > "$vu_d/$vu_cc_also"
+    vu_git "$vu_d"
+    vu_cc_blob="$( cd "$vu_d" && git hash-object -w "$vu_cc_have" 2>/dev/null )"
+    git -C "$vu_d" update-index --add --cacheinfo "100644,$vu_cc_blob,$vu_cc_also" >/dev/null 2>&1
+    vu_cc_seen="$(vu_cc_a="$vu_cc_have" vu_cc_b="$vu_cc_also" git -C "$vu_d" ls-files 2>/dev/null \
+      | LC_ALL=C awk '$0 == ENVIRON["vu_cc_a"] || $0 == ENVIRON["vu_cc_b"] { n++ } END { print n + 0 }')"
+    vu_cc_ondisk=0
+    [ -f "$vu_d/$vu_cc_have" ] && vu_cc_ondisk=$((vu_cc_ondisk + 1))
+    [ -f "$vu_d/$vu_cc_also" ] && vu_cc_ondisk=$((vu_cc_ondisk + 1))
+    if [ "${vu_cc_seen:-0}" != 2 ] || [ "$vu_cc_ondisk" != 2 ]; then
+      vu_cc_bad="$vu_cc_bad [$vu_cc_pair]not-built-index-names-${vu_cc_seen:-0}-and-${vu_cc_ondisk}-are-readable"
+      continue
+    fi
+    vu_cc_built=$((vu_cc_built + 1))
     vu_before="$(cksum < "$vu_d/.claude/template-manifest" | cut -d' ' -f1)"
     vu_rc_cc="$( cd "$vu_d" && CLAUDE_PROJECT_DIR="$vu_d" VAULT_TEMPLATE_MAINTAINER=1 "$VU_BASH" "$VU_SH" --generate > "$VU_OUT" 2>&1; printf '%s' "$?" )"
     vu_after="$(cksum < "$vu_d/.claude/template-manifest" | cut -d' ' -f1)"
-    vu_bad=''
-    [ "$vu_rc_cc" = 1 ] || vu_bad="$vu_bad rc:$vu_rc_cc"
-    vu_says 'CASE-COLLISION' || vu_bad="$vu_bad no-reason"
-    vu_says 'MISSING-TRACKED' && vu_bad="$vu_bad called-it-missing-from-disk"
-    [ "$vu_before" = "$vu_after" ] || vu_bad="$vu_bad the-manifest-was-rewritten-anyway"
+    [ "$vu_rc_cc" = 1 ] || vu_cc_bad="$vu_cc_bad [$vu_cc_pair]rc:$vu_rc_cc"
+    vu_says 'CASE-COLLISION' || vu_cc_bad="$vu_cc_bad [$vu_cc_pair]no-reason"
+    vu_says 'MISSING-TRACKED' && vu_cc_bad="$vu_cc_bad [$vu_cc_pair]called-it-missing-from-disk"
+    [ "$vu_before" = "$vu_after" ] || vu_cc_bad="$vu_cc_bad [$vu_cc_pair]the-manifest-was-rewritten-anyway"
+  done
+  if [ "$vu_cc_built" = 0 ]; then
+    skip tmpl-case-collision "neither pair of spellings could be put in the index and left readable here --$vu_cc_bad, so the collision the control asks about was never built"
+  else
+    vu_bad="$vu_cc_bad"
+    [ "$vu_cc_built" = 2 ] || vu_bad="$vu_bad only-$vu_cc_built-of-2-pairs-was-built"
     ran tmpl-case-collision
     if [ -z "$vu_bad" ]; then
-      ok "two tracked paths differing only in case fail generation where they are made, rather than shipping a manifest that collides on the two platforms of these three that fold case"
+      ok "two tracked paths differing only in case fail generation where they are made, whether the difference is in the last component or in a folder above it, rather than shipping a manifest that collides on the two platforms of these three that fold case"
     else
       bad "two paths differing only in case did not stop generation --$vu_bad [$(vu_excerpt)]"
     fi
@@ -9983,6 +10151,7 @@ else
   # passes it and deleting the double-star refusal was caught by nothing.
   vu_d="$VU/rulesrefused"
   vu_make "$vu_d" 1.0.0
+  vu_rr_before="$(cksum < "$vu_d/.claude/template-manifest" | cut -d' ' -f1)"
   vu_bad=''
   vu_rr_n=0
   for vu_rr_case in 'RULE-DOUBLE-STAR:owned:docs/**' 'RULE-CLASS:bogus:docs/*'; do
@@ -10002,6 +10171,12 @@ else
     vu_rc_rr="$( cd "$vu_d" && CLAUDE_PROJECT_DIR="$vu_d" VAULT_TEMPLATE_MAINTAINER=1 "$VU_BASH" "$VU_SH" --generate > "$VU_OUT" 2>&1; printf '%s' "$?" )"
     [ "${vu_rr_planted:-0}" = 1 ] || vu_bad="$vu_bad [$vu_rr_tag]rule-not-planted"
     [ "$vu_rc_rr" = 1 ] || vu_bad="$vu_bad [$vu_rr_tag]rc:$vu_rc_rr"
+    # The manifest is untouched, which both sibling refusals assert and this
+    # one did not. Nothing exploits the gap today, because the rules are read
+    # before anything is written, and the control could not tell either way,
+    # which is what a refactor that moved the rules check later would rely on.
+    vu_rr_after="$(cksum < "$vu_d/.claude/template-manifest" | cut -d' ' -f1)"
+    [ "$vu_rr_before" = "$vu_rr_after" ] || vu_bad="$vu_bad [$vu_rr_tag]the-manifest-was-rewritten-anyway"
     vu_says "$vu_rr_tag" || vu_bad="$vu_bad [$vu_rr_tag]no-reason"
     # Not the neighbouring refusal, which leaves by the same door and would let
     # either of these two be deleted while the other kept the exit code right.
@@ -10016,13 +10191,23 @@ else
 
   # -- the hash tool, named and misbehaving -------------------------------
 
-  # VAULT_HASH_TOOL naming something outside the four. The second arm is a star,
-  # and it is the one worth having. The loop that tries the four candidates has
-  # to leave its word unquoted so the default splits, and an unquoted word is
-  # also a glob, so a star reaching that loop would expand against the working
-  # directory and hand whatever it found to command -v. The assertion is that
-  # the star is reported back as a star, which is only true if nothing expanded
-  # it on the way.
+  # VAULT_HASH_TOOL naming something outside the four.
+  #
+  # The second arm is a star, and the reason first written here for it was
+  # wrong, so it is corrected rather than left for a later reader to trip over.
+  # It said the candidate loop leaves its word unquoted and a star reaching it
+  # would expand against the working directory. The loop is a literal list of
+  # four names, every use of VAULT_HASH_TOOL is quoted, and the one unquoted
+  # place is a `case` word, where POSIX forbids pathname expansion. So there is
+  # no line that assertion could catch on its own.
+  #
+  # The arm is kept because it still says something true and cheap, which is
+  # that the value is reported back verbatim rather than through anything that
+  # might rewrite it, and because a star is the value most likely to be
+  # rewritten if anybody ever does make that loop take the word from here.
+  # What it is NOT is a second independent test, and saying so is the point of
+  # this comment, because a control whose stated reason a reader can disprove
+  # in ten seconds teaches them to stop reading the others.
   vu_d="$VU/hashnamed"
   vu_make "$vu_d" 1.0.0
   vu_bad=''
@@ -10135,7 +10320,7 @@ else
     vu_says 'HASH-PAIRING' || vu_bad="$vu_bad pairing-gave-no-reason"
     # Nothing was compared, and it does not offer a plan built on answers it
     # could not attach to the files they belong to.
-    vu_says 'safe to take' && vu_bad="$vu_bad pairing-offered-a-plan-anyway"
+    vu_offered && vu_bad="$vu_bad pairing-offered-a-plan-anyway"
     ran tmpl-hash-tool-misbehaves
     if [ -z "$vu_bad" ]; then
       ok "a hash tool answering wrongly for a known string is caught at the probe, and one returning the wrong number of lines is refused rather than paired by line order onto the wrong files"
@@ -10163,7 +10348,20 @@ else
   vu_rc_dok="$(vu_rc "$vu_d" --diff --from "$vu_src")"
   vu_nd_sections="$(LC_ALL=C awk '/^=== / { n++ } END { print n + 0 }' "$VU_OUT")"
   [ "$vu_rc_dok" = 10 ] || vu_bad="$vu_bad ordinary-diff-rc:$vu_rc_dok"
-  [ "${vu_nd_sections:-0}" -ge 1 ] || vu_bad="$vu_bad ordinary-diff-rendered-nothing"
+  # The EXACT number, measured off the two manifests rather than written down.
+  # A threshold was the first attempt and it is the wrong shape here, because
+  # the defect this control exists to catch is a section printed for every
+  # shipped path rather than only the changed ones. That takes the count up and
+  # a test for one or more never notices, which is the project's own rule about
+  # inflated counts being broken in the control that most needs it.
+  vu_nd_expect="$(LC_ALL=C awk '
+    NR == FNR { if ($1 == "owned") h[$3] = $2; next }
+    $1 == "owned" && ((!($3 in h)) || h[$3] != $2) { n++ }
+    END { print n + 0 }
+  ' "$vu_d/.claude/template-manifest" "$vu_src/.claude/template-manifest" 2>/dev/null)"
+  [ "${vu_nd_expect:-0}" -ge 1 ] || vu_bad="$vu_bad the-two-fixtures-differ-in-${vu_nd_expect:-0}-owned-files"
+  [ "${vu_nd_sections:-0}" = "${vu_nd_expect:-0}" ] \
+    || vu_bad="$vu_bad rendered-${vu_nd_sections:-0}-sections-against-the-${vu_nd_expect:-0}-files-that-moved"
   vu_rc_nd="$( cd "$vu_d" && CLAUDE_PROJECT_DIR="$vu_d" VAULT_FORCE_NO_DIFF=1 \
     "$VU_BASH" "$VU_SH" --diff --from "$vu_src" > "$VU_OUT" 2>&1; printf '%s' "$?" )"
   vu_nd_sections2="$(LC_ALL=C awk '/^=== / { n++ } END { print n + 0 }' "$VU_OUT")"
@@ -10245,7 +10443,7 @@ else
     vu_says 'docs/b.md' || vu_bad="$vu_bad did-not-name-the-file"
     # The whole folder is refused rather than the one file being dropped, so
     # nothing it holds is offered.
-    vu_says 'safe to take' && vu_bad="$vu_bad offered-a-plan-anyway"
+    vu_offered && vu_bad="$vu_bad offered-a-plan-anyway"
     # And not the sibling refusal, which leaves by the same door and would let
     # this one be deleted while the exit code stayed right.
     vu_says 'SOURCE-DISAGREES' && vu_bad="$vu_bad called-it-a-disagreement"
@@ -10341,9 +10539,52 @@ else
     # assertion above while telling a reader two different things.
     vu_says 'nothing is owed' && vu_bad="$vu_bad shipped-change-also-said-nothing-is-owed"
 
+    # A shipped file DELETED since the tag, which is the case the shipped set
+    # is built as a union for. The three arms above all change a file that both
+    # manifests name, so deleting the half of that union which reads the TAG'S
+    # manifest left every one of them green while a file the template used to
+    # ship could vanish with nothing owed. That is the same "content no vault
+    # can discover" the whole script exists to collect, arrived at from the
+    # other direction.
+    #
+    # A separate fixture, because the one above is mid-sequence and later arms
+    # read its state.
+    vu_rd="$VU/release-deleted"
+    vu_make "$vu_rd" 1.0.0
+    # The changelog needs a rule of its own, because this fixture regenerates
+    # its manifest below and generation refuses a tracked file no rule
+    # classifies. The other release fixtures never regenerate, so they do not
+    # need it.
+    printf 'excluded\tCHANGELOG.md\n' >> "$vu_rd/.claude/manifest-rules"
+    printf '# Changelog\n\n## 1.0.0 - 2026-01-01\n\nThe first one.\n\n### Adopting this\n\nNothing to do.\n' > "$vu_rd/CHANGELOG.md"
+    vu_git "$vu_rd"
+    vu_gen "$vu_rd"
+    vu_git "$vu_rd"
+    vu_tag "$vu_rd" 1.0.0
+    # Measured at fixture-build time. The tag has to name the file and this
+    # tree's manifest has to have stopped naming it, or the union is not what
+    # is under test and the file would be found through the current side.
+    vu_rd_tagged="$(git -C "$vu_rd" show '1.0.0:.claude/template-manifest' 2>/dev/null \
+      | LC_ALL=C awk '$3 == "docs/b.md" { n++ } END { print n + 0 }')"
+    git -C "$vu_rd" rm -q --cached docs/b.md >/dev/null 2>&1
+    rm -f "$vu_rd/docs/b.md"
+    vu_gen "$vu_rd"
+    vu_git "$vu_rd"
+    vu_rd_now="$(LC_ALL=C awk '$3 == "docs/b.md" { n++ } END { print n + 0 }' "$vu_rd/.claude/template-manifest" 2>/dev/null)"
+    vu_rd_gone=1
+    [ -e "$vu_rd/docs/b.md" ] && vu_rd_gone=0
+    vu_rl_rc_del="$(vu_rel "$vu_rd")"
+    [ "${vu_rd_tagged:-0}" = 1 ] || vu_bad="$vu_bad the-tag-does-not-name-the-deleted-file"
+    [ "${vu_rd_now:-1}" = 0 ] || vu_bad="$vu_bad the-current-manifest-still-names-it-so-the-union-is-not-being-tested"
+    [ "$vu_rd_gone" = 1 ] || vu_bad="$vu_bad the-file-is-still-there"
+    [ "$vu_rl_rc_del" = 1 ] || vu_bad="$vu_bad deleted-rc:$vu_rl_rc_del"
+    vu_says 'UNRELEASED-CHANGES' || vu_bad="$vu_bad deleted-gave-no-reason"
+    vu_says 'docs/b.md' || vu_bad="$vu_bad deleted-did-not-name-the-file"
+    vu_says 'nothing is owed' && vu_bad="$vu_bad deleted-said-nothing-is-owed"
+
     ran tmpl-release-owed
     if [ -z "$vu_bad" ]; then
-      ok "a tree matching its tag is owed nothing, a change to a file the template does not ship is owed nothing, and a change to one it does is refused by name"
+      ok "a tree matching its tag is owed nothing, a change to a file the template does not ship is owed nothing, and a change to one it does is refused by name, including one the tag shipped and this tree has deleted"
     else
       bad "the release check did not tell a shipped change from an unshipped one --$vu_bad [$(vu_excerpt)]"
     fi
@@ -10460,8 +10701,35 @@ else
     git -C "$vu_d" tag -d v2.0.0 >/dev/null 2>&1
     git -C "$vu_d" tag -d 1.1.0 >/dev/null 2>&1
     vu_rl_before="$(git -C "$vu_d" tag -l 2>/dev/null | LC_ALL=C awk '$0 == "1.1.0" { n++ } END { print n + 0 }')"
-    vu_rl_rc_cut="$(vu_rel "$vu_d" --tag)"
+
+    # A REAL REMOTE, as a canary. The script's loudest promise is that it never
+    # reaches the network, and asserting only that the push COMMAND is printed
+    # does not hold it: adding a push beside that line leaves the exit code,
+    # the tag, its message and the printed command all exactly as they are.
+    # The remote is a second local repository, so a push would succeed and be
+    # visible, which is what makes its absence evidence rather than an absence
+    # of evidence.
+    vu_rl_remote="$VU/release-remote.git"
+    rm -rf "$vu_rl_remote"
+    git init -q --bare "$vu_rl_remote" >/dev/null 2>&1
+    git -C "$vu_d" remote remove origin >/dev/null 2>&1
+    git -C "$vu_d" remote add origin "$vu_rl_remote" >/dev/null 2>&1
+    vu_rl_remote_ok=0
+    [ -d "$vu_rl_remote" ] && vu_rl_remote_ok=1
+
+    # An annotated tag carries a tagger, and a runner has no git identity, so
+    # the identity is handed in here rather than left to whoever runs the
+    # suite. The script deliberately does not set one for you, because whose
+    # name goes on a release is not a script's decision, and its TAG-FAILED
+    # message says so.
+    vu_rl_rc_cut="$( cd "$vu_d" && CLAUDE_PROJECT_DIR="$vu_d" \
+      GIT_COMMITTER_NAME=suite GIT_COMMITTER_EMAIL=suite@example.invalid \
+      GIT_AUTHOR_NAME=suite GIT_AUTHOR_EMAIL=suite@example.invalid \
+      "$VU_BASH" "$VU_REL" --tag > "$VU_OUT" 2>&1; printf '%s' "$?" )"
+    vu_rl_pushed="$(git -C "$vu_rl_remote" tag -l 2>/dev/null | LC_ALL=C awk 'END { print NR + 0 }')"
     vu_rl_after="$(git -C "$vu_d" tag -l 2>/dev/null | LC_ALL=C awk '$0 == "1.1.0" { n++ } END { print n + 0 }')"
+    [ "$vu_rl_remote_ok" = 1 ] || vu_bad="$vu_bad no-remote-was-built-so-a-push-would-have-failed-anyway"
+    [ "${vu_rl_pushed:-1}" = 0 ] || vu_bad="$vu_bad it-pushed-${vu_rl_pushed}-tag(s)-to-the-remote"
     vu_rl_msg="$(git -C "$vu_d" tag -l -n99 1.1.0 2>/dev/null | tr '\n' ' ')"
     [ "${vu_rl_before:-1}" = 0 ] || vu_bad="$vu_bad the-tag-already-existed-before-cutting"
     [ "$vu_rl_rc_cut" = 0 ] || vu_bad="$vu_bad cut-rc:$vu_rl_rc_cut"
@@ -10480,14 +10748,189 @@ else
     # And a second cut of a version that is now tagged is refused rather than
     # quietly doing nothing, so a reader who runs it twice is told which it was.
     vu_rl_rc_again="$(vu_rel "$vu_d" --tag)"
+    vu_rl_pushed2="$(git -C "$vu_rl_remote" tag -l 2>/dev/null | LC_ALL=C awk 'END { print NR + 0 }')"
+    [ "${vu_rl_pushed2:-1}" = 0 ] || vu_bad="$vu_bad the-refused-second-cut-pushed-${vu_rl_pushed2}-tag(s)"
     [ "$vu_rl_rc_again" = 1 ] || vu_bad="$vu_bad second-cut-rc:$vu_rl_rc_again"
     vu_says 'ALREADY-TAGGED' || vu_bad="$vu_bad second-cut-gave-no-reason"
 
     ran tmpl-release-cut
     if [ -z "$vu_bad" ]; then
-      ok "cutting a release writes the annotated tag the tree is owed with its changelog entry as the message, prints the two commands that publish it rather than running them, and refuses a second cut of the same version"
+      ok "cutting a release writes the annotated tag the tree is owed with its changelog entry as the message, prints the two commands that publish it and pushes nothing to a remote that was standing there ready to receive it, and refuses a second cut of the same version"
     else
       bad "cutting a release did not do what the failing check tells a reader to do --$vu_bad [$(vu_excerpt)]"
+    fi
+
+    # -- the version has to be spelled like a version ----------------------
+
+    # Reading the version and never checking it had three quiet consequences,
+    # and each of these three arms is one of them. The first is the one that
+    # matters most, because it ends with a tag written and then invisible to
+    # every later run, which is the same silence the prefixed-tag refusal
+    # exists to prevent and the only one that was being refused.
+    vu_vs="$VU/release-version"
+    vu_make "$vu_vs" 1.0.0
+    printf '# Changelog\n\n## 1.0.0 - 2026-01-01\n\nThe first one.\n\n### Adopting this\n\nNothing to do.\n' > "$vu_vs/CHANGELOG.md"
+    vu_git "$vu_vs"
+    vu_tag "$vu_vs" 1.0.0
+    vu_vs_tags="$(git -C "$vu_vs" tag -l 2>/dev/null | tr '\n' ' ')"
+    vu_bad=''
+    [ "${vu_vs_tags% }" = 1.0.0 ] || vu_bad="$vu_bad fixture-tags-are-[${vu_vs_tags:-none}]"
+    vu_vs_n=0
+    for vu_vs_case in '1.2.0-rc1' '1.2.0 ' '1.1.0^' '1..2' '.1.2'; do
+      vu_vs_n=$((vu_vs_n + 1))
+      printf '%s\n' "$vu_vs_case" > "$vu_vs/VERSION"
+      vu_rc_vs="$(vu_rel "$vu_vs")"
+      [ "$vu_rc_vs" = 1 ] || vu_bad="$vu_bad [$vu_vs_case]rc:$vu_rc_vs"
+      vu_says 'VERSION-SPELLING' || vu_bad="$vu_bad [$vu_vs_case]no-reason"
+      # And never the answers that would mean it went on and used the value.
+      vu_says 'nothing is owed' && vu_bad="$vu_bad [$vu_vs_case]said-nothing-is-owed"
+      vu_says 'release in preparation' && vu_bad="$vu_bad [$vu_vs_case]called-it-preparation"
+    done
+    # And the spellings that ARE versions still pass, or the refusal above
+    # could be refusing everything and every arm would look right.
+    vu_vs_ok=0
+    for vu_vs_good in '1.0.0' '1.0' '2' '10.20.30'; do
+      printf '%s\n' "$vu_vs_good" > "$vu_vs/VERSION"
+      vu_rc_vsg="$(vu_rel "$vu_vs")"
+      vu_says 'VERSION-SPELLING' && vu_bad="$vu_bad [$vu_vs_good]a-real-version-was-refused-for-its-spelling"
+      vu_vs_ok=$((vu_vs_ok + 1))
+    done
+    ran tmpl-release-version-spelling
+    if [ "$vu_vs_n" = 5 ] && [ "$vu_vs_ok" = 4 ] && [ -z "$vu_bad" ]; then
+      ok "a version carrying a suffix, a trailing space, a revision expression or a stray dot is refused by name before it can be tagged and then never seen again, and four ordinary spellings still pass"
+    else
+      bad "the version was used without being checked --$vu_bad (bad:$vu_vs_n good:$vu_vs_ok) [$(vu_excerpt)]"
+    fi
+
+    # -- the two comparators have to agree ---------------------------------
+
+    # The header of the release check says its numeric comparison is a second
+    # copy of the one in vault-update.sh, that the two have to agree about 1.0
+    # and 1.0.0 being the same number written two ways, and that a control
+    # asserts it rather than trusting the comment. No control did.
+    # tmpl-same-version-equivalent asserts it of the OTHER copy, which is
+    # exactly the copy the comment says this one has to agree with, so between
+    # them the pair was unverified in the one direction that mattered.
+    vu_eqc="$VU/release-equal"
+    vu_make "$vu_eqc" 1.0.0
+    printf '# Changelog\n\n## 1.0.0 - 2026-01-01\n\nThe first one.\n\n### Adopting this\n\nNothing to do.\n' > "$vu_eqc/CHANGELOG.md"
+    vu_git "$vu_eqc"
+    vu_tag "$vu_eqc" 1.0.0
+    vu_bad=''
+    vu_eqc_n=0
+    # Each of these is the same number as the 1.0.0 tag written differently, so
+    # none of them is above it and none may be offered as a release to prepare.
+    for vu_eqc_v in '1.0' '1.0.0.0' '01.0.0'; do
+      vu_eqc_n=$((vu_eqc_n + 1))
+      printf '%s\n' "$vu_eqc_v" > "$vu_eqc/VERSION"
+      vu_rc_eqc="$(vu_rel "$vu_eqc")"
+      [ "$vu_rc_eqc" = 1 ] || vu_bad="$vu_bad [$vu_eqc_v]rc:$vu_rc_eqc"
+      vu_says 'VERSION-GOES-BACKWARD' || vu_bad="$vu_bad [$vu_eqc_v]no-reason"
+      vu_says 'release in preparation' && vu_bad="$vu_bad [$vu_eqc_v]offered-it-as-a-new-release"
+    done
+    ran tmpl-release-comparators-agree
+    if [ "$vu_eqc_n" = 3 ] && [ -z "$vu_bad" ]; then
+      ok "the release check reads 1.0, 1.0.0.0 and 01.0.0 as the same number as the 1.0.0 tag, which is the agreement with the updater's comparator its own header claims and nothing asserted"
+    else
+      bad "the two numeric comparators do not agree about equal versions --$vu_bad (cases:$vu_eqc_n) [$(vu_excerpt)]"
+    fi
+
+    # -- it could not look, and says so ------------------------------------
+
+    # Two refusals that both leave on 2, and both of them exist because the
+    # first version of this script answered green when it could not answer at
+    # all. Each is asserted present with the other absent, because two
+    # outcomes leaving by one door with no wording assertion is the house rule
+    # being broken.
+    vu_cl="$VU/release-cannotlook"
+    vu_make "$vu_cl" 1.0.0
+    printf '# Changelog\n\n## 1.0.0 - 2026-01-01\n\nThe first one.\n\n### Adopting this\n\nNothing to do.\n' > "$vu_cl/CHANGELOG.md"
+    vu_git "$vu_cl"
+    vu_tag "$vu_cl" 1.0.0
+    vu_bad=''
+    # It answers cleanly first, so that a refusal below is the planted cause
+    # rather than something this fixture was going to say anyway.
+    vu_rc_cl0="$(vu_rel "$vu_cl")"
+    [ "$vu_rc_cl0" = 0 ] || vu_bad="$vu_bad the-fixture-does-not-answer-cleanly-to-begin-with:$vu_rc_cl0"
+
+    # A git that cannot make the comparison. Two conditions were tried first
+    # and neither works, which is worth writing down because both look obvious
+    # and a later reader will think of them again. An index.lock held by
+    # another process does NOT make this fail, because git skips refreshing the
+    # index and answers anyway, and neither does deleting a tree object the
+    # comparison walks. Both measured rather than assumed. So no state of a
+    # repository reaches this refusal on demand.
+    #
+    # A stand-in git on PATH is the same seam the misbehaving hash tool uses,
+    # and it is the honest shape for this: it forces only the behaviour of an
+    # external tool and leaves the refusal, its wording and its exit code the
+    # real ones. It fails the comparison and delegates everything else, so the
+    # run reaches the comparison normally and only that step breaks.
+    vu_cl_shim="$VU/gitshim"
+    rm -rf "$vu_cl_shim"
+    mkdir -p "$vu_cl_shim"
+    vu_cl_real="$(command -v git 2>/dev/null)"
+    {
+      printf '#!/bin/sh\n'
+      printf '# A stand-in git that refuses one subcommand, so the refusal for a\n'
+      printf '# comparison that could not be made can be proved able to fire. Written\n'
+      printf '# by the control suite into a temporary folder, never shipped.\n'
+      printf 'for a in "$@"; do\n'
+      printf '  if [ "$a" = diff ]; then\n'
+      printf '    echo "fatal: the suite made this fail on purpose" >&2\n'
+      printf '    exit 128\n'
+      printf '  fi\n'
+      printf 'done\n'
+      printf 'exec "$VAULT_GIT_REAL" "$@"\n'
+    } > "$vu_cl_shim/git"
+    chmod +x "$vu_cl_shim/git" 2>/dev/null
+    vu_cl_found="$( PATH="$vu_cl_shim:$PATH" command -v git 2>/dev/null )"
+    vu_cl_refuses=0
+    if [ -n "$vu_cl_real" ]; then
+      PATH="$vu_cl_shim:$PATH" VAULT_GIT_REAL="$vu_cl_real" git diff --name-only HEAD >/dev/null 2>&1 \
+        || vu_cl_refuses=1
+    fi
+    if [ -z "$vu_cl_real" ] || [ "$vu_cl_found" != "$vu_cl_shim/git" ] || [ "$vu_cl_refuses" != 1 ]; then
+      vu_bad="$vu_bad a-stand-in-git-could-not-be-put-in-front-of-the-real-one-real:[${vu_cl_real:-none}]-resolved:[${vu_cl_found:-none}]-refuses:$vu_cl_refuses"
+    else
+      vu_rc_cl1="$( cd "$vu_cl" && PATH="$vu_cl_shim:$PATH" CLAUDE_PROJECT_DIR="$vu_cl" \
+        VAULT_GIT_REAL="$vu_cl_real" "$VU_BASH" "$VU_REL" > "$VU_OUT" 2>&1; printf '%s' "$?" )"
+      [ "$vu_rc_cl1" = 2 ] || vu_bad="$vu_bad could-not-compare-rc:$vu_rc_cl1"
+      vu_says 'DIFF-FAILED' || vu_bad="$vu_bad could-not-compare-gave-no-reason"
+      vu_says 'nothing is owed' && vu_bad="$vu_bad could-not-compare-reported-the-release-as-up-to-date"
+      # The words that say which kind of answer this is, because a reader who
+      # takes a 2 for a 0 here is the whole failure.
+      vu_says 'NOT saying the release is up to date' || vu_bad="$vu_bad could-not-compare-did-not-say-what-it-was-not-saying"
+      # And git's own complaint reaches the reader rather than being swallowed,
+      # which is half of what the fix was.
+      vu_says 'made this fail on purpose' || vu_bad="$vu_bad swallowed-what-git-said"
+    fi
+
+    # A manifest whose paths git never spells that way, so the two sides of the
+    # comparison share no vocabulary and it can only ever come back empty.
+    # awk rather than sed, because the obvious sed for this needs \| for the
+    # alternation and that is a GNU extension the macOS jobs would reject.
+    LC_ALL=C awk '
+      ($1 == "owned" || $1 == "seed") { printf "%s %s ./%s\n", $1, $2, $3; next }
+      { print }
+    ' "$vu_cl/.claude/template-manifest" > "$vu_cl/.claude/template-manifest.new"
+    mv "$vu_cl/.claude/template-manifest.new" "$vu_cl/.claude/template-manifest"
+    vu_cl_prefixed="$(LC_ALL=C awk '($1 == "owned" || $1 == "seed") && substr($3, 1, 2) == "./" { n++ } END { print n + 0 }' "$vu_cl/.claude/template-manifest")"
+    vu_rc_cl2="$(vu_rel "$vu_cl")"
+    if [ "${vu_cl_prefixed:-0}" -lt 1 ]; then
+      vu_bad="$vu_bad no-path-was-given-a-prefix-so-the-two-sides-still-agree"
+    else
+      [ "$vu_rc_cl2" = 2 ] || vu_bad="$vu_bad unknown-rc:$vu_rc_cl2"
+      vu_says 'SHIPPED-UNKNOWN' || vu_bad="$vu_bad unknown-gave-no-reason"
+      vu_says 'nothing is owed' && vu_bad="$vu_bad unknown-reported-the-release-as-up-to-date"
+      vu_says 'DIFF-FAILED' && vu_bad="$vu_bad unknown-borrowed-the-other-refusals-words"
+    fi
+
+    ran tmpl-release-cannot-look
+    if [ -z "$vu_bad" ]; then
+      ok "a comparison git could not make and a manifest git never spells that way each leave on 2 saying which one it was, rather than on 0 saying the release is up to date"
+    else
+      bad "the release check answered when it could not look --$vu_bad [$(vu_excerpt)]"
     fi
   fi
 
@@ -10508,15 +10951,28 @@ else
   # say cannot both be true by accident. The floor says the section really
   # built its fixtures rather than falling through some guard, and the ceiling
   # says generation ran about once per version rather than once per fixture,
-  # which is the whole reason vu_make copies. Reverting vu_make to build every
-  # time takes the built count from a handful to the fixture count and this
-  # fails on the ceiling.
+  # which is the whole reason vu_make copies.
+  #
+  # THE PROTOTYPE COUNT IS READ OFF THE DISK, and the counter is checked
+  # against it rather than trusted. The first version of this control read only
+  # the counter, and the counter lives inside vu_make, so the natural way to
+  # revert the reuse - calling vu_build directly and dropping the prototype
+  # branch - left it at zero and satisfied every bound. The suite would have
+  # gone back to one generation per fixture with a green control saying it had
+  # not. A floor on what is actually on the disk is the assertion that could
+  # not be satisfied that way.
+  #
+  # The numbers are set against the measured ones rather than picked. Run
+  # 35665675036 reported 99 fixtures from 6 prototypes, so a floor of 85 and a
+  # ceiling of 20 leave room for the section to grow without leaving room for a
+  # third of it to stop building.
   vu_proto_on_disk="$(find "$VU_PROTO" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | LC_ALL=C awk 'END { print NR + 0 }')"
   vu_bad=''
   [ -z "$VU_MAKE_BROKEN" ] || vu_bad="$vu_bad fixtures-that-did-not-land:$VU_MAKE_BROKEN"
-  [ "$VU_MAKE_N" -ge 60 ] || vu_bad="$vu_bad only-$VU_MAKE_N-fixtures-were-asked-for"
-  [ "$VU_PROTO_BUILT" -lt 12 ] || vu_bad="$vu_bad $VU_PROTO_BUILT-generations-is-one-per-fixture-again"
-  [ "$VU_PROTO_BUILT" -lt "$VU_MAKE_N" ] || vu_bad="$vu_bad nothing-was-reused"
+  [ "$VU_MAKE_N" -ge 85 ] || vu_bad="$vu_bad only-$VU_MAKE_N-fixtures-were-asked-for"
+  [ "$vu_proto_on_disk" -ge 1 ] || vu_bad="$vu_bad no-prototype-was-kept-so-nothing-was-reused"
+  [ "$vu_proto_on_disk" -lt 20 ] || vu_bad="$vu_bad $vu_proto_on_disk-prototypes-is-one-per-fixture-again"
+  [ "$vu_proto_on_disk" -lt "$VU_MAKE_N" ] || vu_bad="$vu_bad nothing-was-reused"
   [ "$vu_proto_on_disk" = "$VU_PROTO_BUILT" ] || vu_bad="$vu_bad built-$VU_PROTO_BUILT-but-$vu_proto_on_disk-are-on-disk"
   ran tmpl-fixtures-built
   if [ -z "$vu_bad" ]; then

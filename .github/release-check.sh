@@ -267,12 +267,12 @@ if git -C "$ROOT" rev-parse -q --verify "refs/tags/$V" >/dev/null 2>&1; then
   # since the tag is absent from the current manifest and a file added since
   # the tag is absent from the tag's, and both of those are changes a reader
   # has to be told about.
-  {
-    LC_ALL=C awk '{ sub(/\r$/, "") } $1 == "owned" || $1 == "seed" { print $3 }' \
-      "$ROOT/$MANIFEST_REL" 2>/dev/null
-    git -C "$ROOT" show "$V:$MANIFEST_REL" 2>/dev/null \
-      | LC_ALL=C awk '{ sub(/\r$/, "") } $1 == "owned" || $1 == "seed" { print $3 }'
-  } | LC_ALL=C sort -u > "$SCRATCH/shipped"
+  LC_ALL=C awk '{ sub(/\r$/, "") } $1 == "owned" || $1 == "seed" { print $3 }' \
+    "$ROOT/$MANIFEST_REL" 2>/dev/null | LC_ALL=C sort -u > "$SCRATCH/shipped.now"
+  git -C "$ROOT" show "$V:$MANIFEST_REL" 2>/dev/null \
+    | LC_ALL=C awk '{ sub(/\r$/, "") } $1 == "owned" || $1 == "seed" { print $3 }' \
+    | LC_ALL=C sort -u > "$SCRATCH/shipped.tag"
+  LC_ALL=C sort -u "$SCRATCH/shipped.now" "$SCRATCH/shipped.tag" > "$SCRATCH/shipped"
   SHIPPED_N="$(LC_ALL=C awk 'END { print NR + 0 }' "$SCRATCH/shipped")"
 
   if [ "$SHIPPED_N" -eq 0 ]; then
@@ -293,10 +293,29 @@ if git -C "$ROOT" rev-parse -q --verify "refs/tags/$V" >/dev/null 2>&1; then
   # both sides disabling quotePath, and every one of those lives in another
   # file. This turns "the two sides speak the same language" from something
   # assumed into a number.
-  OVERLAP="$(git -C "$ROOT" -c core.quotePath=false ls-files 2>/dev/null \
-    | LC_ALL=C awk 'NR == FNR { s[$0] = 1; next } ($0 in s) { n++ } END { print n + 0 }' "$SCRATCH/shipped" -)"
-  if [ "${OVERLAP:-0}" -eq 0 ]; then
-    warn "SHIPPED-UNKNOWN - the manifest names $SHIPPED_N shipped path(s) and git's own list of tracked files matches none of them, so the two sides are spelling paths differently and nothing below could ever find a change."
+  # EACH SIDE SEPARATELY, not the union. Checking only the union was the first
+  # attempt and it is too weak to fire on the case that actually happens. The
+  # two manifests are read by different routes - this tree's off the disk with
+  # whatever line-ending filter git applies on checkout, and the tag's through
+  # `git show`, which applies none - so a spelling difference appears on ONE
+  # side at a time. The union then still overlaps through the other side, the
+  # guard stays quiet, and half the shipped set has silently stopped being
+  # comparable. Measured: giving every path in this tree's manifest a leading
+  # dot-slash left the union overlapping and the run reporting nothing owed.
+  git -C "$ROOT" -c core.quotePath=false ls-files 2>/dev/null \
+    | LC_ALL=C sort -u > "$SCRATCH/tracked"
+  overlap_of() {  # overlap_of <path-list>
+    LC_ALL=C awk 'NR == FNR { s[$0] = 1; next } ($0 in s) { n++ } END { print n + 0 }' \
+      "$SCRATCH/tracked" "$1"
+  }
+  NOW_N="$(LC_ALL=C awk 'END { print NR + 0 }' "$SCRATCH/shipped.now")"
+  TAG_SHIPPED_N="$(LC_ALL=C awk 'END { print NR + 0 }' "$SCRATCH/shipped.tag")"
+  NOW_OVERLAP="$(overlap_of "$SCRATCH/shipped.now")"
+  TAG_OVERLAP="$(overlap_of "$SCRATCH/shipped.tag")"
+  if { [ "$NOW_N" -gt 0 ] && [ "${NOW_OVERLAP:-0}" -eq 0 ]; } \
+     || { [ "$TAG_SHIPPED_N" -gt 0 ] && [ "${TAG_OVERLAP:-0}" -eq 0 ]; }; then
+    warn "SHIPPED-UNKNOWN - a manifest names shipped paths that git's own list of tracked files matches none of, so the two sides are spelling paths differently and nothing below could find a change in them."
+    warn "This tree's manifest names $NOW_N and git recognises $NOW_OVERLAP. The $V tag's manifest names $TAG_SHIPPED_N and git recognises $TAG_OVERLAP."
     warn "A trailing carriage return on one side, a quoted escape on one side, or a leading dot-slash each look exactly like this. Nothing was compared."
     exit 2
   fi
@@ -325,17 +344,22 @@ if git -C "$ROOT" rev-parse -q --verify "refs/tags/$V" >/dev/null 2>&1; then
   # this file, because every way this command can fail leaves an empty file, a
   # changed count of zero, and the words "this tree is the $V release and
   # nothing is owed" on exit 0. A failure of the check was indistinguishable
-  # from a clean release, in the one script written against exactly that. Two
-  # reachable causes were named: another git process holding index.lock, which
-  # this command trips over because it refreshes the index against the working
-  # tree, and a tag whose ref resolves while its commit object is absent, which
-  # is what a shallow fetch of a tag looks like. Stderr is kept and shown
-  # rather than discarded.
+  # from a clean release, in the one script written against exactly that.
+  #
+  # NO CAUSE IS NAMED IN THE MESSAGE, and that is deliberate. Two were named
+  # here at first, an index lock held by another process and a tag object that
+  # was never fetched, and both were then measured and neither produces it.
+  # git skips refreshing the index rather than failing on a held lock, and it
+  # answered anyway with a tree object of the comparison deleted. Guessing at a
+  # cause in the output would send a reader to check something that was never
+  # the problem, so git's own complaint is printed instead and the message says
+  # only what is certain, which is that the answer is unknown. Stderr is kept
+  # for exactly that reason rather than discarded.
   if ! git -C "$ROOT" -c core.quotePath=false diff --no-renames --name-only "$V" -- \
        > "$SCRATCH/diffed" 2> "$SCRATCH/differr"; then
     warn "DIFF-FAILED - git could not compare this tree against the $V tag, so whether a release is owed is unknown."
     LC_ALL=C sed 's/^/  /' "$SCRATCH/differr" >&2
-    warn "Another git process holding the index lock and a tag whose commit object was never fetched both look like this. Nothing was compared, and this is NOT saying the release is up to date."
+    warn "Whatever git said about it is printed above. Nothing was compared, and this is NOT saying the release is up to date."
     exit 2
   fi
   LC_ALL=C awk '
