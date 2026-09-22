@@ -10643,6 +10643,56 @@ else
     vu_says 'docs/b.md' || vu_bad="$vu_bad deleted-did-not-name-the-file"
     vu_says 'nothing is owed' && vu_bad="$vu_bad deleted-said-nothing-is-owed"
 
+    # -- the union's other half, and a shipped path carrying a space -------
+
+    # A SEPARATE FIXTURE, because the two above are mid-sequence.
+    #
+    # The arm above deletes a file the tag shipped, so the union is the TAG's
+    # side and the count line reads the same number whichever side it came
+    # from. This one adds a shipped file since the tag, so the union is THIS
+    # tree's side and the two sides are different numbers, which is what makes
+    # the denominator assertion below able to fail at all. Without a fixture
+    # where the sides differ, taking the count from one side instead of the
+    # union is invisible to every control here.
+    #
+    # The added file's name carries a space, which is the second thing being
+    # held. The manifest readers used to take the third field, so a path with a
+    # space in it was truncated at the space, matched nothing in git's list of
+    # tracked files, and dropped out of the comparison for good. SHIPPED-UNKNOWN
+    # cannot catch that, because it fires only on a side that overlaps by zero
+    # and one mangled path among many leaves the overlap far above zero.
+    vu_sp="$VU/release-space"
+    vu_make "$vu_sp" 1.0.0
+    printf '# Changelog\n\n## 1.0.0 - 2026-01-01\n\nThe first one.\n\n### Adopting this\n\nNothing to do.\n' > "$vu_sp/CHANGELOG.md"
+    vu_git "$vu_sp"
+    vu_tag "$vu_sp" 1.0.0
+    mkdir -p "$vu_sp/docs"
+    printf 'a doc whose name carries a space\n' > "$vu_sp/docs/with space.md"
+    # Appended rather than generated, because nothing regenerates this
+    # fixture's manifest and the release check reads only the class and the
+    # path out of a line. The digest is a placeholder for that reason.
+    printf 'owned 0000000000000000000000000000000000000000000000000000000000000000 docs/with space.md\n' >> "$vu_sp/.claude/template-manifest"
+    vu_git "$vu_sp"
+    # Measured before the run. If the file is not tracked, or the two sides do
+    # not actually differ, then both assertions below are asking an ordinary
+    # question and neither could fail for the reason it names.
+    vu_sp_tracked="$(git -C "$vu_sp" ls-files 2>/dev/null | LC_ALL=C awk '$0 == "docs/with space.md" { n++ } END { print n + 0 }')"
+    vu_sp_now="$(LC_ALL=C awk '$1 == "owned" || $1 == "seed" { n++ } END { print n + 0 }' "$vu_sp/.claude/template-manifest" 2>/dev/null)"
+    vu_sp_tag="$(git -C "$vu_sp" show 1.0.0:.claude/template-manifest 2>/dev/null | LC_ALL=C awk '$1 == "owned" || $1 == "seed" { n++ } END { print n + 0 }')"
+    vu_rc_sp="$(vu_rel "$vu_sp")"
+    [ "${vu_sp_tracked:-0}" = 1 ] || vu_bad="$vu_bad the-space-bearing-path-is-not-tracked"
+    [ "${vu_sp_now:-0}" -gt "${vu_sp_tag:-0}" ] 2>/dev/null \
+      || vu_bad="$vu_bad the-two-sides-ship-the-same-count-[now:${vu_sp_now:-none}-tag:${vu_sp_tag:-none}]-so-the-denominator-proves-nothing"
+    [ "$vu_rc_sp" = 1 ] || vu_bad="$vu_bad added-rc:$vu_rc_sp"
+    vu_says 'UNRELEASED-CHANGES' || vu_bad="$vu_bad added-gave-no-reason"
+    vu_says 'docs/with space.md' || vu_bad="$vu_bad the-path-with-a-space-was-not-named"
+    # THE DENOMINATOR IS THE UNION, and it is read as a number here rather than
+    # as wording. Ten release controls asserted wording and exit codes and not
+    # one read a digit out of the count line, so the shipped count could have
+    # been taken from either side and all ten would still have passed.
+    vu_says "1 of the $vu_sp_now file(s) this template ships" || vu_bad="$vu_bad the-count-line-is-not-1-of-the-union-$vu_sp_now"
+    vu_says 'nothing is owed' && vu_bad="$vu_bad added-said-nothing-is-owed"
+
     ran tmpl-release-owed
     if [ -z "$vu_bad" ]; then
       ok "a tree matching its tag is owed nothing, a change to a file the template does not ship is owed nothing, and a change to one it does is refused by name, including one the tag shipped and this tree has deleted"
@@ -10935,6 +10985,39 @@ else
       *"The first one."*) vu_bad="$vu_bad the-tag-message-swallowed-the-older-entry-too" ;;
       *) : ;;
     esac
+
+    # And the disagreement itself, which needs the fenced heading to name a
+    # DIFFERENT version from the real entry. With both naming the same one, the
+    # guard gives the same answer whether or not it tracks fences and the arm
+    # above cannot tell the two apart.
+    #
+    # Here the fenced example heads the version being released and the newest
+    # real entry heads an older one. A guard that ignores fences agrees the
+    # newest entry is the one being released, the fence-aware extraction then
+    # takes the entry BELOW it, and a tag is written under one version carrying
+    # another version's notes. A guard that tracks fences sees the real newest
+    # entry, finds it is not the version being released, and refuses. The
+    # refusal is the correct outcome, so that is what is asserted.
+    vu_fd="$VU/release-fence-disagree"
+    vu_make "$vu_fd" 1.0.0
+    printf '# Changelog\n\n## 1.0.0 - 2026-01-01\n\nThe first one.\n\n### Adopting this\n\nNothing to do.\n' > "$vu_fd/CHANGELOG.md"
+    vu_git "$vu_fd"
+    vu_tag "$vu_fd" 1.0.0
+    printf '1.2.0\n' > "$vu_fd/VERSION"
+    printf '# Changelog\n\nHead an entry like this.\n\n```\n## 1.2.0\n```\n\n## 1.1.0 - 2026-02-01\n\nThe real second one.\n\n### Adopting this\n\nNothing to do.\n' > "$vu_fd/CHANGELOG.md"
+    vu_git "$vu_fd"
+    # Measured before the run, because the whole question is which of two
+    # headings each reader picks, and if only one of them is there the run is
+    # answering something else.
+    vu_fd_fenced="$(LC_ALL=C awk '/^```/ { f = 1 - f; next } f && /^## 1\.2\.0$/ { n++ } END { print n + 0 }' "$vu_fd/CHANGELOG.md")"
+    vu_fd_real="$(LC_ALL=C awk '/^```/ { f = 1 - f; next } !f && /^## 1\.1\.0 / { n++ } END { print n + 0 }' "$vu_fd/CHANGELOG.md")"
+    vu_rc_fd="$(vu_rel "$vu_fd" --tag)"
+    vu_fd_tagged="$(git -C "$vu_fd" tag -l 2>/dev/null | LC_ALL=C awk '$0 == "1.2.0" { n++ } END { print n + 0 }')"
+    [ "${vu_fd_fenced:-0}" = 1 ] || vu_bad="$vu_bad the-fenced-heading-for-the-released-version-was-not-planted"
+    [ "${vu_fd_real:-0}" = 1 ] || vu_bad="$vu_bad the-older-real-entry-was-not-planted"
+    [ "$vu_rc_fd" = 1 ] || vu_bad="$vu_bad fenced-disagreement-rc:$vu_rc_fd"
+    vu_says 'NO-NOTES' || vu_bad="$vu_bad the-fenced-disagreement-gave-no-reason"
+    [ "${vu_fd_tagged:-1}" = 0 ] || vu_bad="$vu_bad it-tagged-1.2.0-from-an-entry-headed-1.1.0"
 
     ran tmpl-release-cut
     if [ -z "$vu_bad" ]; then
