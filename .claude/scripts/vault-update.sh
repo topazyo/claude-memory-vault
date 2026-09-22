@@ -322,9 +322,10 @@ pick_hash_tool() {
 # both. So the seam is here, around the question "is one available", rather than
 # at the refusal, which stays the one the real condition reaches. It is the same
 # kind of seam as VAULT_FORCE_NO_SHA and as VAULT_FORCE_NO_JQ in the hooks, and
-# it exists because without it that refusal had no control at all. Deleting it
-# printed empty sections under headings and called them no change, in the one
-# mode people use to decide whether to copy a file.
+# it exists because without it that refusal had no control at all. Deleting the
+# REFUSAL is what prints empty sections under headings and calls them no
+# change, in the one mode people use to decide whether to copy a file, and
+# deleting this seam is what leaves nothing able to notice.
 have_diff_tool() {
   [ -z "${VAULT_FORCE_NO_DIFF:-}" ] || return 1
   command -v git >/dev/null 2>&1 && return 0
@@ -716,6 +717,12 @@ read_manifest() {
 # list that does not say it is truncated is the wrong shape for it.
 name_a_few() {  # name_a_few <list-file>
   local n
+  # A file that is not there is answered rather than arithmetic'd. Without
+  # this, awk prints nothing, the comparison below errors to standard error on
+  # an empty string, and the reader is told "and -3 more". No caller does that
+  # today because every one passes a file it has just written, and a later
+  # caller is exactly who would.
+  [ -f "$1" ] || { printf '(no list)'; return 0; }
   n="$(awk 'END { print NR + 0 }' "$1")"
   if [ "$n" -le 3 ]; then
     tr '\n' ' ' < "$1"
@@ -1551,7 +1558,12 @@ verify_source() {  # verify_source <dir>
         *)   walk="$walk/$rest";       rest='' ;;
       esac
       if [ -L "$walk" ]; then
-        printf '%s\n' "$rel" >> "$TMPD/vs.links"
+        # The COMPONENT that is the link, not only the entry that was reached
+        # through it. One link named docs puts every entry under it in this
+        # list, and a reader told about "a.md b.md c.md and 47 more" has been
+        # given the symptom and not the cause. The name of the link is in hand
+        # at exactly this moment and nowhere afterwards.
+        printf '%s (reached through %s)\n' "$rel" "${walk#$dir/}" >> "$TMPD/vs.links"
         break
       fi
     done
@@ -1689,11 +1701,22 @@ do_check() {  # do_check <dir>
 
   if [ "$(( take + new ))" -gt 0 ]; then
     # The digest beside each path is the one this run measured out of the source
-    # folder, from vs.raw, and not the one the source manifest claims. The two
-    # are equal by the time anything is printed, because verify_source refuses
-    # the whole folder when they are not, so the choice is only about which
-    # question the number answers. What a reader can check with sha256sum is
-    # the bytes, so the number printed is the one taken from the bytes.
+    # folder, from vs.raw, and NOT the one the source manifest claims.
+    #
+    # THE TWO ARE OFTEN DIFFERENT, and an earlier version of this comment said
+    # they were equal by then, which was wrong in the ordinary case. A manifest
+    # records the digest of the content with carriage returns removed, so that
+    # it means the same thing on a machine that checks files out with them, and
+    # verify_source deliberately accepts a source whose raw digest disagrees
+    # when the stripped one matches. So for any folder cloned on Windows with
+    # autocrlf on - the case the surrounding code goes out of its way to
+    # support - every text file's two digests differ, and the folder is
+    # accepted.
+    #
+    # What a reader copies is the bytes, and what `sha256sum <file>` hands them
+    # back is the digest of the bytes, so that is the one printed. Comparing
+    # what is printed here against the manifest would show a mismatch on every
+    # CRLF file and read as tampering.
     #
     # This closes the one gap nothing in the script can close on its own.
     # Between the moment these digests were taken and the moment somebody

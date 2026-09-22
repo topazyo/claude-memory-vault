@@ -10791,12 +10791,44 @@ else
     vu_rl_rc_again="$(vu_rel "$vu_d" --tag)"
     vu_rl_pushed2="$(git -C "$vu_rl_remote" tag -l 2>/dev/null | LC_ALL=C awk 'END { print NR + 0 }')"
     [ "${vu_rl_pushed2:-1}" = 0 ] || vu_bad="$vu_bad the-refused-second-cut-pushed-${vu_rl_pushed2}-tag(s)"
+    # And it does not say both things. The refusal used to be preceded by the
+    # clean line on standard output, so a caller reading one stream was told
+    # the opposite of what the exit code said.
+    vu_says 'nothing is owed' && vu_bad="$vu_bad the-refusal-also-said-nothing-is-owed"
+    # EVERY assertion about that run happens before the next run starts, and
+    # this pair used to sit below the block that follows. vu_says reads the one
+    # output file, so a later run silently replaced what these were reading and
+    # the second cut's wording was checked against another fixture's refusal.
+    # It is the same mistake tmpl-source-not-a-template was fixed for earlier
+    # in this file, reintroduced by inserting a new arm in the middle of an old
+    # one rather than after it.
     [ "$vu_rl_rc_again" = 1 ] || vu_bad="$vu_bad second-cut-rc:$vu_rl_rc_again"
     vu_says 'ALREADY-TAGGED' || vu_bad="$vu_bad second-cut-gave-no-reason"
 
+    # A changelog entry that is a heading with nothing under it. The notes are
+    # the only part of a release that can carry a meaning rather than bytes, so
+    # a release with none is worth stopping for, and the refusal for it used to
+    # be unreachable: the extraction prints the heading itself, so the file was
+    # never empty and the emptiness test could not fire.
+    vu_nn="$VU/release-nonotes"
+    vu_make "$vu_nn" 1.0.0
+    printf '# Changelog\n\n## 1.0.0 - 2026-01-01\n\nThe first one.\n\n### Adopting this\n\nNothing to do.\n' > "$vu_nn/CHANGELOG.md"
+    vu_git "$vu_nn"
+    vu_tag "$vu_nn" 1.0.0
+    printf '2.0.0\n' > "$vu_nn/VERSION"
+    printf '# Changelog\n\n## 2.0.0\n\n## 1.0.0 - 2026-01-01\n\nThe first one.\n\n### Adopting this\n\nNothing to do.\n' > "$vu_nn/CHANGELOG.md"
+    vu_git "$vu_nn"
+    vu_nn_heads="$(LC_ALL=C awk '/^## 2\.0\.0/ { n++ } END { print n + 0 }' "$vu_nn/CHANGELOG.md")"
+    vu_rc_nn="$(vu_rel "$vu_nn" --tag)"
+    vu_nn_tagged="$(git -C "$vu_nn" tag -l 2>/dev/null | LC_ALL=C awk '$0 == "2.0.0" { n++ } END { print n + 0 }')"
+    [ "${vu_nn_heads:-0}" = 1 ] || vu_bad="$vu_bad the-empty-entry-was-not-planted"
+    [ "$vu_rc_nn" = 1 ] || vu_bad="$vu_bad empty-notes-rc:$vu_rc_nn"
+    vu_says 'NO-NOTES' || vu_bad="$vu_bad empty-notes-gave-no-reason"
+    [ "${vu_nn_tagged:-1}" = 0 ] || vu_bad="$vu_bad it-tagged-a-release-with-no-notes"
+
     ran tmpl-release-cut
     if [ -z "$vu_bad" ]; then
-      ok "cutting a release writes the annotated tag the tree is owed with its changelog entry as the message, prints the two commands that publish it and pushes nothing to a remote that was standing there ready to receive it, and refuses a second cut of the same version"
+      ok "cutting a release writes the annotated tag the tree is owed with its changelog entry as the message, prints the two commands that publish it and pushes nothing to a remote that was standing there ready to receive it, refuses a second cut of the same version without also calling it clean, and refuses to tag a version whose changelog entry is a heading with nothing under it"
     else
       bad "cutting a release did not do what the failing check tells a reader to do --$vu_bad [$(vu_excerpt)]"
     fi
@@ -10985,9 +11017,25 @@ else
       vu_says 'DIFF-FAILED' && vu_bad="$vu_bad unknown-borrowed-the-other-refusals-words"
     fi
 
+    # And this tree's manifest gone altogether. Nothing here sets -e or
+    # pipefail, so an unreadable one contributed nothing and the shipped set
+    # quietly became "whatever the tag shipped", which stays above zero and so
+    # walks past the vacuity guard. A file added since the tag is then in
+    # neither list that got read and the run says nothing is owed. The manifest
+    # is not an entry in itself either, so its own disappearance was caught by
+    # nothing.
+    rm -f "$vu_cl/.claude/template-manifest"
+    vu_cl_gone=1
+    [ -e "$vu_cl/.claude/template-manifest" ] && vu_cl_gone=0
+    vu_rc_cl3="$(vu_rel "$vu_cl")"
+    [ "$vu_cl_gone" = 1 ] || vu_bad="$vu_bad the-manifest-is-still-there"
+    [ "$vu_rc_cl3" = 2 ] || vu_bad="$vu_bad no-manifest-rc:$vu_rc_cl3"
+    vu_says 'NO-MANIFEST' || vu_bad="$vu_bad no-manifest-gave-no-reason"
+    vu_says 'nothing is owed' && vu_bad="$vu_bad no-manifest-reported-the-release-as-up-to-date"
+
     ran tmpl-release-cannot-look
     if [ -z "$vu_bad" ]; then
-      ok "a comparison git could not make and a manifest git never spells that way each leave on 2 saying which one it was, rather than on 0 saying the release is up to date"
+      ok "a comparison git could not make, a manifest git never spells that way, and a manifest that is not there each leave on 2 saying which one it was, rather than on 0 saying the release is up to date"
     else
       bad "the release check answered when it could not look --$vu_bad [$(vu_excerpt)]"
     fi

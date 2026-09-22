@@ -197,10 +197,16 @@ bash .github/release-check.sh
 
 It exits 0 when the release keeps up with what this tree ships, 1 when a release is owed or the
 tree claims a version it is not, 2 when it could not answer, and 64 when the command line was
-wrong. It could not answer when there is no git, no readable `VERSION`, no tags in the checkout, a
-tag whose tree holds no manifest, or a manifest whose paths git does not recognise. The 2 matters:
-a shallow clone has no tags and looks exactly like a project that has never released one, and
-those two want opposite responses.
+wrong. It could not answer when there is no git, no readable `VERSION`, no readable manifest, no
+tags in the checkout, a tag whose tree holds no manifest, a shipped set git does not recognise, or
+a comparison git could not make. **The 2 matters:** a shallow clone has no tags and looks exactly
+like a project that has never released one, and those two want opposite responses. The CI step
+gives each of them its own annotation for that reason, because the usual answer to a red release
+check is to weaken it and the two want opposite answers.
+
+The script's header publishes every refusal tag it can print, so output can be grepped against a
+document rather than against a memory of one. Three of those names also appear in
+`vault-update.sh` and do not mean the same thing there, and the header says which.
 
 **The CI step is guarded by repository and is not path filtered.** A path filtered step shows as
 skipped on a pull request that touches nothing matching the filter, and a reviewer reading the

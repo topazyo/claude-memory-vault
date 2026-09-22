@@ -64,11 +64,29 @@
 #
 # Exit:
 #    0  the release keeps up with what this tree ships
-#    1  a release is owed, or the tree claims a version it is not
+#    1  a release is owed, the tree claims a version it is not, or the
+#       repository holds a tag spelled a way this cannot reconcile
 #    2  this check could NOT run, so it is saying nothing about the release.
-#       No git, no VERSION, no tags in this checkout, or a tag whose tree holds
-#       no manifest to read the shipped set out of
+#       No git, no readable VERSION, no readable manifest, no tags in this
+#       checkout, a tag whose tree holds no manifest to read the shipped set
+#       out of, a shipped set git does not recognise, or a comparison git
+#       could not make
 #   64  the command line was wrong
+#
+# The refusal tags, published here for the same reason `docs/reference.md`
+# publishes the updater's, so that output can be grepped against a document
+# rather than against a memory of it:
+#
+#   NO-GIT · NO-VERSION · VERSION-SPELLING · TAG-SPELLING · NO-TAGS ·
+#   NO-SCRATCH · NO-MANIFEST · TAG-WITHOUT-MANIFEST · VACUOUS ·
+#   SHIPPED-UNKNOWN · DIFF-FAILED · UNRELEASED-CHANGES · VERSION-GOES-BACKWARD ·
+#   UNTAGGED-VERSION · ALREADY-TAGGED · NO-NOTES · TAG-FAILED
+#
+# Three of those names also exist in `vault-update.sh` and do not mean the same
+# thing there, which is worth knowing before grepping both at once. NO-GIT and
+# NO-VERSION are about this repository here and about a vault's own manifest
+# there, and VACUOUS is about a shipped set with nothing in it here and about a
+# scan that matched no notes there.
 
 set -u
 
@@ -93,7 +111,8 @@ usage() {  # usage <stream-is-stderr>
     printf '                    two commands that publish it\n'
     printf '\n'
     printf 'Exit  0  the release keeps up with what this tree ships\n'
-    printf '      1  a release is owed, or the tree claims a version it is not\n'
+    printf '      1  a release is owed, the tree claims a version it is not, or a tag\n'
+    printf '         is spelled a way this cannot reconcile\n'
     printf '      2  this check could not run, so it is saying nothing about the release\n'
     printf '     64  the command line was wrong\n'
   } >&"$out"
@@ -235,6 +254,7 @@ PREFIXED="$(printf '%s\n' "$ALL_TAGS" | LC_ALL=C awk '/^[vV][0-9]/ { printf "%s 
 if [ -n "$PREFIXED" ]; then
   warn "TAG-SPELLING - these tags spell a version with a leading letter and this template spells one without: ${PREFIXED% }"
   warn "CHANGELOG.md heads its entries unprefixed and the clone example in docs/updating.md names an unprefixed tag, so a prefix has to move in all three at once or a reader is told two names for one release."
+  warn "There are two ways out and neither is free. Delete the tag, which is a published artefact somebody may already have fetched, or move to the prefixed spelling everywhere, which means this filter, the changelog headings and that clone example together. This refuses rather than choosing for you."
   exit 1
 fi
 
@@ -294,6 +314,18 @@ if git -C "$ROOT" rev-parse -q --verify "refs/tags/$V" >/dev/null 2>&1; then
   # since the tag is absent from the current manifest and a file added since
   # the tag is absent from the tag's, and both of those are changes a reader
   # has to be told about.
+  # This side is REFUSED when it cannot be read, the way the tag side already
+  # is a few lines above. Nothing here sets -e or pipefail, so an unreadable
+  # manifest contributed nothing and the union quietly became "whatever the tag
+  # shipped". The shipped count stays above zero, so the vacuity guard below
+  # does not fire, and a file added since the tag is then in neither list that
+  # got read, filtered out of the comparison, and the run says nothing is owed.
+  # The manifest is not an entry in itself either, so its own disappearance is
+  # not caught anywhere else.
+  [ -r "$ROOT/$MANIFEST_REL" ] || {
+    warn "NO-MANIFEST - $ROOT/$MANIFEST_REL is not a readable file, so what this tree ships could not be read and nothing was compared."
+    exit 2
+  }
   LC_ALL=C awk '{ sub(/\r$/, "") } $1 == "owned" || $1 == "seed" { print $3 }' \
     "$ROOT/$MANIFEST_REL" 2>/dev/null | LC_ALL=C sort -u > "$SCRATCH/shipped.now"
   git -C "$ROOT" show "$V:$MANIFEST_REL" 2>/dev/null \
@@ -405,12 +437,15 @@ if git -C "$ROOT" rev-parse -q --verify "refs/tags/$V" >/dev/null 2>&1; then
     exit 1
   fi
 
-  say "0 of $SHIPPED_N shipped file(s) differ from the $V tag, so this tree is the $V release and nothing is owed."
-
+  # The clean line is held back under --tag, because that run is about to
+  # refuse. Printing "nothing is owed" on standard output and then a refusal on
+  # standard error leaves a caller reading one stream told the opposite of what
+  # the exit code says.
   if [ "$MODE" = tag ]; then
     warn "ALREADY-TAGGED - $V is already a tag and this tree matches it, so there is nothing to cut. Bump VERSION first."
     exit 1
   fi
+  say "0 of $SHIPPED_N shipped file(s) differ from the $V tag, so this tree is the $V release and nothing is owed."
   exit 0
 fi
 
@@ -443,8 +478,15 @@ if [ "$MODE" = tag ]; then
     /^## / { if (seen) exit; seen = 1; print; next }
     seen { print }
   ' "$ROOT/$CHANGELOG_REL" > "$NOTES" 2>/dev/null
-  if [ ! -s "$NOTES" ]; then
-    warn "NO-NOTES - the $V entry in CHANGELOG.md is empty, so there are no notes to tag $V with."
+  # The BODY is counted, not the file. The awk above prints the heading itself
+  # before any body, so the file is never empty and `-s` was a refusal that
+  # could not fire. An entry with a heading and nothing under it - which is
+  # exactly the case this was written for - was tagged with a message
+  # consisting of its own version number and nothing else.
+  NOTES_BODY="$(LC_ALL=C awk 'NR > 1 && NF { n++ } END { print n + 0 }' "$NOTES" 2>/dev/null)"
+  if [ "${NOTES_BODY:-0}" -lt 1 ]; then
+    warn "NO-NOTES - the $V entry in CHANGELOG.md is a heading with nothing under it, so the only thing there is to tag $V with is its own number."
+    warn "The notes are the only part of a release that can carry a meaning rather than bytes, so a release with none is worth stopping for."
     exit 1
   fi
   git -C "$ROOT" tag -a "$V" -F "$NOTES" 2> "$SCRATCH/tagerr" || {
