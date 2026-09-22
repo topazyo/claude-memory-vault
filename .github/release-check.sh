@@ -456,10 +456,18 @@ if git -C "$ROOT" rev-parse -q --verify "refs/tags/$V" >/dev/null 2>&1; then
         if (length(p)) print side " " $1 " " p
       }'
   }
+  # THE SAME GUARD AS THE READER FURTHER DOWN, deliberately. One reader parses
+  # a manifest line, which is what the comment above is about, and the CLASSED
+  # line it writes is then parsed in two places - here and by the comparison at
+  # the end. Those two had different guards, one checking the field count and
+  # the other the length, which is the hazard that comment names arriving one
+  # level down. Nothing reached a wrong answer through it, because a line short
+  # of three fields is refused before the comparison runs, and they agree now
+  # so that a later change to this format has one shape to move rather than two.
   side_paths() {  # side_paths <side>, one side of that list with the marker and class taken off
     RC_SIDE="$1" LC_ALL=C awk '
       BEGIN { side = ENVIRON["RC_SIDE"] }
-      $1 == side {
+      NF >= 3 && $1 == side {
         p = $0
         sub(/^[^ ]+ [^ ]+ /, "", p)
         if (length(p)) print p
@@ -673,15 +681,26 @@ if git -C "$ROOT" rev-parse -q --verify "refs/tags/$V" >/dev/null 2>&1; then
   # above it on a terminal, and a run that refused would read to whoever
   # scrolled past as one that did not. Tab survives, because a tab is a
   # character a real path can hold and this is not the place to refuse one.
-  visible() { LC_ALL=C awk '{ gsub(/[\001-\010\013-\037\177]/, "?"); print }'; }
+  # THE PREFIX GOES THROUGH THE ENVIRONMENT TOO, and that is the reason this
+  # takes one at all rather than being piped into sed. The tag-side listing
+  # wants "at the $V tag" in front of each line, and interpolating a version
+  # into a sed SCRIPT puts the same class of value into the same class of
+  # hazard that `shipped_classed` uses ENVIRON to avoid two hundred lines
+  # earlier. It is safe today only because the version grammar ran first, which
+  # is a coupling nothing stated. Passing it as data removes the question.
+  visible() {  # visible [prefix], making control characters visible
+    RC_PREFIX="${1:-}" LC_ALL=C awk '
+      BEGIN { p = ENVIRON["RC_PREFIX"] }
+      { gsub(/[\001-\010\013-\037\177]/, "?"); print p $0 }'
+  }
 
   if [ "$NOW_UNSPELLED" -gt 0 ] || [ "$TAG_UNKNOWN" -gt 0 ]; then
     warn "SHIPPED-UNKNOWN - a manifest names shipped paths that git has never tracked under that spelling, on either side, so those paths cannot be compared and a change to any of them would be dropped out of the answer below with nothing saying so."
     warn "This tree's manifest names $NOW_N, git does not track $NOW_UNKNOWN of them now, and $NOW_UNSPELLED of those were not tracked at the $V tag either. The $V tag's manifest names $TAG_SHIPPED_N and git does not recognise $TAG_UNKNOWN of them."
     warn "A shipped file merely deleted since the tag is NOT this, and is reported as the owed release it is. A trailing carriage return on one side, a quoted escape on one side, a leading dot-slash, or a path whose case differs from the one in git's index each look exactly like this."
     warn "Never tracked under this spelling, and so not compared:"
-    visible < "$SCRATCH/unspelled.now" | LC_ALL=C sed 's/^/  in this tree, /' >&2
-    visible < "$SCRATCH/unknown.tag" | LC_ALL=C sed "s/^/  at the $V tag, /" >&2
+    visible '  in this tree, ' < "$SCRATCH/unspelled.now" >&2
+    visible "  at the $V tag, " < "$SCRATCH/unknown.tag" >&2
     exit 2
   fi
 
@@ -850,7 +869,7 @@ if git -C "$ROOT" rev-parse -q --verify "refs/tags/$V" >/dev/null 2>&1; then
     warn "SHIPPED-RECLASSIFIED - $RECLASSED_N path(s) are shipped differently by this tree than by the $V tag, and VERSION still says $V, so a vault fetching $V is told this template ships something other than what it ships."
     warn "No shipped file's bytes moved to say so, which is why the comparison above found nothing. A class is recorded in $MANIFEST_REL and nowhere else, and neither that file nor .claude/manifest-rules is itself shipped, so this is the only thing that reads it."
     warn "Shipped differently since $V:"
-    visible < "$SCRATCH/reclassed" | LC_ALL=C sed 's/^/  /' >&2
+    visible '  ' < "$SCRATCH/reclassed" >&2
     warn "Set VERSION to a number above $V, add its CHANGELOG.md entry with an Adopting this note, regenerate the manifest, and cut the release."
     warn "  VAULT_TEMPLATE_MAINTAINER=1 bash .claude/scripts/vault-update.sh --generate"
     warn "  bash .github/release-check.sh --tag"

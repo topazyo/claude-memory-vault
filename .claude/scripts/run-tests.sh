@@ -11968,6 +11968,10 @@ else
       || vu_bad="$vu_bad one-sided-the-tag-ships-[${vu_ov_tag:-unmeasurable}]-so-both-sides-are-empty-and-this-is-the-arm-above"
     [ "$vu_rc_ov" = 2 ] || vu_bad="$vu_bad one-sided-rc:$vu_rc_ov"
     vu_says 'VACUOUS' || vu_bad="$vu_bad one-sided-gave-no-reason"
+    # THE SENTENCE UNIQUE TO THIS REFUSAL, because the name alone is shared
+    # with the union arm above and would be satisfied by either.
+    vu_says 'one side of the comparison names no shipped file at all' \
+      || vu_bad="$vu_bad one-sided-borrowed-the-union-refusals-words"
     # NOT the reclassification wording, which is what it said before the fix
     # and which sends a reader to the rules file over a manifest nobody could
     # read, on the exit code that means a release is owed.
@@ -12005,6 +12009,8 @@ else
       || vu_bad="$vu_bad tag-side-empty-this-tree-ships-[${vu_ot_now:-unmeasurable}]-so-both-sides-are-empty"
     [ "$vu_rc_ot" = 2 ] || vu_bad="$vu_bad tag-side-empty-rc:$vu_rc_ot"
     vu_says 'VACUOUS' || vu_bad="$vu_bad tag-side-empty-gave-no-reason"
+    vu_says 'one side of the comparison names no shipped file at all' \
+      || vu_bad="$vu_bad tag-side-empty-borrowed-the-union-refusals-words"
     vu_says "This tree's manifest names $vu_ot_now and the 1.0.0 tag's manifest names 0" \
       || vu_bad="$vu_bad tag-side-empty-did-not-name-$vu_ot_now-against-0"
     vu_says 'SHIPPED-RECLASSIFIED' && vu_bad="$vu_bad tag-side-empty-was-called-a-reclassification"
@@ -12119,10 +12125,19 @@ else
       # redirection and this would stay green. That is the same shape as a
       # per-side guard with a fixture for one side, which this branch has now
       # walked into three times, so it is worth doing once properly here.
+      # EACH CASE ASSERTS THE SENTENCE ONLY ITS OWN REFUSAL CARRIES. The name
+      # NO-SCRATCH is shared by nine refusals in that script and distinguishes
+      # none of them, so a control asserting the name alone would pass on any
+      # of the nine and all three of these would be interchangeable.
       vu_uw_n=0
-      for vu_uw_case in 'tracked.now:shipped.now' 'tracked.tag:shipped.tag' 'tracked.tag:unknown.now'; do
+      for vu_uw_case in \
+        "tracked.now:shipped.now:this tree's shipped paths could not be checked" \
+        "tracked.tag:shipped.tag:the 1.0.0 tag's shipped paths could not be checked" \
+        "tracked.tag:unknown.now:this tree's unrecognised shipped paths could not be checked"; do
         vu_uw_a="${vu_uw_case%%:*}"
-        vu_uw_b="${vu_uw_case##*:}"
+        vu_uw_rest="${vu_uw_case#*:}"
+        vu_uw_b="${vu_uw_rest%%:*}"
+        vu_uw_want="${vu_uw_rest#*:}"
         vu_uw_n=$((vu_uw_n + 1))
         : > "$vu_uw_marker"
         vu_rc_uw="$( cd "$vu_uw" && PATH="$vu_uw_shim:$PATH" VAULT_AWK_REAL="$vu_uw_real" \
@@ -12133,14 +12148,15 @@ else
         # renamed shows up as the wrong target rather than as a silent pass.
         vu_uw_refused="$(LC_ALL=C awk -v want="refused $vu_uw_a and $vu_uw_b" '$0 == want { n++ } END { print n + 0 }' "$vu_uw_marker" 2>/dev/null)"
         [ "${vu_uw_refused:-0}" -ge 1 ] 2>/dev/null \
-          || vu_bad="$vu_bad [$vu_uw_case]the-run-never-reached-that-call-[${vu_uw_refused:-unmeasurable}]"
-        [ "$vu_rc_uw" = 2 ] || vu_bad="$vu_bad [$vu_uw_case]rc:$vu_rc_uw"
-        vu_says 'NO-SCRATCH' || vu_bad="$vu_bad [$vu_uw_case]gave-no-reason"
-        vu_says 'NOT saying the release is up to date' || vu_bad="$vu_bad [$vu_uw_case]did-not-say-what-it-was-not-saying"
+          || vu_bad="$vu_bad [$vu_uw_a]the-run-never-reached-that-call-[${vu_uw_refused:-unmeasurable}]"
+        [ "$vu_rc_uw" = 2 ] || vu_bad="$vu_bad [$vu_uw_a]rc:$vu_rc_uw"
+        vu_says 'NO-SCRATCH' || vu_bad="$vu_bad [$vu_uw_a]gave-no-reason"
+        vu_says "$vu_uw_want" || vu_bad="$vu_bad [$vu_uw_a]did-not-name-which-list-it-was"
+        vu_says 'NOT saying the release is up to date' || vu_bad="$vu_bad [$vu_uw_a]did-not-say-what-it-was-not-saying"
         # THE ASSERTION THAT MATTERS. Before the fix this run left on 0 saying
         # nothing was owed, from a comparison that never happened.
-        vu_says 'nothing is owed' && vu_bad="$vu_bad [$vu_uw_case]reported-the-release-as-up-to-date"
-        vu_says 'SHIPPED-UNKNOWN' && vu_bad="$vu_bad [$vu_uw_case]was-called-a-spelling-difference"
+        vu_says 'nothing is owed' && vu_bad="$vu_bad [$vu_uw_a]reported-the-release-as-up-to-date"
+        vu_says 'SHIPPED-UNKNOWN' && vu_bad="$vu_bad [$vu_uw_a]was-called-a-spelling-difference"
       done
       [ "$vu_uw_n" = 3 ] || vu_bad="$vu_bad only-$vu_uw_n-of-the-three-calls-were-exercised"
       ran tmpl-release-unwritten-not-empty
