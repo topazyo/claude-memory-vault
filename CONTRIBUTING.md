@@ -154,12 +154,29 @@ In a pull request that changes a shipped file:
 1. **Set `VERSION` to a number above the newest tag.** `git tag -l --sort=-v:refname | head -n 1`
    names the newest one. Sort it that way rather than reading the list, because plain text order
    puts `1.10.0` before `1.9.0`.
-2. **Add a `CHANGELOG.md` entry with an Adopting this note.** Every entry needs one, and the
-   control suite fails a release without it. Say "nothing to do" in as many words when that is the
-   answer, because a note nobody wrote and a release that needs nothing look identical otherwise.
-   The note is the only part of a release that can carry a meaning rather than bytes, so it has to
-   cover every shipped file the branch touches — including `AGENTS.md` and anything under `docs/`,
-   which are shipped and which a vault owner will be offered.
+2. **Add a `CHANGELOG.md` entry with an Adopting this note.** Two strings are matched literally,
+   so copy the shape of the entry above rather than inventing one:
+   ```markdown
+   ## 1.2.0 — 2026-10-01
+
+   ### Adopting this
+
+   Nothing to do.
+   ```
+   The heading must be `## <version>` with the version as its second word, because that is what
+   `release-check.sh --tag` reads to find the entry and what it compares against `VERSION`. A
+   bracketed form like `## [1.2.0] - 2026-10-01` reads as the version `[1.2.0]` and is refused. The
+   note must be a `### Adopting this` heading, because `tmpl-changelog-adopting` matches that line
+   and nothing else — bold text or a different heading level is invisible to it.
+
+   **It must also be the newest entry in the file**, since that is the one both checks read. An
+   `## Unreleased` section above the releases counts as the newest and will be read instead.
+
+   Say "nothing to do" in as many words when that is the answer, because a note nobody wrote and a
+   release that needs nothing look identical otherwise. The note is the only part of a release that
+   can carry a meaning rather than bytes, so it has to cover every shipped file the branch touches
+   — including `AGENTS.md` and anything under `docs/`, which are shipped and which a vault owner
+   will be offered.
 3. **Regenerate the manifest, last.** This has to be the final edit to a shipped file in the
    branch, because anything changed after it leaves the manifest stale and fails the CI step that
    verifies it.
@@ -173,9 +190,16 @@ In a pull request that changes a shipped file:
    carries no adopting note. Neither fires unless somebody runs the suite.
 
 After it merges, `main` carries a version that names no tag, and the hygiene job goes red saying
-so. Clearing that red takes three commands and then a re-run, from the repository root:
+so. Clearing that red takes three commands and then a re-run.
+
+**Check out `main` and pull the merge first.** `--tag` tags whatever `HEAD` is, and it neither
+knows nor asks which branch that is. Run it from the feature branch, or from a `main` you have not
+pulled since the merge, and it writes the tag on the wrong commit — and a pushed tag is the one
+artefact here that cannot be quietly corrected. This is easy to get wrong because the person doing
+it is the likeliest to be sitting in a worktree on the branch that just merged.
 
 ```bash
+git checkout main && git pull
 bash .github/release-check.sh --tag
 git push origin <the version>
 gh release create <the version> --title <the version> --notes-file <the file it named>

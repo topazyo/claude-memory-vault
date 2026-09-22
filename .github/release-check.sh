@@ -82,11 +82,11 @@
 #   SHIPPED-UNKNOWN · DIFF-FAILED · UNRELEASED-CHANGES · VERSION-GOES-BACKWARD ·
 #   UNTAGGED-VERSION · ALREADY-TAGGED · NO-NOTES · TAG-FAILED
 #
-# Three of those names also exist in `vault-update.sh` and do not mean the same
-# thing there, which is worth knowing before grepping both at once. NO-GIT and
-# NO-VERSION are about this repository here and about a vault's own manifest
-# there, and VACUOUS is about a shipped set with nothing in it here and about a
-# scan that matched no notes there.
+# Four of those names also exist in `vault-update.sh` and do not mean the same
+# thing there, which is worth knowing before grepping both at once. NO-GIT,
+# NO-VERSION and NO-MANIFEST are about this repository here and about a vault
+# and its own manifest there, and VACUOUS is about a shipped set with nothing
+# in it here and about a scan that matched no notes there.
 
 set -u
 
@@ -137,6 +137,32 @@ command -v git >/dev/null 2>&1 || {
   exit 2
 }
 
+# GIT_DIR AND GIT_WORK_TREE ARE DROPPED BEFORE THE FIRST GIT CALL, and the word
+# before matters. An earlier version dropped them seventeen lines further down,
+# after `$ROOT` had already been derived from `git rev-parse --show-toplevel`,
+# which honours both. With `GIT_DIR` and `GIT_WORK_TREE` exported, that call
+# answered with the other repository's work tree, `$ROOT` became it, and
+# everything after read VERSION, wrote the tag and ran the rm -rf there, while
+# the comment claimed it could not happen. The comment was true about what it
+# guarded and the guard was in the wrong place.
+#
+# `git -C` changes the working directory and does not override either variable,
+# and GIT_DIR beats discovery, so nothing later can undo an early read. This is
+# not hypothetical plumbing: git exports GIT_DIR to every hook it runs, and this
+# repository ships a pre-commit hook, so a release check wired into one would
+# meet it.
+#
+# CDPATH goes too. With it set, `cd` writes the directory it chose to standard
+# output, and two command substitutions below capture the output of a `cd`.
+unset GIT_DIR GIT_WORK_TREE CDPATH
+
+# CLAUDE_PROJECT_DIR is honoured, and it is worth being plain that it moves
+# everything this script then does, including the rm -rf and the tag. It is
+# kept because the control suite needs to point the script at a fixture and
+# because `vault-check.sh` honours the same variable, so a reader meeting both
+# finds one convention rather than two. What it cannot do is widen anything: the
+# value has to be a git repository or the next test refuses, and every path is
+# derived from it rather than joined to it.
 ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null)}"
 # Not a test for a .git DIRECTORY. In a linked worktree .git is a file holding a
 # pointer, and this repository's own development happens in linked worktrees, so
@@ -145,16 +171,6 @@ if [ -z "$ROOT" ] || ! git -C "$ROOT" rev-parse --git-dir >/dev/null 2>&1; then
   warn "NO-GIT - [${ROOT:-the working directory}] is not a git repository, so which versions have been released could not be determined."
   exit 2
 fi
-
-# GIT_DIR AND GIT_WORK_TREE ARE DROPPED FIRST, and that is not tidiness.
-# `git -C` changes the working directory and does not override either of them,
-# and GIT_DIR takes precedence over discovery, so with one exported the
-# resolution below answers with THAT repository while VERSION is still read off
-# this one. The two halves of the check would then come from different places
-# with nothing saying so. This is not hypothetical plumbing: git exports GIT_DIR
-# to every hook it runs, and this repository ships a pre-commit hook, so a
-# release check wired into one later would meet it.
-unset GIT_DIR GIT_WORK_TREE
 
 # Absolute, because a linked worktree's --git-dir comes back relative and this
 # is used from a different working directory further down. Captured into a
@@ -258,6 +274,21 @@ if [ -n "$PREFIXED" ]; then
   exit 1
 fi
 
+# A tag that STARTS like a version and is not one is refused rather than
+# filtered away, for the same reason a prefixed one is. `1.2.0-rc1` and `1.2.`
+# are tags somebody meant as versions, and dropping them silently leaves them
+# out of the newest-version calculation for ever while every message talks
+# confidently about an older number. That is the invisibility VERSION-SPELLING
+# was added to stop on the VERSION side, and stopping it there and not here
+# would have left the same hole one step along.
+MALFORMED="$(printf '%s\n' "$ALL_TAGS" | LC_ALL=C awk '
+  /^[0-9]/ && !/^[0-9]+(\.[0-9]+)*$/ { printf "%s ", $0 }')"
+if [ -n "$MALFORMED" ]; then
+  warn "TAG-SPELLING - these tags begin like a version and are not digits separated by single dots, so nothing here can order them: ${MALFORMED% }"
+  warn "A tag this cannot read is left out of which version is newest, and every answer after that is about some older number while saying nothing about the tag it ignored. Delete it, or rename it to a version this can order."
+  exit 1
+fi
+
 TAGS="$(printf '%s\n' "$ALL_TAGS" | LC_ALL=C awk '/^[0-9]+(\.[0-9]+)*$/ { print }')"
 TAG_N="$(printf '%s\n' "$TAGS" | LC_ALL=C awk 'length($0) { n++ } END { print n + 0 }')"
 if [ "$TAG_N" -eq 0 ]; then
@@ -290,6 +321,17 @@ mkdir -p "$SCRATCH" || {
   warn "NO-SCRATCH - $SCRATCH could not be created, so nothing was compared."
   exit 2
 }
+# EMPTINESS IS ASSERTED, because `mkdir -p` returns 0 for a directory that
+# already exists and so cannot tell a failed clear from a clean one. On Git
+# Bash `rm -rf` really does fail on an open handle, a read-only attribute or a
+# scanner holding a file, in a way it essentially never does on the other two
+# platforms. A survivor here is not cosmetic: four of the files written below
+# have their redirection status read nowhere, so a stale read-only one would be
+# read as this run's data and the run would answer from it.
+if [ -n "$(ls -A "$SCRATCH" 2>/dev/null)" ]; then
+  warn "NO-SCRATCH - $SCRATCH could not be emptied, so a previous run's files are still in it and nothing here could be trusted to be this run's."
+  exit 2
+fi
 
 # -------------------------------------------------------------- the answer --
 
@@ -464,8 +506,9 @@ if [ "$MODE" = tag ]; then
   # which is this script's own business.
   CL_V="$(LC_ALL=C awk '{ sub(/\r$/, "") } /^## / { print $2; exit }' "$ROOT/$CHANGELOG_REL" 2>/dev/null)"
   if [ "$CL_V" != "$V" ]; then
-    warn "NO-NOTES - VERSION says $V and the newest CHANGELOG.md entry heads [${CL_V:-nothing}], so there are no notes to tag $V with."
-    warn "Add a ## $V entry with an Adopting this note. The control tmpl-changelog-adopting says what that note has to carry."
+    warn "NO-NOTES - VERSION says $V and the NEWEST CHANGELOG.md entry heads [${CL_V:-nothing}], so the notes this would tag with are not $V's."
+    warn "The newest entry has to be the one being released, because that is the entry this takes the tag message from and the one tmpl-version-agrees holds VERSION against. An entry for $V further down the file is not enough, and an Unreleased section above them reads as the newest entry too."
+    warn "Head it '## $V' and give it a '### Adopting this' note. Both strings are matched literally, by this script and by tmpl-changelog-adopting."
     exit 1
   fi
   # Beside the scratch rather than inside it. The scratch is cleared at the top
@@ -473,23 +516,49 @@ if [ "$MODE" = tag ]; then
   # --notes-file for their release, so a verification run between cutting the
   # tag and publishing it would delete the notes out from under them.
   NOTES="$GITDIR/release-notes-$V.md"
-  LC_ALL=C awk '
+  # FENCES ARE TRACKED, because a `## ` at the start of a line inside a fenced
+  # code block is not a heading and stopping at one truncates the message with
+  # nothing saying so. A changelog that shows an example heading in a code
+  # block is an ordinary thing to write, and this file has done it.
+  if ! LC_ALL=C awk '
     { sub(/\r$/, "") }
-    /^## / { if (seen) exit; seen = 1; print; next }
+    /^```/ { fence = 1 - fence; if (seen) print; next }
+    !fence && /^## / { if (seen) exit; seen = 1; print; next }
     seen { print }
-  ' "$ROOT/$CHANGELOG_REL" > "$NOTES" 2>/dev/null
+  ' "$ROOT/$CHANGELOG_REL" > "$NOTES" 2>/dev/null; then
+    warn "NO-NOTES - $ROOT/$CHANGELOG_REL could not be read, so the notes for $V could not be taken out of it and nothing was cut."
+    exit 2
+  fi
   # The BODY is counted, not the file. The awk above prints the heading itself
   # before any body, so the file is never empty and `-s` was a refusal that
   # could not fire. An entry with a heading and nothing under it - which is
   # exactly the case this was written for - was tagged with a message
   # consisting of its own version number and nothing else.
+  #
+  # A FAILURE TO MEASURE LEAVES ON 2, not on 1. Defaulting an unmeasured count
+  # to zero and then refusing would print a claim about what the changelog
+  # contains when the changelog was never read, which is this file's own
+  # doctrine about 1 and 2 inverted.
   NOTES_BODY="$(LC_ALL=C awk 'NR > 1 && NF { n++ } END { print n + 0 }' "$NOTES" 2>/dev/null)"
-  if [ "${NOTES_BODY:-0}" -lt 1 ]; then
+  if [ -z "$NOTES_BODY" ]; then
+    warn "NO-NOTES - the notes taken out of CHANGELOG.md for $V could not be measured, so whether there are any is unknown and nothing was cut."
+    exit 2
+  fi
+  if [ "$NOTES_BODY" -lt 1 ]; then
     warn "NO-NOTES - the $V entry in CHANGELOG.md is a heading with nothing under it, so the only thing there is to tag $V with is its own number."
     warn "The notes are the only part of a release that can carry a meaning rather than bytes, so a release with none is worth stopping for."
     exit 1
   fi
-  git -C "$ROOT" tag -a "$V" -F "$NOTES" 2> "$SCRATCH/tagerr" || {
+  # --cleanup=verbatim, and this one was found by running it rather than by
+  # reading it. git's default for a tag message is to strip every line that
+  # begins with a hash, because a hash starts a comment in the editor it would
+  # otherwise open. A changelog entry is markdown, so that default removes the
+  # version heading AND every sub-heading, including `### Adopting this`, which
+  # CHANGELOG.md itself calls the only part of a release that can carry a
+  # meaning rather than bytes. Measured: an entry of a heading, a body line,
+  # `### Added`, a bullet and `### Adopting this` was stored as four lines of
+  # body with no structure at all.
+  git -C "$ROOT" tag -a "$V" --cleanup=verbatim -F "$NOTES" 2> "$SCRATCH/tagerr" || {
     warn "TAG-FAILED - git would not write the $V tag, so nothing was cut."
     LC_ALL=C sed 's/^/  /' "$SCRATCH/tagerr" >&2
     warn "An annotated tag carries a tagger, so the commonest cause is a checkout with no user.name and user.email set. This does not set them for you, because whose name goes on a release is not a script's decision."

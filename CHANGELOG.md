@@ -74,10 +74,11 @@ taking the bytes also takes a standing instruction every harness loads. The new 
 to contributing to the template, so it costs a vault nothing, but read the bullet before you copy
 it rather than after.
 
-A source folder that you reach through a symbolic link is now refused where it used to be
-compared, so a fetched copy living under a symlinked path will report `SOURCE-SYMLINK` and leave
-on `2`. That is the refusal working rather than a fault, and moving the copy to a real path is the
-answer.
+The symlink change is a hardening one and you will almost certainly never see it. It refuses a
+source that reaches its own files through a symbolic link **inside** the folder, which a `git
+clone` of this template never produces. The folder you point `--from` at may itself live under a
+symlinked path, and that is not affected — only links below it are tested, because you chose that
+folder and the template did not.
 
 If you fetched this release with `--check`, read the digests in the safe-to-take list against the
 folder you are about to copy out of. That is what they are for, and it applies whether or not your

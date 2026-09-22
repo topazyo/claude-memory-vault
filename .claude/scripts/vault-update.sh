@@ -1563,7 +1563,11 @@ verify_source() {  # verify_source <dir>
         # list, and a reader told about "a.md b.md c.md and 47 more" has been
         # given the symptom and not the cause. The name of the link is in hand
         # at exactly this moment and nowhere afterwards.
-        printf '%s (reached through %s)\n' "$rel" "${walk#$dir/}" >> "$TMPD/vs.links"
+        # The prefix to strip is QUOTED. The right-hand side of a ${var#...} is
+        # a pattern, not a literal, so an unquoted $dir holding a star or a
+        # bracket would match something other than itself and cut the wrong
+        # amount off. The folder comes from --from, which a reader types.
+        printf '%s (reached through %s)\n' "$rel" "${walk#"$dir"/}" >> "$TMPD/vs.links"
         break
       fi
     done

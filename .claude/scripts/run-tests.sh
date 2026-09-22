@@ -10530,6 +10530,11 @@ else
     skip tmpl-release-in-preparation "$VU_REL is not present, so this is a vault rather than the template project and there is no release to keep up with"
     skip tmpl-release-tag-spelling "$VU_REL is not present, so this is a vault rather than the template project and there is no release to keep up with"
     skip tmpl-release-cut "$VU_REL is not present, so this is a vault rather than the template project and there is no release to keep up with"
+    skip tmpl-release-version-spelling "$VU_REL is not present, so this is a vault rather than the template project and there is no release to keep up with"
+    skip tmpl-release-comparators-agree "$VU_REL is not present, so this is a vault rather than the template project and there is no release to keep up with"
+    skip tmpl-release-cannot-look "$VU_REL is not present, so this is a vault rather than the template project and there is no release to keep up with"
+    skip tmpl-release-ignores-git-dir "$VU_REL is not present, so this is a vault rather than the template project and there is no release to keep up with"
+    skip tmpl-release-vacuous "$VU_REL is not present, so this is a vault rather than the template project and there is no release to keep up with"
   else
     vu_d="$VU/release"
     vu_make "$vu_d" 1.0.0
@@ -10782,6 +10787,21 @@ else
       *"The second one."*) : ;;
       *) vu_bad="$vu_bad the-tag-message-is-not-the-changelog-entry-[${vu_rl_msg:-empty}]" ;;
     esac
+    # THE HEADINGS SURVIVE. Asserting a line of body text passed for a whole
+    # round while git was stripping every line beginning with a hash, which is
+    # its default for a tag message, so the version heading and every
+    # sub-heading were being thrown away. Measured rather than reasoned about.
+    # The Adopting this heading is the one that matters, because CHANGELOG.md
+    # calls it the only part of a release that can carry a meaning rather than
+    # bytes, and a reader looking at the tag would not have found it.
+    case "$vu_rl_msg" in
+      *"## 1.1.0"*) : ;;
+      *) vu_bad="$vu_bad the-tag-message-lost-its-version-heading-[${vu_rl_msg:-empty}]" ;;
+    esac
+    case "$vu_rl_msg" in
+      *"### Adopting this"*) : ;;
+      *) vu_bad="$vu_bad the-tag-message-lost-its-adopting-heading-[${vu_rl_msg:-empty}]" ;;
+    esac
     # It says how to publish, and it does not publish. A step that reached the
     # network here would be doing unattended what this project makes a person do.
     vu_says 'git push origin 1.1.0' || vu_bad="$vu_bad did-not-print-the-push-command"
@@ -10862,15 +10882,35 @@ else
     # And the spellings that ARE versions still pass, or the refusal above
     # could be refusing everything and every arm would look right.
     vu_vs_ok=0
-    for vu_vs_good in '1.0.0' '1.0' '2' '10.20.30'; do
+    # EACH ONE STATES THE ANSWER IT MUST GET, and the exit code is asserted
+    # rather than captured and dropped. The first version of this loop read the
+    # code into a variable and never looked at it, which is the same dead
+    # exit-code defect tmpl-converged-not-a-merge was fixed for earlier in this
+    # file, written again three controls later.
+    #
+    # Dropping it mattered more than it looks. VERSION-GOES-BACKWARD is the
+    # wording for "equal" AND for "older", so the arms above assert only "not
+    # strictly newer" and never "equal", which is the property the pass line
+    # claims. A comparator reading a different field count as older gives every
+    # arm above the same verdict and survives the whole suite. The `2` case is
+    # what kills it: one field against three, and it has to come back as a
+    # release in preparation rather than as a version going backward.
+    #
+    #   1.0.0 names the tag itself and this tree matches it, so nothing is owed
+    #   1.0   is the same number as the tag written shorter, so it is refused
+    #   2 and 10.20.30 are above it, so both are releases in preparation
+    for vu_vs_case in '1.0.0:0' '1.0:1' '2:0' '10.20.30:0'; do
+      vu_vs_good="${vu_vs_case%%:*}"
+      vu_vs_want="${vu_vs_case##*:}"
       printf '%s\n' "$vu_vs_good" > "$vu_vs/VERSION"
       vu_rc_vsg="$(vu_rel "$vu_vs")"
       vu_says 'VERSION-SPELLING' && vu_bad="$vu_bad [$vu_vs_good]a-real-version-was-refused-for-its-spelling"
+      [ "$vu_rc_vsg" = "$vu_vs_want" ] || vu_bad="$vu_bad [$vu_vs_good]rc:$vu_rc_vsg-wanted-$vu_vs_want"
       vu_vs_ok=$((vu_vs_ok + 1))
     done
     ran tmpl-release-version-spelling
     if [ "$vu_vs_n" = 5 ] && [ "$vu_vs_ok" = 4 ] && [ -z "$vu_bad" ]; then
-      ok "a version carrying a suffix, a trailing space, a revision expression or a stray dot is refused by name before it can be tagged and then never seen again, and four ordinary spellings still pass"
+      ok "a version carrying a suffix, a trailing space, a revision expression or a stray dot is refused by name before it can be tagged and then never seen again, and four ordinary spellings each get the one answer they should"
     else
       bad "the version was used without being checked --$vu_bad (bad:$vu_vs_n good:$vu_vs_ok) [$(vu_excerpt)]"
     fi
@@ -11040,6 +11080,50 @@ else
       bad "the release check answered when it could not look --$vu_bad [$(vu_excerpt)]"
     fi
 
+    # -- a comparison of nothing at all ------------------------------------
+
+    # The sharpest gap the second review round found, because it is a
+    # fail-open and it was the one guard against this shape with no control.
+    # A manifest that classifies nothing as shipped gives both sides of the
+    # overlap check a count of zero, and both halves of that check are gated on
+    # the count being above zero, so neither fires. The comparison then has
+    # nothing to compare, finds nothing changed, and prints "0 of 0 shipped
+    # file(s) differ from the tag, so this tree is the release and nothing is
+    # owed" on exit 0.
+    #
+    # That is a clean answer from a comparison that examined nothing, which is
+    # the exact shape this whole script was written against. The updater has
+    # tmpl-vacuous and tmpl-source-vacuous for its own versions of it and the
+    # pattern was simply not carried across.
+    vu_vac="$VU/release-vacuous"
+    vu_make "$vu_vac" 1.0.0
+    printf 'excluded\t*\n' > "$vu_vac/.claude/manifest-rules"
+    printf '# Changelog\n\n## 1.0.0 - 2026-01-01\n\nThe first one.\n\n### Adopting this\n\nNothing to do.\n' > "$vu_vac/CHANGELOG.md"
+    vu_git "$vu_vac"
+    vu_gen "$vu_vac"
+    vu_git "$vu_vac"
+    vu_tag "$vu_vac" 1.0.0
+    # Measured when the fixture is built. Nothing may be shipped, or this is
+    # asking an ordinary question and the guard under test is never reached.
+    vu_vac_shipped="$(LC_ALL=C awk '$1 == "owned" || $1 == "seed" { n++ } END { print n + 0 }' "$vu_vac/.claude/template-manifest" 2>/dev/null)"
+    vu_vac_tagged="$(git -C "$vu_vac" tag -l 2>/dev/null | LC_ALL=C awk '$0 == "1.0.0" { n++ } END { print n + 0 }')"
+    vu_rc_vac="$(vu_rel "$vu_vac")"
+    vu_bad=''
+    [ "${vu_vac_shipped:-1}" = 0 ] || vu_bad="$vu_bad the-manifest-still-ships-${vu_vac_shipped:-unknown}-file(s)"
+    [ "${vu_vac_tagged:-0}" = 1 ] || vu_bad="$vu_bad the-fixture-is-not-tagged"
+    [ "$vu_rc_vac" = 2 ] || vu_bad="$vu_bad rc:$vu_rc_vac"
+    vu_says 'VACUOUS' || vu_bad="$vu_bad no-reason"
+    vu_says 'nothing is owed' && vu_bad="$vu_bad it-called-a-comparison-of-nothing-a-clean-release"
+    # And not the neighbouring refusal, which is about the two sides spelling
+    # paths differently rather than about there being no paths at all.
+    vu_says 'SHIPPED-UNKNOWN' && vu_bad="$vu_bad called-it-a-spelling-difference"
+    ran tmpl-release-vacuous
+    if [ -z "$vu_bad" ]; then
+      ok "a manifest that ships nothing makes the release check say it compared nothing, rather than reporting that a comparison of no files found no difference"
+    else
+      bad "a comparison of nothing was reported as a clean release --$vu_bad [$(vu_excerpt)]"
+    fi
+
     # -- which repository it is actually answering about -------------------
 
     # `git -C` moves the working directory and does NOT override GIT_DIR, which
@@ -11067,7 +11151,17 @@ else
     [ "${vu_gd_other_tags:-1}" = 0 ] || vu_bad="$vu_bad the-other-repository-has-tags-so-it-would-answer-the-same-way"
     vu_rc_gd0="$(vu_rel "$vu_gd")"
     vu_gd_said0=0; vu_says 'nothing is owed' && vu_gd_said0=1
-    vu_rc_gd1="$( cd "$vu_gd" && CLAUDE_PROJECT_DIR="$vu_gd" GIT_DIR="$vu_gd_other/.git" \
+    # NO CLAUDE_PROJECT_DIR ON THIS RUN, and that omission is the whole point.
+    # The first version of this control set it, which pins the root before any
+    # discovery happens, so `git rev-parse --show-toplevel` never ran and the
+    # line the control exists to protect was never reached. It passed while the
+    # defect it was written for stood.
+    #
+    # GIT_WORK_TREE as well as GIT_DIR, because that pair is what actually
+    # moves the answer. With GIT_DIR alone and the working directory already at
+    # the right repository's top level, --show-toplevel returns the right
+    # answer anyway and a broken script still looks correct.
+    vu_rc_gd1="$( cd "$vu_gd" && GIT_DIR="$vu_gd_other/.git" GIT_WORK_TREE="$vu_gd_other" \
       "$VU_BASH" "$VU_REL" > "$VU_OUT" 2>&1; printf '%s' "$?" )"
     vu_gd_said1=0; vu_says 'nothing is owed' && vu_gd_said1=1
     vu_gd_leaked=0
