@@ -368,13 +368,67 @@ if git -C "$ROOT" rev-parse -q --verify "refs/tags/$V" >/dev/null 2>&1; then
     warn "NO-MANIFEST - $ROOT/$MANIFEST_REL is not a readable file, so what this tree ships could not be read and nothing was compared."
     exit 2
   }
-  LC_ALL=C awk '{ sub(/\r$/, "") } $1 == "owned" || $1 == "seed" { print $3 }' \
-    "$ROOT/$MANIFEST_REL" 2>/dev/null | LC_ALL=C sort -u > "$SCRATCH/shipped.now"
+  # THE PATH IS THE REST OF THE LINE, not the third field. A manifest line is a
+  # class, a digest and a path separated by single spaces, and awk's default
+  # splitting ends the path at the first space inside it. `docs/my file.md`
+  # became `docs/my`, which git's list of tracked files matches nothing in, so
+  # the real path was absent from the shipped set and every later change to it
+  # was filtered out of the comparison with nothing saying so.
+  #
+  # SHIPPED-UNKNOWN cannot see it either, because that guard fires only when a
+  # whole side overlaps by zero, and one mangled path among ninety leaves the
+  # overlap far above zero. So a single shipped file whose name carries a space
+  # drops silently out of the release discipline for good. Paths with spaces are
+  # ordinary on Windows and macOS, which are two of the four platforms this runs
+  # on.
+  #
+  # The field count is checked in the same pass. A line short of three fields
+  # used to contribute an empty path, which inflated every count by one and put
+  # a blank line into a set that is compared against git's.
+  shipped_paths() {  # shipped_paths, filtering a manifest on standard input
+    LC_ALL=C awk '
+      { sub(/\r$/, "") }
+      ($1 == "owned" || $1 == "seed") && NF >= 3 {
+        p = $0
+        sub(/^[^ ]+[ ]+[^ ]+[ ]+/, "", p)
+        if (length(p)) print p
+      }'
+  }
+  shipped_paths < "$ROOT/$MANIFEST_REL" 2>/dev/null | LC_ALL=C sort -u > "$SCRATCH/shipped.now"
   git -C "$ROOT" show "$V:$MANIFEST_REL" 2>/dev/null \
-    | LC_ALL=C awk '{ sub(/\r$/, "") } $1 == "owned" || $1 == "seed" { print $3 }' \
+    | shipped_paths \
     | LC_ALL=C sort -u > "$SCRATCH/shipped.tag"
   LC_ALL=C sort -u "$SCRATCH/shipped.now" "$SCRATCH/shipped.tag" > "$SCRATCH/shipped"
   SHIPPED_N="$(LC_ALL=C awk 'END { print NR + 0 }' "$SCRATCH/shipped")"
+
+  # A COUNT THAT COULD NOT BE TAKEN IS NOT A ZERO, and the difference decides
+  # the verdict rather than the wording. Measured on GNU awk 5.4.0: counting a
+  # file that is not there prints NOTHING and leaves on 2, because awk never
+  # reaches END, while counting a file that exists and is empty prints 0 on 0.
+  # Those two have to stay distinguishable, and an unguarded count collapses
+  # them.
+  #
+  # An empty string in a numeric test makes bash print "integer expression
+  # expected" and return 2, which an `if` reads as FALSE. So an unmeasured
+  # count skips BOTH directions of every guard below - `-eq 0` is not true and
+  # `-gt 0` is not true - and the run falls through to the clean line and says
+  # this tree is the release and nothing is owed, on exit 0. That is the same
+  # fail-open to green this whole file is written against, arrived at through a
+  # redirection nobody checked rather than through a command nobody checked.
+  #
+  # The four files these counts read all come from redirections whose status is
+  # not read, so a full disk, a read-only scratch, or the concurrent run that
+  # clears this directory between two of them is enough to produce it.
+  #
+  # DEFAULTING TO ZERO IS THE WRONG REPAIR. Zero is the GREEN answer for the
+  # changed count, so `${CHANGED_N:-0}` would turn a failure to measure into
+  # "nothing is owed" rather than away from it. The emptiness is tested
+  # instead, which is the shape the notes body measurement further down already
+  # uses for the same reason.
+  if [ -z "$SHIPPED_N" ]; then
+    warn "NO-SCRATCH - the shipped set in $SCRATCH could not be counted, so how many files this template ships is unknown and nothing was compared."
+    exit 2
+  fi
 
   if [ "$SHIPPED_N" -eq 0 ]; then
     warn "VACUOUS - the $V tag and this tree between them name no shipped file, so nothing was compared and a clean answer here would mean nothing."
@@ -413,6 +467,14 @@ if git -C "$ROOT" rev-parse -q --verify "refs/tags/$V" >/dev/null 2>&1; then
   TAG_SHIPPED_N="$(LC_ALL=C awk 'END { print NR + 0 }' "$SCRATCH/shipped.tag")"
   NOW_OVERLAP="$(overlap_of "$SCRATCH/shipped.now")"
   TAG_OVERLAP="$(overlap_of "$SCRATCH/shipped.tag")"
+  # Both sides, for the reason given at the shipped count above. These two are
+  # the ones gated on being ABOVE zero, so an unmeasured one disarms its half
+  # of the guard rather than firing it, and the half that stayed measurable
+  # then reports a clean overlap for a set nobody could count.
+  if [ -z "$NOW_N" ] || [ -z "$TAG_SHIPPED_N" ]; then
+    warn "NO-SCRATCH - one of the two shipped lists in $SCRATCH could not be counted, so whether the two sides spell paths the same way is unknown and nothing was compared."
+    exit 2
+  fi
   if { [ "$NOW_N" -gt 0 ] && [ "${NOW_OVERLAP:-0}" -eq 0 ]; } \
      || { [ "$TAG_SHIPPED_N" -gt 0 ] && [ "${TAG_OVERLAP:-0}" -eq 0 ]; }; then
     warn "SHIPPED-UNKNOWN - a manifest names shipped paths that git's own list of tracked files matches none of, so the two sides are spelling paths differently and nothing below could find a change in them."
@@ -468,6 +530,14 @@ if git -C "$ROOT" rev-parse -q --verify "refs/tags/$V" >/dev/null 2>&1; then
     ($0 in ship) { print }
   ' "$SCRATCH/shipped" "$SCRATCH/diffed" > "$SCRATCH/changed"
   CHANGED_N="$(LC_ALL=C awk 'END { print NR + 0 }' "$SCRATCH/changed")"
+  # THE ONE THAT MATTERS MOST, for the reason given at the shipped count above.
+  # This count is the verdict. Unmeasured, it skips the refusal below and lands
+  # on the clean line, so the single sentence a reader trusts is printed about
+  # a comparison whose result was never read.
+  if [ -z "$CHANGED_N" ]; then
+    warn "NO-SCRATCH - the changed set in $SCRATCH could not be counted, so whether a release is owed is unknown, and this is NOT saying the release is up to date."
+    exit 2
+  fi
 
   if [ "$CHANGED_N" -gt 0 ]; then
     warn "UNRELEASED-CHANGES - $CHANGED_N of the $SHIPPED_N file(s) this template ships differ from the $V tag, and VERSION still says $V, so a vault fetching $V does not get them."
@@ -504,7 +574,26 @@ if [ "$MODE" = tag ]; then
   # VERSION and the newest changelog heading agree is `tmpl-version-agrees`'s
   # rule and it lives there. What this needs the entry for is the tag message,
   # which is this script's own business.
-  CL_V="$(LC_ALL=C awk '{ sub(/\r$/, "") } /^## / { print $2; exit }' "$ROOT/$CHANGELOG_REL" 2>/dev/null)"
+  # THE SAME FENCE RULE THE EXTRACTION BELOW USES, and it has to be the same or
+  # the two disagree about which line is the newest heading. This guard decides
+  # whether the extraction runs at all, and the extraction learned about fenced
+  # code blocks while this did not, which left the gate reading one file by one
+  # rule and the extractor reading it by another.
+  #
+  # What that costs is the worst thing in this file. Put a fenced example above
+  # the entries, which the comment below says is an ordinary thing to write and
+  # this file has done, and head it with a version this tree is about to
+  # release. The gate takes the fenced line, agrees it is the version being
+  # released, and the fence-aware extraction skips that same line and takes the
+  # entry BELOW it. The tag is then written under one version carrying another
+  # version's notes, and the line that reports success names the version whose
+  # notes are not in it. A pushed tag is the one artefact here that cannot be
+  # quietly corrected.
+  CL_V="$(LC_ALL=C awk '
+    { sub(/\r$/, "") }
+    /^```/ { fence = 1 - fence; next }
+    !fence && /^## / { print $2; exit }
+  ' "$ROOT/$CHANGELOG_REL" 2>/dev/null)"
   if [ "$CL_V" != "$V" ]; then
     warn "NO-NOTES - VERSION says $V and the NEWEST CHANGELOG.md entry heads [${CL_V:-nothing}], so the notes this would tag with are not $V's."
     warn "The newest entry has to be the one being released, because that is the entry this takes the tag message from and the one tmpl-version-agrees holds VERSION against. An entry for $V further down the file is not enough, and an Unreleased section above them reads as the newest entry too."

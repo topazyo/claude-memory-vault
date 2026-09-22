@@ -10557,17 +10557,29 @@ else
     vu_rl_tags="$(git -C "$vu_d" tag -l 2>/dev/null | tr '\n' ' ')"
     vu_rl_shipped="$(LC_ALL=C awk '($1 == "owned" || $1 == "seed") && $3 == "docs/a.md" { n++ } END { print n + 0 }' "$vu_d/.claude/template-manifest" 2>/dev/null)"
     vu_rl_notshipped="$(LC_ALL=C awk '$3 == ".claude/manifest-rules" { n++ } END { print n + 0 }' "$vu_d/.claude/template-manifest" 2>/dev/null)"
+    # How many the fixture ships altogether, because the count line names that
+    # number and until now no control read a single digit out of it.
+    vu_rl_ships="$(LC_ALL=C awk '$1 == "owned" || $1 == "seed" { n++ } END { print n + 0 }' "$vu_d/.claude/template-manifest" 2>/dev/null)"
 
     vu_bad=''
     [ "${vu_rl_tags% }" = 1.0.0 ] || vu_bad="$vu_bad fixture-tags-are-[${vu_rl_tags:-none}]"
     [ "${vu_rl_shipped:-0}" = 1 ] || vu_bad="$vu_bad docs/a.md-is-not-a-shipped-entry"
     [ "${vu_rl_notshipped:-0}" = 0 ] || vu_bad="$vu_bad the-rules-file-is-a-shipped-entry-so-the-filter-cannot-be-tested"
+    [ "${vu_rl_ships:-0}" -gt 0 ] || vu_bad="$vu_bad the-fixture-ships-nothing-so-the-count-line-proves-nothing"
 
     # Clean. The tree is the release it says it is.
     vu_rl_rc_clean="$(vu_rel "$vu_d")"
     [ "$vu_rl_rc_clean" = 0 ] || vu_bad="$vu_bad clean-rc:$vu_rl_rc_clean"
     vu_says 'nothing is owed' || vu_bad="$vu_bad clean-did-not-say-so"
     vu_says 'UNRELEASED-CHANGES' && vu_bad="$vu_bad clean-was-called-unreleased"
+    # THE NUMBERS IN THE COUNT LINE, and not merely the words around them. Every
+    # release control asserted wording and exit codes and not one read a digit,
+    # so the denominator could be taken from either side of the union rather
+    # than from the union, or from the wrong file entirely, and all ten still
+    # passed while every real run reported a number that was not the shipped
+    # count. The count line is the one sentence a reader trusts, so a control
+    # that never reads its numbers is not covering it.
+    vu_says "0 of $vu_rl_ships shipped file(s)" || vu_bad="$vu_bad clean-count-line-is-not-0-of-$vu_rl_ships"
 
     # A file the template does not ship changes, and that is nobody's problem.
     # This arm is what separates "a shipped file changed" from "anything
@@ -10647,6 +10659,15 @@ else
     vu_git "$vu_d"
 
     vu_bad=''
+    # Measured before the run, because the three arms below all rest on this
+    # tree now saying 1.1.0 and on no tag naming it, and neither of those was
+    # ever measured. A printf that silently did not land leaves the previous
+    # VERSION in place, and the preparation arm then answers a different
+    # question correctly and looks right doing it.
+    vu_rl_prep_v="$(LC_ALL=C awk '{ sub(/\r$/, ""); if (length($0)) { print; exit } }' "$vu_d/VERSION" 2>/dev/null)"
+    vu_rl_prep_tagged="$(git -C "$vu_d" tag -l 2>/dev/null | LC_ALL=C awk '$0 == "1.1.0" { n++ } END { print n + 0 }')"
+    [ "$vu_rl_prep_v" = 1.1.0 ] || vu_bad="$vu_bad the-fixture-version-is-[${vu_rl_prep_v:-empty}]-not-1.1.0"
+    [ "${vu_rl_prep_tagged:-1}" = 0 ] || vu_bad="$vu_bad a-tag-already-names-1.1.0-so-this-is-not-the-untagged-case"
     # On a pull request this is a release in preparation and it passes.
     vu_rl_rc_prep="$(vu_rel "$vu_d")"
     [ "$vu_rl_rc_prep" = 0 ] || vu_bad="$vu_bad preparation-rc:$vu_rl_rc_prep"
@@ -10854,6 +10875,67 @@ else
     vu_says 'NO-NOTES' || vu_bad="$vu_bad empty-notes-gave-no-reason"
     [ "${vu_nn_tagged:-1}" = 0 ] || vu_bad="$vu_bad it-tagged-a-release-with-no-notes"
 
+    # -- a heading inside a fenced code block ------------------------------
+
+    # A SEPARATE FIXTURE, because the one above is mid-sequence and every arm
+    # there reads its state.
+    #
+    # Two things meet here and neither had a control. The extraction learned to
+    # track code fences last round, so that a `## ` inside one stops truncating
+    # the message, and nothing asserted it - the fixture changelogs carry no
+    # fenced block at all, so that arm of the extraction has been dead code
+    # since it was written. And the guard that decides whether the extraction
+    # runs read the same file by the OTHER rule, taking the first `## ` line
+    # anywhere, fences included.
+    #
+    # Disagreeing like that is worse than either alone. With a fenced example
+    # heading the version being released sitting above the real entry, the
+    # guard agreed the newest entry was the right one and the extraction then
+    # skipped that line and took the entry BELOW it, so the tag was written
+    # under one version carrying another version's notes while the success line
+    # named the first. This builds exactly that shape and asserts the tag
+    # message is the entry the tag is named for.
+    vu_fc="$VU/release-fence"
+    vu_make "$vu_fc" 1.0.0
+    printf '# Changelog\n\n## 1.0.0 - 2026-01-01\n\nThe first one.\n\n### Adopting this\n\nNothing to do.\n' > "$vu_fc/CHANGELOG.md"
+    vu_git "$vu_fc"
+    vu_tag "$vu_fc" 1.0.0
+    printf '1.1.0\n' > "$vu_fc/VERSION"
+    # The fenced example heads 1.1.0, the same version the real entry heads and
+    # the same one VERSION says, which is what makes the two readers disagree
+    # about WHICH line they matched rather than about the number.
+    printf '# Changelog\n\nHead an entry like this.\n\n```\n## 1.1.0\n```\n\n## 1.1.0 - 2026-02-01\n\nThe real second one.\n\n### Adopting this\n\nNothing to do.\n\n## 1.0.0 - 2026-01-01\n\nThe first one.\n\n### Adopting this\n\nNothing to do.\n' > "$vu_fc/CHANGELOG.md"
+    vu_git "$vu_fc"
+    # Measured before the run. The fenced heading has to be present and above
+    # the real one, or this is asking an ordinary question and the disagreement
+    # under test is never reached.
+    vu_fc_fenced="$(LC_ALL=C awk '/^```/ { f = 1 - f; next } f && /^## 1\.1\.0$/ { n++ } END { print n + 0 }' "$vu_fc/CHANGELOG.md")"
+    vu_fc_real="$(LC_ALL=C awk '/^```/ { f = 1 - f; next } !f && /^## 1\.1\.0 / { n++ } END { print n + 0 }' "$vu_fc/CHANGELOG.md")"
+    vu_rc_fc="$(vu_rel "$vu_fc" --tag)"
+    vu_fc_msg="$(git -C "$vu_fc" tag -l -n99 1.1.0 2>/dev/null)"
+    vu_fc_tagged="$(git -C "$vu_fc" tag -l 2>/dev/null | LC_ALL=C awk '$0 == "1.1.0" { n++ } END { print n + 0 }')"
+    [ "${vu_fc_fenced:-0}" = 1 ] || vu_bad="$vu_bad the-fenced-heading-was-not-planted"
+    [ "${vu_fc_real:-0}" = 1 ] || vu_bad="$vu_bad the-real-entry-was-not-planted"
+    [ "$vu_rc_fc" = 0 ] || vu_bad="$vu_bad fenced-cut-rc:$vu_rc_fc"
+    [ "${vu_fc_tagged:-0}" = 1 ] || vu_bad="$vu_bad the-fenced-case-cut-no-tag"
+    # The message is the entry the tag is NAMED for, which is the whole point.
+    case "$vu_fc_msg" in
+      *"The real second one."*) : ;;
+      *) vu_bad="$vu_bad the-tag-message-is-not-the-entry-the-tag-is-named-for-[${vu_fc_msg:-empty}]" ;;
+    esac
+    # And it does not stop at the fenced heading, which is the truncation the
+    # fence tracking exists to prevent.
+    case "$vu_fc_msg" in
+      *"### Adopting this"*) : ;;
+      *) vu_bad="$vu_bad the-fenced-heading-truncated-the-tag-message-[${vu_fc_msg:-empty}]" ;;
+    esac
+    # And it did not swallow the entry below the one being released, which is
+    # what an unbalanced fence would do.
+    case "$vu_fc_msg" in
+      *"The first one."*) vu_bad="$vu_bad the-tag-message-swallowed-the-older-entry-too" ;;
+      *) : ;;
+    esac
+
     ran tmpl-release-cut
     if [ -z "$vu_bad" ]; then
       ok "cutting a release writes the annotated tag the tree is owed with its changelog entry as the message, prints the two commands that publish it and pushes nothing to a remote that was standing there ready to receive it, refuses a second cut of the same version without also calling it clean, and refuses to tag a version whose changelog entry is a heading with nothing under it"
@@ -10938,6 +11020,13 @@ else
     vu_git "$vu_eqc"
     vu_tag "$vu_eqc" 1.0.0
     vu_bad=''
+    # Measured before the loop. Every arm below rests on the 1.0.0 tag being
+    # there, and nothing measured it. A tag step that silently did not land
+    # sends all three cases to NO-TAGS on 2 instead, which the exit codes catch
+    # but report as the wrong thing entirely, so the control would fail for a
+    # reason that has nothing to do with the comparators it is named for.
+    vu_eqc_tagged="$(git -C "$vu_eqc" tag -l 2>/dev/null | LC_ALL=C awk '$0 == "1.0.0" { n++ } END { print n + 0 }')"
+    [ "${vu_eqc_tagged:-0}" = 1 ] || vu_bad="$vu_bad the-fixture-carries-no-1.0.0-tag-so-nothing-could-be-compared-against"
     vu_eqc_n=0
     # Each of these is the same number as the 1.0.0 tag written differently, so
     # none of them is above it and none may be offered as a release to prepare.
