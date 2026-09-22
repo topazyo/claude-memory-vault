@@ -153,6 +153,38 @@ V="$(LC_ALL=C awk '{ sub(/\r$/, ""); if (length($0)) { print; exit } }' "$VERSIO
   exit 2
 }
 
+# Digits and dots, and the same grammar the tag filter below applies, because
+# the version and the tag have to be the same string for any of this to mean
+# anything. Reading it and never checking it was a real hole with three
+# separate consequences, and they are worth naming because each one fails
+# quietly in its own way.
+#
+# A version like 1.2.0-rc1 passes the ordering, because the comparator converts
+# each field with awk's numeric coercion and "0-rc1" becomes 0, so --tag writes
+# the literal tag 1.2.0-rc1 and git accepts it as a refname. Every later run
+# then filters that tag out as not spelling a version, so it is absent from the
+# newest-tag calculation and INVISIBLE, which is precisely the failure the
+# prefixed-tag refusal further down exists to prevent. Only the v spelling was
+# refused.
+#
+# A trailing space is worse, because it is invisible in a terminal. Git refuses
+# a refname ending in a space, so the tag never matches, plain verification
+# says "release in preparation" and leaves on 0 for ever, and --tag reports
+# that VERSION says 1.2.0 and the changelog heads [1.2.0] - two strings that
+# are byte-different and look identical. The carriage return was thought about
+# here and the space was not.
+#
+# And the value reaches git as a REVISION EXPRESSION rather than as a tag name,
+# so 1.1.0^ or 1.1.0^{} verifies, orders, and then drives the comparison
+# against a commit that is not any release while every message calls it a tag.
+case "$V" in
+  *[!0-9.]*|.*|*.|*..*|'')
+    warn "VERSION-SPELLING - $VERSION_FILE says [$V] and a version here is digits separated by single dots, so nothing could be compared against it."
+    warn "This is refused rather than tried because the value reaches git as a revision expression and as a tag name. A version this file accepts and the tag filter does not would be tagged once and then never seen again, which is the same silence a leading letter would cause."
+    exit 1
+    ;;
+esac
+
 # The same numeric comparison `version_older` makes in vault-update.sh, and
 # deliberately a second copy of it rather than a shared function. That script is
 # shipped into every vault and this one is not, so lifting ten lines of awk into
@@ -248,6 +280,27 @@ if git -C "$ROOT" rev-parse -q --verify "refs/tags/$V" >/dev/null 2>&1; then
     exit 2
   fi
 
+  # The shipped set has to be spelled the way git spells a path, or the
+  # comparison below intersects two vocabularies and comes back empty however
+  # much has moved. A count above zero is not enough for that, which is why
+  # this is a second guard rather than part of the one above.
+  #
+  # The channels are real even though none of them is open today. A trailing
+  # carriage return on manifest lines and not on git's output, a quoted octal
+  # escape on one side only, or a leading ./ would each collapse the answer to
+  # zero and print "nothing is owed" over a tree that owes a release. The
+  # defences are `.gitattributes` pinning these files to one line ending and
+  # both sides disabling quotePath, and every one of those lives in another
+  # file. This turns "the two sides speak the same language" from something
+  # assumed into a number.
+  OVERLAP="$(git -C "$ROOT" -c core.quotePath=false ls-files 2>/dev/null \
+    | LC_ALL=C awk 'NR == FNR { s[$0] = 1; next } ($0 in s) { n++ } END { print n + 0 }' "$SCRATCH/shipped" -)"
+  if [ "${OVERLAP:-0}" -eq 0 ]; then
+    warn "SHIPPED-UNKNOWN - the manifest names $SHIPPED_N shipped path(s) and git's own list of tracked files matches none of them, so the two sides are spelling paths differently and nothing below could ever find a change."
+    warn "A trailing carriage return on one side, a quoted escape on one side, or a leading dot-slash each look exactly like this. Nothing was compared."
+    exit 2
+  fi
+
   # One `git diff` over the whole tree and then a filter, rather than a diff
   # narrowed by ninety pathspecs. The narrowed form is the obvious one and it
   # runs into the command line length limit on Windows at a size this
@@ -260,7 +313,31 @@ if git -C "$ROOT" rev-parse -q --verify "refs/tags/$V" >/dev/null 2>&1; then
   # core.quotePath off, because git otherwise escapes a non-ASCII name into a
   # spelling that matches no manifest path and the file would be filtered out
   # of its own report.
-  git -C "$ROOT" -c core.quotePath=false diff --name-only "$V" -- > "$SCRATCH/diffed" 2>/dev/null
+  #
+  # --no-renames, and this is not tidiness. Rename detection is on by default,
+  # and --name-only prints ONE line per renamed pair, the destination. Retire a
+  # shipped file by moving it somewhere the manifest does not ship and the only
+  # path printed is the new unshipped one, which the filter below drops, so a
+  # shipped file vanishes and nothing is owed. With renames off the pair is a
+  # delete and an add and both paths are printed.
+  #
+  # THE EXIT STATUS IS READ. It was not, and that was the sharpest defect in
+  # this file, because every way this command can fail leaves an empty file, a
+  # changed count of zero, and the words "this tree is the $V release and
+  # nothing is owed" on exit 0. A failure of the check was indistinguishable
+  # from a clean release, in the one script written against exactly that. Two
+  # reachable causes were named: another git process holding index.lock, which
+  # this command trips over because it refreshes the index against the working
+  # tree, and a tag whose ref resolves while its commit object is absent, which
+  # is what a shallow fetch of a tag looks like. Stderr is kept and shown
+  # rather than discarded.
+  if ! git -C "$ROOT" -c core.quotePath=false diff --no-renames --name-only "$V" -- \
+       > "$SCRATCH/diffed" 2> "$SCRATCH/differr"; then
+    warn "DIFF-FAILED - git could not compare this tree against the $V tag, so whether a release is owed is unknown."
+    LC_ALL=C sed 's/^/  /' "$SCRATCH/differr" >&2
+    warn "Another git process holding the index lock and a tag whose commit object was never fetched both look like this. Nothing was compared, and this is NOT saying the release is up to date."
+    exit 2
+  fi
   LC_ALL=C awk '
     NR == FNR { ship[$0] = 1; next }
     ($0 in ship) { print }
@@ -319,8 +396,10 @@ if [ "$MODE" = tag ]; then
     warn "NO-NOTES - the $V entry in CHANGELOG.md is empty, so there are no notes to tag $V with."
     exit 1
   fi
-  git -C "$ROOT" tag -a "$V" -F "$NOTES" || {
+  git -C "$ROOT" tag -a "$V" -F "$NOTES" 2> "$SCRATCH/tagerr" || {
     warn "TAG-FAILED - git would not write the $V tag, so nothing was cut."
+    LC_ALL=C sed 's/^/  /' "$SCRATCH/tagerr" >&2
+    warn "An annotated tag carries a tagger, so the commonest cause is a checkout with no user.name and user.email set. This does not set them for you, because whose name goes on a release is not a script's decision."
     exit 1
   }
   say "Annotated tag $V written into this repository, with the CHANGELOG.md $V entry as its message."

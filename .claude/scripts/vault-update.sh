@@ -1702,20 +1702,41 @@ do_check() {  # do_check <dir>
     # that it has not changed" into something the reader can settle in one
     # command.
     printf '\nSafe to take (%s). You have not touched these, so copying them loses nothing. The digest beside each one is what this run hashed out of %s, so you can check that what you copy is what was read:\n' "$(( take + new ))" "$dir"
-    # Named into a variable with its absence handled, rather than handed to awk
-    # and hoped for. verify_source always writes this file before anything here
-    # runs, and if that ever stops being true awk would fail to open it, print
-    # nothing at all, and empty the one list a reader acts on. A list that
-    # vanished would read as nothing being safe to take, which is the quiet
-    # direction.
+    # THE DIGESTS ARE READ IN BEGIN, NOT AS A FIRST FILE OPERAND, and an
+    # earlier version of this did the latter with a /dev/null fallback for a
+    # missing file. That fallback produced exactly the failure it was written
+    # to prevent. `NR == FNR` is the two-file idiom and it breaks when the
+    # first file has no records at all: with an empty first operand, NR and FNR
+    # stay in lockstep through the whole of standard input, so every path was
+    # swallowed into the array and NOTHING was printed, under exit 0 with a
+    # heading above it still announcing a count. The list a reader acts on
+    # would have been empty and nothing would have said why.
+    #
+    # getline in BEGIN has no such dependence on argument order or on record
+    # counts, and the same shape is already used elsewhere in this script for
+    # the same reason. The path travels through the environment rather than
+    # through -v, because a -v assignment is escape processed and a Windows
+    # temporary path holds backslashes.
+    #
+    # The absence is reported rather than papered over. verify_source writes
+    # this file before anything here can run, so this cannot fire today, but a
+    # safety net that quietly changes the answer is worse than none.
     plan_digests="$TMPD/vs.raw"
-    [ -f "$plan_digests" ] || plan_digests=/dev/null
+    if [ ! -f "$plan_digests" ]; then
+      warn "WARNING - the digests measured from $dir are not where this expected them, so the copy plan below names paths without them."
+    fi
     { list_paths "$TMPD/ck.state" take owned; list_paths "$TMPD/ck.state" new owned; } \
       | LC_ALL=C sort \
-      | LC_ALL=C awk '
-          NR == FNR { h[$2] = $1; next }
+      | vu_dig="$plan_digests" LC_ALL=C awk '
+          BEGIN {
+            d = ENVIRON["vu_dig"]
+            while ((getline line < d) > 0) {
+              n = split(line, f, " ")
+              if (n >= 2) h[f[2]] = f[1]
+            }
+          }
           { printf "  %s  %s\n", (($0 in h) ? h[$0] : "digest-unknown"), $0 }
-        ' "$plan_digests" -
+        '
   fi
   if [ "$merge" -gt 0 ]; then
     printf '\nMoved upstream and changed here (%s). Nothing will overwrite these. Read each one with --diff and merge it yourself:\n' "$merge"
