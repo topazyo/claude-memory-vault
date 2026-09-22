@@ -10961,7 +10961,17 @@ else
     # under test is never reached.
     vu_fc_fenced="$(LC_ALL=C awk '/^```/ { f = 1 - f; next } f && /^## 1\.1\.0$/ { n++ } END { print n + 0 }' "$vu_fc/CHANGELOG.md")"
     vu_fc_real="$(LC_ALL=C awk '/^```/ { f = 1 - f; next } !f && /^## 1\.1\.0 / { n++ } END { print n + 0 }' "$vu_fc/CHANGELOG.md")"
-    vu_rc_fc="$(vu_rel "$vu_fc" --tag)"
+    # THE IDENTITY IS HANDED IN, the same way the cut arm above hands it in and
+    # for the same reason. An annotated tag carries a tagger and a runner has no
+    # git identity, so a plain call here takes TAG-FAILED and leaves on 1 while
+    # passing on any developer machine that has a global identity configured.
+    # This arm was written without it and did exactly that, green locally and
+    # red on every CI job, which is round one's finding about this very script
+    # arriving again in new code.
+    vu_rc_fc="$( cd "$vu_fc" && CLAUDE_PROJECT_DIR="$vu_fc" \
+      GIT_COMMITTER_NAME=suite GIT_COMMITTER_EMAIL=suite@example.invalid \
+      GIT_AUTHOR_NAME=suite GIT_AUTHOR_EMAIL=suite@example.invalid \
+      "$VU_BASH" "$VU_REL" --tag > "$VU_OUT" 2>&1; printf '%s' "$?" )"
     vu_fc_msg="$(git -C "$vu_fc" tag -l -n99 1.1.0 2>/dev/null)"
     vu_fc_tagged="$(git -C "$vu_fc" tag -l 2>/dev/null | LC_ALL=C awk '$0 == "1.1.0" { n++ } END { print n + 0 }')"
     [ "${vu_fc_fenced:-0}" = 1 ] || vu_bad="$vu_bad the-fenced-heading-was-not-planted"
@@ -11011,7 +11021,17 @@ else
     # answering something else.
     vu_fd_fenced="$(LC_ALL=C awk '/^```/ { f = 1 - f; next } f && /^## 1\.2\.0$/ { n++ } END { print n + 0 }' "$vu_fd/CHANGELOG.md")"
     vu_fd_real="$(LC_ALL=C awk '/^```/ { f = 1 - f; next } !f && /^## 1\.1\.0 / { n++ } END { print n + 0 }' "$vu_fd/CHANGELOG.md")"
-    vu_rc_fd="$(vu_rel "$vu_fd" --tag)"
+    # The identity again, and here it decides whether the control can fail at
+    # all rather than merely whether it passes. This arm expects a refusal
+    # BEFORE any tag is written, so without an identity a run that wrongly got
+    # past the guard would reach git tag, take TAG-FAILED, leave on 1 and write
+    # no tag, which is exactly what the assertions below are looking for. The
+    # control would then be green on every runner while the defect it exists to
+    # catch stood.
+    vu_rc_fd="$( cd "$vu_fd" && CLAUDE_PROJECT_DIR="$vu_fd" \
+      GIT_COMMITTER_NAME=suite GIT_COMMITTER_EMAIL=suite@example.invalid \
+      GIT_AUTHOR_NAME=suite GIT_AUTHOR_EMAIL=suite@example.invalid \
+      "$VU_BASH" "$VU_REL" --tag > "$VU_OUT" 2>&1; printf '%s' "$?" )"
     vu_fd_tagged="$(git -C "$vu_fd" tag -l 2>/dev/null | LC_ALL=C awk '$0 == "1.2.0" { n++ } END { print n + 0 }')"
     [ "${vu_fd_fenced:-0}" = 1 ] || vu_bad="$vu_bad the-fenced-heading-for-the-released-version-was-not-planted"
     [ "${vu_fd_real:-0}" = 1 ] || vu_bad="$vu_bad the-older-real-entry-was-not-planted"
