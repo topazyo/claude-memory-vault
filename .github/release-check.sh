@@ -29,6 +29,13 @@
 #   byte for byte what that tag holds, because the tree is claiming to BE that
 #   release. A shipped file that differs is a change no vault can discover.
 #
+#   And WHICH files those are has to match too. The set is not a fact about the
+#   tree, it is a statement in `.claude/template-manifest`, so a path can start
+#   or stop being shipped, or move between `owned` and `seed`, without any
+#   file's bytes changing at all. That is as much a change no vault can
+#   discover as an edit is, and for a while it was the one this asked nothing
+#   about.
+#
 #   VERSION names no tag. Then a release is in preparation, which is a fine
 #   state for a pull request and not a fine state for the branch releases are
 #   cut from. On that branch an untagged version is the exact debt this script
@@ -79,8 +86,9 @@
 #
 #   NO-GIT · NO-VERSION · VERSION-SPELLING · TAG-SPELLING · NO-TAGS ·
 #   NO-SCRATCH · NO-MANIFEST · TAG-WITHOUT-MANIFEST · VACUOUS ·
-#   SHIPPED-UNKNOWN · DIFF-FAILED · UNRELEASED-CHANGES · VERSION-GOES-BACKWARD ·
-#   UNTAGGED-VERSION · ALREADY-TAGGED · NO-NOTES · TAG-FAILED
+#   SHIPPED-UNKNOWN · DIFF-FAILED · UNRELEASED-CHANGES ·
+#   SHIPPED-RECLASSIFIED · VERSION-GOES-BACKWARD · UNTAGGED-VERSION ·
+#   ALREADY-TAGGED · NO-NOTES · TAG-FAILED
 #
 # Four of those names also exist in `vault-update.sh` and do not mean the same
 # thing there, which is worth knowing before grepping both at once. NO-GIT,
@@ -385,19 +393,49 @@ if git -C "$ROOT" rev-parse -q --verify "refs/tags/$V" >/dev/null 2>&1; then
   # The field count is checked in the same pass. A line short of three fields
   # used to contribute an empty path, which inflated every count by one and put
   # a blank line into a set that is compared against git's.
-  shipped_paths() {  # shipped_paths, filtering a manifest on standard input
-    LC_ALL=C awk '
+  # THE CLASS IS READ ALONGSIDE THE PATH, by ONE reader, and the path lists
+  # below are taken off what it wrote rather than from a second pass over the
+  # same manifests. The shipped SET is compared against the tag further down
+  # and that comparison needs the class, so a second manifest reader was the
+  # obvious shape - and it would have put the field-count guard and the
+  # rest-of-the-line strip in two places. This repository has already been
+  # bitten twice by one fix landing in one of the two places that needed it,
+  # and a manifest line is parsed in exactly one place here for that reason.
+  #
+  # The side is marked in the line rather than kept in two files, because the
+  # comparison further down reads both sides at once and awk's NR == FNR idiom
+  # is true for the SECOND file's lines when the first file is empty. An empty
+  # tag side is reachable, so the two sides would be read as one.
+  #
+  # The separator is a single space and the marker and the class hold none, so
+  # stripping exactly two space-delimited fields gives the path back whatever
+  # it holds, a space or a tab included.
+  shipped_classed() {  # shipped_classed <side>, filtering a manifest on standard input
+    # The side reaches awk through the environment rather than through -v,
+    # because -v processes backslash escapes in the value it is handed.
+    RC_SIDE="$1" LC_ALL=C awk '
+      BEGIN { side = ENVIRON["RC_SIDE"] }
       { sub(/\r$/, "") }
       ($1 == "owned" || $1 == "seed") && NF >= 3 {
         p = $0
         sub(/^[^ ]+[ ]+[^ ]+[ ]+/, "", p)
-        if (length(p)) print p
+        if (length(p)) print side " " $1 " " p
       }'
   }
-  shipped_paths < "$ROOT/$MANIFEST_REL" 2>/dev/null | LC_ALL=C sort -u > "$SCRATCH/shipped.now"
+  side_paths() {  # side_paths <side>, one side of that list with the marker and class taken off
+    RC_SIDE="$1" LC_ALL=C awk '
+      BEGIN { side = ENVIRON["RC_SIDE"] }
+      $1 == side {
+        p = $0
+        sub(/^[^ ]+ [^ ]+ /, "", p)
+        if (length(p)) print p
+      }' "$SCRATCH/classed"
+  }
+  shipped_classed now < "$ROOT/$MANIFEST_REL" 2>/dev/null > "$SCRATCH/classed"
   git -C "$ROOT" show "$V:$MANIFEST_REL" 2>/dev/null \
-    | shipped_paths \
-    | LC_ALL=C sort -u > "$SCRATCH/shipped.tag"
+    | shipped_classed tag >> "$SCRATCH/classed"
+  side_paths now | LC_ALL=C sort -u > "$SCRATCH/shipped.now"
+  side_paths tag | LC_ALL=C sort -u > "$SCRATCH/shipped.tag"
   LC_ALL=C sort -u "$SCRATCH/shipped.now" "$SCRATCH/shipped.tag" > "$SCRATCH/shipped"
   SHIPPED_N="$(LC_ALL=C awk 'END { print NR + 0 }' "$SCRATCH/shipped")"
 
@@ -543,6 +581,79 @@ if git -C "$ROOT" rev-parse -q --verify "refs/tags/$V" >/dev/null 2>&1; then
     warn "UNRELEASED-CHANGES - $CHANGED_N of the $SHIPPED_N file(s) this template ships differ from the $V tag, and VERSION still says $V, so a vault fetching $V does not get them."
     warn "Changed since $V, and unreachable by anybody downstream:"
     LC_ALL=C sed 's/^/  /' "$SCRATCH/changed" >&2
+    warn "Set VERSION to a number above $V, add its CHANGELOG.md entry with an Adopting this note, regenerate the manifest, and cut the release."
+    warn "  VAULT_TEMPLATE_MAINTAINER=1 bash .claude/scripts/vault-update.sh --generate"
+    warn "  bash .github/release-check.sh --tag"
+    exit 1
+  fi
+
+  # ------------------------------------ and the shipped SET, not its bytes --
+
+  # THE SHIPPED SET IS ITSELF SOMETHING THIS TEMPLATE SHIPS, and everything
+  # above compares file CONTENT. A path's class lives in the manifest and
+  # nowhere else, the manifest is classed `excluded` and so is not a shipped
+  # file, and `.claude/manifest-rules` is excluded beside it. So a commit that
+  # moves a path between `owned`, `seed` and `excluded` and regenerates the
+  # manifest changes what every vault downstream is told this template ships,
+  # while the only two files whose bytes moved are the two the filter above
+  # drops. CHANGED_N is 0 and the clean line prints on exit 0. That is the
+  # fail-open this whole file is written against, reached through the one input
+  # to the shipped set that was never held against a tag.
+  #
+  # Both directions are real and they fail differently. A path moving INTO the
+  # set means vaults are never offered a file the template has started
+  # maintaining. A path moving OUT is worse, because it is durable. Once any
+  # later release is cut for some other reason, the new tag's manifest does not
+  # name it either, it is then in neither side of the union, and every later
+  # change to it is filtered out of every comparison for good.
+  #
+  # CLASS AND PATH, rather than path alone. `owned` and `seed` are different
+  # promises - the template maintains one and hands the other over - and
+  # `vault-update.sh` reads that class out of the manifest to decide what a
+  # vault is offered. A path moving between them stays in a path-only set and
+  # is invisible to it.
+  #
+  # AFTER the content comparison, because an ordinary release-owing change
+  # moves a file's bytes too and UNRELEASED-CHANGES is the wording that names
+  # it. This is left to fire on what nothing else can see, and that placement is
+  # what lets its message say plainly that no file's bytes moved: reaching this
+  # line at all means CHANGED_N was 0.
+  #
+  # NOTHING IS RE-READ HERE. The classed list this works from is the same one
+  # the shipped paths above were taken off, so a manifest is parsed once and
+  # the two answers cannot disagree about what it said. Everything that guards
+  # that read - the readable-manifest refusal, the vacuity count and the
+  # overlap guard - therefore guards this too, and a classed list that went
+  # missing or came out half written has already been refused above rather than
+  # arriving here as an absence of reclassification.
+  LC_ALL=C awk '
+    {
+      c = $2
+      p = $0
+      sub(/^[^ ]+ [^ ]+ /, "", p)
+    }
+    NF >= 3 && $1 == "tag" { if (!seen[p]++) order[++n] = p; was[p] = c; next }
+    NF >= 3 && $1 == "now" { if (!seen[p]++) order[++n] = p; here[p] = c; next }
+    END {
+      for (i = 1; i <= n; i++) {
+        p = order[i]
+        w = (p in was) ? was[p] : "not shipped"
+        u = (p in here) ? here[p] : "not shipped"
+        if (w != u) print p " was " w " at the tag and is " u " in this tree"
+      }
+    }
+  ' "$SCRATCH/classed" > "$SCRATCH/reclassed"
+  RECLASSED_N="$(LC_ALL=C awk 'END { print NR + 0 }' "$SCRATCH/reclassed")"
+  if [ -z "$RECLASSED_N" ]; then
+    warn "NO-SCRATCH - the reclassified set in $SCRATCH could not be counted, so whether what this template ships has moved between classes is unknown, and this is NOT saying the release is up to date."
+    exit 2
+  fi
+
+  if [ "$RECLASSED_N" -gt 0 ]; then
+    warn "SHIPPED-RECLASSIFIED - $RECLASSED_N path(s) are shipped differently by this tree than by the $V tag, and VERSION still says $V, so a vault fetching $V is told this template ships something other than what it ships."
+    warn "No shipped file's bytes moved to say so, which is why the comparison above found nothing. A class is recorded in $MANIFEST_REL and nowhere else, and neither that file nor .claude/manifest-rules is itself shipped, so this is the only thing that reads it."
+    warn "Shipped differently since $V:"
+    LC_ALL=C sed 's/^/  /' "$SCRATCH/reclassed" >&2
     warn "Set VERSION to a number above $V, add its CHANGELOG.md entry with an Adopting this note, regenerate the manifest, and cut the release."
     warn "  VAULT_TEMPLATE_MAINTAINER=1 bash .claude/scripts/vault-update.sh --generate"
     warn "  bash .github/release-check.sh --tag"

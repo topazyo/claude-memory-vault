@@ -8108,6 +8108,7 @@ if ! command -v git >/dev/null 2>&1; then
   skip tmpl-release-ignores-git-dir "the release controls build a tagged git fixture, and git is not installed"
   skip tmpl-release-vacuous "the release controls build a tagged git fixture, and git is not installed"
   skip tmpl-release-tag-without-manifest "the release controls build a tagged git fixture, and git is not installed"
+  skip tmpl-release-reclassified "the release controls build a tagged git fixture, and git is not installed"
   # This one grew a git fixture when it stopped grepping the rules file for a
   # spelling and started putting it in front of the real generator.
   skip tmpl-shipped-rules-have-no-catchall "the template update controls build git fixtures, and git is not installed"
@@ -10538,6 +10539,7 @@ else
     skip tmpl-release-ignores-git-dir "$VU_REL is not present, so this is a vault rather than the template project and there is no release to keep up with"
     skip tmpl-release-vacuous "$VU_REL is not present, so this is a vault rather than the template project and there is no release to keep up with"
     skip tmpl-release-tag-without-manifest "$VU_REL is not present, so this is a vault rather than the template project and there is no release to keep up with"
+    skip tmpl-release-reclassified "$VU_REL is not present, so this is a vault rather than the template project and there is no release to keep up with"
   else
     vu_d="$VU/release"
     vu_make "$vu_d" 1.0.0
@@ -10698,6 +10700,141 @@ else
       ok "a tree matching its tag is owed nothing, a change to a file the template does not ship is owed nothing, and a change to one it does is refused by name, including one the tag shipped and this tree has deleted"
     else
       bad "the release check did not tell a shipped change from an unshipped one --$vu_bad [$(vu_excerpt)]"
+    fi
+
+    # -- the shipped SET moving, with no file's bytes moving ----------------
+
+    # WHICH FILES THE TEMPLATE SHIPS IS ITSELF SOMETHING IT SHIPS, and every
+    # arm above moves a file's bytes. The class a path is shipped under is
+    # recorded in the manifest and nowhere else, and the manifest and the rules
+    # that generate it are both excluded, so they are not shipped files. A
+    # commit that moves a path between owned, seed and excluded and regenerates
+    # the manifest therefore changed what every vault downstream is told this
+    # template ships, while the only two files whose bytes moved were the two
+    # the comparison filters out. The check printed that nothing was owed, on
+    # exit 0, which is the one shape this whole script exists to prevent.
+    #
+    # THREE DIRECTIONS IN ONE FIXTURE, because they fail differently and a
+    # control holding one of them would leave the other two free to regress.
+    # A path leaving the set is the durable one: once any later release is cut
+    # for some other reason, the new tag's manifest does not name it either, it
+    # is then in neither side of the union, and every later change to it is
+    # filtered out of every comparison for good.
+    vu_rk="$VU/release-reclassified"
+    vu_make "$vu_rk" 1.0.0
+    # The changelog needs a rule of its own, because this fixture regenerates
+    # its manifest and generation refuses a tracked file no rule classifies. It
+    # starts excluded so that one arm can move it the other way, into the set.
+    printf 'excluded\tCHANGELOG.md\n' >> "$vu_rk/.claude/manifest-rules"
+    printf '# Changelog\n\n## 1.0.0 - 2026-01-01\n\nThe first one.\n\n### Adopting this\n\nNothing to do.\n' > "$vu_rk/CHANGELOG.md"
+    vu_git "$vu_rk"
+    vu_gen "$vu_rk"
+    vu_git "$vu_rk"
+    vu_tag "$vu_rk" 1.0.0
+
+    vu_bad=''
+    # The fixture as tagged, before anything moves. A refusal here would mean
+    # the arms below were reading a tree that already owed a release, and every
+    # one of them would then pass for a reason that has nothing to do with
+    # classes.
+    vu_rk_rc_clean="$(vu_rel "$vu_rk")"
+    [ "$vu_rk_rc_clean" = 0 ] || vu_bad="$vu_bad reclass-clean-rc:$vu_rk_rc_clean"
+    vu_says 'nothing is owed' || vu_bad="$vu_bad reclass-clean-did-not-say-so"
+    vu_says 'SHIPPED-RECLASSIFIED' && vu_bad="$vu_bad reclass-clean-was-called-reclassified"
+
+    # docs/* leaves the shipped set, README.md stays in it under the other
+    # promise, and CHANGELOG.md joins it. Rewritten line by line rather than
+    # regenerated from scratch, because every other rule in the fixture has to
+    # survive or generation refuses a tracked file nothing classifies and the
+    # manifest is left exactly as it was.
+    LC_ALL=C awk '
+      $0 == "owned\tdocs/*"          { print "excluded\tdocs/*"; next }
+      $0 == "seed\tREADME.md"        { print "owned\tREADME.md"; next }
+      $0 == "excluded\tCHANGELOG.md" { print "owned\tCHANGELOG.md"; next }
+      { print }
+    ' "$vu_rk/.claude/manifest-rules" > "$vu_rk/.claude/rules.rewritten" 2>/dev/null
+    mv -f "$vu_rk/.claude/rules.rewritten" "$vu_rk/.claude/manifest-rules" 2>/dev/null
+    # Measured, because an awk that matched nothing leaves the rules exactly as
+    # they were, the manifest regenerates identically, and the run below then
+    # answers "nothing is owed" correctly about a fixture that never moved.
+    # That reads the same as the defect being back.
+    vu_rk_rules="$(LC_ALL=C awk '
+      $0 == "excluded\tdocs/*"    { d++ }
+      $0 == "owned\tREADME.md"    { r++ }
+      $0 == "owned\tCHANGELOG.md" { c++ }
+      END { print (d + 0) "-" (r + 0) "-" (c + 0) }' "$vu_rk/.claude/manifest-rules" 2>/dev/null)"
+    [ "${vu_rk_rules:-none}" = 1-1-1 ] \
+      || vu_bad="$vu_bad the-three-rules-did-not-move-[${vu_rk_rules:-unmeasurable}]"
+    vu_gen "$vu_rk"
+    vu_git "$vu_rk"
+
+    # What the two manifests now say about each path, read from the tag and
+    # from the tree separately, so that a generation which quietly did nothing
+    # cannot look like a reclassification the check failed to see.
+    vu_rk_tag_docs="$(git -C "$vu_rk" show '1.0.0:.claude/template-manifest' 2>/dev/null | LC_ALL=C awk '$3 == "docs/a.md" { print $1 }')"
+    vu_rk_now_docs="$(LC_ALL=C awk '$3 == "docs/a.md" { print $1 }' "$vu_rk/.claude/template-manifest" 2>/dev/null)"
+    vu_rk_tag_rdme="$(git -C "$vu_rk" show '1.0.0:.claude/template-manifest' 2>/dev/null | LC_ALL=C awk '$3 == "README.md" { print $1 }')"
+    vu_rk_now_rdme="$(LC_ALL=C awk '$3 == "README.md" { print $1 }' "$vu_rk/.claude/template-manifest" 2>/dev/null)"
+    vu_rk_tag_cl="$(git -C "$vu_rk" show '1.0.0:.claude/template-manifest' 2>/dev/null | LC_ALL=C awk '$3 == "CHANGELOG.md" { print $1 }')"
+    vu_rk_now_cl="$(LC_ALL=C awk '$3 == "CHANGELOG.md" { print $1 }' "$vu_rk/.claude/template-manifest" 2>/dev/null)"
+    [ "${vu_rk_tag_docs:-absent}" = owned ] || vu_bad="$vu_bad docs/a.md-is-[${vu_rk_tag_docs:-absent}]-at-the-tag-rather-than-owned"
+    [ -z "$vu_rk_now_docs" ] || vu_bad="$vu_bad docs/a.md-is-still-shipped-as-[$vu_rk_now_docs]-so-nothing-left-the-set"
+    [ "${vu_rk_tag_rdme:-absent}" = seed ] || vu_bad="$vu_bad README.md-is-[${vu_rk_tag_rdme:-absent}]-at-the-tag-rather-than-seed"
+    [ "${vu_rk_now_rdme:-absent}" = owned ] || vu_bad="$vu_bad README.md-is-[${vu_rk_now_rdme:-absent}]-now-rather-than-owned-so-no-path-changed-promise"
+    [ -z "$vu_rk_tag_cl" ] || vu_bad="$vu_bad CHANGELOG.md-was-already-shipped-as-[$vu_rk_tag_cl]-so-nothing-joined-the-set"
+    [ "${vu_rk_now_cl:-absent}" = owned ] || vu_bad="$vu_bad CHANGELOG.md-is-[${vu_rk_now_cl:-absent}]-now-rather-than-owned"
+
+    # THE ONE MEASUREMENT THAT MAKES THIS A CONTROL ABOUT CLASSES. If any
+    # shipped file's bytes also moved, the ordinary content comparison refuses
+    # the fixture first, every assertion below is satisfied by the wrong
+    # refusal, and the arm proves nothing about the shipped set. The default is
+    # one rather than zero, because zero is the answer that lets this pass and
+    # an unmeasurable count must not be read as the passing one.
+    vu_rk_bytes="$(git -C "$vu_rk" diff --no-renames --name-only 1.0.0 -- 2>/dev/null \
+      | LC_ALL=C awk '$0 != ".claude/manifest-rules" && $0 != ".claude/template-manifest" { n++ } END { print n + 0 }')"
+    [ "${vu_rk_bytes:-1}" = 0 ] \
+      || vu_bad="$vu_bad [${vu_rk_bytes:-unmeasurable}]-shipped-file(s)-bytes-also-moved-so-this-is-not-a-class-only-fixture"
+
+    # How many paths the fixture moved, taken from the fixture and from the
+    # deliberate construction rather than written as a literal or re-derived
+    # the way the script under test derives it. Everything the tag ships under
+    # docs/ leaves, and README.md and CHANGELOG.md make two more.
+    vu_rk_expect="$(git -C "$vu_rk" show '1.0.0:.claude/template-manifest' 2>/dev/null \
+      | LC_ALL=C awk '($1 == "owned" || $1 == "seed") && $3 ~ /^docs\// { n++ } END { print n + 2 }')"
+    # Above two, so that a count taken from one direction only is a different
+    # number and the assertion on it can fail. With everything moving the same
+    # way, that assertion would hold whichever direction was counted.
+    [ "${vu_rk_expect:-0}" -gt 2 ] 2>/dev/null \
+      || vu_bad="$vu_bad the-fixture-moved-[${vu_rk_expect:-unmeasurable}]-path(s)-so-the-count-cannot-tell-the-directions-apart"
+
+    vu_rk_rc="$(vu_rel "$vu_rk")"
+    [ "$vu_rk_rc" = 1 ] || vu_bad="$vu_bad reclassified-rc:$vu_rk_rc"
+    vu_says 'SHIPPED-RECLASSIFIED' || vu_bad="$vu_bad reclassified-gave-no-reason"
+    # Each direction named in its own words, because one sentence covering all
+    # three would be satisfied by an implementation that saw only one of them.
+    vu_says 'docs/a.md was owned at the tag and is not shipped in this tree' \
+      || vu_bad="$vu_bad the-path-that-left-the-set-was-not-named"
+    vu_says 'CHANGELOG.md was not shipped at the tag and is owned in this tree' \
+      || vu_bad="$vu_bad the-path-that-joined-the-set-was-not-named"
+    vu_says 'README.md was seed at the tag and is owned in this tree' \
+      || vu_bad="$vu_bad the-path-that-stayed-under-another-promise-was-not-named"
+    # And the number, read as a digit. Ten release controls once asserted
+    # wording and exit codes and not one read a digit out of a count line, so
+    # the number could have come from either direction and every one of them
+    # would still have passed.
+    vu_says "$vu_rk_expect path(s) are shipped differently" \
+      || vu_bad="$vu_bad the-count-line-is-not-$vu_rk_expect"
+    # Not the sibling refusal, which leaves by the same door with the same exit
+    # code. Without this the class comparison could be deleted outright and the
+    # arm would stay green as long as something else refused.
+    vu_says 'UNRELEASED-CHANGES' && vu_bad="$vu_bad reclassified-was-called-a-content-change"
+    vu_says 'nothing is owed' && vu_bad="$vu_bad reclassified-said-nothing-is-owed"
+
+    ran tmpl-release-reclassified
+    if [ -z "$vu_bad" ]; then
+      ok "a path that moves into the shipped set, out of it, or between owned and seed is refused by name with no file's bytes changing, rather than reported as a tree that owes nothing"
+    else
+      bad "the release check did not see a shipped set that had been reclassified --$vu_bad [$(vu_excerpt)]"
     fi
 
     # -- a version that names no tag ---------------------------------------
