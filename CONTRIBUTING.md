@@ -189,14 +189,17 @@ In a pull request that changes a shipped file:
    statements of the version disagree, and `tmpl-changelog-adopting` fails one whose newest entry
    carries no adopting note. Neither fires unless somebody runs the suite.
 
-After it merges, `main` carries a version that names no tag, and the hygiene job goes red saying
-so. Clearing that red takes three commands and then a re-run.
+After it merges, `main` carries a version that names no tag, and the repository hygiene job goes
+red saying so. Clearing that red takes the four steps below and then a re-run of that job.
 
-**Check out `main` and pull the merge first.** `--tag` tags whatever `HEAD` is, and it neither
-knows nor asks which branch that is. Run it from the feature branch, or from a `main` you have not
-pulled since the merge, and it writes the tag on the wrong commit — and a pushed tag is the one
-artefact here that cannot be quietly corrected. This is easy to get wrong because the person doing
-it is the likeliest to be sitting in a worktree on the branch that just merged.
+**Do this from the main checkout, with `main` pulled, and from the repository root.** `--tag` tags
+whatever `HEAD` is, and it neither knows nor asks which branch that is. Run it from the feature
+branch, or from a `main` you have not pulled since the merge, and it writes the tag on the wrong
+commit — and a pushed tag is the one artefact here that cannot be quietly corrected. This is easy
+to get wrong because the person doing it is the likeliest to be sitting in a linked worktree on the
+branch that just merged. Walk over to the main checkout rather than running `git checkout main`
+where you are, because git refuses a branch another worktree already holds and exits 128 saying so,
+and the two obvious ways around that refusal both end in a tag on the wrong commit.
 
 ```bash
 git checkout main && git pull
@@ -205,9 +208,10 @@ git push origin <the version>
 gh release create <the version> --title <the version> --notes-file <the file it named>
 ```
 
-The first writes the annotated tag with the changelog entry as its message, and prints the other
-two filled in. Those two are the only steps in cutting a release that reach the network, which is
-why they are printed rather than run. **The push is what clears the red**, because the job checks
+The second writes the annotated tag with the changelog entry as its message, and prints the last
+two filled in. Those last two are the only steps the script refuses to run for you, because they
+are the ones that publish something nobody can take back, so it prints them filled in rather than
+running them. **The push is what clears the red**, because the job checks
 out with tags and only sees the ones that have been pushed, so re-running it after the tag exists
 only locally leaves it exactly as red. Re-run the job after the push, because tagging does not
 re-trigger the workflow.
@@ -226,10 +230,10 @@ tags in the checkout, a tag whose tree holds no manifest, a shipped set git does
 a comparison git could not make. **The 2 matters:** a shallow clone has no tags and looks exactly
 like a project that has never released one, and those two want opposite responses. The CI step
 gives each of them its own annotation for that reason, because the usual answer to a red release
-check is to weaken it and the two want opposite answers.
+check is to weaken it.
 
 The script's header publishes every refusal tag it can print, so output can be grepped against a
-document rather than against a memory of one. Three of those names also appear in
+document rather than against a memory of one. Four of those names also appear in
 `vault-update.sh` and do not mean the same thing there, and the header says which.
 
 **The CI step is guarded by repository and is not path filtered.** A path filtered step shows as

@@ -33,6 +33,11 @@ itself merged first and tagged afterwards by hand.
 
 ### Added
 
+- `.github/release-check.sh`, which is what now enforces the rule the paragraph above says nothing
+  enforced. It refuses a default branch whose `VERSION` names no tag, and a tree whose shipped
+  files differ from the tag `VERSION` does name, so that every merge changing a shipped file is a
+  release. It belongs to the template project rather than to a vault and is never copied into one,
+  because a vault has no releases to cut, and `run-tests.sh` gains ten controls holding it.
 - `.claude/scripts/vault-update.sh --check` now prints the SHA-256 of each file in the safe-to-take
   list, says in that list's heading what the digest is, and says in the copy plan's own preamble
   that the plan describes the source folder as it was when the check read it. Nothing re-reads that
@@ -80,9 +85,14 @@ clone` of this template never produces. The folder you point `--from` at may its
 symlinked path, and that is not affected — only links below it are tested, because you chose that
 folder and the template did not.
 
-If you fetched this release with `--check`, read the digests in the safe-to-take list against the
-folder you are about to copy out of. That is what they are for, and it applies whether or not your
-vault is a git repository.
+**Take `.claude/scripts/vault-update.sh` first and on its own, then run `--check` again.** The
+digest column and the stricter symlink test are both inside that file, so the run that offers you
+this release is your old copy and cannot use either of them. The second run can. This is worth the
+extra pass because both of this release's safeguards protect the copying, and the copy that brings
+them in is the one they cannot cover.
+
+Once that second run is the one you are reading, check the digests in its safe-to-take list against
+the folder you are about to copy out of. That is what they are for.
 
 ---
 
