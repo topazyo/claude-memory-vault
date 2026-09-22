@@ -279,9 +279,8 @@ the harness's state somewhere else rather than widening the fence. Setup details
   notes that belong in a pull request are templates and the clearly-marked `EXAMPLE-` set. Personal
   vault content, absolute paths containing a username, employer names, and secrets stay out. See
   `CONTRIBUTING.md`.
-- **Do not change a file the template ships without setting `VERSION`.** This one applies only when
-  you are contributing to the template, where `CONTRIBUTING.md` and `.github/release-check.sh`
-  exist. Every merge that changes a shipped file is a release there, because a release is the only
-  way a vault downstream ever hears that something moved, and CI refuses a tree that claims a
-  version it is not. In your own vault neither of those files is present and nothing asks this
-  of you.
+- **Do not change a file the template ships without setting `VERSION`.** If you are contributing to
+  this template, every merge that changes a shipped file is a release, because a release is the
+  only way a vault downstream ever hears that something moved, and CI refuses a tree that claims a
+  version it is not. `CONTRIBUTING.md` has the steps. Nothing asks this of you in your own vault,
+  where `VERSION` records which template version you came from rather than one you are publishing.

@@ -1202,12 +1202,15 @@ later. This decides whether a file somebody spent an afternoon on has been touch
 `tmpl-no-hash-tool` exercises that refusal, `tmpl-hash-tool-named` exercises a `VAULT_HASH_TOOL`
 outside the four, and `tmpl-hash-tool-misbehaves` puts a stand-in tool in front of the real one so
 that the probe and the pairing guard can each be shown firing rather than asserted to work.
-`VAULT_FORCE_NO_DIFF=1` is the same kind of seam one mode further on, and it exists because a
-machine carrying neither `git` nor `diff` cannot be built inside a test on a runner that has both,
-so without it the `NO-DIFF-TOOL` refusal had no control at all. `VAULT_HASH_TOOL` is
-validated against the four names before it is used, because the candidate word is expanded
-unquoted and would otherwise be a glob as well as a name, and a value that is not one of the four
-is `HASH-TOOL-UNKNOWN` rather than a silent fall-through to the others.
+`VAULT_HASH_TOOL` is validated against the four names before it is used, and a value that is not
+one of the four is `HASH-TOOL-UNKNOWN` rather than a silent fall-through to the others.
+
+`VAULT_FORCE_NO_DIFF=1` is the same kind of seam one mode further on. A machine carrying neither
+`git` nor `diff` cannot be built inside a test on a runner that has both, so without it the
+`NO-DIFF-TOOL` refusal had no control at all, and deleting that refusal printed an empty section
+under every heading and called it no change. The seam sits around the question of whether a tool
+is available rather than at the refusal, so the control exercises the real refusal and the real
+exit and only the availability answer is forced.
 
 **The refusal tags**, published here for the same reason § 4.3's are, so that output can be grepped
 against a document. `HASH-PROBE` is the one a reader meets during an otherwise successful run, when

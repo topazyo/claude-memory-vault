@@ -34,6 +34,10 @@ bash .claude/scripts/vault-check.sh   # frontmatter invariants
 Both must pass. For `vault-check.sh`, read the file count as well as the violation count:
 `0 violations across 0 files` means it scanned nothing, which is a broken invocation, not a pass.
 
+**If your change touches a file this template ships, it owes a release**, which means setting
+`VERSION` and writing a changelog entry in the same pull request. That is worth knowing now rather
+than when CI tells you, and *Cutting a release* below says what to do and why the rule exists.
+
 CI (`.github/workflows/ci.yml`) runs both on ubuntu-latest, macos-latest and windows-latest, plus a
 separate job that runs them under macOS's system `/bin/bash` 3.2. It deliberately does **not**
 install `jq`, because `jq` is absent by default on macOS and in Git for Windows and the hooks are
@@ -133,50 +137,81 @@ one that becomes immutable once pushed and the only one a vault can fetch. So `t
 checks that the three claims agree with each other, and `.github/release-check.sh` checks that what
 they agree on has actually been published.
 
-**The tag is spelled `1.0.0`, with no `v`.** `CHANGELOG.md` heads its entries that way and the
-clone example in `docs/updating.md` names a tag that way. A prefix would have to move in all three
-at once, so a tag that looks like a prefixed version is refused by name rather than skipped.
+**The tag is spelled with digits and dots and no `v`,** so `1.1.0` rather than `v1.1.0`.
+`CHANGELOG.md` heads its entries that way and the clone example in `docs/updating.md` names a tag
+that way, so a prefix would have to move in the tag, the changelog and that example together. A
+tag that looks like a prefixed version is therefore refused by name rather than skipped, and so is
+a `VERSION` holding anything but digits and dots — a suffix like `1.2.0-rc1` would otherwise be
+tagged once and then be invisible to every run after it.
+
+The work splits in two, and it is worth saying which half is yours. **Anybody opening a pull
+request does the four steps below.** Publishing the release afterwards needs push access to this
+repository and an authenticated `gh`, so it is the maintainer's, and an outside contributor who
+tries it will be denied for a permission they were never meant to have.
 
 In a pull request that changes a shipped file:
 
-1. Set `VERSION` to a number above the newest tag.
-2. Add a `CHANGELOG.md` entry with an **Adopting this** note. Every entry needs one, and the
+1. **Set `VERSION` to a number above the newest tag.** `git tag -l --sort=-v:refname | head -n 1`
+   names the newest one. Sort it that way rather than reading the list, because plain text order
+   puts `1.10.0` before `1.9.0`.
+2. **Add a `CHANGELOG.md` entry with an Adopting this note.** Every entry needs one, and the
    control suite fails a release without it. Say "nothing to do" in as many words when that is the
    answer, because a note nobody wrote and a release that needs nothing look identical otherwise.
-3. Regenerate the manifest, so its `version` header matches `VERSION`.
-4. Run `bash .claude/scripts/run-tests.sh`. `tmpl-version-agrees` fails a release whose three
+   The note is the only part of a release that can carry a meaning rather than bytes, so it has to
+   cover every shipped file the branch touches — including `AGENTS.md` and anything under `docs/`,
+   which are shipped and which a vault owner will be offered.
+3. **Regenerate the manifest, last.** This has to be the final edit to a shipped file in the
+   branch, because anything changed after it leaves the manifest stale and fails the CI step that
+   verifies it.
+   ```bash
+   VAULT_TEMPLATE_MAINTAINER=1 bash .claude/scripts/vault-update.sh --generate
+   ```
+   The environment variable is explained under *Adding or removing a file* above, and without it
+   this refuses with exit 64.
+4. **Run `bash .claude/scripts/run-tests.sh`.** `tmpl-version-agrees` fails a release whose three
    statements of the version disagree, and `tmpl-changelog-adopting` fails one whose newest entry
    carries no adopting note. Neither fires unless somebody runs the suite.
 
 After it merges, `main` carries a version that names no tag, and the hygiene job goes red saying
-so. Clear it with one command:
+so. Clearing that red takes three commands and then a re-run, from the repository root:
 
 ```bash
 bash .github/release-check.sh --tag
+git push origin <the version>
+gh release create <the version> --title <the version> --notes-file <the file it named>
 ```
 
-That writes the annotated tag, with the changelog entry as its message, and prints the two
-commands that publish it. Those two are the only steps in cutting a release that reach the
-network, which is why they are printed rather than run. Re-run the failed hygiene job afterwards,
-because tagging does not re-trigger the workflow.
+The first writes the annotated tag with the changelog entry as its message, and prints the other
+two filled in. Those two are the only steps in cutting a release that reach the network, which is
+why they are printed rather than run. **The push is what clears the red**, because the job checks
+out with tags and only sees the ones that have been pushed, so re-running it after the tag exists
+only locally leaves it exactly as red. Re-run the job after the push, because tagging does not
+re-trigger the workflow.
 
-You can run the check itself at any time, from anywhere in the repository:
+You can run the check itself at any time. It works from any directory inside the repository,
+though the path below is written from the root:
 
 ```bash
 bash .github/release-check.sh
 ```
 
 It exits 0 when the release keeps up with what this tree ships, 1 when a release is owed or the
-tree claims a version it is not, and 2 when it could not answer — no git, no tags in the checkout,
-or a tag whose tree holds no manifest. The 2 matters: a shallow clone has no tags and looks exactly
-like a project that has never released one, and those two want opposite responses.
+tree claims a version it is not, 2 when it could not answer, and 64 when the command line was
+wrong. It could not answer when there is no git, no readable `VERSION`, no tags in the checkout, a
+tag whose tree holds no manifest, or a manifest whose paths git does not recognise. The 2 matters:
+a shallow clone has no tags and looks exactly like a project that has never released one, and
+those two want opposite responses.
 
 **The CI step is guarded by repository and is not path filtered.** A path filtered step shows as
 skipped on a pull request that touches nothing matching the filter, and a reviewer reading the
 checks list cannot tell a skip from a pass. This one runs on every pull request and every push to
 `main` here, including pull requests from forks, because `github.repository` is still this
-repository for those. It skips only in a repository made with "Use this template", where the
-owner's notes are shipped files by class and their releases are their own business.
+repository for those.
+
+It skips everywhere else, and that includes **pushes to your own fork** as well as a repository
+made with "Use this template". This is the same wrinkle the manifest step has above, and it has the
+same answer: watching it skip on your fork does not mean it is unenforced, and it will run on the
+pull request.
 
 ## Changing the documentation
 

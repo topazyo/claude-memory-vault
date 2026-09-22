@@ -114,21 +114,31 @@ template owns lives under `.claude/`, which is what your harness reads to decide
 so read the diff before you paste anything and read [§5](#5-what-this-does-not-protect-against)
 before you read the diff.
 
-The safe-to-take list prints the SHA-256 of each file beside its path, and it is the digest this
-run took out of the folder rather than the one that folder's manifest claims. The two agree by the
-time anything is printed, because a folder that disagrees with its own manifest is refused whole.
-What the digest is for is the gap the tool cannot close on its own. Between the moment those bytes
-were read and the moment you paste the copy commands there is you, reading, and nothing re-reads
-the folder across that gap. The plan says so in its own preamble, and the digest is what lets you
-settle it in one command rather than trust it:
-
-```bash
-sha256sum ../template-new/.claude/hooks/vault-lint.sh
-```
-
 ```bash
 bash .claude/scripts/vault-update.sh --diff --from ../template-new
 ```
+
+#### The digest beside each path
+
+The safe-to-take list prints the SHA-256 of each file beside its path. What it is for is the gap
+the tool cannot close on its own: between the moment those bytes were read and the moment you
+paste the copy commands there is you, reading the diff, and nothing re-reads the folder across
+that gap. The plan says so in its own preamble, and the digest is what lets you settle it in one
+command rather than trust it. Check it once you have decided to take a file, against the copy you
+are about to move, with whichever of these your machine has:
+
+```bash
+sha256sum ../template-new/.claude/hooks/vault-lint.sh       # Linux, and Git Bash on Windows
+shasum -a 256 ../template-new/.claude/hooks/vault-lint.sh   # macOS, which ships no sha256sum
+```
+
+**It is the digest of the bytes on disk, which is deliberately not the digest the manifest
+records.** A manifest has to mean the same thing on a machine that checks files out with carriage
+returns, so the hashes in it are taken with carriage returns removed. What you are about to copy
+is the bytes, so the bytes are what the plan prints. For a file with no carriage returns the two
+are the same number and none of this matters. For one that has them — every `.cmd` file this
+template ships, on every platform, because `.gitattributes` pins them that way — they differ, and
+comparing the plan against the manifest would look like tampering when nothing is wrong.
 
 ### If your vault predates all of this
 

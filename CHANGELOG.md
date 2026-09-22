@@ -34,10 +34,12 @@ itself merged first and tagged afterwards by hand.
 ### Added
 
 - `.claude/scripts/vault-update.sh --check` now prints the SHA-256 of each file in the safe-to-take
-  list, and says in the copy plan's own preamble that the plan describes the source folder as it
-  was when the check read it. Nothing re-reads that folder between then and whenever you paste, and
-  that gap is you reading rather than a race inside the script, so it cannot be closed in code. The
-  digest is what lets you settle it in one command instead.
+  list, says in that list's heading what the digest is, and says in the copy plan's own preamble
+  that the plan describes the source folder as it was when the check read it. Nothing re-reads that
+  folder between then and whenever you paste, and that gap is you reading rather than a race inside
+  the script, so it cannot be closed in code. The digest is what lets you settle it in one command
+  instead. It is the digest of the bytes, which is not the one the manifest records, and
+  `docs/updating.md` says why.
 - `VAULT_FORCE_NO_DIFF=1`, which makes `--diff` take its no-diff-tool refusal on a machine that has
   one. It is the same kind of seam as `VAULT_FORCE_NO_SHA` beside it, and it exists so that refusal
   can have a control.
@@ -49,16 +51,37 @@ itself merged first and tagged afterwards by hand.
   check whose whole purpose was to stop that, while verifying against its own manifest perfectly.
 - The truncated lists in the source checks say how many entries there were, the way every other
   list in that script already did.
+- `AGENTS.md` carries a new rule, and it is the only change in this release that tells an agent to
+  do something differently. It says not to change a file the template ships without setting
+  `VERSION`, which is a rule for people contributing to the template and not for your vault. It is
+  written to say so, and the note below says what to do if you take it anyway.
+- `docs/updating.md` explains the digest beside each path and which digest it is.
+  `docs/reference.md` records the two environment variables that force a refusal for testing.
 
 ### Adopting this
 
-**Nothing to do.** No frontmatter key, tier, folder or exit code has changed, and no command you
-run takes different arguments. `--check` prints one extra column and one extra sentence, so a
-script of your own that reads its output by position rather than by the counts line is the one
-thing worth glancing at.
+**Nothing to do, and one thing to read if you take `AGENTS.md`.**
 
-If you keep your vault in git and you fetched this release with `--check`, read the digests in the
-safe-to-take list against the folder you are about to copy out of. That is what they are for.
+No frontmatter key, tier, folder or exit code has changed, and no command you run takes different
+arguments. What did change is output, in three places, which matters only if something of yours
+reads it by position rather than by the counts line. `--check` prints a digest column in the
+safe-to-take list, a sentence in that list's heading and a sentence in the copy plan's preamble,
+and the refusal warnings about a source folder now end with a count of how many entries there
+were rather than a silent truncation.
+
+`AGENTS.md` is shipped, so `--check` will offer it, and it is the one file in this release where
+taking the bytes also takes a standing instruction every harness loads. The new rule scopes itself
+to contributing to the template, so it costs a vault nothing, but read the bullet before you copy
+it rather than after.
+
+A source folder that you reach through a symbolic link is now refused where it used to be
+compared, so a fetched copy living under a symlinked path will report `SOURCE-SYMLINK` and leave
+on `2`. That is the refusal working rather than a fault, and moving the copy to a real path is the
+answer.
+
+If you fetched this release with `--check`, read the digests in the safe-to-take list against the
+folder you are about to copy out of. That is what they are for, and it applies whether or not your
+vault is a git repository.
 
 ---
 
