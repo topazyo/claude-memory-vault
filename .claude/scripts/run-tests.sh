@@ -7988,19 +7988,27 @@ vu_rc() {  # vu_rc <dir> <arg>...
 vu_says()    { grep -qF -- "$1" "$VU_OUT"; }
 vu_excerpt() { tr '\n' '|' < "$VU_OUT" | cut -c1-400; }
 
-# "It offered something", asserted against BOTH sentences that could say so,
-# because the two are one letter apart and do not mean the same thing. The
-# counts line says "N safe to take," in lower case and the copy plan's heading
-# says "Safe to take (N)." with a capital.
+# "A COPY PLAN WAS PRINTED", which is one sentence and not two. The two
+# spellings are one letter apart and do not mean the same thing. The copy
+# plan's heading says "Safe to take (N)." with a capital and appears only when
+# there is something to copy. The counts line says "N safe to take," in lower
+# case and is printed by every run that reports at all, INCLUDING ONE WHOSE
+# NUMBER IS ZERO.
 #
-# Eight refusal controls used to assert only the lower-case spelling, and a
-# refusal suppresses the counts line anyway, so what they actually held was
-# "the report never ran" rather than "no plan was printed". Rewording the
-# counts line would have turned all eight into assertions that can never fire,
-# and nothing in the suite would have noticed, because a negative that cannot
-# match looks exactly like a negative that passed.
+# Matching both was wrong in a way that hid itself. "0 safe to take," contains
+# " safe to take,", so a run that reported honestly and offered nothing read as
+# a run that had offered something, and this helper answered the opposite of
+# its own name. That never showed, because every one of its nine uses is a
+# NEGATIVE - `vu_offered && vu_bad=...` on a refusal - and a refusal prints
+# neither sentence. A negative use can only ever be weakened by a helper that
+# matches less, so those nine could not hold this and were never going to.
+#
+# A mutation dropping the capitalised arm survived the whole suite for that
+# reason, which is how the defect was found. `tmpl-offered-is-a-plan` is the
+# positive use that holds it now, and the arm that does the holding is the one
+# where a report runs and offers nothing.
 vu_offered() {
-  grep -qF -- 'Safe to take (' "$VU_OUT" || grep -qF -- ' safe to take,' "$VU_OUT"
+  grep -qF -- 'Safe to take (' "$VU_OUT"
 }
 
 # A SHA-256 of a file, or of standard input when given a dash, taken with
@@ -8057,6 +8065,7 @@ if ! command -v git >/dev/null 2>&1; then
   skip tmpl-exempt-set-is-behavioural "the template update controls build git fixtures, and git is not installed"
   skip tmpl-converged-not-a-merge "the template update controls build git fixtures, and git is not installed"
   skip tmpl-already-adopted "the template update controls build git fixtures, and git is not installed"
+  skip tmpl-offered-is-a-plan "the template update controls build git fixtures, and git is not installed"
   skip tmpl-unknown-algorithm "the template update controls build git fixtures, and git is not installed"
   skip tmpl-source-not-a-template "the template update controls build git fixtures, and git is not installed"
   skip tmpl-hostile-manifest-narrows "the template update controls build git fixtures, and git is not installed"
@@ -8109,6 +8118,9 @@ if ! command -v git >/dev/null 2>&1; then
   skip tmpl-release-vacuous "the release controls build a tagged git fixture, and git is not installed"
   skip tmpl-release-tag-without-manifest "the release controls build a tagged git fixture, and git is not installed"
   skip tmpl-release-reclassified "the release controls build a tagged git fixture, and git is not installed"
+  skip tmpl-release-tag-failed "the release controls build a tagged git fixture, and git is not installed"
+  skip tmpl-release-scratch-survivor "the release controls build a tagged git fixture, and git is not installed"
+  skip tmpl-release-shipped-unknown-sides "the release controls build a tagged git fixture, and git is not installed"
   # This one grew a git fixture when it stopped grepping the rules file for a
   # spelling and started putting it in front of the real generator.
   skip tmpl-shipped-rules-have-no-catchall "the template update controls build git fixtures, and git is not installed"
@@ -8657,6 +8669,73 @@ else
     ok "adopting a second time is refused with its own code and the existing baseline is byte for byte what it was"
   else
     bad "a second adopt was not refused --$vu_bad [$(vu_excerpt)]"
+  fi
+
+  # -- what "it offered something" is allowed to mean ----------------------
+
+  # THE SUITE'S OWN HELPER, held for the first time. `vu_offered` is the
+  # predicate nine refusal controls use to say no copy plan was printed, and it
+  # used to match the counts line as well as the plan's heading. Those two are
+  # one letter apart and do not mean the same thing, and "0 safe to take,"
+  # contains the lower-case one, so a report that ran honestly and offered
+  # nothing read as a report that had offered something.
+  #
+  # Nothing could catch that, and the reason is structural rather than an
+  # oversight. Every use of the helper is a NEGATIVE, and a negative assertion
+  # only gets weaker when its predicate matches less, so all nine stayed green
+  # against a helper with an arm removed. A mutation that dropped one arm
+  # survived the whole suite, which is how this was found. Holding a predicate
+  # takes a POSITIVE use, and the arm that does the work is this first one,
+  # where the report runs and there is nothing to copy.
+  vu_op="$VU/offered-nothing"
+  vu_make "$vu_op" 1.0.0
+  vu_op_src="$VU/offered-nothing-src"
+  vu_make "$vu_op_src" 1.1.0
+  # The only file two prototype versions differ in is VERSION, so changing it
+  # here as well turns the one thing that moved upstream into a merge and
+  # leaves nothing at all safe to take. Not regenerated afterwards, because
+  # "changed here" is measured against the manifest and regenerating would
+  # restamp it.
+  printf '1.0.1\n' > "$vu_op/VERSION"
+  vu_bad=''
+  vu_rc_op="$(vu_rc "$vu_op" --check --from "$vu_op_src")"
+  # Measured out of the output rather than assumed, because all three of these
+  # have to hold for the assertion below to be asking the question it names.
+  # The report has to have run, its number has to be zero, and no plan may have
+  # been printed.
+  vu_op_counts="$(LC_ALL=C awk '/ safe to take,/ { n++ } END { print n + 0 }' "$VU_OUT" 2>/dev/null)"
+  vu_op_zero="$(LC_ALL=C awk '/ 0 safe to take,/ { n++ } END { print n + 0 }' "$VU_OUT" 2>/dev/null)"
+  vu_op_plan="$(LC_ALL=C awk '/Safe to take \(/ { n++ } END { print n + 0 }' "$VU_OUT" 2>/dev/null)"
+  [ "$vu_rc_op" = 10 ] || vu_bad="$vu_bad offered-nothing-rc:$vu_rc_op"
+  [ "${vu_op_counts:-0}" -ge 1 ] 2>/dev/null \
+    || vu_bad="$vu_bad no-counts-line-so-the-report-never-ran-[${vu_op_counts:-unmeasurable}]"
+  [ "${vu_op_zero:-0}" -ge 1 ] 2>/dev/null \
+    || vu_bad="$vu_bad the-counts-line-does-not-say-zero-safe-to-take-so-something-was-offered"
+  [ "${vu_op_plan:-1}" = 0 ] || vu_bad="$vu_bad a-copy-plan-was-printed-so-there-was-something-to-offer"
+  # THE ASSERTION. A run that printed no plan must not read as having offered
+  # one, whatever else it printed.
+  vu_offered && vu_bad="$vu_bad a-report-that-offered-nothing-read-as-having-offered-something"
+
+  # And the other direction, or the helper could be made to answer no to
+  # everything and the arm above would still pass. Every wording about the run
+  # above is asserted before this one starts, because the helper and vu_says
+  # both read one shared output file.
+  vu_op2="$VU/offered-something"
+  vu_make "$vu_op2" 1.0.0
+  vu_op2_src="$VU/offered-something-src"
+  vu_make "$vu_op2_src" 1.1.0
+  vu_rc_op2="$(vu_rc "$vu_op2" --check --from "$vu_op2_src")"
+  vu_op2_plan="$(LC_ALL=C awk '/Safe to take \(/ { n++ } END { print n + 0 }' "$VU_OUT" 2>/dev/null)"
+  [ "$vu_rc_op2" = 10 ] || vu_bad="$vu_bad offered-something-rc:$vu_rc_op2"
+  [ "${vu_op2_plan:-0}" -ge 1 ] 2>/dev/null \
+    || vu_bad="$vu_bad the-second-fixture-printed-no-copy-plan-[${vu_op2_plan:-unmeasurable}]-so-the-positive-arm-proves-nothing"
+  vu_offered || vu_bad="$vu_bad a-report-that-printed-a-copy-plan-did-not-read-as-having-offered-one"
+
+  ran tmpl-offered-is-a-plan
+  if [ -z "$vu_bad" ]; then
+    ok "the suite's own test for whether an update was offered answers yes to a printed copy plan and no to a report that ran and had nothing to copy, rather than yes to both"
+  else
+    bad "the suite's test for whether an update was offered does not mean what its name says --$vu_bad [$(vu_excerpt)]"
   fi
 
   # A hash algorithm this does not understand, on the source side. A
@@ -10540,6 +10619,9 @@ else
     skip tmpl-release-vacuous "$VU_REL is not present, so this is a vault rather than the template project and there is no release to keep up with"
     skip tmpl-release-tag-without-manifest "$VU_REL is not present, so this is a vault rather than the template project and there is no release to keep up with"
     skip tmpl-release-reclassified "$VU_REL is not present, so this is a vault rather than the template project and there is no release to keep up with"
+    skip tmpl-release-tag-failed "$VU_REL is not present, so this is a vault rather than the template project and there is no release to keep up with"
+    skip tmpl-release-scratch-survivor "$VU_REL is not present, so this is a vault rather than the template project and there is no release to keep up with"
+    skip tmpl-release-shipped-unknown-sides "$VU_REL is not present, so this is a vault rather than the template project and there is no release to keep up with"
   else
     vu_d="$VU/release"
     vu_make "$vu_d" 1.0.0
@@ -11183,6 +11265,84 @@ else
       bad "cutting a release did not do what the failing check tells a reader to do --$vu_bad [$(vu_excerpt)]"
     fi
 
+    # -- a tag git would not write -----------------------------------------
+
+    # THE ONE DOOR IN THIS FILE NOTHING HAS EVER OPENED. TAG-FAILED had no
+    # control at all, which is recorded rather than assumed, and the arm above
+    # hands in an identity precisely so that it never arrives here. That left
+    # its exit code free to be anything, and it was a 1 - a release is owed -
+    # for what is the tool failing rather than a finding about the release.
+    #
+    # It matters more than an unexercised message usually would. An arm that
+    # expects a refusal BEFORE any tag is written sees a run with no identity
+    # reach git, take this door, write no tag and leave on 1, which is exactly
+    # the shape such an arm looks for. On a runner, which has no identity, that
+    # arm would have been green while the defect it exists to catch stood. The
+    # code is a 2 now and this is what holds it there.
+    #
+    # The state is a runner's, reproduced by pointing git at an empty config
+    # for both the global and the system file and clearing the four identity
+    # variables. A subshell, so the clearing cannot reach anything after it.
+    vu_tf="$VU/release-tagfailed"
+    vu_make "$vu_tf" 1.0.0
+    printf '# Changelog\n\n## 1.0.0 - 2026-01-01\n\nThe first one.\n\n### Adopting this\n\nNothing to do.\n' > "$vu_tf/CHANGELOG.md"
+    vu_git "$vu_tf"
+    vu_tag "$vu_tf" 1.0.0
+    printf '2.0.0\n' > "$vu_tf/VERSION"
+    printf '# Changelog\n\n## 2.0.0 - 2026-03-01\n\nThe third one.\n\n### Adopting this\n\nNothing to do.\n\n## 1.0.0 - 2026-01-01\n\nThe first one.\n\n### Adopting this\n\nNothing to do.\n' > "$vu_tf/CHANGELOG.md"
+    vu_git "$vu_tf"
+    vu_tf_empty="$VU/release-tagfailed.gitconfig"
+    : > "$vu_tf_empty"
+    # MEASURED, because git can invent an identity out of the operating system
+    # user and the hostname, so an empty config and no identity are not the same
+    # state and which one this machine is in decides whether the refusal below
+    # can fire at all. git var answers the same question the tag write asks and
+    # writes nothing while asking it.
+    vu_tf_ident="$( unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL EMAIL
+      GIT_CONFIG_GLOBAL="$vu_tf_empty" GIT_CONFIG_SYSTEM="$vu_tf_empty" \
+      git -C "$vu_tf" var GIT_COMMITTER_IDENT >/dev/null 2>&1; printf '%s' "$?" )"
+    # And that the fixture is otherwise ready to cut, or a refusal here could be
+    # any of the four that come before the tag write.
+    vu_tf_tagged="$(git -C "$vu_tf" tag -l 2>/dev/null | LC_ALL=C awk '$0 == "2.0.0" { n++ } END { print n + 0 }')"
+    vu_tf_heads="$(LC_ALL=C awk '/^## 2\.0\.0 / { n++ } END { print n + 0 }' "$vu_tf/CHANGELOG.md" 2>/dev/null)"
+    if [ "$vu_tf_ident" = 0 ] || [ "${vu_tf_heads:-0}" != 1 ] || [ "${vu_tf_tagged:-1}" != 0 ]; then
+      skip tmpl-release-tag-failed "a checkout with no identity could not be built here -- git var left on ${vu_tf_ident:-unmeasurable} where a runner leaves on 128, the changelog heads 2.0.0 ${vu_tf_heads:-unmeasurable} time(s) and 2.0.0 is already tagged ${vu_tf_tagged:-unmeasurable} time(s), so the refusal's silence would prove nothing"
+    else
+      vu_bad=''
+      vu_tf_rc="$( unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL EMAIL
+        cd "$vu_tf" && CLAUDE_PROJECT_DIR="$vu_tf" LC_ALL=C \
+        GIT_CONFIG_GLOBAL="$vu_tf_empty" GIT_CONFIG_SYSTEM="$vu_tf_empty" \
+        "$VU_BASH" "$VU_REL" --tag > "$VU_OUT" 2>&1; printf '%s' "$?" )"
+      vu_tf_after="$(git -C "$vu_tf" tag -l 2>/dev/null | LC_ALL=C awk '$0 == "2.0.0" { n++ } END { print n + 0 }')"
+      # git's own complaint reaches the reader rather than being swallowed,
+      # which is the only thing that tells them which tool failed and why. The
+      # relayed text is counted by its SHAPE, as an indented line that is not
+      # one of this script's own, rather than by quoting a sentence of git's.
+      # git translates these and its wording moves between versions, so an
+      # assertion naming the sentence would fail on a runner for a reason that
+      # has nothing to do with the release check.
+      vu_tf_relayed="$(LC_ALL=C awk '/^  / && $0 !~ /^release-check:/ { n++ } END { print n + 0 }' "$VU_OUT" 2>/dev/null)"
+      # TWO, because git would not write the tag is the tool failing and this
+      # file's doctrine keeps 1 for what it has found out about the release.
+      [ "$vu_tf_rc" = 2 ] || vu_bad="$vu_bad tag-failed-rc:$vu_tf_rc"
+      vu_says 'TAG-FAILED' || vu_bad="$vu_bad tag-failed-gave-no-reason"
+      [ "${vu_tf_relayed:-0}" -ge 1 ] 2>/dev/null \
+        || vu_bad="$vu_bad swallowed-what-git-said-[${vu_tf_relayed:-unmeasurable}-relayed-line(s)]"
+      vu_says 'saying nothing about whether one is owed' || vu_bad="$vu_bad did-not-say-what-kind-of-answer-it-was"
+      [ "${vu_tf_after:-1}" = 0 ] || vu_bad="$vu_bad a-tag-was-written-anyway"
+      # And none of the refusals that come before the tag write, any of which
+      # would mean this never reached the door it names.
+      vu_says 'NO-NOTES' && vu_bad="$vu_bad stopped-at-the-notes-instead"
+      vu_says 'ALREADY-TAGGED' && vu_bad="$vu_bad stopped-at-the-existing-tag-instead"
+      vu_says 'VERSION-GOES-BACKWARD' && vu_bad="$vu_bad stopped-at-the-ordering-instead"
+      ran tmpl-release-tag-failed
+      if [ -z "$vu_bad" ]; then
+        ok "a checkout that cannot say who the tagger is leaves by the door that says the tool failed rather than the one that says a release is owed, prints what git said about it, and writes no tag"
+      else
+        bad "a tag git would not write was not reported as a tool failure --$vu_bad [$(vu_excerpt)]"
+      fi
+    fi
+
     # -- the version has to be spelled like a version ----------------------
 
     # Reading the version and never checking it had three quiet consequences,
@@ -11203,11 +11363,18 @@ else
       vu_vs_n=$((vu_vs_n + 1))
       printf '%s\n' "$vu_vs_case" > "$vu_vs/VERSION"
       vu_rc_vs="$(vu_rel "$vu_vs")"
-      [ "$vu_rc_vs" = 1 ] || vu_bad="$vu_bad [$vu_vs_case]rc:$vu_rc_vs"
+      # TWO, NOT ONE, and the difference is the point of having two codes. A
+      # version nothing here can read means nothing could be compared, which is
+      # what a 2 says, and the absent-VERSION refusal it sits beside has always
+      # been a 2 for the same defect with the value missing rather than
+      # misspelled.
+      [ "$vu_rc_vs" = 2 ] || vu_bad="$vu_bad [$vu_vs_case]rc:$vu_rc_vs"
       vu_says 'VERSION-SPELLING' || vu_bad="$vu_bad [$vu_vs_case]no-reason"
+      vu_says 'NOT saying the release is up to date' || vu_bad="$vu_bad [$vu_vs_case]did-not-say-what-it-was-not-saying"
       # And never the answers that would mean it went on and used the value.
       vu_says 'nothing is owed' && vu_bad="$vu_bad [$vu_vs_case]said-nothing-is-owed"
       vu_says 'release in preparation' && vu_bad="$vu_bad [$vu_vs_case]called-it-preparation"
+      vu_says 'UNRELEASED-CHANGES' && vu_bad="$vu_bad [$vu_vs_case]called-it-an-owed-release"
     done
     # And the spellings that ARE versions still pass, or the refusal above
     # could be refusing everything and every arm would look right.
@@ -11422,6 +11589,181 @@ else
       ok "a comparison git could not make, a manifest git never spells that way, and a manifest that is not there each leave on 2 saying which one it was, rather than on 0 saying the release is up to date"
     else
       bad "the release check answered when it could not look --$vu_bad [$(vu_excerpt)]"
+    fi
+
+    # -- a scratch directory that was not emptied --------------------------
+
+    # THE EMPTINESS ASSERTION, which had no control and was recorded as having
+    # none rather than assumed to be covered. `mkdir -p` returns 0 for a
+    # directory that is already there, so it cannot tell a failed clear from a
+    # clean one, and the `rm -rf` above it has its status read nowhere. Four of
+    # the files the run then writes have their redirection status read nowhere
+    # either, so a survivor would be read as this run's data and the answer
+    # would come out of a previous run's files.
+    #
+    # A STAND-IN rm THAT REMOVES NOTHING AND REPORTS SUCCESS, rather than a
+    # permission trick. Which trick makes a real rm fail is not the same on the
+    # three platforms here, and it was measured rather than guessed - on
+    # Windows an unwritable scratch directory, an unenterable subdirectory, the
+    # read-only attribute and an unwritable parent all still let rm -rf
+    # succeed - so any of them would have given a control that runs on some
+    # jobs and skips on the rest. The stand-in also models the case that
+    # actually matters, which is not a clear that fails loudly but one that
+    # says it worked while the state did not change, because that status is
+    # precisely the one nothing reads.
+    vu_sc="$VU/release-scratch"
+    vu_make "$vu_sc" 1.0.0
+    printf '# Changelog\n\n## 1.0.0 - 2026-01-01\n\nThe first one.\n\n### Adopting this\n\nNothing to do.\n' > "$vu_sc/CHANGELOG.md"
+    vu_git "$vu_sc"
+    vu_tag "$vu_sc" 1.0.0
+    vu_sc_shim="$VU/release-scratch-shim"
+    rm -rf "$vu_sc_shim"
+    mkdir -p "$vu_sc_shim"
+    {
+      printf '#!/usr/bin/env bash\n'
+      printf '# A stand-in rm that removes nothing and says it succeeded, so that the\n'
+      printf '# release check meets a scratch directory its clear did not clear.\n'
+      printf '# Written by the control suite into a temporary folder, never shipped.\n'
+      printf 'printf "stood in for rm\\n" >> "$VAULT_RM_MARKER"\n'
+      printf 'exit 0\n'
+    } > "$vu_sc_shim/rm"
+    chmod +x "$vu_sc_shim/rm" 2>/dev/null
+    vu_sc_scratch="$vu_sc/.git/release-check"
+    mkdir -p "$vu_sc_scratch"
+    printf 'a previous run left this behind\n' > "$vu_sc_scratch/shipped"
+    # Whether the stand-in is reached is established by RUNNING it and reading
+    # what it left, not by asking command -v. bash keeps a hash table of
+    # command locations and consults it before PATH, and this suite has run rm
+    # many times by now. The hash is dropped as well, but the evidence is the
+    # probe file surviving a clear and the marker being written.
+    hash -r 2>/dev/null || true
+    vu_sc_marker="$VU/release-scratch.marker"
+    : > "$vu_sc_marker"
+    vu_sc_probe="$VU/release-scratch.probe"
+    printf 'probe\n' > "$vu_sc_probe"
+    ( PATH="$vu_sc_shim:$PATH" VAULT_RM_MARKER="$vu_sc_marker" rm -rf "$vu_sc_probe" ) >/dev/null 2>&1
+    vu_sc_left=0
+    [ -e "$vu_sc_probe" ] && vu_sc_left=1
+    vu_sc_marked=0
+    [ -s "$vu_sc_marker" ] && vu_sc_marked=1
+    rm -f "$vu_sc_probe" 2>/dev/null
+    vu_sc_planted="$(LC_ALL=C awk '/a previous run left this behind/ { n++ } END { print n + 0 }' "$vu_sc_scratch/shipped" 2>/dev/null)"
+    if [ "$vu_sc_left" != 1 ] || [ "$vu_sc_marked" != 1 ] || [ "${vu_sc_planted:-0}" != 1 ]; then
+      skip tmpl-release-scratch-survivor "a clear that removes nothing could not be arranged here -- the stand-in left the probe:$vu_sc_left wrote its marker:$vu_sc_marked and the survivor was planted:${vu_sc_planted:-unmeasurable}, so the refusal's silence would prove nothing"
+    else
+      vu_bad=''
+      vu_sc_rc="$( cd "$vu_sc" && PATH="$vu_sc_shim:$PATH" VAULT_RM_MARKER="$vu_sc_marker" \
+        CLAUDE_PROJECT_DIR="$vu_sc" "$VU_BASH" "$VU_REL" > "$VU_OUT" 2>&1; printf '%s' "$?" )"
+      # The survivor is still the survivor. This is the assertion that fails
+      # when the guard is deleted, because a run that goes past it writes its
+      # own shipped list over exactly this file.
+      vu_sc_after="$(LC_ALL=C awk '/a previous run left this behind/ { n++ } END { print n + 0 }' "$vu_sc_scratch/shipped" 2>/dev/null)"
+      [ "$vu_sc_rc" = 2 ] || vu_bad="$vu_bad scratch-rc:$vu_sc_rc"
+      vu_says 'NO-SCRATCH' || vu_bad="$vu_bad scratch-gave-no-reason"
+      # WHICH of the NO-SCRATCH cases, because that name covers a directory
+      # that could not be made and three counts that could not be taken, and
+      # collapsing any of them into another would leave this green.
+      vu_says 'could not be emptied' || vu_bad="$vu_bad scratch-did-not-say-which-NO-SCRATCH-case-it-was"
+      vu_says 'nothing is owed' && vu_bad="$vu_bad scratch-reported-the-release-as-up-to-date"
+      vu_says 'UNRELEASED-CHANGES' && vu_bad="$vu_bad scratch-answered-about-the-release-at-all"
+      [ "${vu_sc_after:-0}" = 1 ] || vu_bad="$vu_bad the-survivor-was-overwritten-so-the-run-went-past-the-guard"
+      ran tmpl-release-scratch-survivor
+      if [ -z "$vu_bad" ]; then
+        ok "a scratch directory whose clear removed nothing is refused as a previous run's files rather than read as this run's, and the run answers nothing at all about the release"
+      else
+        bad "a scratch the clear did not clear was answered from --$vu_bad [$(vu_excerpt)]"
+      fi
+    fi
+
+    # -- the two sides of SHIPPED-UNKNOWN, and a mismatch that is not total --
+
+    # TWO GAPS THAT MEET. The guard used to fire only when a whole side matched
+    # NOTHING, and the arm that exercised it gave a bad spelling only to THIS
+    # TREE'S manifest. So the tag half could never fire for want of a fixture,
+    # and neither half could fire for one mangled path among many - which is
+    # the shape that actually happens, because a leading dot-slash is somebody
+    # rewriting a manifest by hand and a case-folded path is a manifest
+    # regenerated on an ordinary macOS or Windows machine.
+    vu_bad=''
+    vu_su="$VU/release-unknown-tag"
+    vu_make "$vu_su" 1.0.0
+    printf '# Changelog\n\n## 1.0.0 - 2026-01-01\n\nThe first one.\n\n### Adopting this\n\nNothing to do.\n' > "$vu_su/CHANGELOG.md"
+    vu_git "$vu_su"
+    # The TAG's manifest gets the bad spelling, and then this tree's is put
+    # back, so only the tag half of the guard has anything to fire on.
+    LC_ALL=C awk '
+      ($1 == "owned" || $1 == "seed") { printf "%s %s ./%s\n", $1, $2, $3; next }
+      { print }
+    ' "$vu_su/.claude/template-manifest" > "$vu_su/.claude/template-manifest.new"
+    mv "$vu_su/.claude/template-manifest.new" "$vu_su/.claude/template-manifest"
+    vu_git "$vu_su"
+    vu_tag "$vu_su" 1.0.0
+    LC_ALL=C awk '
+      ($1 == "owned" || $1 == "seed") { p = $3; sub(/^\.\//, "", p); printf "%s %s %s\n", $1, $2, p; next }
+      { print }
+    ' "$vu_su/.claude/template-manifest" > "$vu_su/.claude/template-manifest.new"
+    mv "$vu_su/.claude/template-manifest.new" "$vu_su/.claude/template-manifest"
+    vu_git "$vu_su"
+    vu_su_tagbad="$(git -C "$vu_su" show '1.0.0:.claude/template-manifest' 2>/dev/null | LC_ALL=C awk '($1 == "owned" || $1 == "seed") && substr($3, 1, 2) == "./" { n++ } END { print n + 0 }')"
+    vu_su_nowbad="$(LC_ALL=C awk '($1 == "owned" || $1 == "seed") && substr($3, 1, 2) == "./" { n++ } END { print n + 0 }' "$vu_su/.claude/template-manifest" 2>/dev/null)"
+    vu_su_rc="$(vu_rel "$vu_su")"
+    [ "${vu_su_tagbad:-0}" -ge 1 ] 2>/dev/null \
+      || vu_bad="$vu_bad the-tag-manifest-was-not-given-a-bad-spelling-[${vu_su_tagbad:-unmeasurable}]"
+    [ "${vu_su_nowbad:-1}" = 0 ] || vu_bad="$vu_bad this-tree-manifest-is-also-badly-spelled-so-the-tag-half-is-not-what-fired"
+    [ "$vu_su_rc" = 2 ] || vu_bad="$vu_bad tag-side-rc:$vu_su_rc"
+    vu_says 'SHIPPED-UNKNOWN' || vu_bad="$vu_bad tag-side-gave-no-reason"
+    # The numbers, and specifically that THIS TREE'S side recognised everything.
+    # Without reading that digit the arm passes on a run where both halves
+    # fired, which is the arm that already existed.
+    vu_says 'and git does not recognise 0 of them' \
+      || vu_bad="$vu_bad this-tree-side-also-went-unrecognised-so-the-tag-half-is-not-what-fired"
+    vu_says 'nothing is owed' && vu_bad="$vu_bad tag-side-reported-the-release-as-up-to-date"
+
+    # And a mismatch that is not total, on both sides at once. One path spelled
+    # with a different case from git's index, folded BEFORE the tag so both
+    # manifests carry it - which is the state a repository whose manifests were
+    # always generated on a case-insensitive filesystem is in. Folding one side
+    # only would prove nothing, because the other side still names the path,
+    # the union still holds it and the ordinary comparison finds the change.
+    vu_pu="$VU/release-unknown-partial"
+    vu_make "$vu_pu" 1.0.0
+    printf '# Changelog\n\n## 1.0.0 - 2026-01-01\n\nThe first one.\n\n### Adopting this\n\nNothing to do.\n' > "$vu_pu/CHANGELOG.md"
+    LC_ALL=C awk '{ sub(/ docs\/a\.md$/, " Docs/a.md"); print }' \
+      "$vu_pu/.claude/template-manifest" > "$vu_pu/.claude/template-manifest.new"
+    mv "$vu_pu/.claude/template-manifest.new" "$vu_pu/.claude/template-manifest"
+    vu_git "$vu_pu"
+    vu_tag "$vu_pu" 1.0.0
+    # And the file both manifests misspell really does change, so a release is
+    # genuinely owed and a clean answer here is the defect rather than a
+    # difference of opinion about how strict to be.
+    printf 'doc a, edited after the release went out\n' > "$vu_pu/docs/a.md"
+    vu_git "$vu_pu"
+    vu_pu_folded="$(LC_ALL=C awk '$3 == "Docs/a.md" { n++ } END { print n + 0 }' "$vu_pu/.claude/template-manifest" 2>/dev/null)"
+    vu_pu_tracked="$(git -C "$vu_pu" ls-files 2>/dev/null | LC_ALL=C awk '$0 == "docs/a.md" { n++ } END { print n + 0 }')"
+    vu_pu_ships="$(LC_ALL=C awk '$1 == "owned" || $1 == "seed" { n++ } END { print n + 0 }' "$vu_pu/.claude/template-manifest" 2>/dev/null)"
+    vu_pu_rc="$(vu_rel "$vu_pu")"
+    [ "${vu_pu_folded:-0}" = 1 ] || vu_bad="$vu_bad the-fold-did-not-land-[${vu_pu_folded:-unmeasurable}]"
+    [ "${vu_pu_tracked:-0}" = 1 ] || vu_bad="$vu_bad git-does-not-track-the-unfolded-spelling-so-there-is-no-mismatch"
+    # PARTIAL, and this is the measurement that makes the arm about the new
+    # property rather than the old one. If every shipped path were
+    # unrecognisable the guard that only ever demanded a non-zero overlap would
+    # have fired too, and this would prove nothing it did not already hold.
+    [ "${vu_pu_ships:-0}" -gt "${vu_pu_folded:-0}" ] 2>/dev/null \
+      || vu_bad="$vu_bad the-fixture-ships-[${vu_pu_ships:-unmeasurable}]-and-folded-[${vu_pu_folded:-unmeasurable}]-so-the-mismatch-is-total-rather-than-partial"
+    [ "$vu_pu_rc" = 2 ] || vu_bad="$vu_bad partial-rc:$vu_pu_rc"
+    vu_says 'SHIPPED-UNKNOWN' || vu_bad="$vu_bad partial-gave-no-reason"
+    vu_says 'and git does not recognise 1 of them' || vu_bad="$vu_bad partial-did-not-count-the-one-unrecognised-path"
+    vu_says 'Docs/a.md' || vu_bad="$vu_bad partial-did-not-name-the-path-it-could-not-read"
+    vu_says 'nothing is owed' && vu_bad="$vu_bad partial-reported-the-release-as-up-to-date"
+    # And not the ordinary drift wording, which would mean it reached the
+    # comparison after all and this says nothing about the guard.
+    vu_says 'UNRELEASED-CHANGES' && vu_bad="$vu_bad partial-answered-about-the-content-anyway"
+
+    ran tmpl-release-shipped-unknown-sides
+    if [ -z "$vu_bad" ]; then
+      ok "a tag whose manifest spells paths a way git never does is refused on the tag's own side, and one path in ninety that git does not recognise is refused rather than dropped quietly out of the comparison"
+    else
+      bad "a shipped set git could only partly read was compared anyway --$vu_bad [$(vu_excerpt)]"
     fi
 
     # -- a tag from before there were manifests ----------------------------

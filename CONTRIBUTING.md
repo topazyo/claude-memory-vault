@@ -124,6 +124,15 @@ first note. So it runs on your **pull request**, where the base repository is th
 a side effect of one, and CI enforces it, so it is worth knowing before you open a pull request
 that touches a shipped file.
 
+**And so is every merge that changes WHICH files it ships**, even when no file's bytes move.
+Moving a path between `owned`, `seed` and `excluded` in `.claude/manifest-rules` changes what
+every vault is offered, and the only file it edits is the manifest, which is itself excluded. So a
+reclassification looks like a commit that touches nothing shipped while being exactly the kind of
+change a vault has to hear about. `release-check.sh` compares the classes as well as the content
+for that reason and refuses with `SHIPPED-RECLASSIFIED`. The direction that matters most is a path
+leaving the set, because once the next release is cut for any reason the new tag does not name it
+either, and from then on every change to it is invisible to the comparison.
+
 The reason is that a release is the only way anybody downstream finds out. `vault-update.sh` tells
 a vault what moved by comparing manifests, and `docs/updating.md` tells the reader to hear about a
 newer copy by watching this repository's releases. A merge that edited a shipped file, left
@@ -225,12 +234,18 @@ bash .github/release-check.sh
 
 It exits 0 when the release keeps up with what this tree ships, 1 when a release is owed or the
 tree claims a version it is not, 2 when it could not answer, and 64 when the command line was
-wrong. It could not answer when there is no git, no readable `VERSION`, no readable manifest, no
-tags in the checkout, a tag whose tree holds no manifest, a shipped set git does not recognise, or
-a comparison git could not make. **The 2 matters:** a shallow clone has no tags and looks exactly
-like a project that has never released one, and those two want opposite responses. The CI step
-gives each of them its own annotation for that reason, because the usual answer to a red release
-check is to weaken it.
+wrong. It could not answer when there is no git, no readable `VERSION`, a `VERSION` spelled a way
+it cannot read, no readable manifest, no tags in the checkout, a tag whose tree holds no manifest,
+a shipped set git does not recognise, a comparison git could not make, or a tag git would not
+write. **The 2 matters:** a shallow clone has no tags and looks exactly like a project that has
+never released one, and those two want opposite responses. The CI step gives each of them its own
+annotation for that reason, because the usual answer to a red release check is to weaken it.
+
+The last two of those causes used to leave on 1. A `VERSION` holding something that is not a
+version, and a `git tag` the tool refused to write, are both the check failing to get an answer
+rather than the check finding that a release is owed, and both said so in their own words while
+leaving by the other door. They moved in 1.2.0. Nothing downstream read them, because this script
+is classed `excluded` and reaches no vault.
 
 The script's header publishes every refusal tag it can print, so output can be grepped against a
 document rather than against a memory of one. Four of those names also appear in

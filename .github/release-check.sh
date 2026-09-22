@@ -74,10 +74,11 @@
 #    1  a release is owed, the tree claims a version it is not, or the
 #       repository holds a tag spelled a way this cannot reconcile
 #    2  this check could NOT run, so it is saying nothing about the release.
-#       No git, no readable VERSION, no readable manifest, no tags in this
-#       checkout, a tag whose tree holds no manifest to read the shipped set
-#       out of, a shipped set git does not recognise, or a comparison git
-#       could not make
+#       No git, no readable VERSION, a VERSION spelled a way nothing here can
+#       read, no readable manifest, no tags in this checkout, a tag whose tree
+#       holds no manifest to read the shipped set out of, a shipped set git
+#       does not recognise, a comparison git could not make, or a tag git would
+#       not write
 #   64  the command line was wrong
 #
 # The refusal tags, published here for the same reason `docs/reference.md`
@@ -235,11 +236,23 @@ V="$(LC_ALL=C awk '{ sub(/\r$/, ""); if (length($0)) { print; exit } }' "$VERSIO
 # And the value reaches git as a REVISION EXPRESSION rather than as a tag name,
 # so 1.1.0^ or 1.1.0^{} verifies, orders, and then drives the comparison
 # against a commit that is not any release while every message calls it a tag.
+#
+# AND IT LEAVES ON 2 RATHER THAN 1. The message ends by saying nothing could be
+# compared, which is this file's own definition of a 2, and the sibling refusal
+# a few lines above - a VERSION that is absent or empty, which is the same
+# defect with the value missing rather than misspelled - has always been a 2. A
+# caller that tells the two codes apart, which is the whole reason for having
+# both, was being told a release is owed when what had happened was that
+# nothing could be read. It was a 1 until the owner was asked, because a
+# published exit code is not a thing to change quietly, and what made it
+# affordable is that this file is classed `excluded` and reaches no vault, so
+# its only readers are the workflow beside it and whoever runs it here.
 case "$V" in
   *[!0-9.]*|.*|*.|*..*|'')
     warn "VERSION-SPELLING - $VERSION_FILE says [$V] and a version here is digits separated by single dots, so nothing could be compared against it."
     warn "This is refused rather than tried because the value reaches git as a revision expression and as a tag name. A version this file accepts and the tag filter does not would be tagged once and then never seen again, which is the same silence a leading letter would cause."
-    exit 1
+    warn "Nothing was compared, and this is NOT saying the release is up to date."
+    exit 2
     ;;
 esac
 
@@ -495,16 +508,50 @@ if git -C "$ROOT" rev-parse -q --verify "refs/tags/$V" >/dev/null 2>&1; then
   # guard stays quiet, and half the shipped set has silently stopped being
   # comparable. Measured: giving every path in this tree's manifest a leading
   # dot-slash left the union overlapping and the run reporting nothing owed.
+  #
+  # AND EVERY PATH ON EACH SIDE, not merely one of them. A guard that fires
+  # only when a whole side matches NOTHING is almost no guard at all, because
+  # one mangled path among ninety leaves the overlap far above zero and that
+  # path then drops out of the filter below for good with nothing saying so.
+  # Measured on a five-file fixture whose manifests both spell one path with a
+  # different case from git's index, which is the state a repository generated
+  # on a case-insensitive filesystem is in: that file's content changed, both
+  # overlaps sat at four of five, this guard stayed silent and the run printed
+  # that nothing was owed on exit 0.
+  #
+  # EACH SIDE AGAINST THE LIST IT WAS GENERATED FROM, and that is what makes
+  # demanding all of them affordable. The tag's manifest was generated from the
+  # files git tracked AT THE TAG, and holding it against what git tracks NOW
+  # asks a question it was never an answer to - a shipped file deleted since
+  # the tag is legitimately absent, so the overlap drops for a reason that is
+  # nobody's mistake. Measured on the same fixture: after deleting one shipped
+  # file the tag side reads four of five against this tree's list and five of
+  # five against the tag's own. Comparing against the wrong list is why this
+  # could only ever demand a non-zero overlap.
   git -C "$ROOT" -c core.quotePath=false ls-files 2>/dev/null \
-    | LC_ALL=C sort -u > "$SCRATCH/tracked"
-  overlap_of() {  # overlap_of <path-list>
-    LC_ALL=C awk 'NR == FNR { s[$0] = 1; next } ($0 in s) { n++ } END { print n + 0 }' \
-      "$SCRATCH/tracked" "$1"
+    | LC_ALL=C sort -u > "$SCRATCH/tracked.now"
+  git -C "$ROOT" -c core.quotePath=false ls-tree -r --full-tree --name-only "$V" 2>/dev/null \
+    | LC_ALL=C sort -u > "$SCRATCH/tracked.tag"
+  TRACKED_NOW_N="$(LC_ALL=C awk 'END { print NR + 0 }' "$SCRATCH/tracked.now")"
+  TRACKED_TAG_N="$(LC_ALL=C awk 'END { print NR + 0 }' "$SCRATCH/tracked.tag")"
+  # THE LISTS BEING COMPARED AGAINST ARE MEASURED FIRST, and this is not
+  # ceremony. What follows prints the paths a list does NOT hold, and awk's
+  # two-file idiom treats the second file as the first when the first has no
+  # records at all, so an empty tracked list would swallow every shipped path,
+  # print nothing, and read as a side that matched perfectly. Zero is the quiet
+  # answer again, and a repository git lists no tracked file for is not one
+  # this can say anything about.
+  if [ -z "$TRACKED_NOW_N" ] || [ -z "$TRACKED_TAG_N" ] \
+     || [ "$TRACKED_NOW_N" -eq 0 ] || [ "$TRACKED_TAG_N" -eq 0 ]; then
+    warn "SHIPPED-UNKNOWN - git listed no tracked file for this tree or for the $V tag, so there was nothing to hold the shipped paths against and nothing was compared."
+    warn "This tree lists ${TRACKED_NOW_N:-no measurable number} and the $V tag lists ${TRACKED_TAG_N:-no measurable number}."
+    exit 2
+  fi
+  unknown_of() {  # unknown_of <tracked-list> <path-list>
+    LC_ALL=C awk 'NR == FNR { s[$0] = 1; next } !($0 in s) { print }' "$1" "$2"
   }
   NOW_N="$(LC_ALL=C awk 'END { print NR + 0 }' "$SCRATCH/shipped.now")"
   TAG_SHIPPED_N="$(LC_ALL=C awk 'END { print NR + 0 }' "$SCRATCH/shipped.tag")"
-  NOW_OVERLAP="$(overlap_of "$SCRATCH/shipped.now")"
-  TAG_OVERLAP="$(overlap_of "$SCRATCH/shipped.tag")"
   # Both sides, for the reason given at the shipped count above. These two are
   # the ones gated on being ABOVE zero, so an unmeasured one disarms its half
   # of the guard rather than firing it, and the half that stayed measurable
@@ -513,11 +560,21 @@ if git -C "$ROOT" rev-parse -q --verify "refs/tags/$V" >/dev/null 2>&1; then
     warn "NO-SCRATCH - one of the two shipped lists in $SCRATCH could not be counted, so whether the two sides spell paths the same way is unknown and nothing was compared."
     exit 2
   fi
-  if { [ "$NOW_N" -gt 0 ] && [ "${NOW_OVERLAP:-0}" -eq 0 ]; } \
-     || { [ "$TAG_SHIPPED_N" -gt 0 ] && [ "${TAG_OVERLAP:-0}" -eq 0 ]; }; then
-    warn "SHIPPED-UNKNOWN - a manifest names shipped paths that git's own list of tracked files matches none of, so the two sides are spelling paths differently and nothing below could find a change in them."
-    warn "This tree's manifest names $NOW_N and git recognises $NOW_OVERLAP. The $V tag's manifest names $TAG_SHIPPED_N and git recognises $TAG_OVERLAP."
-    warn "A trailing carriage return on one side, a quoted escape on one side, or a leading dot-slash each look exactly like this. Nothing was compared."
+  unknown_of "$SCRATCH/tracked.now" "$SCRATCH/shipped.now" > "$SCRATCH/unknown.now"
+  unknown_of "$SCRATCH/tracked.tag" "$SCRATCH/shipped.tag" > "$SCRATCH/unknown.tag"
+  NOW_UNKNOWN="$(LC_ALL=C awk 'END { print NR + 0 }' "$SCRATCH/unknown.now")"
+  TAG_UNKNOWN="$(LC_ALL=C awk 'END { print NR + 0 }' "$SCRATCH/unknown.tag")"
+  if [ -z "$NOW_UNKNOWN" ] || [ -z "$TAG_UNKNOWN" ]; then
+    warn "NO-SCRATCH - the unrecognised shipped paths in $SCRATCH could not be counted, so whether the two sides spell paths the same way is unknown and nothing was compared."
+    exit 2
+  fi
+  if [ "$NOW_UNKNOWN" -gt 0 ] || [ "$TAG_UNKNOWN" -gt 0 ]; then
+    warn "SHIPPED-UNKNOWN - a manifest names shipped paths that git's own list of tracked files does not hold, so those paths cannot be compared and a change to any of them would be dropped out of the answer below with nothing saying so."
+    warn "This tree's manifest names $NOW_N and git does not recognise $NOW_UNKNOWN of them. The $V tag's manifest names $TAG_SHIPPED_N and git does not recognise $TAG_UNKNOWN of them."
+    warn "Each side is held against the files git tracked when that side was generated, so a shipped file deleted since the tag is not this. A trailing carriage return on one side, a quoted escape on one side, a leading dot-slash, or a path whose case differs from the one in git's index each look exactly like it, and so does a manifest nobody regenerated."
+    warn "Not recognised, and so not compared:"
+    LC_ALL=C sed 's/^/  in this tree, /' "$SCRATCH/unknown.now" >&2
+    LC_ALL=C sed "s/^/  at the $V tag, /" "$SCRATCH/unknown.tag" >&2
     exit 2
   fi
 
@@ -758,11 +815,21 @@ if [ "$MODE" = tag ]; then
   # meaning rather than bytes. Measured: an entry of a heading, a body line,
   # `### Added`, a bullet and `### Adopting this` was stored as four lines of
   # body with no structure at all.
+  # AND THIS LEAVES ON 2, for the same reason VERSION-SPELLING does. git
+  # refusing to write the tag is the tool failing, not a finding about the
+  # release, and none of the three things a 1 means here covers it. The
+  # difference is not academic on the one path that reaches this line by
+  # accident. An arm that expects a refusal BEFORE any tag is written sees a
+  # run with no git identity reach `git tag`, take this door, write nothing and
+  # leave on 1, which is exactly the shape it was looking for - so it would
+  # have been green on every runner while the defect it exists to catch stood.
+  # On 2 that confusion cannot happen, because no refusal in this file leaves
+  # on 2 for a reason that is about the release.
   git -C "$ROOT" tag -a "$V" --cleanup=verbatim -F "$NOTES" 2> "$SCRATCH/tagerr" || {
-    warn "TAG-FAILED - git would not write the $V tag, so nothing was cut."
+    warn "TAG-FAILED - git would not write the $V tag, so nothing was cut and this is saying nothing about whether one is owed."
     LC_ALL=C sed 's/^/  /' "$SCRATCH/tagerr" >&2
     warn "An annotated tag carries a tagger, so the commonest cause is a checkout with no user.name and user.email set. This does not set them for you, because whose name goes on a release is not a script's decision."
-    exit 1
+    exit 2
   }
   say "Annotated tag $V written into this repository, with the CHANGELOG.md $V entry as its message."
   say "Publish it with these two, which are the only steps in cutting a release that reach the network."
