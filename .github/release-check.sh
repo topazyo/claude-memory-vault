@@ -127,9 +127,24 @@ if [ -z "$ROOT" ] || ! git -C "$ROOT" rev-parse --git-dir >/dev/null 2>&1; then
   exit 2
 fi
 
+# GIT_DIR AND GIT_WORK_TREE ARE DROPPED FIRST, and that is not tidiness.
+# `git -C` changes the working directory and does not override either of them,
+# and GIT_DIR takes precedence over discovery, so with one exported the
+# resolution below answers with THAT repository while VERSION is still read off
+# this one. The two halves of the check would then come from different places
+# with nothing saying so. This is not hypothetical plumbing: git exports GIT_DIR
+# to every hook it runs, and this repository ships a pre-commit hook, so a
+# release check wired into one later would meet it.
+unset GIT_DIR GIT_WORK_TREE
+
 # Absolute, because a linked worktree's --git-dir comes back relative and this
-# is used from a different working directory further down.
-GITDIR="$(cd "$ROOT" && cd "$(git rev-parse --git-dir)" && pwd)"
+# is used from a different working directory further down. Captured into a
+# variable and checked before the cd, because `cd ""` is a no-op in bash, so an
+# empty answer would quietly leave this at $ROOT and point the rm -rf below
+# inside the working tree.
+gitdir_rel="$(cd "$ROOT" && git rev-parse --git-dir 2>/dev/null)"
+GITDIR=''
+[ -n "$gitdir_rel" ] && GITDIR="$(cd "$ROOT" && cd "$gitdir_rel" 2>/dev/null && pwd)"
 [ -n "$GITDIR" ] && [ -d "$GITDIR" ] || {
   warn "NO-GIT - the git directory for $ROOT could not be resolved, so nothing was compared."
   exit 2
@@ -233,6 +248,12 @@ fi
 
 # The greatest tag by number rather than by text, because 1.10.0 sorts before
 # 1.9.0 as text and after it as a version.
+#
+# The word splitting below is deliberate and the filter above is LOAD BEARING
+# for it. $TAGS is unquoted so that it splits into one tag per iteration, and an
+# unquoted expansion is also a glob, so loosening that numeric filter to admit a
+# character a shell pattern reads would turn this loop into a directory listing.
+# Anything it lets through now is digits and dots.
 NEWEST=''
 for t in $TAGS; do
   if [ -z "$NEWEST" ] || [ "$(version_cmp "$t" "$NEWEST")" = 1 ]; then

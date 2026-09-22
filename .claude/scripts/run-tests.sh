@@ -8105,6 +8105,7 @@ if ! command -v git >/dev/null 2>&1; then
   skip tmpl-release-version-spelling "the release controls build a tagged git fixture, and git is not installed"
   skip tmpl-release-comparators-agree "the release controls build a tagged git fixture, and git is not installed"
   skip tmpl-release-cannot-look "the release controls build a tagged git fixture, and git is not installed"
+  skip tmpl-release-ignores-git-dir "the release controls build a tagged git fixture, and git is not installed"
   # This one grew a git fixture when it stopped grepping the rules file for a
   # spelling and started putting it in front of the real generator.
   skip tmpl-shipped-rules-have-no-catchall "the template update controls build git fixtures, and git is not installed"
@@ -10989,6 +10990,51 @@ else
       ok "a comparison git could not make and a manifest git never spells that way each leave on 2 saying which one it was, rather than on 0 saying the release is up to date"
     else
       bad "the release check answered when it could not look --$vu_bad [$(vu_excerpt)]"
+    fi
+
+    # -- which repository it is actually answering about -------------------
+
+    # `git -C` moves the working directory and does NOT override GIT_DIR, which
+    # takes precedence over discovery, so with one exported the check read its
+    # tags out of that repository while reading VERSION off this one. The two
+    # halves of the answer came from different places with nothing saying so.
+    # Measured against the commit before the fix: with GIT_DIR pointed at an
+    # unrelated repository it reported NO-TAGS about a tree whose tag it had
+    # just been reading a moment earlier.
+    #
+    # Git exports GIT_DIR to every hook it runs and this repository ships a
+    # pre-commit hook, so this is the shape a release check wired into one
+    # would meet rather than a contrivance.
+    vu_gd="$VU/release-gitdir"
+    vu_make "$vu_gd" 1.0.0
+    printf '# Changelog\n\n## 1.0.0 - 2026-01-01\n\nThe first one.\n\n### Adopting this\n\nNothing to do.\n' > "$vu_gd/CHANGELOG.md"
+    vu_git "$vu_gd"
+    vu_tag "$vu_gd" 1.0.0
+    # A second repository with no tags at all, which is what the check would
+    # report on if GIT_DIR still reached it.
+    vu_gd_other="$VU/release-gitdir-other"
+    vu_make "$vu_gd_other" 1.0.0
+    vu_gd_other_tags="$(git -C "$vu_gd_other" tag -l 2>/dev/null | LC_ALL=C awk 'END { print NR + 0 }')"
+    vu_bad=''
+    [ "${vu_gd_other_tags:-1}" = 0 ] || vu_bad="$vu_bad the-other-repository-has-tags-so-it-would-answer-the-same-way"
+    vu_rc_gd0="$(vu_rel "$vu_gd")"
+    vu_gd_said0=0; vu_says 'nothing is owed' && vu_gd_said0=1
+    vu_rc_gd1="$( cd "$vu_gd" && CLAUDE_PROJECT_DIR="$vu_gd" GIT_DIR="$vu_gd_other/.git" \
+      "$VU_BASH" "$VU_REL" > "$VU_OUT" 2>&1; printf '%s' "$?" )"
+    vu_gd_said1=0; vu_says 'nothing is owed' && vu_gd_said1=1
+    vu_gd_leaked=0
+    [ -e "$vu_gd_other/.git/release-check" ] && vu_gd_leaked=1
+    [ "$vu_gd_said0" = 1 ] || vu_bad="$vu_bad the-plain-run-did-not-answer-cleanly-to-begin-with"
+    [ "$vu_rc_gd0" = 0 ] || vu_bad="$vu_bad plain-rc:$vu_rc_gd0"
+    [ "$vu_rc_gd1" = 0 ] || vu_bad="$vu_bad with-git-dir-rc:$vu_rc_gd1"
+    [ "$vu_gd_said1" = 1 ] || vu_bad="$vu_bad with-git-dir-gave-a-different-answer"
+    vu_says 'NO-TAGS' && vu_bad="$vu_bad it-read-its-tags-out-of-the-other-repository"
+    [ "$vu_gd_leaked" = 0 ] || vu_bad="$vu_bad it-wrote-scratch-into-the-other-repository"
+    ran tmpl-release-ignores-git-dir
+    if [ -z "$vu_bad" ]; then
+      ok "an exported GIT_DIR naming another repository does not move which tree the release check answers about, nor where it writes"
+    else
+      bad "an environment variable moved the release check onto another repository --$vu_bad [$(vu_excerpt)]"
     fi
   fi
 
