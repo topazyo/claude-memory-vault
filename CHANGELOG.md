@@ -27,9 +27,9 @@ bash .claude/scripts/vault-update.sh --check --from ../template-new
 
 ## 1.2.0 — 2026-09-22
 
-A release about the release check, which 1.1.0 introduced and which three review rounds then read.
-Everything here comes out of what those rounds recorded and deliberately left, and the first item
-is the only one of them that let the check answer green when it could not answer at all.
+A release about the release check, which 1.1.0 introduced and which review rounds then read.
+Everything here comes out of what those rounds recorded and deliberately left, and the first two
+items are the ones that let the check answer green when it had not compared what it claimed to.
 
 ### Fixed
 
@@ -45,14 +45,17 @@ is the only one of them that let the check answer green when it could not answer
   every later change to it is filtered out of every comparison from then on.
 - **A shipped path that git does not recognise is refused even when its neighbours are fine.** The
   guard for two sides that spell paths differently fired only when a whole side matched nothing,
-  and one unrecognised path among ninety leaves that far from nothing. Measured on a five-file
+  and one unrecognised path among all the rest leaves that far from nothing. Measured on a five-file
   fixture whose manifests spell one path with a different case from git's index, which is the state
   a repository generated on a case-insensitive filesystem is in: that file's content changed, both
   sides recognised four of five, the guard stayed silent and the run reported that nothing was
   owed. Each side is now held against the files git tracked when that side was generated, and every
   path on it has to be recognised. Holding the tag's manifest against what git tracks *now* was
   what made the loose test necessary, because a shipped file deleted since the tag is legitimately
-  absent from that list.
+  absent from that list. A path this tree's manifest names and git no longer tracks is still not
+  refused when the tag *did* track it, because that is a deletion or a rename with the manifest
+  left unregenerated — a finding the ordinary comparison was going to make correctly, and refusing
+  it would replace an answer with "the check could not run".
 
 ### Changed
 
@@ -61,13 +64,22 @@ is the only one of them that let the check answer green when it could not answer
   `VERSION` holding something that is not a version ended its own message with "nothing could be
   compared against it" while leaving by the door that says a release is owed, and its sibling for
   an absent `VERSION` had always been a 2. A `git tag` the tool refused to write is the tool
-  failing. Nothing downstream reads either code, because that script is classed `excluded` and is
-  never copied into a vault.
+  failing. No vault reads either code, because that script is classed `excluded` and is never
+  copied into one. The reader that does is this project's own CI step, which gives a 1 and a 2
+  different annotations, so both of these now say the check could not answer rather than that a
+  release is owed — which is the point of the change.
 - The control suite gains controls for the two refusals above, for the emptiness assertion on the
   release check's scratch directory, for a tag git will not write, and for both sides of the
   spelling guard. All of those are about the template's own release check and skip in a vault,
   which has no releases to cut.
-
+- `AGENTS.md` says that changing **which** files the template ships owes a release too. The rule
+  there read "every merge that changes a shipped file", and a commit that only reclassifies a path
+  changes nothing shipped while changing exactly what a release exists to announce, so an agent
+  following the rule as written would have believed it had complied.
+- `CONTRIBUTING.md` carries the same correction in the two places that tell a contributor what to
+  do rather than merely stating the policy, records the two exit codes that moved, and says which
+  direction of a reclassification reaches a vault immediately and which waits for their baseline to
+  be renewed.
 - **The suite's own test for whether an update was offered means what its name says.** It matched
   the counts line as well as the copy plan's heading, and "0 safe to take," contains the counts
   line's spelling, so a `--check` that ran honestly and had nothing to copy read as one that had
@@ -77,9 +89,19 @@ is the only one of them that let the check answer green when it could not answer
 
 ### Adopting this
 
-Nothing to do. Every change here is in the template project's own release machinery or in the
-control suite, and the one that reaches a vault is a control that holds a helper inside the suite.
-No note, rule, hook, script or frontmatter key a vault relies on has moved.
+Nothing to do, and here is what you will nevertheless be offered so that you can tell an omission
+from a deliberate silence.
+
+`--check` will list `.claude/scripts/run-tests.sh` and `AGENTS.md` as safe to take, alongside
+`VERSION` and `CHANGELOG.md`, which move on every release. Taking them is optional and changes
+nothing about how your vault is written or checked. The suite's new controls are about the template
+project's own release check and every one of them skips in a vault, which has no releases to cut.
+The `AGENTS.md` change is one sentence in the rule a contributor follows, and that sentence says in
+as many words that it asks nothing of you in your own vault.
+
+No note, rule, hook, frontmatter key or checker behaviour a vault relies on has moved.
+
+---
 
 ## 1.1.0 — 2026-09-22
 

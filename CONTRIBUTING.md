@@ -34,9 +34,12 @@ bash .claude/scripts/vault-check.sh   # frontmatter invariants
 Both must pass. For `vault-check.sh`, read the file count as well as the violation count:
 `0 violations across 0 files` means it scanned nothing, which is a broken invocation, not a pass.
 
-**If your change touches a file this template ships, it owes a release**, which means setting
-`VERSION` and writing a changelog entry in the same pull request. That is worth knowing now rather
-than when CI tells you, and *Cutting a release* below says what to do and why the rule exists.
+**If your change touches a file this template ships, or changes which files it ships, it owes a
+release**, which means setting `VERSION` and writing a changelog entry in the same pull request.
+The second half of that is easy to miss, because a commit that only moves a path between `owned`,
+`seed` and `excluded` edits nothing shipped and still changes exactly what a release exists to
+announce. All of this is worth knowing now rather than when CI tells you, and *Cutting a release*
+below says what to do and why the rule exists.
 
 CI (`.github/workflows/ci.yml`) runs both on ubuntu-latest, macos-latest and windows-latest, plus a
 separate job that runs them under macOS's system `/bin/bash` 3.2. It deliberately does **not**
@@ -125,10 +128,14 @@ a side effect of one, and CI enforces it, so it is worth knowing before you open
 that touches a shipped file.
 
 **And so is every merge that changes WHICH files it ships**, even when no file's bytes move.
-Moving a path between `owned`, `seed` and `excluded` in `.claude/manifest-rules` changes what
-every vault is offered, and the only file it edits is the manifest, which is itself excluded. So a
-reclassification looks like a commit that touches nothing shipped while being exactly the kind of
-change a vault has to hear about. `release-check.sh` compares the classes as well as the content
+Moving a path between `owned`, `seed` and `excluded` in `.claude/manifest-rules` changes what every
+vault is told this template ships, and the only files it edits are that rules file and the manifest
+generated from it, both of which are themselves excluded. So a reclassification looks like a commit
+that touches nothing shipped while being exactly the kind of change a vault has to hear about.
+(*Told*, rather than *offered*, because the two are not the same for every direction —
+[`docs/updating.md` §5](docs/updating.md) explains that a path in both manifests takes its class
+from the reader's own record, so an `owned`↔`seed` move reaches them only once their baseline is
+renewed, while a move to or from `excluded` changes what they are offered straight away.) `release-check.sh` compares the classes as well as the content
 for that reason and refuses with `SHIPPED-RECLASSIFIED`. The direction that matters most is a path
 leaving the set, because once the next release is cut for any reason the new tag does not name it
 either, and from then on every change to it is invisible to the comparison.
@@ -158,7 +165,7 @@ request does the four steps below.** Publishing the release afterwards needs pus
 repository and an authenticated `gh`, so it is the maintainer's, and an outside contributor who
 tries it will be denied for a permission they were never meant to have.
 
-In a pull request that changes a shipped file:
+In a pull request that changes a shipped file, or that changes which files are shipped:
 
 1. **Set `VERSION` to a number above the newest tag.** `git tag -l --sort=-v:refname | head -n 1`
    names the newest one. Sort it that way rather than reading the list, because plain text order
@@ -166,7 +173,7 @@ In a pull request that changes a shipped file:
 2. **Add a `CHANGELOG.md` entry with an Adopting this note.** Two strings are matched literally,
    so copy the shape of the entry above rather than inventing one:
    ```markdown
-   ## 1.2.0 — 2026-10-01
+   ## 1.3.0 — 2026-11-01
 
    ### Adopting this
 
@@ -174,7 +181,7 @@ In a pull request that changes a shipped file:
    ```
    The heading must be `## <version>` with the version as its second word, because that is what
    `release-check.sh --tag` reads to find the entry and what it compares against `VERSION`. A
-   bracketed form like `## [1.2.0] - 2026-10-01` reads as the version `[1.2.0]` and is refused. The
+   bracketed form like `## [1.3.0] - 2026-11-01` reads as the version `[1.3.0]` and is refused. The
    note must be a `### Adopting this` heading, because `tmpl-changelog-adopting` matches that line
    and nothing else — bold text or a different heading level is invisible to it.
 
@@ -241,11 +248,13 @@ write. **The 2 matters:** a shallow clone has no tags and looks exactly like a p
 never released one, and those two want opposite responses. The CI step gives each of them its own
 annotation for that reason, because the usual answer to a red release check is to weaken it.
 
-The last two of those causes used to leave on 1. A `VERSION` holding something that is not a
-version, and a `git tag` the tool refused to write, are both the check failing to get an answer
-rather than the check finding that a release is owed, and both said so in their own words while
-leaving by the other door. They moved in 1.2.0. Nothing downstream read them, because this script
-is classed `excluded` and reaches no vault.
+Two of those causes used to leave on 1, and they are the third and the last. A `VERSION` holding
+something that is not a version, and a `git tag` the tool refused to write, are both the check
+failing to get an answer rather than the check finding that a release is owed, and both said so in
+their own words while leaving by the other door. They moved in 1.2.0. No vault read either code,
+because this script is classed `excluded` and is never copied into one, and the reader that does
+read them is the CI step above — which from 1.2.0 gives both of them its could-not-answer
+annotation rather than its release-owed one, which is the point of the change.
 
 The script's header publishes every refusal tag it can print, so output can be grepped against a
 document rather than against a memory of one. Four of those names also appear in
