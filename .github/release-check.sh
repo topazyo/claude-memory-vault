@@ -29,6 +29,13 @@
 #   byte for byte what that tag holds, because the tree is claiming to BE that
 #   release. A shipped file that differs is a change no vault can discover.
 #
+#   And WHICH files those are has to match too. The set is not a fact about the
+#   tree, it is a statement in `.claude/template-manifest`, so a path can start
+#   or stop being shipped, or move between `owned` and `seed`, without any
+#   file's bytes changing at all. That is as much a change no vault can
+#   discover as an edit is, and for a while it was the one this asked nothing
+#   about.
+#
 #   VERSION names no tag. Then a release is in preparation, which is a fine
 #   state for a pull request and not a fine state for the branch releases are
 #   cut from. On that branch an untagged version is the exact debt this script
@@ -67,10 +74,13 @@
 #    1  a release is owed, the tree claims a version it is not, or the
 #       repository holds a tag spelled a way this cannot reconcile
 #    2  this check could NOT run, so it is saying nothing about the release.
-#       No git, no readable VERSION, no readable manifest, no tags in this
-#       checkout, a tag whose tree holds no manifest to read the shipped set
-#       out of, a shipped set git does not recognise, or a comparison git
-#       could not make
+#       No git, no readable VERSION, a VERSION spelled a way nothing here can
+#       read, no readable manifest, no tags in this checkout, a tag whose tree
+#       holds no manifest to read the shipped set out of, a scratch directory
+#       this run could not make, could not empty, or could not write and read
+#       back, a side of the comparison naming no shipped file at all, a shipped
+#       set git does not recognise, a comparison git could not make, or a tag
+#       git would not write
 #   64  the command line was wrong
 #
 # The refusal tags, published here for the same reason `docs/reference.md`
@@ -79,8 +89,9 @@
 #
 #   NO-GIT · NO-VERSION · VERSION-SPELLING · TAG-SPELLING · NO-TAGS ·
 #   NO-SCRATCH · NO-MANIFEST · TAG-WITHOUT-MANIFEST · VACUOUS ·
-#   SHIPPED-UNKNOWN · DIFF-FAILED · UNRELEASED-CHANGES · VERSION-GOES-BACKWARD ·
-#   UNTAGGED-VERSION · ALREADY-TAGGED · NO-NOTES · TAG-FAILED
+#   SHIPPED-UNKNOWN · DIFF-FAILED · UNRELEASED-CHANGES ·
+#   SHIPPED-RECLASSIFIED · VERSION-GOES-BACKWARD · UNTAGGED-VERSION ·
+#   ALREADY-TAGGED · NO-NOTES · TAG-FAILED
 #
 # Four of those names also exist in `vault-update.sh` and do not mean the same
 # thing there, which is worth knowing before grepping both at once. NO-GIT,
@@ -227,11 +238,30 @@ V="$(LC_ALL=C awk '{ sub(/\r$/, ""); if (length($0)) { print; exit } }' "$VERSIO
 # And the value reaches git as a REVISION EXPRESSION rather than as a tag name,
 # so 1.1.0^ or 1.1.0^{} verifies, orders, and then drives the comparison
 # against a commit that is not any release while every message calls it a tag.
+#
+# AND IT LEAVES ON 2 RATHER THAN 1. The message ends by saying nothing could be
+# compared, which is this file's own definition of a 2, and the sibling refusal
+# a few lines above - a VERSION that is absent or empty, which is the same
+# defect with the value missing rather than misspelled - has always been a 2. A
+# caller that tells the two codes apart, which is the whole reason for having
+# both, was being told a release is owed when what had happened was that
+# nothing could be read. It was a 1 until the owner was asked, because a
+# published exit code is not a thing to change quietly, and what made it
+# affordable is that this file is classed `excluded` and reaches no vault, so
+# its only readers are the workflow beside it and whoever runs it here.
+# THE DIGITS ARE SPELLED OUT rather than written as a range. A bracket RANGE
+# in a shell pattern is collation dependent, and bash pins it to ASCII with
+# `globasciiranges`, which is on by default in bash 5 and does not exist in
+# bash 3.2 - and one of the five jobs this runs on is macOS's system bash 3.2.
+# Every awk here already carries an LC_ALL=C prefix, so this `case` is the only
+# range the shell itself evaluates, and listing the ten characters removes the
+# dependency rather than configuring it away.
 case "$V" in
-  *[!0-9.]*|.*|*.|*..*|'')
+  *[!0123456789.]*|.*|*.|*..*|'')
     warn "VERSION-SPELLING - $VERSION_FILE says [$V] and a version here is digits separated by single dots, so nothing could be compared against it."
     warn "This is refused rather than tried because the value reaches git as a revision expression and as a tag name. A version this file accepts and the tag filter does not would be tagged once and then never seen again, which is the same silence a leading letter would cause."
-    exit 1
+    warn "Nothing was compared, and this is NOT saying the release is up to date."
+    exit 2
     ;;
 esac
 
@@ -325,9 +355,14 @@ mkdir -p "$SCRATCH" || {
 # already exists and so cannot tell a failed clear from a clean one. On Git
 # Bash `rm -rf` really does fail on an open handle, a read-only attribute or a
 # scanner holding a file, in a way it essentially never does on the other two
-# platforms. A survivor here is not cosmetic: four of the files written below
+# platforms. A survivor here is not cosmetic: MOST of the files written below
 # have their redirection status read nowhere, so a stale read-only one would be
-# read as this run's data and the run would answer from it.
+# read as this run's data and the run would answer from it. This said "four"
+# when four was the count, and the count has since grown past ten, which is the
+# kind of number that goes stale in a comment while the sentence it is load
+# bearing for stays true. Only the diff, its error output and the tag error
+# have their redirections checked; everything else in this directory is held by
+# the assertion below and by the guards that read what came back.
 if [ -n "$(ls -A "$SCRATCH" 2>/dev/null)" ]; then
   warn "NO-SCRATCH - $SCRATCH could not be emptied, so a previous run's files are still in it and nothing here could be trusted to be this run's."
   exit 2
@@ -385,19 +420,64 @@ if git -C "$ROOT" rev-parse -q --verify "refs/tags/$V" >/dev/null 2>&1; then
   # The field count is checked in the same pass. A line short of three fields
   # used to contribute an empty path, which inflated every count by one and put
   # a blank line into a set that is compared against git's.
-  shipped_paths() {  # shipped_paths, filtering a manifest on standard input
-    LC_ALL=C awk '
+  # THE CLASS IS READ ALONGSIDE THE PATH, by ONE reader, and the path lists
+  # below are taken off what it wrote rather than from a second pass over the
+  # same manifests. The shipped SET is compared against the tag further down
+  # and that comparison needs the class, so a second manifest reader was the
+  # obvious shape - and it would have put the field-count guard and the
+  # rest-of-the-line strip in two places. This repository has already been
+  # bitten twice by one fix landing in one of the two places that needed it,
+  # and a manifest line is parsed in exactly one place here for that reason.
+  #
+  # The side is marked in the line rather than kept in two files, because the
+  # comparison further down reads both sides at once and awk's NR == FNR idiom
+  # is true for the SECOND file's lines when the first file is empty. An empty
+  # tag side is reachable, so the two sides would be read as one.
+  #
+  # The separator is a single space and the marker and the class hold none, so
+  # stripping exactly two space-delimited fields gives the path back whatever
+  # it holds, a space or a tab INSIDE it included. A manifest line separated by
+  # tabs rather than spaces is a different matter and is not accepted: awk's
+  # default splitting counts a tab as a separator where this strip does not, so
+  # such a line passes the class and field-count test, survives the strip whole,
+  # and becomes its own path. That leaves by SHIPPED-UNKNOWN on 2, which is the
+  # right direction, and it is worth saying plainly rather than letting the
+  # sentence above imply the format is looser than it is. `.claude/manifest-rules`
+  # IS tab separated, so a maintainer copying that shape by hand is the way in.
+  shipped_classed() {  # shipped_classed <side>, filtering a manifest on standard input
+    # The side reaches awk through the environment rather than through -v,
+    # because -v processes backslash escapes in the value it is handed.
+    RC_SIDE="$1" LC_ALL=C awk '
+      BEGIN { side = ENVIRON["RC_SIDE"] }
       { sub(/\r$/, "") }
       ($1 == "owned" || $1 == "seed") && NF >= 3 {
         p = $0
         sub(/^[^ ]+[ ]+[^ ]+[ ]+/, "", p)
-        if (length(p)) print p
+        if (length(p)) print side " " $1 " " p
       }'
   }
-  shipped_paths < "$ROOT/$MANIFEST_REL" 2>/dev/null | LC_ALL=C sort -u > "$SCRATCH/shipped.now"
+  # THE SAME GUARD AS THE READER FURTHER DOWN, deliberately. One reader parses
+  # a manifest line, which is what the comment above is about, and the CLASSED
+  # line it writes is then parsed in two places - here and by the comparison at
+  # the end. Those two had different guards, one checking the field count and
+  # the other the length, which is the hazard that comment names arriving one
+  # level down. Nothing reached a wrong answer through it, because a line short
+  # of three fields is refused before the comparison runs, and they agree now
+  # so that a later change to this format has one shape to move rather than two.
+  side_paths() {  # side_paths <side>, one side of that list with the marker and class taken off
+    RC_SIDE="$1" LC_ALL=C awk '
+      BEGIN { side = ENVIRON["RC_SIDE"] }
+      NF >= 3 && $1 == side {
+        p = $0
+        sub(/^[^ ]+ [^ ]+ /, "", p)
+        if (length(p)) print p
+      }' "$SCRATCH/classed"
+  }
+  shipped_classed now < "$ROOT/$MANIFEST_REL" 2>/dev/null > "$SCRATCH/classed"
   git -C "$ROOT" show "$V:$MANIFEST_REL" 2>/dev/null \
-    | shipped_paths \
-    | LC_ALL=C sort -u > "$SCRATCH/shipped.tag"
+    | shipped_classed tag >> "$SCRATCH/classed"
+  side_paths now | LC_ALL=C sort -u > "$SCRATCH/shipped.now"
+  side_paths tag | LC_ALL=C sort -u > "$SCRATCH/shipped.tag"
   LC_ALL=C sort -u "$SCRATCH/shipped.now" "$SCRATCH/shipped.tag" > "$SCRATCH/shipped"
   SHIPPED_N="$(LC_ALL=C awk 'END { print NR + 0 }' "$SCRATCH/shipped")"
 
@@ -457,29 +537,170 @@ if git -C "$ROOT" rev-parse -q --verify "refs/tags/$V" >/dev/null 2>&1; then
   # guard stays quiet, and half the shipped set has silently stopped being
   # comparable. Measured: giving every path in this tree's manifest a leading
   # dot-slash left the union overlapping and the run reporting nothing owed.
-  git -C "$ROOT" -c core.quotePath=false ls-files 2>/dev/null \
-    | LC_ALL=C sort -u > "$SCRATCH/tracked"
-  overlap_of() {  # overlap_of <path-list>
-    LC_ALL=C awk 'NR == FNR { s[$0] = 1; next } ($0 in s) { n++ } END { print n + 0 }' \
-      "$SCRATCH/tracked" "$1"
+  #
+  # AND EVERY PATH ON EACH SIDE, not merely one of them. A guard that fires
+  # only when a whole side matches NOTHING is almost no guard at all, because
+  # one mangled path among ninety leaves the overlap far above zero and that
+  # path then drops out of the filter below for good with nothing saying so.
+  # Measured on a five-file fixture whose manifests both spell one path with a
+  # different case from git's index, which is the state a repository generated
+  # on a case-insensitive filesystem is in: that file's content changed, both
+  # overlaps sat at four of five, this guard stayed silent and the run printed
+  # that nothing was owed on exit 0.
+  #
+  # EACH SIDE AGAINST THE LIST IT WAS GENERATED FROM, and that is what makes
+  # demanding all of them affordable. The tag's manifest was generated from the
+  # files git tracked AT THE TAG, and holding it against what git tracks NOW
+  # asks a question it was never an answer to - a shipped file deleted since
+  # the tag is legitimately absent, so the overlap drops for a reason that is
+  # nobody's mistake. Measured on the same fixture: after deleting one shipped
+  # file the tag side reads four of five against this tree's list and five of
+  # five against the tag's own. Comparing against the wrong list is why this
+  # could only ever demand a non-zero overlap.
+  # --full-name AND a pathspec for the whole repository, because `ls-files`
+  # answers about the CURRENT DIRECTORY twice over - it lists only what is
+  # under it and prints what it lists relative to it - while `ls-tree
+  # --full-tree` does neither. CLAUDE_PROJECT_DIR is allowed to name a
+  # subdirectory, so without both flags the two lists would be in different
+  # vocabularies and every path on the tag side would read as unrecognised.
+  # The pair is new here, so the asymmetry is new here, and the flags cost
+  # nothing where the working directory is the top of the tree anyway.
+  git -C "$ROOT" -c core.quotePath=false ls-files --full-name -- ":/" 2>/dev/null \
+    | LC_ALL=C sort -u > "$SCRATCH/tracked.now"
+  git -C "$ROOT" -c core.quotePath=false ls-tree -r --full-tree --name-only "$V" 2>/dev/null \
+    | LC_ALL=C sort -u > "$SCRATCH/tracked.tag"
+  TRACKED_NOW_N="$(LC_ALL=C awk 'END { print NR + 0 }' "$SCRATCH/tracked.now")"
+  TRACKED_TAG_N="$(LC_ALL=C awk 'END { print NR + 0 }' "$SCRATCH/tracked.tag")"
+  # THE LISTS BEING COMPARED AGAINST ARE MEASURED FIRST, and this is not
+  # ceremony. What follows prints the paths a list does NOT hold, and awk's
+  # two-file idiom treats the second file as the first when the first has no
+  # records at all, so an empty tracked list would swallow every shipped path,
+  # print nothing, and read as a side that matched perfectly. Zero is the quiet
+  # answer again, and a repository git lists no tracked file for is not one
+  # this can say anything about.
+  if [ -z "$TRACKED_NOW_N" ] || [ -z "$TRACKED_TAG_N" ] \
+     || [ "$TRACKED_NOW_N" -eq 0 ] || [ "$TRACKED_TAG_N" -eq 0 ]; then
+    warn "SHIPPED-UNKNOWN - git listed no tracked file for this tree or for the $V tag, so there was nothing to hold the shipped paths against and nothing was compared."
+    warn "This tree lists ${TRACKED_NOW_N:-no measurable number} and the $V tag lists ${TRACKED_TAG_N:-no measurable number}."
+    exit 2
+  fi
+  unknown_of() {  # unknown_of <tracked-list> <path-list>
+    LC_ALL=C awk 'NR == FNR { s[$0] = 1; next } !($0 in s) { print }' "$1" "$2"
   }
   NOW_N="$(LC_ALL=C awk 'END { print NR + 0 }' "$SCRATCH/shipped.now")"
   TAG_SHIPPED_N="$(LC_ALL=C awk 'END { print NR + 0 }' "$SCRATCH/shipped.tag")"
-  NOW_OVERLAP="$(overlap_of "$SCRATCH/shipped.now")"
-  TAG_OVERLAP="$(overlap_of "$SCRATCH/shipped.tag")"
   # Both sides, for the reason given at the shipped count above. These two are
   # the ones gated on being ABOVE zero, so an unmeasured one disarms its half
   # of the guard rather than firing it, and the half that stayed measurable
   # then reports a clean overlap for a set nobody could count.
   if [ -z "$NOW_N" ] || [ -z "$TAG_SHIPPED_N" ]; then
-    warn "NO-SCRATCH - one of the two shipped lists in $SCRATCH could not be counted, so whether the two sides spell paths the same way is unknown and nothing was compared."
+    warn "NO-SCRATCH - one of the two shipped lists in $SCRATCH could not be counted, so whether the two sides spell paths the same way is unknown. Nothing was compared, and this is NOT saying the release is up to date."
     exit 2
   fi
-  if { [ "$NOW_N" -gt 0 ] && [ "${NOW_OVERLAP:-0}" -eq 0 ]; } \
-     || { [ "$TAG_SHIPPED_N" -gt 0 ] && [ "${TAG_OVERLAP:-0}" -eq 0 ]; }; then
-    warn "SHIPPED-UNKNOWN - a manifest names shipped paths that git's own list of tracked files matches none of, so the two sides are spelling paths differently and nothing below could find a change in them."
-    warn "This tree's manifest names $NOW_N and git recognises $NOW_OVERLAP. The $V tag's manifest names $TAG_SHIPPED_N and git recognises $TAG_OVERLAP."
-    warn "A trailing carriage return on one side, a quoted escape on one side, or a leading dot-slash each look exactly like this. Nothing was compared."
+
+  # EACH SIDE SEPARATELY, AND THE UNION IS NOT ENOUGH. The VACUOUS test above
+  # measures the union, so one side naming nothing at all while the other names
+  # ninety leaves it silent, and everything below then reads that side's
+  # absence as a fact about the template rather than as a failure to read it.
+  # It lands hardest on the reclassification report, which sees every path on
+  # the surviving side as one that started or stopped being shipped and refuses
+  # on 1 saying the whole template was reclassified. That is this file's own
+  # doctrine about 1 and 2 inverted, on the loudest sentence it prints.
+  #
+  # It is reachable without any failure of this machine. A manifest emptied to
+  # its comment header is a perfectly readable file, so the readable-manifest
+  # test above passes it, and an object at $V:$MANIFEST_REL that is not a
+  # manifest reads the same way, because the existence test is `cat-file -e`
+  # and proves only that something is there.
+  if [ "$NOW_N" -eq 0 ] || [ "$TAG_SHIPPED_N" -eq 0 ]; then
+    warn "VACUOUS - one side of the comparison names no shipped file at all, so what this template ships could not be established and nothing was compared."
+    warn "This tree's manifest names $NOW_N and the $V tag's manifest names $TAG_SHIPPED_N."
+    warn "A side that names nothing is a manifest this could not read rather than a template that ships nothing, and it is NOT a reclassification. This is NOT saying the release is up to date."
+    exit 2
+  fi
+
+  # THE STATUS OF EACH OF THESE IS READ, and the reason is the direction the
+  # measurement runs in. The guard this replaced counted an OVERLAP and fired
+  # when it was zero, so an awk that failed and wrote nothing fired it - that
+  # shape was fail-closed by accident of its arithmetic. Counting the paths
+  # git does NOT hold inverts the arithmetic, and it inverts the failure
+  # direction with it: an awk that fails now leaves an empty file, a
+  # measurable zero, and silence. Zero is the green answer here, so the `-z`
+  # test below cannot stand in for this - it catches a count nobody could take
+  # and not a file nobody could write.
+  if ! unknown_of "$SCRATCH/tracked.now" "$SCRATCH/shipped.now" > "$SCRATCH/unknown.now"; then
+    warn "NO-SCRATCH - this tree's shipped paths could not be checked against git's list of tracked files, so whether the two sides spell paths the same way is unknown. Nothing was compared, and this is NOT saying the release is up to date."
+    exit 2
+  fi
+  if ! unknown_of "$SCRATCH/tracked.tag" "$SCRATCH/shipped.tag" > "$SCRATCH/unknown.tag"; then
+    warn "NO-SCRATCH - the $V tag's shipped paths could not be checked against git's list of tracked files, so whether the two sides spell paths the same way is unknown. Nothing was compared, and this is NOT saying the release is up to date."
+    exit 2
+  fi
+  # A DELETION SINCE THE TAG IS NOT A SPELLING DIFFERENCE, and telling the two
+  # apart is what keeps this guard from pre-empting an answer that was going to
+  # be right. Take a shipped file deleted from the index with the manifest left
+  # unregenerated. This tree's manifest still names it, git no longer tracks
+  # it, and demanding every path be recognised would refuse on 2 - but the path
+  # is in the shipped set through the TAG'S manifest, `git diff` below lists it
+  # as deleted, the filter keeps it, and the run would have refused on 1 naming
+  # that file, with a remedy that already includes regenerating the manifest.
+  # Refusing here would replace a correct and fully determined answer with "the
+  # check could not run", forty lines before the thing that was going to
+  # answer, and two trees differing only in whether somebody ran --generate
+  # would get different codes for an identical consequence.
+  #
+  # The discriminator costs one more pass and no git call, because both tracked
+  # lists are already on disk. A now-side path the TAG tracked is a deletion or
+  # a rename, which is a finding. A path in NEITHER list is the spelling case,
+  # and that one genuinely cannot be answered, because the two sides are
+  # speaking different vocabularies and every comparison below would silently
+  # under-report. A case-only difference is in neither list, so it still
+  # refuses; a case-only rename is in the tag's, so it is reported as the owed
+  # release it is.
+  #
+  # The TAG side needs no such split. Its manifest and its tracked list come
+  # from the same commit, so there is no "deleted since" for them to disagree
+  # about, and anything it does not recognise is a spelling difference.
+  if ! unknown_of "$SCRATCH/tracked.tag" "$SCRATCH/unknown.now" > "$SCRATCH/unspelled.now"; then
+    warn "NO-SCRATCH - this tree's unrecognised shipped paths could not be checked against the files the $V tag tracked, so whether they are misspelled or merely deleted is unknown. Nothing was compared, and this is NOT saying the release is up to date."
+    exit 2
+  fi
+  NOW_UNKNOWN="$(LC_ALL=C awk 'END { print NR + 0 }' "$SCRATCH/unknown.now")"
+  TAG_UNKNOWN="$(LC_ALL=C awk 'END { print NR + 0 }' "$SCRATCH/unknown.tag")"
+  NOW_UNSPELLED="$(LC_ALL=C awk 'END { print NR + 0 }' "$SCRATCH/unspelled.now")"
+  if [ -z "$NOW_UNKNOWN" ] || [ -z "$TAG_UNKNOWN" ] || [ -z "$NOW_UNSPELLED" ]; then
+    warn "NO-SCRATCH - the unrecognised shipped paths in $SCRATCH could not be counted, so whether the two sides spell paths the same way is unknown. Nothing was compared, and this is NOT saying the release is up to date."
+    exit 2
+  fi
+  # CONTROL CHARACTERS ARE MADE VISIBLE in the three listings that print
+  # manifest bytes, and in nothing else. Everything else this file prints comes
+  # from git, which spells a path the way its index holds it. These three print
+  # strings git does NOT recognise, or classes and paths read straight out of a
+  # tracked file that a pull request from a stranger can edit. A carriage
+  # return or an escape sequence in one of them would overwrite the refusal
+  # above it on a terminal, and a run that refused would read to whoever
+  # scrolled past as one that did not. Tab survives, because a tab is a
+  # character a real path can hold and this is not the place to refuse one.
+  # THE PREFIX GOES THROUGH THE ENVIRONMENT TOO, and that is the reason this
+  # takes one at all rather than being piped into sed. The tag-side listing
+  # wants "at the $V tag" in front of each line, and interpolating a version
+  # into a sed SCRIPT puts the same class of value into the same class of
+  # hazard that `shipped_classed` uses ENVIRON to avoid two hundred lines
+  # earlier. It is safe today only because the version grammar ran first, which
+  # is a coupling nothing stated. Passing it as data removes the question.
+  visible() {  # visible [prefix], making control characters visible
+    RC_PREFIX="${1:-}" LC_ALL=C awk '
+      BEGIN { p = ENVIRON["RC_PREFIX"] }
+      { gsub(/[\001-\010\013-\037\177]/, "?"); print p $0 }'
+  }
+
+  if [ "$NOW_UNSPELLED" -gt 0 ] || [ "$TAG_UNKNOWN" -gt 0 ]; then
+    warn "SHIPPED-UNKNOWN - a manifest names shipped paths that git has never tracked under that spelling, on either side, so those paths cannot be compared and a change to any of them would be dropped out of the answer below with nothing saying so."
+    warn "This tree's manifest names $NOW_N, git does not track $NOW_UNKNOWN of them now, and $NOW_UNSPELLED of those were not tracked at the $V tag either. The $V tag's manifest names $TAG_SHIPPED_N and git does not recognise $TAG_UNKNOWN of them."
+    warn "A shipped file merely deleted since the tag is NOT this, and is reported as the owed release it is. A trailing carriage return on one side, a quoted escape on one side, a leading dot-slash, or a path whose case differs from the one in git's index each look exactly like this."
+    warn "Never tracked under this spelling, and so not compared:"
+    visible '  in this tree, ' < "$SCRATCH/unspelled.now" >&2
+    visible "  at the $V tag, " < "$SCRATCH/unknown.tag" >&2
     exit 2
   fi
 
@@ -543,6 +764,112 @@ if git -C "$ROOT" rev-parse -q --verify "refs/tags/$V" >/dev/null 2>&1; then
     warn "UNRELEASED-CHANGES - $CHANGED_N of the $SHIPPED_N file(s) this template ships differ from the $V tag, and VERSION still says $V, so a vault fetching $V does not get them."
     warn "Changed since $V, and unreachable by anybody downstream:"
     LC_ALL=C sed 's/^/  /' "$SCRATCH/changed" >&2
+    warn "Set VERSION to a number above $V, add its CHANGELOG.md entry with an Adopting this note, regenerate the manifest, and cut the release."
+    warn "  VAULT_TEMPLATE_MAINTAINER=1 bash .claude/scripts/vault-update.sh --generate"
+    warn "  bash .github/release-check.sh --tag"
+    exit 1
+  fi
+
+  # ------------------------------------ and the shipped SET, not its bytes --
+
+  # THE SHIPPED SET IS ITSELF SOMETHING THIS TEMPLATE SHIPS, and everything
+  # above compares file CONTENT. A path's class lives in the manifest and
+  # nowhere else, the manifest is classed `excluded` and so is not a shipped
+  # file, and `.claude/manifest-rules` is excluded beside it. So a commit that
+  # moves a path between `owned`, `seed` and `excluded` and regenerates the
+  # manifest changes what every vault downstream is told this template ships,
+  # while the only two files whose bytes moved are the two the filter above
+  # drops. CHANGED_N is 0 and the clean line prints on exit 0. That is the
+  # fail-open this whole file is written against, reached through the one input
+  # to the shipped set that was never held against a tag.
+  #
+  # Both directions are real and they fail differently. A path moving INTO the
+  # set means vaults are never offered a file the template has started
+  # maintaining. A path moving OUT is worse, because it is durable. Once any
+  # later release is cut for some other reason, the new tag's manifest does not
+  # name it either, it is then in neither side of the union, and every later
+  # change to it is filtered out of every comparison for good.
+  #
+  # CLASS AND PATH, rather than path alone. `owned` and `seed` are different
+  # promises - the template maintains one and hands the other over - and
+  # `vault-update.sh` reads that class out of the manifest to decide what a
+  # vault is offered. A path moving between them stays in a path-only set and
+  # is invisible to it.
+  #
+  # AFTER the content comparison, because an ordinary release-owing change
+  # moves a file's bytes too and UNRELEASED-CHANGES is the wording that names
+  # it. This is left to fire on what nothing else can see, and that placement is
+  # what lets its message say plainly that no file's bytes moved: reaching this
+  # line at all means CHANGED_N was 0.
+  #
+  # NOTHING IS RE-READ HERE. The classed list this works from is the same one
+  # the shipped paths above were taken off, so a manifest is parsed once and
+  # the two answers cannot disagree about what it said. Everything that guards
+  # that read - the readable-manifest refusal, the two vacuity counts and the
+  # overlap guard - therefore guards this too, and a classed list that went
+  # missing or came out half written has already been refused above rather than
+  # arriving here as an absence of reclassification.
+  #
+  # AND THIS ONE'S STATUS IS READ TOO, for the reason given at the unknown-path
+  # counts above. Zero reclassified paths is the green answer, so an awk that
+  # started and failed would leave an empty file, a measurable zero, and the
+  # clean line.
+  #
+  # IT LEAVES ON 3 FOR A DUPLICATE, which is a third answer and not a failure,
+  # so the status is captured rather than merely tested. A manifest naming one
+  # path twice cannot be resolved by this and must not be resolved by this.
+  RECLASS_RC=0
+  LC_ALL=C awk '
+    {
+      c = $2
+      p = $0
+      sub(/^[^ ]+ [^ ]+ /, "", p)
+    }
+    NF >= 3 && $1 == "tag" { if (!seen[p]++) order[++n] = p; if (p in was) dupe[p] = 1; was[p] = c; next }
+    NF >= 3 && $1 == "now" { if (!seen[p]++) order[++n] = p; if (p in here) dupe[p] = 1; here[p] = c; next }
+    END {
+      for (i = 1; i <= n; i++) {
+        p = order[i]
+        # A PATH NAMED TWICE ON ONE SIDE IS NOT RESOLVED. The assignments above
+        # would otherwise keep whichever line came last, so the verdict would
+        # turn on the order of two lines in a file, and a real move could be
+        # hidden by appending a line restating the old class. The path lists
+        # are sort -u so no count can see it either. This reports it as
+        # something nobody can answer rather than picking a winner.
+        if (p in dupe) { print "DUPLICATE " p; bad = 1; continue }
+        w = (p in was) ? was[p] : "not shipped"
+        u = (p in here) ? here[p] : "not shipped"
+        # THE PATH IS BRACKETED, because the rest of this line is prose and the
+        # path is the one part of it a stranger writes. Unbracketed, a path
+        # reading "x was owned at the tag and is seed in this tree" produces a
+        # whole extra finding that looks exactly like a real one.
+        if (w != u) print "[" p "] was " w " at the tag and is " u " in this tree"
+      }
+      exit bad ? 3 : 0
+    }
+  ' "$SCRATCH/classed" > "$SCRATCH/reclassed" || RECLASS_RC=$?
+  if [ "$RECLASS_RC" = 3 ]; then
+    warn "SHIPPED-UNKNOWN - a manifest names the same shipped path twice under two classes, so what this template ships is a thing that manifest disagrees with itself about and nothing here can settle it."
+    warn "Named twice on one side:"
+    visible < "$SCRATCH/reclassed" | LC_ALL=C sed 's/^DUPLICATE /  /' >&2
+    warn "This is not resolved here on purpose. Whichever line were taken, the answer would turn on the order of two lines in a file, and a real move between classes could be hidden by appending one that restates the old class. Fix the manifest and run this again. Nothing was compared."
+    exit 2
+  fi
+  if [ "$RECLASS_RC" != 0 ]; then
+    warn "NO-SCRATCH - the shipped set in $SCRATCH could not be compared against the $V tag's, so whether what this template ships has been reclassified is unknown, and this is NOT saying the release is up to date."
+    exit 2
+  fi
+  RECLASSED_N="$(LC_ALL=C awk 'END { print NR + 0 }' "$SCRATCH/reclassed")"
+  if [ -z "$RECLASSED_N" ]; then
+    warn "NO-SCRATCH - the reclassified set in $SCRATCH could not be counted, so whether what this template ships has moved between classes is unknown, and this is NOT saying the release is up to date."
+    exit 2
+  fi
+
+  if [ "$RECLASSED_N" -gt 0 ]; then
+    warn "SHIPPED-RECLASSIFIED - $RECLASSED_N path(s) are shipped differently by this tree than by the $V tag, and VERSION still says $V, so a vault fetching $V is told this template ships something other than what it ships."
+    warn "No shipped file's bytes moved to say so, which is why the comparison above found nothing. A class is recorded in $MANIFEST_REL and nowhere else, and neither that file nor .claude/manifest-rules is itself shipped, so this is the only thing that reads it."
+    warn "Shipped differently since $V:"
+    visible '  ' < "$SCRATCH/reclassed" >&2
     warn "Set VERSION to a number above $V, add its CHANGELOG.md entry with an Adopting this note, regenerate the manifest, and cut the release."
     warn "  VAULT_TEMPLATE_MAINTAINER=1 bash .claude/scripts/vault-update.sh --generate"
     warn "  bash .github/release-check.sh --tag"
@@ -647,11 +974,21 @@ if [ "$MODE" = tag ]; then
   # meaning rather than bytes. Measured: an entry of a heading, a body line,
   # `### Added`, a bullet and `### Adopting this` was stored as four lines of
   # body with no structure at all.
+  # AND THIS LEAVES ON 2, for the same reason VERSION-SPELLING does. git
+  # refusing to write the tag is the tool failing, not a finding about the
+  # release, and none of the three things a 1 means here covers it. The
+  # difference is not academic on the one path that reaches this line by
+  # accident. An arm that expects a refusal BEFORE any tag is written sees a
+  # run with no git identity reach `git tag`, take this door, write nothing and
+  # leave on 1, which is exactly the shape it was looking for - so it would
+  # have been green on every runner while the defect it exists to catch stood.
+  # On 2 that confusion cannot happen, because no refusal in this file leaves
+  # on 2 for a reason that is about the release.
   git -C "$ROOT" tag -a "$V" --cleanup=verbatim -F "$NOTES" 2> "$SCRATCH/tagerr" || {
-    warn "TAG-FAILED - git would not write the $V tag, so nothing was cut."
+    warn "TAG-FAILED - git would not write the $V tag, so nothing was cut and this is saying nothing about whether one is owed."
     LC_ALL=C sed 's/^/  /' "$SCRATCH/tagerr" >&2
     warn "An annotated tag carries a tagger, so the commonest cause is a checkout with no user.name and user.email set. This does not set them for you, because whose name goes on a release is not a script's decision."
-    exit 1
+    exit 2
   }
   say "Annotated tag $V written into this repository, with the CHANGELOG.md $V entry as its message."
   say "Publish it with these two, which are the only steps in cutting a release that reach the network."

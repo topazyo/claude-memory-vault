@@ -282,5 +282,9 @@ the harness's state somewhere else rather than widening the fence. Setup details
 - **Do not change a file the template ships without setting `VERSION`.** If you are contributing to
   this template, every merge that changes a shipped file is a release, because a release is the
   only way a vault downstream ever hears that something moved, and CI refuses a tree that claims a
-  version it is not. `CONTRIBUTING.md` has the steps. Nothing asks this of you in your own vault,
-  where `VERSION` records which template version you came from rather than one you are publishing.
+  version it is not. **Changing WHICH files it ships is the same thing**, so moving a path between
+  `owned`, `seed` and `excluded` in `.claude/manifest-rules` owes a release even though no shipped
+  file's bytes move — the only file such a commit edits is the manifest, which is itself excluded,
+  so it looks like a commit that touches nothing shipped. `CONTRIBUTING.md` has the steps. Nothing
+  asks this of you in your own vault, where `VERSION` records which template version you came from
+  rather than one you are publishing.
