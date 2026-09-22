@@ -8106,6 +8106,8 @@ if ! command -v git >/dev/null 2>&1; then
   skip tmpl-release-comparators-agree "the release controls build a tagged git fixture, and git is not installed"
   skip tmpl-release-cannot-look "the release controls build a tagged git fixture, and git is not installed"
   skip tmpl-release-ignores-git-dir "the release controls build a tagged git fixture, and git is not installed"
+  skip tmpl-release-vacuous "the release controls build a tagged git fixture, and git is not installed"
+  skip tmpl-release-tag-without-manifest "the release controls build a tagged git fixture, and git is not installed"
   # This one grew a git fixture when it stopped grepping the rules file for a
   # spelling and started putting it in front of the real generator.
   skip tmpl-shipped-rules-have-no-catchall "the template update controls build git fixtures, and git is not installed"
@@ -10535,6 +10537,7 @@ else
     skip tmpl-release-cannot-look "$VU_REL is not present, so this is a vault rather than the template project and there is no release to keep up with"
     skip tmpl-release-ignores-git-dir "$VU_REL is not present, so this is a vault rather than the template project and there is no release to keep up with"
     skip tmpl-release-vacuous "$VU_REL is not present, so this is a vault rather than the template project and there is no release to keep up with"
+    skip tmpl-release-tag-without-manifest "$VU_REL is not present, so this is a vault rather than the template project and there is no release to keep up with"
   else
     vu_d="$VU/release"
     vu_make "$vu_d" 1.0.0
@@ -10755,6 +10758,11 @@ else
     # The remote is a second local repository, so a push would succeed and be
     # visible, which is what makes its absence evidence rather than an absence
     # of evidence.
+    #
+    # EVERY REF IS COUNTED, not only tags. The promise in the script's header
+    # is that it never reaches the network, stated in full generality, so a
+    # canary that watched tags alone would have stayed silent for a `git push
+    # origin HEAD` added beside the printed command.
     vu_rl_remote="$VU/release-remote.git"
     rm -rf "$vu_rl_remote"
     git init -q --bare "$vu_rl_remote" >/dev/null 2>&1
@@ -10772,10 +10780,10 @@ else
       GIT_COMMITTER_NAME=suite GIT_COMMITTER_EMAIL=suite@example.invalid \
       GIT_AUTHOR_NAME=suite GIT_AUTHOR_EMAIL=suite@example.invalid \
       "$VU_BASH" "$VU_REL" --tag > "$VU_OUT" 2>&1; printf '%s' "$?" )"
-    vu_rl_pushed="$(git -C "$vu_rl_remote" tag -l 2>/dev/null | LC_ALL=C awk 'END { print NR + 0 }')"
+    vu_rl_pushed="$(git -C "$vu_rl_remote" for-each-ref 2>/dev/null | LC_ALL=C awk 'END { print NR + 0 }')"
     vu_rl_after="$(git -C "$vu_d" tag -l 2>/dev/null | LC_ALL=C awk '$0 == "1.1.0" { n++ } END { print n + 0 }')"
     [ "$vu_rl_remote_ok" = 1 ] || vu_bad="$vu_bad no-remote-was-built-so-a-push-would-have-failed-anyway"
-    [ "${vu_rl_pushed:-1}" = 0 ] || vu_bad="$vu_bad it-pushed-${vu_rl_pushed}-tag(s)-to-the-remote"
+    [ "${vu_rl_pushed:-1}" = 0 ] || vu_bad="$vu_bad it-pushed-${vu_rl_pushed}-ref(s)-to-the-remote"
     vu_rl_msg="$(git -C "$vu_d" tag -l -n99 1.1.0 2>/dev/null | tr '\n' ' ')"
     [ "${vu_rl_before:-1}" = 0 ] || vu_bad="$vu_bad the-tag-already-existed-before-cutting"
     [ "$vu_rl_rc_cut" = 0 ] || vu_bad="$vu_bad cut-rc:$vu_rl_rc_cut"
@@ -10809,8 +10817,8 @@ else
     # And a second cut of a version that is now tagged is refused rather than
     # quietly doing nothing, so a reader who runs it twice is told which it was.
     vu_rl_rc_again="$(vu_rel "$vu_d" --tag)"
-    vu_rl_pushed2="$(git -C "$vu_rl_remote" tag -l 2>/dev/null | LC_ALL=C awk 'END { print NR + 0 }')"
-    [ "${vu_rl_pushed2:-1}" = 0 ] || vu_bad="$vu_bad the-refused-second-cut-pushed-${vu_rl_pushed2}-tag(s)"
+    vu_rl_pushed2="$(git -C "$vu_rl_remote" for-each-ref 2>/dev/null | LC_ALL=C awk 'END { print NR + 0 }')"
+    [ "${vu_rl_pushed2:-1}" = 0 ] || vu_bad="$vu_bad the-refused-second-cut-pushed-${vu_rl_pushed2}-ref(s)"
     # And it does not say both things. The refusal used to be preceded by the
     # clean line on standard output, so a caller reading one stream was told
     # the opposite of what the exit code said.
@@ -11018,7 +11026,14 @@ else
       grep -qF 'made this fail on purpose' "$TMP/gitshim.out" && vu_cl_marker=1
       # And the rest of git still works through it, or the run would not reach
       # the comparison at all and the refusal below would be the wrong one.
-      PATH="$vu_cl_shim:$PATH" VAULT_GIT_REAL="$vu_cl_real" git tag -l >/dev/null 2>&1 \
+      #
+      # Run INSIDE the fixture. It used to run in whatever directory the suite
+      # was started from, and `git tag -l` needs a repository, so running the
+      # suite from a checkout that is not one - an unpacked tarball of this
+      # template, which nothing forbids - failed this control for a reason with
+      # nothing to do with what it tests. The diff half above does not care,
+      # because the stand-in refuses before reaching git at all.
+      ( cd "$vu_cl" && PATH="$vu_cl_shim:$PATH" VAULT_GIT_REAL="$vu_cl_real" git tag -l ) >/dev/null 2>&1 \
         || vu_cl_marker=0
     fi
     if [ -z "$vu_cl_real" ] || [ "$vu_cl_refuses" != 1 ] || [ "$vu_cl_marker" != 1 ]; then
@@ -11078,6 +11093,50 @@ else
       ok "a comparison git could not make, a manifest git never spells that way, and a manifest that is not there each leave on 2 saying which one it was, rather than on 0 saying the release is up to date"
     else
       bad "the release check answered when it could not look --$vu_bad [$(vu_excerpt)]"
+    fi
+
+    # -- a tag from before there were manifests ----------------------------
+
+    # Of the refusals with no control, this is the one whose absence narrows
+    # what gets compared rather than merely losing a message. Delete it and
+    # the tag's side of the shipped set comes back empty, the union quietly
+    # becomes this tree's side alone, and a file the tag shipped and this tree
+    # has dropped is compared against nothing.
+    #
+    # The case is real rather than contrived. Version 1.0.0 is the first that
+    # ships a manifest, so any tag older than it has none, and a repository
+    # that released before adopting this mechanism has exactly such tags.
+    vu_tw="$VU/release-notagmanifest"
+    vu_make "$vu_tw" 1.0.0
+    printf '# Changelog\n\n## 1.0.0 - 2026-01-01\n\nThe first one.\n\n### Adopting this\n\nNothing to do.\n' > "$vu_tw/CHANGELOG.md"
+    # Tag a commit made BEFORE the manifest existed. vu_build commits once and
+    # then generates, so the first commit is that state, and its parent-free
+    # history means the tag has to be put on it by name.
+    vu_tw_first="$(git -C "$vu_tw" rev-list --max-parents=0 HEAD 2>/dev/null | head -n 1)"
+    vu_git "$vu_tw"
+    if [ -n "$vu_tw_first" ]; then
+      git -C "$vu_tw" -c user.name=suite -c user.email=suite@example.invalid \
+        -c tag.gpgSign=false tag -a 1.0.0 -m 1.0.0 "$vu_tw_first" >/dev/null 2>&1
+    fi
+    # Measured when the fixture is built. The tag must exist and its tree must
+    # NOT hold a manifest, or this is asking an ordinary question.
+    vu_tw_tagged="$(git -C "$vu_tw" tag -l 2>/dev/null | LC_ALL=C awk '$0 == "1.0.0" { n++ } END { print n + 0 }')"
+    vu_tw_has=0
+    git -C "$vu_tw" cat-file -e '1.0.0:.claude/template-manifest' 2>/dev/null && vu_tw_has=1
+    if [ "${vu_tw_tagged:-0}" != 1 ] || [ "$vu_tw_has" != 0 ]; then
+      skip tmpl-release-tag-without-manifest "a tag on a commit from before the manifest existed could not be built here -- tagged:${vu_tw_tagged:-0} tag-holds-a-manifest:$vu_tw_has, so the refusal's silence would prove nothing"
+    else
+      vu_rc_tw="$(vu_rel "$vu_tw")"
+      vu_bad=''
+      [ "$vu_rc_tw" = 2 ] || vu_bad="$vu_bad rc:$vu_rc_tw"
+      vu_says 'TAG-WITHOUT-MANIFEST' || vu_bad="$vu_bad no-reason"
+      vu_says 'nothing is owed' && vu_bad="$vu_bad it-compared-against-a-tag-it-could-not-read"
+      ran tmpl-release-tag-without-manifest
+      if [ -z "$vu_bad" ]; then
+        ok "a tag whose tree holds no manifest stops the comparison rather than narrowing it to this tree's side and reporting that nothing moved"
+      else
+        bad "a tag that shipped no manifest was compared against anyway --$vu_bad [$(vu_excerpt)]"
+      fi
     fi
 
     # -- a comparison of nothing at all ------------------------------------
@@ -11224,9 +11283,17 @@ else
   # is the cost rather than a description of it. Every bound above survives a
   # revert that keeps one prototype per version and then builds each fixture
   # from scratch anyway, because the prototype count, the fixture count and
-  # their ratio are all unchanged by it. This one is not: it runs from about
-  # thirty to about a hundred and thirty.
-  [ "$VU_GEN_N" -lt 55 ] || vu_bad="$vu_bad $VU_GEN_N-generations-is-about-one-per-fixture-again"
+  # their ratio are all unchanged by it.
+  #
+  # A RANGE, not a ceiling, and a tight one. The first version allowed anything
+  # under fifty-five against a measured thirty-one, and eighty per cent of slack
+  # is enough room to revert the reuse for ONE SECTION and stay under the bar,
+  # which is the natural scope of a "just build this one from scratch" edit and
+  # leaves every other bound here unmoved. This number is deterministic and
+  # knowable, so the house rule about exact counts applies to it, and a range
+  # this tight shows up as a one-line edit when the section grows honestly.
+  [ "$VU_GEN_N" -ge 24 ] || vu_bad="$vu_bad only-$VU_GEN_N-generations-so-the-fixtures-were-not-built"
+  [ "$VU_GEN_N" -le 40 ] || vu_bad="$vu_bad $VU_GEN_N-generations-is-more-than-one-per-version-plus-the-ones-controls-ask-for"
   ran tmpl-fixtures-built
   if [ -z "$vu_bad" ]; then
     ok "all $VU_MAKE_N template fixtures landed with a manifest and a repository, from $VU_PROTO_BUILT generated prototype(s), and the whole section ran $VU_GEN_N generation(s) rather than one per fixture"
