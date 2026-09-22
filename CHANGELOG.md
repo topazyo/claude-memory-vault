@@ -25,6 +25,77 @@ bash .claude/scripts/vault-update.sh --check --from ../template-new
 
 ---
 
+## 1.1.0 — 2026-09-22
+
+Mostly a release about releases. 1.0.0 shipped a mechanism that tells a vault what moved upstream
+and relies on a release being cut whenever something does, and nothing enforced that. 1.0.0 was
+itself merged first and tagged afterwards by hand.
+
+### Added
+
+- `.github/release-check.sh`, which is what now enforces the rule the paragraph above says nothing
+  enforced. It refuses a default branch whose `VERSION` names no tag, and a tree whose shipped
+  files differ from the tag `VERSION` does name, so that every merge changing a shipped file is a
+  release. It belongs to the template project rather than to a vault and is never copied into one,
+  because a vault has no releases to cut, and `run-tests.sh` gains ten controls holding it.
+- `.claude/scripts/vault-update.sh --check` now prints the SHA-256 of each file in the safe-to-take
+  list, says in that list's heading what the digest is, and says in the copy plan's own preamble
+  that the plan describes the source folder as it was when the check read it. Nothing re-reads that
+  folder between then and whenever you paste, and that gap is you reading rather than a race inside
+  the script, so it cannot be closed in code. The digest is what lets you settle it in one command
+  instead. It is the digest of the bytes, which is not the one the manifest records, and
+  `docs/updating.md` says why.
+- `VAULT_FORCE_NO_DIFF=1`, which makes `--diff` take its no-diff-tool refusal on a machine that has
+  one. It is the same kind of seam as `VAULT_FORCE_NO_SHA` beside it, and it exists so that refusal
+  can have a control.
+
+### Changed
+
+- The source symlink refusal tests **every component of a path** rather than only its last one. A
+  source could otherwise ship one symbolic link named `docs` and walk every entry beneath it past a
+  check whose whole purpose was to stop that, while verifying against its own manifest perfectly.
+- The truncated lists in the source checks say how many entries there were, the way every other
+  list in that script already did.
+- `AGENTS.md` carries a new rule, and it is the only change in this release that tells an agent to
+  do something differently. It says not to change a file the template ships without setting
+  `VERSION`, which is a rule for people contributing to the template and not for your vault. It is
+  written to say so, and the note below says what to do if you take it anyway.
+- `docs/updating.md` explains the digest beside each path and which digest it is.
+  `docs/reference.md` records the two environment variables that force a refusal for testing.
+
+### Adopting this
+
+**Nothing to do, and one thing to read if you take `AGENTS.md`.**
+
+No frontmatter key, tier, folder or exit code has changed, and no command you run takes different
+arguments. What did change is output, in three places, which matters only if something of yours
+reads it by position rather than by the counts line. `--check` prints a digest column in the
+safe-to-take list, a sentence in that list's heading and a sentence in the copy plan's preamble,
+and the refusal warnings about a source folder now end with a count of how many entries there
+were rather than a silent truncation.
+
+`AGENTS.md` is shipped, so `--check` will offer it, and it is the one file in this release where
+taking the bytes also takes a standing instruction every harness loads. The new rule scopes itself
+to contributing to the template, so it costs a vault nothing, but read the bullet before you copy
+it rather than after.
+
+The symlink change is a hardening one and you will almost certainly never see it. It refuses a
+source that reaches its own files through a symbolic link **inside** the folder, which a `git
+clone` of this template never produces. The folder you point `--from` at may itself live under a
+symlinked path, and that is not affected — only links below it are tested, because you chose that
+folder and the template did not.
+
+**Take `.claude/scripts/vault-update.sh` first and on its own, then run `--check` again.** The
+digest column and the stricter symlink test are both inside that file, so the run that offers you
+this release is your old copy and cannot use either of them. The second run can. This is worth the
+extra pass because both of this release's safeguards protect the copying, and the copy that brings
+them in is the one they cannot cover.
+
+Once that second run is the one you are reading, check the digests in its safe-to-take list against
+the folder you are about to copy out of. That is what they are for.
+
+---
+
 ## 1.0.0 — 2026-09-21
 
 The first version with a version. Everything before this shipped unnumbered, so a vault created
