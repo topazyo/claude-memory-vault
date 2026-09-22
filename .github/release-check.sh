@@ -190,7 +190,13 @@ esac
 # shipped into every vault and this one is not, so lifting ten lines of awk into
 # a shared place would couple a maintainer's tool into the reader's. The two
 # have to agree about one thing, which is that 1.0 and 1.0.0 are the same number
-# written two ways, and a control asserts that rather than trusting this comment.
+# written two ways.
+#
+# `tmpl-release-comparators-agree` asserts that of THIS copy, by feeding it 1.0,
+# 1.0.0.0 and 01.0.0 against a 1.0.0 tag, and `tmpl-same-version-equivalent`
+# asserts it of the other one. This sentence used to claim a control existed
+# when none did for this side, which is the shape of claim that teaches a reader
+# to stop checking the others, so it now names them.
 version_cmp() {  # version_cmp <a> <b>, prints -1, 0 or 1
   LC_ALL=C awk -v a="$1" -v b="$2" '
     BEGIN {
