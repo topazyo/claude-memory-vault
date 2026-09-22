@@ -7883,7 +7883,15 @@ vu_git() {  # vu_git <dir>
     commit -q -m init >/dev/null 2>&1
 }
 
+# Counted, because the count of generations IS the cost this section was
+# rebuilt to control, and every other number nearby is bookkeeping that a
+# revert can leave untouched. Reverting the reuse by building each fixture
+# from scratch keeps the prototype count, the fixture count and their ratio
+# all exactly as they are, and takes this number from about thirty to about a
+# hundred and thirty.
+VU_GEN_N=0
 vu_gen() {  # vu_gen <dir>
+  VU_GEN_N=$((VU_GEN_N + 1))
   ( cd "$1" && CLAUDE_PROJECT_DIR="$1" VAULT_TEMPLATE_MAINTAINER=1 "$VU_BASH" "$VU_SH" --generate ) >/dev/null 2>&1
 }
 
@@ -8270,6 +8278,20 @@ else
   vu_moved_count() {
     LC_ALL=C sed -n 's/^vault-update: \([0-9][0-9]*\) moved upstream,.*/\1/p' "$VU_OUT" | head -n 1
   }
+  # The third number as well as the first. The first is take plus merge plus
+  # new plus collision and the third is take plus new, so reading both means a
+  # term dropped from one of them has to be dropped from the other to stay
+  # consistent.
+  #
+  # THE LIMIT, STATED. This fixture produces only the take verdict, so merge,
+  # new and collision are all zero in it and dropping any of those three from
+  # either sum is still invisible here. Closing that needs a fixture carrying
+  # all four verdicts at once, which is a different control from this one, and
+  # each of the three has its own control asserting its own section. What is
+  # uncovered is the arithmetic of the sum, not the verdicts.
+  vu_safe_count() {
+    LC_ALL=C sed -n 's/^vault-update: .* \([0-9][0-9]*\) safe to take,.*/\1/p' "$VU_OUT" | head -n 1
+  }
   # The exact number this fixture builds rather than a threshold, and measured
   # off the two manifests rather than written down, so that it stays exact when
   # the fixture changes. A count that came back inflated is invisible to a test
@@ -8292,8 +8314,17 @@ else
 
   vu_rc_b="$(vu_rc "$vu_same" --check --from "$vu_newer")"
   vu_n_b="$(vu_moved_count)"
+  vu_s_b="$(vu_safe_count)"
   vu_t_b_uptodate=0; vu_says 'nothing has moved upstream' && vu_t_b_uptodate=1
-  vu_t_b_plan=0;     vu_says 'Safe to take' && vu_t_b_plan=1
+  # BOTH spellings, exactly, and this is the one place they are pinned. The
+  # counts line says "N safe to take," in lower case and the copy plan's
+  # heading says "Safe to take (N)." with a capital, and eight refusal
+  # controls elsewhere assert that NEITHER appears. A negative that can no
+  # longer match is indistinguishable from one that passed, so rewording
+  # either of these in the report would quietly disarm all eight with nothing
+  # to notice. This is what would notice.
+  vu_t_b_plan=0;     vu_says 'Safe to take (' && vu_t_b_plan=1
+  vu_t_b_counts=0;   vu_says ' safe to take,' && vu_t_b_counts=1
 
   vu_nomf="$VU/nomanifest"
   vu_make "$vu_nomf" 1.0.0
@@ -8311,7 +8342,9 @@ else
   [ "${vu_n_a:-x}" = 0 ] || vu_bad="$vu_bad uptodate-count:${vu_n_a:-absent}"
   [ "${vu_t_expect:-0}" -ge 1 ] || vu_bad="$vu_bad the-two-fixtures-differ-in-${vu_t_expect:-0}-owned-files"
   [ "${vu_n_b:-absent}" = "${vu_t_expect:-0}" ] || vu_bad="$vu_bad update-count:${vu_n_b:-absent}-against-${vu_t_expect:-0}-built"
-  [ "$vu_t_b_plan" = 1 ] || vu_bad="$vu_bad update-offered-no-plan"
+  [ "${vu_s_b:-absent}" = "${vu_t_expect:-0}" ] || vu_bad="$vu_bad safe-count:${vu_s_b:-absent}-against-${vu_t_expect:-0}-built"
+  [ "$vu_t_b_plan" = 1 ] || vu_bad="$vu_bad update-printed-no-copy-plan-heading"
+  [ "$vu_t_b_counts" = 1 ] || vu_bad="$vu_bad update-printed-no-counts-line-phrase"
   [ "$vu_t_b_uptodate" = 1 ] && vu_bad="$vu_bad update-said-uptodate"
   [ "$vu_t_a_plan" = 1 ] && vu_bad="$vu_bad uptodate-offered-a-plan"
   [ "$vu_t_a_cp" = 1 ] && vu_bad="$vu_bad uptodate-printed-cp-commands"
@@ -10060,8 +10093,13 @@ else
     vu_make "$vu_d" 1.0.0
     printf 'doc with a name a manifest could not carry\n' > "$vu_d/$vu_uw_name"
     vu_git "$vu_d"
-    vu_uw_tracked="$(vu_uw_want="$vu_uw_name" git -C "$vu_d" ls-files 2>/dev/null \
-      | LC_ALL=C awk '$0 == ENVIRON["vu_uw_want"] { n++ } END { print n + 0 }')"
+    # The assignment goes on the AWK and not on the git, because a variable
+    # written in front of the first command of a pipeline is in that command's
+    # environment alone. Written in front of git it reached git, which has no
+    # use for it, and awk read an empty string, matched nothing, and reported
+    # the index as not naming a file that was sitting in it.
+    vu_uw_tracked="$(git -C "$vu_d" ls-files 2>/dev/null \
+      | vu_uw_want="$vu_uw_name" LC_ALL=C awk '$0 == ENVIRON["vu_uw_want"] { n++ } END { print n + 0 }')"
     vu_before="$(cksum < "$vu_d/.claude/template-manifest" | cut -d' ' -f1)"
     vu_rc_uw="$( cd "$vu_d" && CLAUDE_PROJECT_DIR="$vu_d" VAULT_TEMPLATE_MAINTAINER=1 "$VU_BASH" "$VU_SH" --generate > "$VU_OUT" 2>&1; printf '%s' "$?" )"
     vu_after="$(cksum < "$vu_d/.claude/template-manifest" | cut -d' ' -f1)"
@@ -10113,8 +10151,10 @@ else
     vu_git "$vu_d"
     vu_cc_blob="$( cd "$vu_d" && git hash-object -w "$vu_cc_have" 2>/dev/null )"
     git -C "$vu_d" update-index --add --cacheinfo "100644,$vu_cc_blob,$vu_cc_also" >/dev/null 2>&1
-    vu_cc_seen="$(vu_cc_a="$vu_cc_have" vu_cc_b="$vu_cc_also" git -C "$vu_d" ls-files 2>/dev/null \
-      | LC_ALL=C awk '$0 == ENVIRON["vu_cc_a"] || $0 == ENVIRON["vu_cc_b"] { n++ } END { print n + 0 }')"
+    # The assignments go on the AWK and not on the git, for the reason written
+    # out at tmpl-unwritable-name above.
+    vu_cc_seen="$(git -C "$vu_d" ls-files 2>/dev/null \
+      | vu_cc_a="$vu_cc_have" vu_cc_b="$vu_cc_also" LC_ALL=C awk '$0 == ENVIRON["vu_cc_a"] || $0 == ENVIRON["vu_cc_b"] { n++ } END { print n + 0 }')"
     vu_cc_ondisk=0
     [ -f "$vu_d/$vu_cc_have" ] && vu_cc_ondisk=$((vu_cc_ondisk + 1))
     [ -f "$vu_d/$vu_cc_also" ] && vu_cc_ondisk=$((vu_cc_ondisk + 1))
@@ -10884,14 +10924,32 @@ else
       printf 'exec "$VAULT_GIT_REAL" "$@"\n'
     } > "$vu_cl_shim/git"
     chmod +x "$vu_cl_shim/git" 2>/dev/null
-    vu_cl_found="$( PATH="$vu_cl_shim:$PATH" command -v git 2>/dev/null )"
+    # Whether the stand-in is reached is established by RUNNING it and looking
+    # for what only it says, not by asking command -v. bash keeps a hash table
+    # of command locations and consults it before PATH, and this suite has
+    # already run git directly many times by the time it gets here, so on macOS
+    # command -v answered with the real git while the stand-in was the thing
+    # actually being run. The hash is dropped as well, but the check that
+    # decides is the marker, because behaviour is the evidence and a lookup is
+    # a claim about it.
+    hash -r 2>/dev/null || true
     vu_cl_refuses=0
+    vu_cl_marker=0
     if [ -n "$vu_cl_real" ]; then
-      PATH="$vu_cl_shim:$PATH" VAULT_GIT_REAL="$vu_cl_real" git diff --name-only HEAD >/dev/null 2>&1 \
-        || vu_cl_refuses=1
+      if PATH="$vu_cl_shim:$PATH" VAULT_GIT_REAL="$vu_cl_real" \
+           git diff --name-only HEAD > "$TMP/gitshim.out" 2>&1; then
+        vu_cl_refuses=0
+      else
+        vu_cl_refuses=1
+      fi
+      grep -qF 'made this fail on purpose' "$TMP/gitshim.out" && vu_cl_marker=1
+      # And the rest of git still works through it, or the run would not reach
+      # the comparison at all and the refusal below would be the wrong one.
+      PATH="$vu_cl_shim:$PATH" VAULT_GIT_REAL="$vu_cl_real" git tag -l >/dev/null 2>&1 \
+        || vu_cl_marker=0
     fi
-    if [ -z "$vu_cl_real" ] || [ "$vu_cl_found" != "$vu_cl_shim/git" ] || [ "$vu_cl_refuses" != 1 ]; then
-      vu_bad="$vu_bad a-stand-in-git-could-not-be-put-in-front-of-the-real-one-real:[${vu_cl_real:-none}]-resolved:[${vu_cl_found:-none}]-refuses:$vu_cl_refuses"
+    if [ -z "$vu_cl_real" ] || [ "$vu_cl_refuses" != 1 ] || [ "$vu_cl_marker" != 1 ]; then
+      vu_bad="$vu_bad a-stand-in-git-could-not-be-put-in-front-of-the-real-one-real:[${vu_cl_real:-none}]-refuses:$vu_cl_refuses-is-the-stand-in:$vu_cl_marker"
     else
       vu_rc_cl1="$( cd "$vu_cl" && PATH="$vu_cl_shim:$PATH" CLAUDE_PROJECT_DIR="$vu_cl" \
         VAULT_GIT_REAL="$vu_cl_real" "$VU_BASH" "$VU_REL" > "$VU_OUT" 2>&1; printf '%s' "$?" )"
@@ -10974,9 +11032,16 @@ else
   [ "$vu_proto_on_disk" -lt 20 ] || vu_bad="$vu_bad $vu_proto_on_disk-prototypes-is-one-per-fixture-again"
   [ "$vu_proto_on_disk" -lt "$VU_MAKE_N" ] || vu_bad="$vu_bad nothing-was-reused"
   [ "$vu_proto_on_disk" = "$VU_PROTO_BUILT" ] || vu_bad="$vu_bad built-$VU_PROTO_BUILT-but-$vu_proto_on_disk-are-on-disk"
+  # And the count of generations, which is the only one of these numbers that
+  # is the cost rather than a description of it. Every bound above survives a
+  # revert that keeps one prototype per version and then builds each fixture
+  # from scratch anyway, because the prototype count, the fixture count and
+  # their ratio are all unchanged by it. This one is not: it runs from about
+  # thirty to about a hundred and thirty.
+  [ "$VU_GEN_N" -lt 55 ] || vu_bad="$vu_bad $VU_GEN_N-generations-is-about-one-per-fixture-again"
   ran tmpl-fixtures-built
   if [ -z "$vu_bad" ]; then
-    ok "all $VU_MAKE_N template fixtures landed with a manifest, from $VU_PROTO_BUILT generated prototype(s) rather than $VU_MAKE_N generations"
+    ok "all $VU_MAKE_N template fixtures landed with a manifest and a repository, from $VU_PROTO_BUILT generated prototype(s), and the whole section ran $VU_GEN_N generation(s) rather than one per fixture"
   else
     bad "the template fixtures were not built as this section assumes --$vu_bad"
   fi
