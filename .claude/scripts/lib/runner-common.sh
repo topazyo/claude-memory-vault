@@ -2059,9 +2059,12 @@ record_leftovers() {
 # check_leftovers <root> <snap-dir> <head-commit-or-NONE> <quarantine-dir> <log> <put-back: 0|1>
 # Runs vault-check on each adopted leftover in <snap-dir>/predirty.adopted on its
 # own, before the agent starts, and drops every one that fails from that list,
-# so it cannot make this pass's own files fail with it. With <put-back> 1 a
-# failing leftover is put back now, as revert_owned does. With 0 it is left in
-# place for review, and from then on counts as someone's file.
+# so it cannot make this pass's own files fail with it. A leftover that changes a
+# long-tier note the head commit holds fails too: it is an earlier run's edit of
+# a note that was already there, which check_owned would refuse together with
+# every note of this pass. With <put-back> 1 a failing leftover is put back now,
+# as revert_owned does. With 0 it is left in place for review, and from then on
+# counts as someone's file.
 check_leftovers() {
   local root="$1" snap="$2" head="$3" qdir="$4" log="$5" putback="$6" p pre="$2/leftover-check"
   [ -s "$snap/predirty.adopted" ] || return 0
@@ -2072,24 +2075,33 @@ check_leftovers() {
   : > "$pre/check.out"
   while IFS= read -r p; do
     [ -n "$p" ] || continue
+    case "$p" in
+      31-standards/*|40-llm-wiki/wiki/*)
+        if [ "$head" != NONE ] && [ -n "$(index_blob "$root" "$head" "$p")" ]; then
+          printf '%s\n' "$p" >> "$pre/failed"
+          printf '%s ./%s\n' "$(path_state "$root" "$p")" "$p" >> "$pre/after"
+          printf 'create-only: %s is a long-tier note the last commit already holds, and a pass may only add notes there\n' "$p" >> "$pre/check.out"
+          continue
+        fi ;;
+    esac
     CLAUDE_PROJECT_DIR="$root" bash "$root/.claude/scripts/vault-check.sh" -- "$p" </dev/null >"$pre/check.one" 2>&1 && continue
     printf '%s\n' "$p" >> "$pre/failed"
     printf '%s ./%s\n' "$(path_state "$root" "$p")" "$p" >> "$pre/after"
-    cat "$pre/check.one" >> "$pre/check.out"
+    sed 's/^/vault-check: /' "$pre/check.one" >> "$pre/check.out"
   done < "$snap/predirty.adopted"
   [ -s "$pre/failed" ] || return 0
   awk 'FILENAME == ARGV[1] { failed[$0] = 1; next } !($0 in failed)' "$pre/failed" "$snap/predirty.adopted" > "$snap/predirty.adopted.kept"
   if [ "$putback" = 1 ]; then
     cp "$pre/after" "$pre/before"
     cp "$snap/predirty.adopted" "$pre/predirty.adopted"
-    printf '[%s] LEFTOVER-REJECTED: files an earlier run left uncommitted fail vault-check, so they are put back before this pass starts:\n' "$(ts)" >> "$log"
-    sed 's/^/    vault-check: /' "$pre/check.out" >> "$log"
+    printf '[%s] LEFTOVER-REJECTED: files an earlier run left uncommitted fail vault-check, or change a long-tier note that was already committed, so they are put back before this pass starts:\n' "$(ts)" >> "$log"
+    sed 's/^/    /' "$pre/check.out" >> "$log"
     if ! revert_owned "$root" "$snap/nohooks" "$pre" "$pre/failed" "$head" "$qdir" "$log"; then
       printf '[%s] ERROR: some of those files could not be put back, as listed above. Review them.\n' "$(ts)" >> "$log"
     fi
   else
-    printf '[%s] LEFTOVER-REJECTED: files an earlier run left uncommitted fail vault-check, so they are left in place for review and not committed:\n' "$(ts)" >> "$log"
-    sed 's/^/    vault-check: /' "$pre/check.out" >> "$log"
+    printf '[%s] LEFTOVER-REJECTED: files an earlier run left uncommitted fail vault-check, or change a long-tier note that was already committed, so they are left in place for review and not committed:\n' "$(ts)" >> "$log"
+    sed 's/^/    /' "$pre/check.out" >> "$log"
     sed 's/^/    /' "$pre/failed" >> "$log"
     # Back on the dirty list, so this pass may not write them either.
     cat "$pre/failed" "$snap/predirty" | LC_ALL=C sort -u > "$snap/predirty.new"
@@ -2264,10 +2276,23 @@ owned_predirty() {
 # check_owned <root> <owned-list> <predirty-list> <snap-dir> <log>
 # Returns 2 after logging when a path the pass owns and changed already had
 # uncommitted changes before the pass (owned_predirty), or is no longer a regular
-# file because the pass removed it or put a link or a folder in its place. Such a
-# pass is put back rather than committed or recorded. Returns 0 otherwise.
+# file because the pass removed it or put a link or a folder in its place, or is
+# a long-tier note that was there before the pass. Such a pass is put back rather
+# than committed or recorded. Returns 0 otherwise.
+#
+# The long tier is create-only. A pass may add notes to 31-standards/ and
+# 40-llm-wiki/wiki/ but never change one already there, whoever wrote it: a
+# supersession, a freshness stamp or an edit to a standard is the owner's to
+# make, and the pass proposes it instead. A note was there when the commit HEAD
+# pointed at before the pass (HEAD_BEFORE) holds it, or when the snapshot taken
+# before the pass lists it and it is not a leftover of this runner that
+# adopt_uncommitted took back. The snapshot test also catches a note git ignores
+# and one git's lookup misses, such as after a case-only rename, so a lookup that
+# finds nothing does not let a change through. Without a snapshot to read, a
+# long-tier path counts as there. Dream journals are not in the long tier, so the
+# dream pass is unaffected.
 check_owned() {
-  local root="$1" owned="$2" p
+  local root="$1" owned="$2" snap="$4" p before
   owned_predirty "$owned" "$3" "$4" "$5" || return 2
   while IFS= read -r p; do
     [ -n "$p" ] || continue
@@ -2276,6 +2301,25 @@ check_owned() {
       return 2
     fi
   done < "$owned"
+  before="${HEAD_BEFORE:-HEAD HEAD}"
+  before="${before##* }"
+  : > "$snap/owned-existing"
+  while IFS= read -r p; do
+    case "$p" in 31-standards/*|40-llm-wiki/wiki/*) ;; *) continue ;; esac
+    if [ "$before" != NONE ] && [ -n "$(index_blob "$root" "$before" "$p")" ]; then
+      printf '%s\n' "$p" >> "$snap/owned-existing"
+    elif grep -qxF -- "$p" "$snap/predirty.adopted" 2>/dev/null; then
+      continue
+    elif [ ! -f "$snap/before" ] \
+         || P="./$p" awk '{ line = $0; sub(/^[^ ]* [^ ]* /, "", line) } line == ENVIRON["P"] { found = 1; exit } END { exit found ? 0 : 1 }' "$snap/before"; then
+      printf '%s\n' "$p" >> "$snap/owned-existing"
+    fi
+  done < "$owned"
+  if [ -s "$snap/owned-existing" ]; then
+    printf '[%s] VIOLATION: the pass changed long-tier notes that were there before it started. A pass may add notes to 31-standards/ and 40-llm-wiki/wiki/ but never change one already there, so nothing was committed:\n' "$(ts)" >> "$5"
+    sed 's/^/    /' "$snap/owned-existing" >> "$5"
+    return 2
+  fi
   return 0
 }
 
