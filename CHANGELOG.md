@@ -25,6 +25,100 @@ bash .claude/scripts/vault-update.sh --check --from ../template-new
 
 ---
 
+## 1.3.0 — 2026-09-23
+
+The weekly promotion pass becomes create-only over the long tier. It may add notes to
+`31-standards/` and `40-llm-wiki/wiki/` and never change one already there. Freshness stamps,
+supersessions and corrections of existing notes now reach you as proposals in its promotion report.
+
+### Changed
+
+- **A promotion pass that changes a long-tier note that was there before it is refused and put
+  back.** Until now the runner committed any change to an existing standard or wiki entity that
+  passed vault-check, unattended and under a `Vault-Pass: promotion` trailer: a supersession, a
+  `last_verified` stamp with no probe behind it, a gutted body, a claim reversed under untouched
+  frontmatter. C1–C5 cannot see what a change means, so none of those was caught. A note counts as
+  there when the commit HEAD pointed at before the pass holds it, or when it was on disk before the
+  pass, a note git ignores included, unless it is an earlier promotion pass's own uncommitted note
+  that this run adopted. A new name that differs from such a note only in ASCII case counts as that
+  note, adopted or not, because on Windows and macOS it is one. Such a pass exits 2 with
+  `VIOLATION: long-tier notes that were there before the pass started changed during it`, commits
+  nothing, and puts back every note it changed except one that already had uncommitted changes,
+  whether the agent succeeded, failed, timed out or gave no summary. When the commit from before
+  the pass cannot be listed, the pass is refused under a line that says so. A note git ignores is
+  in no commit, so it is refused but left as the pass wrote it, and the log says so. So a failing
+  or timed-out pass that changed one, and wrote nowhere else, now exits 2 rather than with the
+  agent's status, 124 or 125, and its notes are no longer left for the next run. A pass that also
+  wrote outside its allowed folders, or changed a steering surface, is refused for that first and
+  puts none of its notes back, as before, but its log now names each long-tier note that was there
+  before the pass and changed during it, and names one someone was already editing as such. Such a
+  note is left as it is and may hold your edit as well as the pass's, so the log asks for a look
+  with `git diff` against the commit from before the pass, which it names, before any
+  `git restore`. The check comes before vault-check, so a pass that also wrote an invalid note
+  exits 2 rather than 5. The dream pass is unaffected.
+- **The put-back no longer moves a note out of the vault when the pass wrote it under a name that
+  differs only in case.** A writer that replaces files, as the agent's Write tool does, leaves the
+  note under the new name on Windows, and the put-back could take that for a new note and move it
+  to the quarantine, depending on which of the two names it reached first. The pass's bytes now go
+  to the quarantine as a copy and the note is restored under its own name from the commit before
+  the pass, whichever name comes first, unless no commit holds that name, someone was already
+  editing it or it was committed while the pass ran, when it is left as it is, or the copy or the
+  restore failed. The log says which, and what was done. On macOS a rename over such a name was measured to keep the old one, so the note is put
+  back as any changed note is.
+- **The promotion agent writes new notes only.** It never changes, retires or stamps an existing
+  long-tier note, whoever wrote it. Its trust sweep proposes the stamps it would make. When a new
+  note replaces an old one on evidence, it proposes retiring the old one; when two disagree and
+  neither is established, it gives the new note a `contradicts:` edge and proposes the matching
+  edge on the old one. The task text `promotion-pass.sh` gives it now asks for new notes only,
+  with stamps, retirements and corrections as proposals.
+- **An earlier pass's uncommitted edit of a committed long-tier note is put back before the next
+  pass starts.** A pass that timed out or failed could leave such an edit for the next run to adopt
+  and commit. The next run now logs it under `LEFTOVER-REJECTED` with a `create-only:` line, keeps
+  a copy in the state directory's quarantine, in a folder ending in `-leftover`, and restores the
+  note before its agent starts, so it cannot take that run's own notes down with it.
+
+### Adopting this
+
+Take the changed owned files: `.claude/scripts/lib/runner-common.sh`,
+`.claude/scripts/promotion-pass.sh`, `.claude/agents/promotion-agent.md`,
+`.claude/scripts/run-tests.sh`, `AGENTS.md`, `docs/reference.md`, `docs/setup.md`,
+`docs/customizing.md` and `docs/concepts.md`, besides `VERSION` and `CHANGELOG.md`, which move on
+every release. Then:
+
+- **If you renamed `31-standards/` or `40-llm-wiki/wiki/`, change where the new code names them**
+  after you take it: in `.claude/scripts/lib/runner-common.sh`, the `case` pattern and the
+  `git ls-tree` paths in `long_tier_existing` and the `case` pattern in `check_leftovers`; in
+  `promotion-pass.sh`, the grep that lists the long-tier notes a contained pass changed. Without
+  the first two the create-only check matches none of your notes and lets every change through,
+  with exit 0 and nothing logged, and without the last a contained pass names none of the notes
+  it left.
+- **If you customized `promotion-agent.md`, drop every instruction to stamp, supersede or edit an
+  existing note** when you merge the new one. An agent still told to do any of those makes each
+  such pass exit 2 and lose that week's notes.
+- **Stamps and retirements now arrive as proposals** in `20-projects/_logs/promotion-*.md`.
+  Applying one is yours: edit the note and commit it.
+- **Read the log of your first run on this version.** If a pass on an earlier version left an
+  uncommitted edit of an existing standard or wiki entity, that run puts it back and logs
+  `LEFTOVER-REJECTED`. The edit is in the state directory's quarantine, in a folder ending in
+  `-leftover`. Apply it by hand if you want it.
+- **Avoid editing an existing long-tier note while a promotion pass runs.** The runner cannot tell
+  your edit from the pass's, so it refuses the pass and restores a committed note, and your edit is
+  in the quarantine copy the log names, unless the log says the note was committed during the pass
+  or changed after it ended, or the pass also wrote outside its folders or changed a steering
+  surface, when it was left as it is. Read such a note with `git diff` before you restore it,
+  because `git restore` discards your edit too. Diff against the commit from before the pass when
+  a sync client may have committed since; the exits that put none of the pass's notes back name
+  that commit.
+- **Pause any auto-commit, such as obsidian-git's, around the scheduled pass.** A sync client that
+  commits during the pass can commit the pass's change to an existing note before the runner looks.
+  The runner then refuses the pass and logs the note as committed while the pass ran, but it cannot
+  undo someone else's commit, so read that commit with `git show` and revert it yourself if the
+  change is the pass's.
+- Create-only needs the vault to be its own git repository, as the commit and the put-back already
+  did. In any other vault the runner checks nothing of this.
+
+`README.md` changed too, and it is seed, so your copy stays as you wrote it.
+
 ## 1.2.0 — 2026-09-22
 
 A release about the release check, which 1.1.0 introduced and which review rounds then read.

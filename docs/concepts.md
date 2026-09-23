@@ -582,7 +582,8 @@ that means before adopting it.
   `AGENTS.md`, `.claude/hooks/vault-lint.sh`, `.claude/scripts/vault-check.sh` (its `TIERS=`
   line), `.claude/hooks/postcompact-wrap-up.sh`, both agents, all four files in
   `.claude/rules/`, all five skills, `30-knowledge/moc/VAULT-INDEX.md` (every Dataview query
-  names folders), `dream-pass.sh`, `promotion-pass.sh` and `vault-retention.sh`, the `run-tests.sh` fixtures,
+  names folders), `dream-pass.sh`, `promotion-pass.sh`, `vault-retention.sh` and
+  `lib/runner-common.sh`, the `run-tests.sh` fixtures,
   `.obsidian/daily-notes.json`, and `.gitignore`. Treat that list as a floor, not an inventory,
   and grep for the old folder name before you declare the rename done. It is the template's
   largest customization cost, and it is worth deciding on the folder names before you have a

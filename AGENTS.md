@@ -201,7 +201,9 @@ against.
 
 The dream and promotion passes run the `dream-agent` and `promotion-agent` definitions in
 `.claude/agents/`. The dream agent **proposes only**: its single write is one dated journal, and it
-mutates no existing note. Keep it that way. Those two runners also fail a pass that writes outside
+mutates no existing note. Keep it that way. The promotion agent adds notes to the long tier and
+never changes one already there, proposing such changes in its report instead, and in a vault that
+is its own git repository its runner refuses a pass that does (exit 2). Those two runners also fail a pass that writes outside
 its allowed folders (exit 2) and kill one that hangs (exit 124) or stops streaming (exit 125).
 
 The retention pass is the third scheduled thing and it is not an agent, so `VAULT_AGENT` does not

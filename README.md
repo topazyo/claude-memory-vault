@@ -439,8 +439,9 @@ an instruction file, memory, git's config), failing is not enough, because the f
 there next time something opens the vault. So the runner restores it, keeps what the pass wrote in
 a quarantine outside the vault, and sets a tripwire that stops every later run until you have
 looked. The promotion agent, which *does* write into the long tier, has no shell. Its runner fails
-the run if it wrote anywhere but the long tier or a promotion report. Otherwise the runner checks
-every note the pass changed and commits exactly those with a `Vault-Pass: promotion` trailer, so
+the run if it wrote anywhere but the long tier or a promotion report, or changed a long-tier note
+that was already there, which it may only propose changing. Otherwise the runner checks every note
+the pass wrote and commits exactly those with a `Vault-Pass: promotion` trailer, so
 each unattended write is one revertible commit. A pass whose notes fail the check has them put
 back, except a note someone changed or committed while it ran, which the log lists. The fence
 catches a write in the wrong place. Only git history can undo a bad write in the right one, which

@@ -8,9 +8,14 @@
 # READ THIS BEFORE SCHEDULING IT.
 # Unlike the dream-agent, the promotion-agent WRITES into 31-standards/ and
 # 40-llm-wiki/wiki/ - your long tier, the notes that steer every future session.
-# It has no shell. This runner keeps the history for it: it records the vault's
-# recent history for the agent to read, snapshots the vault before the run, and
-# fails the run if anything changed OUTSIDE the areas a promotion pass may write.
+# It may add notes there but never change one already there, and in a vault
+# that is its own git repository a pass that does is refused and put back, as
+# far as a commit holds what to put back. A pass that also wrote outside those
+# folders or changed a steering surface is refused for that, nothing puts its
+# notes back, and the log names them instead. It has no shell. This runner
+# keeps the history for it: it records the vault's recent history for the
+# agent to read, snapshots the vault before the run, and fails the run if
+# anything changed OUTSIDE the areas a promotion pass may write.
 # A change to a steering or execution surface - including an instruction file
 # nested inside the long tier, such as 31-standards/CLAUDE.md - is also
 # CONTAINED: quarantined outside the vault, restored from a pre-pass backup, and
@@ -48,7 +53,7 @@
 #                           newest part first (default 10000000, at least 1000)
 #
 # Exit codes:
-#   0    the pass reported a summary or changed the long tier, wrote nowhere else,
+#   0    the pass reported a summary or added to the long tier, wrote nowhere else,
 #        and its notes were committed (or the vault is not a repository of its
 #        own, git ignores them, or HEAD already holds them)
 #   1    NO-ARTIFACT: exited 0 with no summary line and no long-tier change,
@@ -59,8 +64,10 @@
 #        (steering surfaces among them are contained and the tripwire is set),
 #        or the pass changed a long-tier note or promotion report that already
 #        had uncommitted changes, or one it changed is no longer a regular file,
-#        even if the agent then failed, timed out or gave no summary. In those
-#        last two cases the pass's other notes are put back as for exit 5
+#        or it changed a long-tier note that was there before the pass, even if
+#        the agent then failed, timed out or gave no summary. In those last
+#        three cases the pass's notes are put back as for exit 5, except one
+#        that already had uncommitted changes
 #   3    REFUSED: command mode without VAULT_ALLOW_UNENFORCED_TOOLS=1
 #   4    COMMIT-FAILED: staging or committing the notes failed or ran past
 #        RUNNER_GIT_TIMEOUT, and they are left uncommitted
@@ -273,7 +280,7 @@ main() {
   preflight_rc=$?
   [ "$preflight_rc" -eq 0 ] || exit "$preflight_rc"
 
-  TASK="Run this week's promotion pass per your instructions: scan 20-projects/_logs/ for promotion candidates, run the trust sweep over the long-term notes, and write the ones that meet the promotion bar. You have no shell. The repository state recorded before this run, with the long-tier changes since the last promotion pass, is in .claude/logs/promotion-pass.git-state.txt, and the runner commits your notes after the pass. End your final message with one line of the form: ${SUMMARY_MARKER} promoted=<n> pending=<n>"
+  TASK="Run this week's promotion pass per your instructions: scan 20-projects/_logs/ for promotion candidates and write the ones that meet the promotion bar as new notes. Change no note already in the long tier: your trust sweep's stamps, and any retirement or correction of an existing note, go in your promotion report as proposals. You have no shell. The repository state recorded before this run, with the long-tier changes since the last promotion pass, is in .claude/logs/promotion-pass.git-state.txt, and the runner commits your notes after the pass. End your final message with one line of the form: ${SUMMARY_MARKER} promoted=<n> pending=<n>"
   PROMPT_REL=".claude/logs/promotion-pass.prompt.md"
   if [ "$AGENT_KIND" = command ]; then
     DEF="$ROOT/.claude/agents/promotion-agent.md"
@@ -313,7 +320,8 @@ main() {
   if [ "$VAULT_GIT" -eq 1 ]; then
     # Notes an earlier run of this runner left uncommitted, and nobody has
     # touched since, are this runner's own, not someone's edit. One that fails
-    # the check is put back now, so it cannot take this pass's notes down with it.
+    # the check, or changes a long-tier note the last commit holds, is put back
+    # now, so it cannot take this pass's notes down with it.
     adopt_uncommitted "$ROOT" "$SNAP_DIR/nohooks" "$STATE" "$RUNNER" "$SNAP_DIR/predirty"
     head_now="$(head_state "$ROOT" "$SNAP_DIR/nohooks")"
     check_leftovers "$ROOT" "$SNAP_DIR" "${head_now##* }" \
@@ -446,11 +454,21 @@ main() {
   if [ "$CONTAINED" -eq 1 ]; then
     [ "$RUN_TIMED_OUT" -eq 1 ] && printf '[%s] (the run had also exceeded %ss and was killed)\n' "$(ts)" "$TIMEOUT" >> "$LOG"
     [ "$RUN_STALLED" -eq 1 ] && printf '[%s] (the run had also stalled for %ss and was killed)\n' "$(ts)" "$AGENT_STALL_SECONDS" >> "$LOG"
+    # Containment puts back steering surfaces only, so a long-tier note the pass
+    # changed is still as it wrote it, and is named: under the dirty-note line
+    # when someone was already editing it, as on the other exits that put
+    # nothing back. A steering file containment put back is not the pass's any
+    # more, so the dirty-note line leaves it out.
+    grep -E '^(31-standards|40-llm-wiki/wiki)/' "$SNAP_DIR/changed" > "$SNAP_DIR/changed-long"
+    grep -vxF -f "$SNAP_DIR/contained" "$SNAP_DIR/changed-long" > "$SNAP_DIR/changed-long-kept"
+    [ "$VAULT_GIT" -eq 1 ] && owned_predirty "$SNAP_DIR/changed-long-kept" "$SNAP_DIR/predirty" "$SNAP_DIR" "$LOG"
+    report_existing_left "$ROOT" "$SNAP_DIR/changed-long" "$SNAP_DIR" "$LOG"
     exit 2
   fi
 
   # WRITE FENCE. A promotion pass may write long-tier notes (never their
-  # templates), a promotion report in 20-projects/_logs/, and nothing else. An
+  # templates, and never one that was there before the pass, which check_owned
+  # refuses), a promotion report in 20-projects/_logs/, and nothing else. An
   # auto-written compaction stub is tolerated. Anything else - a rule, an agent
   # definition, CLAUDE.md, someone's daily note - is a violation. The pass owns
   # what it may write, except the compaction stub.
@@ -495,6 +513,7 @@ main() {
       printf '[%s] VIOLATION: files outside the allowed write areas changed before the pass was killed, so nothing it wrote is recorded for the next run:\n' "$(ts)" >> "$LOG"
       LC_ALL=C sort -u "$SNAP_DIR/outside" | sed 's/^/    /' >> "$LOG"
       [ "$VAULT_GIT" -eq 1 ] && owned_predirty "$SNAP_DIR/owned" "$SNAP_DIR/predirty" "$SNAP_DIR" "$LOG"
+      report_existing_left "$ROOT" "$SNAP_DIR/owned" "$SNAP_DIR" "$LOG"
     elif [ "$VAULT_GIT" -eq 1 ] && ! check_owned "$ROOT" "$SNAP_DIR/owned" "$SNAP_DIR/predirty" "$SNAP_DIR" "$LOG"; then
       # Put back as a failing pass is, so a pass that hangs cannot keep its
       # other notes for the next run to commit.
@@ -509,14 +528,17 @@ main() {
   if [ -s "$SNAP_DIR/outside" ]; then
     printf '[%s] VIOLATION: files outside the allowed write areas changed during the run:\n' "$(ts)" >> "$LOG"
     LC_ALL=C sort -u "$SNAP_DIR/outside" | sed 's/^/    /' >> "$LOG"
+    [ "$VAULT_GIT" -eq 1 ] && owned_predirty "$SNAP_DIR/owned" "$SNAP_DIR/predirty" "$SNAP_DIR" "$LOG"
+    report_existing_left "$ROOT" "$SNAP_DIR/owned" "$SNAP_DIR" "$LOG"
     exit 2
   fi
 
   if [ "$RUN_RC" -ne 0 ]; then
-    # A failing pass that wrote into a note someone was editing, or removed or
-    # replaced a note, is a violation whatever the agent's own status, and is put
-    # back like a pass whose commit stopped for that reason. Any other failing
-    # pass leaves its notes for the next run to check.
+    # A failing pass that wrote into a note someone was editing, removed or
+    # replaced a note, or changed a long-tier note that was there before it, is a
+    # violation whatever the agent's own status, and is put back like a pass whose
+    # commit stopped for that reason. Any other failing pass leaves its notes for
+    # the next run to check.
     if [ "$VAULT_GIT" -eq 1 ] && ! check_owned "$ROOT" "$SNAP_DIR/owned" "$SNAP_DIR/predirty" "$SNAP_DIR" "$LOG"; then
       put_back 2
     fi
