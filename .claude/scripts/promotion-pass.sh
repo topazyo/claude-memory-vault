@@ -457,9 +457,11 @@ main() {
     # Containment puts back steering surfaces only, so a long-tier note the pass
     # changed is still as it wrote it, and is named: under the dirty-note line
     # when someone was already editing it, as on the other exits that put
-    # nothing back.
+    # nothing back. A steering file containment put back is not the pass's any
+    # more, so the dirty-note line leaves it out.
     grep -E '^(31-standards|40-llm-wiki/wiki)/' "$SNAP_DIR/changed" > "$SNAP_DIR/changed-long"
-    [ "$VAULT_GIT" -eq 1 ] && owned_predirty "$SNAP_DIR/changed-long" "$SNAP_DIR/predirty" "$SNAP_DIR" "$LOG"
+    grep -vxF -f "$SNAP_DIR/contained" "$SNAP_DIR/changed-long" > "$SNAP_DIR/changed-long-kept"
+    [ "$VAULT_GIT" -eq 1 ] && owned_predirty "$SNAP_DIR/changed-long-kept" "$SNAP_DIR/predirty" "$SNAP_DIR" "$LOG"
     report_existing_left "$ROOT" "$SNAP_DIR/changed-long" "$SNAP_DIR" "$LOG"
     exit 2
   fi

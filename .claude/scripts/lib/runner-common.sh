@@ -2449,7 +2449,8 @@ check_owned() {
 # note that already had uncommitted changes before the pass is left out, because
 # it holds work no commit holds and owned_predirty names it, and so is one
 # containment restored. When the commit from before the pass cannot be listed,
-# every candidate is named under a headline that says so. The candidates are
+# every candidate, a promotion report included, is named under a headline that
+# says so. The candidates are
 # kept in a variable, so a write that fails cannot silence it.
 report_existing_left() {
   local p was cands="" left before
@@ -2466,7 +2467,7 @@ report_existing_left() {
   done < "$2"
   [ -n "$cands" ] || return 0
   if ! left="$(printf '%s' "$cands" | long_tier_existing "$1" /dev/stdin "$3")"; then
-    printf '[%s] The runner could not list the commit from before the pass, so it cannot tell which of these long-tier notes that changed during the pass were there before it. This exit puts none of them back and copies none of them to the quarantine, so each is left as it is: read each with git diff %s -- <path> before anything commits it:\n' "$(ts)" "$before" >> "$4"
+    printf '[%s] The runner could not list the commit from before the pass, so it cannot tell which of these notes, which changed during the pass, were long-tier notes that were there before it. This exit puts none of them back and copies none of them to the quarantine, so each is left as it is: once git can read that commit, read each with git diff %s -- <path> before anything commits it:\n' "$(ts)" "$before" >> "$4"
     printf '%s' "$cands" | sed 's/^/    /' >> "$4"
     return 0
   fi

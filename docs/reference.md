@@ -858,7 +858,7 @@ Around that call, each runner does several things an exit code cannot:
   with `git diff <commit> -- <path>`, the commit from before the pass that the line names, which
   also shows a change a sync client has committed since, before you restore it with
   `git restore --source=<commit> -- <path>`, which would discard an edit of yours along with the
-  pass's. When that commit cannot be listed, the log names every long-tier note that changed,
+  pass's. When that commit cannot be listed, the log names every note the pass owns that changed,
   under a line that says so. A note git ignores, or one whose name on disk differs only
   in case from the name a commit holds it under (a case-only rename, such as one made in
   Obsidian, that git has not recorded), is in no commit under its name on disk, so it is refused
@@ -912,9 +912,9 @@ Around that call, each runner does several things an exit code cannot:
     differs only in case, is that note renamed by a writer that replaces files on a filesystem that
     folds case. Moving it out would take the note out of the vault, so it is copied to the
     quarantine and the note restored under its own name instead, unless no commit holds that name,
-    someone was already editing it, it was committed while the pass ran, or the copy or the
-    restore failed, when it is left as it is and the log says why. A link, or a second name for
-    the same file, is never taken for such a note.
+    someone was already editing it or it was committed while the pass ran, when it is left as it
+    is, or the copy or the restore failed. The log says which, and what was done. A link, or a
+    second name for the same file, is never taken for such a note.
   - A note that is no longer exactly as the pass left it (changed again, removed, or now a folder
     or a link) is someone else's since, and is left as it is.
   - A note whose content in HEAD changed while the pass ran, because you or a sync plugin committed

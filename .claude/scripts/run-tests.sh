@@ -1356,7 +1356,8 @@ q r .git" ;;
   promote-twin-link) ln 31-standards/existing.md 31-standards/EXISTING.md || exit 3
                   printf 'case twin\n' >> 31-standards/EXISTING.md
                   printf 'PROMOTION-SUMMARY: promoted=1 pending=0\n' ;;
-  # The next three also append to FAKE_APPEND and FAKE_STEER when they are set.
+  # The next three also append to FAKE_APPEND when it is set, and
+  # promote-edit-contain to FAKE_STEER.
   promote-edit-outside) printf 'promoted\n' >> 31-standards/existing.md
                   [ -z "${FAKE_APPEND:-}" ] || printf 'promoted again\n' >> "$FAKE_APPEND"
                   printf -- '---\ntier: medium\ntype: project-log\n---\n\nstray\n' > 20-projects/_logs/outside-stray.md
@@ -4477,8 +4478,11 @@ if [ "$RV_GIT" -eq 1 ]; then
   # removed and written again under a new case is not the same file as the note
   # (the -ef test), and a hard link to the note is, but the snapshot from after
   # the pass still lists the note under its own name (case_renamed). Either way
-  # the twin is moved out as new and the note restored. Where the filesystem
-  # folds case neither input can be built, and the control is skipped.
+  # the twin is moved out as new and the note restored. The hard link holds
+  # case_renamed only because the put-back reaches EXISTING.md first, as the
+  # runner lists paths in C-locale order: restoring the note first would break
+  # the link, and the -ef test would refuse the twin on its own. Where the
+  # filesystem folds case neither input can be built, and the control is skipped.
   mkdir -p "$TMP/case-probe"
   : > "$TMP/case-probe/lower"
   if [ -e "$TMP/case-probe/LOWER" ]; then
@@ -4756,7 +4760,7 @@ if [ "$RV_GIT" -eq 1 ]; then
      && grep -q 'REVERTED' "$PROMO_LOG"; then
     ok "the deleted note is restored, the new note quarantined with its empty folder removed, and nothing committed"
   else
-    bad "a deleting pass was not reverted -- status: $(git -C "$RV" status --porcelain -- 31-standards | tr '\n' ' ') log: $(tr '\n' '|' < "$PROMO_LOG" | cut -c1-400)"
+    bad "a deleting pass was not reverted, or its note not named as create-only -- status: $(git -C "$RV" status --porcelain -- 31-standards | tr '\n' ' ') log: $(tr '\n' '|' < "$PROMO_LOG" | cut -c1-2000)"
   fi
   git -C "$RV" checkout -q -- 31-standards/existing.md
   rm -rf "$RV/31-standards/newdir"
@@ -4825,7 +4829,7 @@ if [ "$RV_GIT" -eq 1 ]; then
   if grep -q 'already had uncommitted changes' "$PROMO_LOG" && co_named 31-standards/existing.md; then
     ok "a failing pass that wrote into a dirty note is reported"
   else
-    bad "a failing pass that wrote into a dirty note was not reported"
+    bad "a failing pass that wrote into a dirty note was not reported, or not also as create-only -- log: $(tr '\n' '|' < "$PROMO_LOG" | cut -c1-2000)"
   fi
   git -C "$RV" checkout -q -- 31-standards/existing.md
 

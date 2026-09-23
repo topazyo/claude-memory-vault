@@ -62,8 +62,8 @@ supersessions and corrections of existing notes now reach you as proposals in it
   to the quarantine, depending on which of the two names it reached first. The pass's bytes now go
   to the quarantine as a copy and the note is restored under its own name from the commit before
   the pass, whichever name comes first, unless no commit holds that name, someone was already
-  editing it, it was committed while the pass ran, or the copy or the restore failed, when it is
-  left as it is and the log says why. On macOS a rename over such a name was measured to keep the old one, so the note is put
+  editing it or it was committed while the pass ran, when it is left as it is, or the copy or the
+  restore failed. The log says which, and what was done. On macOS a rename over such a name was measured to keep the old one, so the note is put
   back as any changed note is.
 - **The promotion agent writes new notes only.** It never changes, retires or stamps an existing
   long-tier note, whoever wrote it. Its trust sweep proposes the stamps it would make. When a new
@@ -105,9 +105,10 @@ every release. Then:
   your edit from the pass's, so it refuses the pass and restores a committed note, and your edit is
   in the quarantine copy the log names, unless the log says the note was committed during the pass
   or changed after it ended, or the pass also wrote outside its folders or changed a steering
-  surface, when it was left as it is. Read such a note with `git diff` against the commit from
-  before the pass, which the log names, before you restore it, because `git restore` discards your
-  edit too.
+  surface, when it was left as it is. Read such a note with `git diff` before you restore it,
+  because `git restore` discards your edit too. Diff against the commit from before the pass when
+  a sync client may have committed since; the exits that put none of the pass's notes back name
+  that commit.
 - **Pause any auto-commit, such as obsidian-git's, around the scheduled pass.** A sync client that
   commits during the pass can commit the pass's change to an existing note before the runner looks.
   The runner then refuses the pass and logs the note as committed while the pass ran, but it cannot
