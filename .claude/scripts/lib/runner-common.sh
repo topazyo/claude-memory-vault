@@ -2127,6 +2127,13 @@ path_state() {
   fi
 }
 
+# case_twin <relative-path> <snapshot>
+# Prints the first path the snapshot lists whose name differs from the given one
+# only in ASCII case, and nothing when there is none.
+case_twin() {
+  P="./$1" LC_ALL=C awk 'BEGIN { want = tolower(ENVIRON["P"]) } { line = $0; sub(/^[^ ]* [^ ]* /, "", line) } line != ENVIRON["P"] && tolower(line) == want { print substr(line, 3); exit }' "$2" 2>/dev/null
+}
+
 # revert_owned <root> <empty-hooks-dir> <snap-dir> <path-list> <commit-before-or-NONE> <quarantine-dir> <log>
 # Puts back the pre-pass state of every file in <path-list>, after the runner
 # rejected the pass's notes. None of them was dirty before the pass, except a
@@ -2146,7 +2153,9 @@ path_state() {
 #     it is an adopted leftover, and any folder left empty below the top folder
 #     is removed, unless it held files before the pass. One that existed before
 #     the pass because git ignores it has no earlier bytes to go back to, so it
-#     is left in place.
+#     is left in place. One that is the same file as a note the snapshot before
+#     the pass lists under a name that differs only in case is that note under
+#     a new name, and the note is put back under its own name instead.
 #
 # Every path left alone is listed in the log. Returns 1 when any path in the
 # list could not be put back.
@@ -2178,8 +2187,14 @@ revert_owned() {
 # snapshot saw is set aside in <plist>.deferred, so the files in it are moved
 # out first and the path can then be restored. One still holding anything after
 # that is left.
+#
+# A writer that replaces files, as the agent's Write tool does, on a filesystem
+# that folds case, leaves a note that was there under the new case it was given.
+# Both names are on the list then. The new one, the same file as the note, puts
+# the note back under its own name, and the old one says so rather than being
+# taken for a note someone changed after the pass.
 revert_path() {
-  local now was b_blob h_blob d
+  local now was b_blob h_blob d twin t_blob
   now="$(path_state "$root" "$p")"
   was="$(P="./$p" awk '{ line = $0; sub(/^[^ ]* [^ ]* /, "", line) } line == ENVIRON["P"] { print $1 " " $2; exit }' "$snap/after")"
   if [ "$now" = other ] && [ -z "$was" ] && [ -d "$root/$p" ] && [ ! -L "$root/$p" ]; then
@@ -2195,6 +2210,10 @@ revert_path() {
     fi
   fi
   if [ "$now" != "$was" ]; then
+    if [ -z "$was" ] && [ -n "$now" ] && twin="$(case_twin "$p" "$snap/after")" && [ -n "$twin" ] && [ "$root/$p" -ef "$root/$twin" ]; then
+      printf '    %s (on disk as %s after the pass, and put back with it)\n' "$p" "$twin" >> "$log"
+      return 0
+    fi
     printf '    %s (changed after the pass ended, so it was left as it is)\n' "$p" >> "$log"
     rc=1
     return 0
@@ -2234,8 +2253,24 @@ revert_path() {
   elif [ -e "$root/$p" ] || [ -L "$root/$p" ]; then
     if P="./$p" awk '{ line = $0; sub(/^[^ ]* [^ ]* /, "", line) } line == ENVIRON["P"] { found = 1; exit } END { exit found ? 0 : 1 }' "$snap/before" \
        && ! grep -qxF -- "$p" "$snap/predirty.adopted" 2>/dev/null; then
-      printf '    %s (existed before the pass but is in no commit, so it could not be put back and was left as the pass wrote it)\n' "$p" >> "$log"
+      printf '    %s (existed before the pass but is in no commit under this name, so it could not be put back and was left as the pass wrote it)\n' "$p" >> "$log"
       rc=1
+    elif twin="$(case_twin "$p" "$snap/before")" && [ -n "$twin" ] && [ "$root/$p" -ef "$root/$twin" ]; then
+      # Moving it out as new would take the note out of the vault. It is put
+      # back under its own name as a changed note is, unless no commit holds
+      # that name, someone was already editing it, or it was committed while
+      # the pass ran.
+      t_blob=""
+      [ "$before" != NONE ] && t_blob="$(index_blob "$root" "$before" "$twin")"
+      if [ -n "$t_blob" ] && [ "$(index_blob "$root" HEAD "$twin")" = "$t_blob" ] \
+         && ! grep -qxF -- "$twin" "$snap/predirty" 2>/dev/null \
+         && mkdir -p "$qdir/$(dirname "$p")" 2>/dev/null && cp -p "$root/$p" "$qdir/$p" 2>/dev/null \
+         && safe_git "$hooks" -C "$root" restore --source="$before" --worktree -- "$twin" 2>/dev/null; then
+        printf '    %s (the same file as %s, whose name differs only in case: copied to %s, then %s restored from %s)\n' "$p" "$twin" "$qdir/$p" "$twin" "$before" >> "$log"
+      else
+        printf '    %s (the same file as %s, whose name differs only in case, so it was left as it is: restore %s with git restore)\n' "$p" "$twin" "$twin" >> "$log"
+        rc=1
+      fi
     elif mkdir -p "$qdir/$(dirname "$p")" 2>/dev/null && mv -f "$root/$p" "$qdir/$p" 2>/dev/null; then
       printf '    %s (new, moved to %s)\n' "$p" "$qdir/$p" >> "$log"
       # Folders the move left empty go too, below the tier folders and unless a
@@ -2273,26 +2308,64 @@ owned_predirty() {
   return 2
 }
 
-# check_owned <root> <owned-list> <predirty-list> <snap-dir> <log>
-# Returns 2 after logging when a path the pass owns and changed already had
-# uncommitted changes before the pass (owned_predirty), or is no longer a regular
-# file because the pass removed it or put a link or a folder in its place, or is
-# a long-tier note that was there before the pass. Such a pass is put back rather
-# than committed or recorded. Returns 0 otherwise.
-#
-# The long tier is create-only. A pass may add notes to 31-standards/ and
-# 40-llm-wiki/wiki/ but never change one already there, whoever wrote it: a
-# supersession, a freshness stamp or an edit to a standard is the owner's to
-# make, and the pass proposes it instead. A note was there when the commit HEAD
+# long_tier_existing <root> <path-list> <snap-dir>
+# Prints, four spaces in, each path in <path-list> that is a long-tier note that
+# was there before the pass, and returns 0. A note was there when the commit HEAD
 # pointed at before the pass (HEAD_BEFORE) holds it, or when the snapshot taken
 # before the pass lists it and it is not a leftover of this runner that
 # adopt_uncommitted took back. The snapshot test also catches a note git ignores
 # and one git's lookup misses, such as after a case-only rename, so a lookup that
 # finds nothing does not let a change through. Without a snapshot to read, a
-# long-tier path counts as there. Dream journals are not in the long tier, so the
-# dream pass is unaffected.
+# long-tier path counts as there. A path neither test finds, but whose name
+# differs only in ASCII case from one that either knows, is that note on a
+# filesystem that folds case, as every clone on Windows or macOS does, so it
+# counts as there too, and is printed saying so. Case that differs outside ASCII,
+# and names that differ only in Unicode normalization, are not caught.
+long_tier_existing() {
+  local root="$1" snap="$3" p before folded
+  before="${HEAD_BEFORE:-HEAD HEAD}"
+  before="${before##* }"
+  # Every long-tier name either test knows, in lower case and then as it is, for
+  # the case test, which must find a name that differs, or it would stand in for
+  # the two tests above.
+  folded="$( { [ "$before" = NONE ] || ( cd "$root" && MSYS_NO_PATHCONV=1 GIT_TERMINAL_PROMPT=0 git ls-tree -r -z --name-only "$before" -- 31-standards 40-llm-wiki/wiki 2>/dev/null ) | tr '\0' '\n'
+               [ -f "$snap/before" ] && awk '{ sub(/^[^ ]* [^ ]* \.\//, ""); print }' "$snap/before"; } | LC_ALL=C awk '{ printf "%s\t%s\n", tolower($0), $0 }' )"
+  while IFS= read -r p; do
+    case "$p" in 31-standards/*|40-llm-wiki/wiki/*) ;; *) continue ;; esac
+    if [ "$before" != NONE ] && [ -n "$(index_blob "$root" "$before" "$p")" ]; then
+      printf '    %s\n' "$p"
+    elif grep -qxF -- "$p" "$snap/predirty.adopted" 2>/dev/null; then
+      continue
+    elif [ ! -f "$snap/before" ] \
+         || P="./$p" awk '{ line = $0; sub(/^[^ ]* [^ ]* /, "", line) } line == ENVIRON["P"] { found = 1; exit } END { exit found ? 0 : 1 }' "$snap/before"; then
+      printf '    %s\n' "$p"
+    elif printf '%s\n' "$folded" | P="$p" LC_ALL=C awk 'BEGIN { FS = "\t"; want = tolower(ENVIRON["P"]) } $1 == want && $2 != ENVIRON["P"] { found = 1; exit } END { exit found ? 0 : 1 }'; then
+      printf '    %s (its name differs only in case from a note that was there)\n' "$p"
+    fi
+  done < "$2"
+  return 0
+}
+
+# check_owned <root> <owned-list> <predirty-list> <snap-dir> <log>
+# Returns 2 after logging when a path the pass owns and changed already had
+# uncommitted changes before the pass (owned_predirty), or is no longer a regular
+# file because the pass removed it or put a link or a folder in its place, or is
+# a long-tier note that was there before the pass (long_tier_existing). Such a
+# pass is put back rather than committed or recorded. Returns 0 otherwise.
+#
+# The long tier is create-only. A pass may add notes to 31-standards/ and
+# 40-llm-wiki/wiki/ but never change one already there, whoever wrote it: a
+# supersession, a freshness stamp or an edit to a standard is the owner's to
+# make, and the pass proposes it instead. The runner cannot tell the pass's
+# change from one someone made while the pass ran, so either refuses the pass. A
+# note git ignores, or one committed under a name that differs only in case, is
+# refused too, though no commit holds it under that name for the put-back to
+# restore. The refused paths are kept in a variable rather than a file, so a
+# write that fails cannot turn a refusal into a commit, and a check that could
+# not run refuses. Dream journals are not in the long tier, so the dream pass is
+# unaffected.
 check_owned() {
-  local root="$1" owned="$2" snap="$4" p before
+  local root="$1" owned="$2" p existing
   owned_predirty "$owned" "$3" "$4" "$5" || return 2
   while IFS= read -r p; do
     [ -n "$p" ] || continue
@@ -2301,26 +2374,36 @@ check_owned() {
       return 2
     fi
   done < "$owned"
-  before="${HEAD_BEFORE:-HEAD HEAD}"
-  before="${before##* }"
-  : > "$snap/owned-existing"
-  while IFS= read -r p; do
-    case "$p" in 31-standards/*|40-llm-wiki/wiki/*) ;; *) continue ;; esac
-    if [ "$before" != NONE ] && [ -n "$(index_blob "$root" "$before" "$p")" ]; then
-      printf '%s\n' "$p" >> "$snap/owned-existing"
-    elif grep -qxF -- "$p" "$snap/predirty.adopted" 2>/dev/null; then
-      continue
-    elif [ ! -f "$snap/before" ] \
-         || P="./$p" awk '{ line = $0; sub(/^[^ ]* [^ ]* /, "", line) } line == ENVIRON["P"] { found = 1; exit } END { exit found ? 0 : 1 }' "$snap/before"; then
-      printf '%s\n' "$p" >> "$snap/owned-existing"
-    fi
-  done < "$owned"
-  if [ -s "$snap/owned-existing" ]; then
-    printf '[%s] VIOLATION: the pass changed long-tier notes that were there before it started. A pass may add notes to 31-standards/ and 40-llm-wiki/wiki/ but never change one already there, so nothing was committed:\n' "$(ts)" >> "$5"
-    sed 's/^/    /' "$snap/owned-existing" >> "$5"
+  existing="$(long_tier_existing "$root" "$owned" "$4")" \
+    || existing="    (the check of which notes were there could not run)"
+  if [ -n "$existing" ]; then
+    printf '[%s] VIOLATION: long-tier notes that were there before the pass started changed during it. A pass may add notes to 31-standards/ and 40-llm-wiki/wiki/ but never change one already there, and the runner cannot tell its change from anyone else'"'"'s, so nothing was committed:\n' "$(ts)" >> "$5"
+    printf '%s\n' "$existing" >> "$5"
     return 2
   fi
   return 0
+}
+
+# report_existing_left <root> <path-list> <snap-dir> <log>
+# On an exit that puts nothing back, such as a write outside the fence, names
+# each long-tier note in <path-list> that was there before the pass and is not
+# as it was then, because every later session reads it from disk as the pass
+# left it. A note containment restored is as it was, and is not named.
+report_existing_left() {
+  local p was left
+  [ "${VAULT_GIT:-0}" -eq 1 ] || return 0
+  : > "$3/left-candidates" 2>/dev/null
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    was="$(P="./$p" awk '{ line = $0; sub(/^[^ ]* [^ ]* /, "", line) } line == ENVIRON["P"] { print $1 " " $2; exit }' "$3/before" 2>/dev/null)"
+    [ "$(path_state "$1" "$p")" = "$was" ] && continue
+    printf '%s\n' "$p" >> "$3/left-candidates"
+  done < "$2"
+  left="$(long_tier_existing "$1" "$3/left-candidates" "$3")" \
+    || left="    (the check of which notes were there could not run)"
+  [ -n "$left" ] || return 0
+  printf '[%s] The pass also changed long-tier notes that were there before it started, and this exit puts nothing back, so each is left as the pass wrote it. Restore each from git (git restore -- <path>) before anything commits it:\n' "$(ts)" >> "$4"
+  printf '%s\n' "$left" >> "$4"
 }
 
 # unstage_paths <root> <empty-hooks-dir> <path...>
@@ -2352,7 +2435,8 @@ index_blob() {
 # that changes while it is checked is not committed. Returns 0 when they were
 # committed or there was nothing to commit (not a repository of its own, nothing
 # owned, every path ignored by git, or HEAD already holding them), 2 when a path
-# was dirty before the pass or is not a regular file, 5 when vault-check rejects
+# was dirty before the pass, is not a regular file, or is a long-tier note that
+# was there before the pass (check_owned), 5 when vault-check rejects
 # a note, and 4 when staging or the commit failed, which is logged with whether
 # the paths could be taken back out of the index, or when a commit was made but
 # HEAD does not hold the checked content. The agent's RUN_RC, RUN_TIMED_OUT,

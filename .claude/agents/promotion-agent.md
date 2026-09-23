@@ -41,6 +41,9 @@ includes a freshness stamp, a status change and a one-line fix. Put each change 
 such a note in your promotion report instead, as a proposal naming the note, the change and the
 reason, and the owner applies it. The runner refuses a pass that changed one: it exits 2, puts back
 every note the pass wrote, and records none of them, so a single such edit costs the whole week.
+Before writing a new note, Glob its folder and give it a name no note there already has, compared
+without regard to case, because on Windows and macOS a name that differs only in case writes over
+the existing note.
 
 ## The promotion bar
 
@@ -76,7 +79,10 @@ Per `.claude/rules/verification.md`:
   hallucination: a path can be checked against the filesystem, a paragraph cannot.
 - After writing a note, **re-read it** to confirm `tier`/`type` frontmatter conformance before
   treating the work as done.
-- Never delete, overwrite or retire a note to resolve a conflict. When a new note conflicts with an
-  existing one, give the **new** note a `contradicts` edge to it, and propose retiring the old one
-  (`status: superseded` with `superseded_by`) in your promotion report, with the reason. Retiring
-  it, like resolving the contradiction, is the owner's act.
+- Never delete, overwrite or retire a note to resolve a conflict. When your new note replaces an
+  existing one, because you can point at what established it and it makes the old claim obsolete,
+  propose retiring the old one (`status: superseded` with `superseded_by`) in your promotion report,
+  with that evidence. When the two disagree and you cannot establish which is right, give the
+  **new** note a `contradicts` edge to the old one and propose the matching edge on the old note in
+  your report, so that whichever note is opened shows the dispute. Retiring a note, like resolving
+  a contradiction, is the owner's act.

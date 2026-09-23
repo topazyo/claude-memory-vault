@@ -8,10 +8,12 @@
 # READ THIS BEFORE SCHEDULING IT.
 # Unlike the dream-agent, the promotion-agent WRITES into 31-standards/ and
 # 40-llm-wiki/wiki/ - your long tier, the notes that steer every future session.
-# It may add notes there but never change one already there, and a pass that
-# does is refused and put back. It has no shell. This runner keeps the history for it: it records the vault's
-# recent history for the agent to read, snapshots the vault before the run, and
-# fails the run if anything changed OUTSIDE the areas a promotion pass may write.
+# It may add notes there but never change one already there, and in a vault
+# that is its own git repository a pass that does is refused and put back, as
+# far as a commit holds what to put back. It has no shell. This runner keeps
+# the history for it: it records the vault's recent history for the agent to
+# read, snapshots the vault before the run, and fails the run if anything
+# changed OUTSIDE the areas a promotion pass may write.
 # A change to a steering or execution surface - including an instruction file
 # nested inside the long tier, such as 31-standards/CLAUDE.md - is also
 # CONTAINED: quarantined outside the vault, restored from a pre-pass backup, and
@@ -316,7 +318,8 @@ main() {
   if [ "$VAULT_GIT" -eq 1 ]; then
     # Notes an earlier run of this runner left uncommitted, and nobody has
     # touched since, are this runner's own, not someone's edit. One that fails
-    # the check is put back now, so it cannot take this pass's notes down with it.
+    # the check, or changes a long-tier note the last commit holds, is put back
+    # now, so it cannot take this pass's notes down with it.
     adopt_uncommitted "$ROOT" "$SNAP_DIR/nohooks" "$STATE" "$RUNNER" "$SNAP_DIR/predirty"
     head_now="$(head_state "$ROOT" "$SNAP_DIR/nohooks")"
     check_leftovers "$ROOT" "$SNAP_DIR" "${head_now##* }" \
@@ -449,6 +452,10 @@ main() {
   if [ "$CONTAINED" -eq 1 ]; then
     [ "$RUN_TIMED_OUT" -eq 1 ] && printf '[%s] (the run had also exceeded %ss and was killed)\n' "$(ts)" "$TIMEOUT" >> "$LOG"
     [ "$RUN_STALLED" -eq 1 ] && printf '[%s] (the run had also stalled for %ss and was killed)\n' "$(ts)" "$AGENT_STALL_SECONDS" >> "$LOG"
+    # Containment puts back steering surfaces only, so a long-tier note the pass
+    # changed is still as it wrote it, and is named.
+    grep -E '^(31-standards|40-llm-wiki/wiki)/' "$SNAP_DIR/changed" > "$SNAP_DIR/changed-long"
+    report_existing_left "$ROOT" "$SNAP_DIR/changed-long" "$SNAP_DIR" "$LOG"
     exit 2
   fi
 
@@ -499,6 +506,7 @@ main() {
       printf '[%s] VIOLATION: files outside the allowed write areas changed before the pass was killed, so nothing it wrote is recorded for the next run:\n' "$(ts)" >> "$LOG"
       LC_ALL=C sort -u "$SNAP_DIR/outside" | sed 's/^/    /' >> "$LOG"
       [ "$VAULT_GIT" -eq 1 ] && owned_predirty "$SNAP_DIR/owned" "$SNAP_DIR/predirty" "$SNAP_DIR" "$LOG"
+      report_existing_left "$ROOT" "$SNAP_DIR/owned" "$SNAP_DIR" "$LOG"
     elif [ "$VAULT_GIT" -eq 1 ] && ! check_owned "$ROOT" "$SNAP_DIR/owned" "$SNAP_DIR/predirty" "$SNAP_DIR" "$LOG"; then
       # Put back as a failing pass is, so a pass that hangs cannot keep its
       # other notes for the next run to commit.
@@ -513,14 +521,16 @@ main() {
   if [ -s "$SNAP_DIR/outside" ]; then
     printf '[%s] VIOLATION: files outside the allowed write areas changed during the run:\n' "$(ts)" >> "$LOG"
     LC_ALL=C sort -u "$SNAP_DIR/outside" | sed 's/^/    /' >> "$LOG"
+    report_existing_left "$ROOT" "$SNAP_DIR/owned" "$SNAP_DIR" "$LOG"
     exit 2
   fi
 
   if [ "$RUN_RC" -ne 0 ]; then
-    # A failing pass that wrote into a note someone was editing, or removed or
-    # replaced a note, is a violation whatever the agent's own status, and is put
-    # back like a pass whose commit stopped for that reason. Any other failing
-    # pass leaves its notes for the next run to check.
+    # A failing pass that wrote into a note someone was editing, removed or
+    # replaced a note, or changed a long-tier note that was there before it, is a
+    # violation whatever the agent's own status, and is put back like a pass whose
+    # commit stopped for that reason. Any other failing pass leaves its notes for
+    # the next run to check.
     if [ "$VAULT_GIT" -eq 1 ] && ! check_owned "$ROOT" "$SNAP_DIR/owned" "$SNAP_DIR/predirty" "$SNAP_DIR" "$LOG"; then
       put_back 2
     fi

@@ -834,15 +834,28 @@ Around that call, each runner does several things an exit code cannot:
   `40-llm-wiki/wiki/` but never change one that was there before it started, whoever wrote it. A
   note was there when the commit HEAD pointed at before the pass holds it, or when it was on disk
   before the pass, a note git ignores included, unless it is an earlier promotion pass's own
-  uncommitted note that this run adopted (below). A pass that changed one exits **2**, logs the
-  notes under `VIOLATION: the pass changed long-tier notes that were there before it started`,
-  commits nothing and puts back every note it changed, whether the agent succeeded, failed, timed
-  out or gave no summary. The check comes before vault-check, so such a pass exits 2 even when a
-  note of its own would fail the check. A freshness stamp, a supersession or a correction of an
-  existing note reaches you as a proposal in the pass's promotion report instead, and applying it
-  is yours. A promotion report is not in the long tier, so a pass may still change one. Like the
-  commit and the put-back, the check needs a vault that is its own git repository, and a pass in
-  any other vault is not checked for it.
+  uncommitted note that this run adopted (below). A new name that differs from such a note only in
+  ASCII case counts as that note, because on Windows and macOS it is one. A pass during which one
+  changed exits **2**, logs the notes under `VIOLATION: long-tier notes that were there before the
+  pass started changed during it`, commits nothing and puts back every note it changed, whether
+  the agent succeeded, failed, timed out or gave no summary. The runner cannot tell the pass's
+  change from one you or a sync client made while it ran, so either refuses the pass. A change a
+  sync client *commits* while the pass runs stays committed: the runner logs it as committed while
+  the pass ran and cannot undo it, so revert that commit yourself, and pause any auto-commit around
+  the scheduled pass. The check comes before vault-check, so such a pass exits 2 even when a note
+  of its own would fail the check. A pass that also wrote outside the areas it may write, or
+  changed a steering surface, is refused for that first, and that refusal puts nothing back
+  (below). The log then names each long-tier note that was there before the pass and is still as
+  the pass wrote it, under `The pass also changed long-tier notes that were there before it
+  started`, so restore those with `git restore`. A note git ignores, or one committed under a name
+  that differs only in case, is in no commit under that name, so it is refused but left as the
+  pass wrote it, and the log says so. For the case-renamed note `git status` shows the change under
+  its committed name, so restore it before anything commits it. A freshness stamp, a supersession
+  or a correction of an existing note reaches you as a proposal in the pass's promotion report
+  instead, and applying it is yours. A promotion report is not in the long tier, so a pass may
+  still change one. Like the commit and the put-back, the check needs a vault that is its own git
+  repository, and a pass in any other vault is not checked for it. Case that differs outside
+  ASCII, and names that differ only in Unicode normalization, are not caught.
 - **Runner commit.** A successful pass has the files it changed in the areas it owns committed by
   its runner, and nothing else. For the dream pass those are its journals. For the promotion pass
   they are its new long-tier notes and its promotion report. The runner records their blob ids, runs
@@ -879,6 +892,12 @@ Around that call, each runner does several things an exit code cannot:
     unless it held other files before the pass. The tier folders themselves are never removed.
   - A note git ignores that existed before the pass is in no commit, so there is nothing to
     restore, and it is left as the pass wrote it.
+  - A new note that is the same file as one that was there before the pass, under a name that
+    differs only in case, is that note renamed by a writer that replaces files on a filesystem that
+    folds case. Moving it out would take the note out of the vault, so it is copied to the
+    quarantine and the note restored under its own name instead, unless no commit holds that name,
+    someone was already editing it, or it was committed while the pass ran, when it is left as it
+    is and the log says which note to restore.
   - A note that is no longer exactly as the pass left it (changed again, removed, or now a folder
     or a link) is someone else's since, and is left as it is.
   - A note whose content in HEAD changed while the pass ran, because you or a sync plugin committed
@@ -918,10 +937,12 @@ Around that call, each runner does several things an exit code cannot:
   you or a sync client while the pass ran cannot be told apart from the pass's own writing. A
   journal, a promotion report or a note the pass created is committed under the pass's trailer. A
   long-tier note that was there before the pass counts as the pass changing it, so the pass is
-  refused and the note restored, and your edit is in the quarantine copy the log names. Avoid
-  editing today's journal, or a long-tier note, during a scheduled pass. In Obsidian that includes creating a note in the long tier. An empty new note
-  there fails the check, so the promotion pass puts back every note it wrote and moves the new note
-  to the quarantine while it is still open.
+  refused and the note restored, and your edit is in the quarantine copy the log names. That copy
+  exists only when the note was neither committed during the pass nor changed again after it
+  ended; otherwise the log says which, and the note is left as it is. Avoid editing today's
+  journal, or a long-tier note, during a scheduled pass. In Obsidian that includes creating a note
+  in the long tier. An empty new note there fails the check, so the promotion pass puts back every
+  note it wrote and moves the new note to the quarantine while it is still open.
 
 Neither agent is given a shell, so each runner writes the history its agent reads before the run.
 `dream-pass.sh` writes `git log --oneline -5` and `git status --short` to
@@ -1391,9 +1412,10 @@ Safety constraints, all load-bearing:
 - **Spawned workers return status and a file path, never pasted content.** A path can be checked
   against the filesystem; a paragraph cannot. This bounds hallucination structurally.
 - **Re-read each written note** to confirm `tier`/`type` conformance before calling it done.
-- **Conflicts are marked, not resolved.** The new note carries a `contradicts` edge to the old one,
-  and retiring the old one (`status: superseded` + `superseded_by`) is proposed in the report and
-  left to the owner.
+- **Conflicts are marked, not resolved.** When the new note replaces an old one on evidence it can
+  point at, retiring the old one (`status: superseded` + `superseded_by`) is proposed in the report.
+  When the two disagree and neither is established, the new note carries a `contradicts` edge to
+  the old one and the matching edge on the old note is proposed. Either way the owner decides.
 - Candidates below the promotion bar are left unwritten and reported **with the reason**; an
   unexplained non-promotion is indistinguishable from an oversight.
 

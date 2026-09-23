@@ -39,16 +39,29 @@ supersessions and corrections of existing notes now reach you as proposals in it
   `last_verified` stamp with no probe behind it, a gutted body, a claim reversed under untouched
   frontmatter. C1–C5 cannot see what a change means, so none of those was caught. A note counts as
   there when the commit HEAD pointed at before the pass holds it, or when it was on disk before the
-  pass, a note git ignores included. Such a pass exits 2 with `VIOLATION: the pass changed long-tier
-  notes that were there before it started`, commits nothing, and puts back every note it changed,
-  whether the agent succeeded, failed, timed out or gave no summary. So a failing or timed-out pass
-  that changed one now exits 2 rather than with the agent's status, 124 or 125, and its notes are no
-  longer left for the next run. The check comes before vault-check, so a pass that also wrote an
-  invalid note exits 2 rather than 5. The dream pass is unaffected.
+  pass, a note git ignores included. A new name that differs from such a note only in ASCII case
+  counts as that note, because on Windows and macOS it is one. Such a pass exits 2 with
+  `VIOLATION: long-tier notes that were there before the pass started changed during it`, commits
+  nothing, and puts back every note it changed, whether the agent succeeded, failed, timed out or
+  gave no summary. A note git ignores is in no commit, so it is refused but left as the pass wrote
+  it, and the log says so. So a failing or timed-out pass that changed one, and wrote nowhere else,
+  now exits 2 rather than with the agent's status, 124 or 125, and its notes are no longer left for
+  the next run. A pass that also wrote outside its allowed folders, or changed a steering surface,
+  is refused for that first and puts nothing back, as before, but its log now names each long-tier
+  note that was there before the pass and is left as the pass wrote it. The check comes before
+  vault-check, so a pass that also wrote an invalid note exits 2 rather than 5. The dream pass is
+  unaffected.
+- **The put-back no longer moves a note out of the vault when the pass wrote it under a name that
+  differs only in case.** A writer that replaces files, as the agent's Write tool does, leaves the
+  note under the new name on Windows and macOS, and the put-back could take that for a new note
+  and move it to the quarantine, depending on which of the two names it reached first. The pass's
+  bytes now go to the quarantine as a copy and the note is restored under its own name from the
+  commit before the pass, whichever name comes first.
 - **The promotion agent writes new notes only.** It never changes, retires or stamps an existing
-  long-tier note, whoever wrote it. Its trust sweep proposes the stamps it would make, and on a
-  conflict it gives the new note a `contradicts:` edge and proposes retiring the old one. The task
-  text `promotion-pass.sh` gives it says the same.
+  long-tier note, whoever wrote it. Its trust sweep proposes the stamps it would make. When a new
+  note replaces an old one on evidence, it proposes retiring the old one; when two disagree and
+  neither is established, it gives the new note a `contradicts:` edge and proposes the matching
+  edge on the old one. The task text `promotion-pass.sh` gives it says the same.
 - **An earlier pass's uncommitted edit of a committed long-tier note is put back before the next
   pass starts.** A pass that timed out or failed could leave such an edit for the next run to adopt
   and commit. The next run now logs it under `LEFTOVER-REJECTED` with a `create-only:` line, keeps
@@ -59,9 +72,14 @@ supersessions and corrections of existing notes now reach you as proposals in it
 
 Take the changed owned files: `.claude/scripts/lib/runner-common.sh`,
 `.claude/scripts/promotion-pass.sh`, `.claude/agents/promotion-agent.md`,
-`.claude/scripts/run-tests.sh`, `AGENTS.md`, `docs/reference.md`, `docs/setup.md` and
-`docs/customizing.md`, besides `VERSION` and `CHANGELOG.md`, which move on every release. Then:
+`.claude/scripts/run-tests.sh`, `AGENTS.md`, `docs/reference.md`, `docs/setup.md`,
+`docs/customizing.md` and `docs/concepts.md`, besides `VERSION` and `CHANGELOG.md`, which move on
+every release. Then:
 
+- **If you renamed `31-standards/` or `40-llm-wiki/wiki/`, change where
+  `.claude/scripts/lib/runner-common.sh` names them** after you take it: the `case` pattern and the
+  `git ls-tree` paths in `long_tier_existing`, and the `case` pattern in `check_leftovers`. Without that the create-only check matches none of your
+  notes and lets every change through, with exit 0 and nothing logged.
 - **If you customized `promotion-agent.md`, drop every instruction to stamp, supersede or edit an
   existing note** when you merge the new one. An agent still told to do any of those makes each
   such pass exit 2 and lose that week's notes.
@@ -72,8 +90,13 @@ Take the changed owned files: `.claude/scripts/lib/runner-common.sh`,
   `LEFTOVER-REJECTED`. The edit is in the state directory's quarantine, in a folder ending in
   `-leftover`. Apply it by hand if you want it.
 - **Avoid editing an existing long-tier note while a promotion pass runs.** The runner cannot tell
-  your edit from the pass's, so it refuses the pass and restores the note, and your edit is in the
-  quarantine copy the log names.
+  your edit from the pass's, so it refuses the pass and restores a committed note, and your edit is
+  in the quarantine copy the log names, unless the log says the note was committed during the pass
+  or changed after it ended, when it was left as it is.
+- **Pause any auto-commit, such as obsidian-git's, around the scheduled pass.** A sync client that
+  commits during the pass can commit the pass's change to an existing note before the runner looks.
+  The runner then refuses the pass and logs the note as committed while the pass ran, but it cannot
+  undo someone else's commit, so you would revert it yourself.
 - Create-only needs the vault to be its own git repository, as the commit and the put-back already
   did. In any other vault the runner checks nothing of this.
 
