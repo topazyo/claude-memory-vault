@@ -25,6 +25,67 @@ bash .claude/scripts/vault-update.sh --check --from ../template-new
 
 ---
 
+## 1.3.0 — 2026-09-23
+
+The retention pass now tells whoever ran it what it did. Its judgement used to go only to its log,
+so cron, launchd and a person at a terminal received nothing at all, and a run that refused to start
+could not be told from one that found nothing to move or one that never ran. It also stops
+describing a journal a person has marked as replaced as one that is still being argued over.
+
+### Changed
+
+- **`vault-retention.sh` prints what it logged.** As a run ends it prints every line it wrote to
+  `.claude/logs/vault-retention.log`, in order and once each, as `vault-retention: <text>` without
+  the timestamp, and a run that ends with any code but 0 adds a closing
+  `vault-retention: FAILED: this run ended with exit N. …` line, so a refusal is never silent and a
+  summary is never the last thing a failed run says. Failures the runner library writes itself — the
+  run lock, the tripwire and git's own refusals — come out too, because the lines are read back from
+  the log rather than printed beside each one. Three differences from the log are deliberate: every
+  byte outside printable ASCII is spelled out, the part of the log written while the run waited for
+  the run lock is left out with a `NOTE:` saying how much, and a refused lock shows only its own
+  line. [`docs/reference.md` § 4.3.1](docs/reference.md) has the contract. The log is unchanged.
+- **One refusal reason became two.** A journal carrying `contradicts:` or `superseded_by:` was
+  refused with *"contradicts or superseded_by is set, so it is still being argued over"*, which is
+  false of a journal a person has marked as replaced. It now reads
+  `contradicts: is set, so it is still being argued over` or
+  `superseded_by: is set, so a human has recorded that something replaces it, and this pass does not
+  decide what that means`, and a journal carrying both gets the `contradicts:` one. Which journals
+  are refused has not changed.
+- The control suite reads what the retention runner prints, for each state it has to tell apart: a
+  run that moved, a dry run, an empty folder, no folder, a tripwire, a refused lock, a run that
+  waited for another run's lock, a refused adoption and a run stopped by TERM. It holds the escaping
+  with a raw escape sequence and carriage return, and holds both reasons, including a journal that
+  carries both keys. `ret_run` still throws standard output away, as its callers need.
+- `AGENTS.md`, `docs/reference.md`, `docs/setup.md` and `docs/concepts.md` describe the new output.
+  CI names the new controls, and the existing control for a candidate name holding a line break, as
+  ones that must run.
+
+### Adopting this
+
+Two things change what you see, and the first may change your mail.
+
+**A crontab line for the retention pass without a redirect now mails you its judgement every
+week**, and a run that could not start mails its reason. That is intended. If your cron mail leaves
+the machine and you would rather it did not carry note names and paths, end the line with
+`>/dev/null` and read the log instead. Never redirect it into `.claude/logs/vault-retention.log`
+itself. launchd appends the same lines to `vault-retention.launchd.out`. Task Scheduler discards
+them, so nothing changes there.
+
+**Anything that searches the retention log for `contradicts or superseded_by is set` stops
+matching.** Search for `contradicts: is set` or `superseded_by: is set` instead.
+
+If your vault has never run the retention pass, this is a good release to start with: run
+`bash .claude/scripts/vault-retention.sh --dry-run` by hand and read what it prints before you
+schedule it.
+
+`--check` will list `.claude/scripts/vault-retention.sh`, `.claude/scripts/run-tests.sh`,
+`AGENTS.md`, `docs/reference.md`, `docs/setup.md` and `docs/concepts.md` as safe to take, alongside
+`VERSION` and `CHANGELOG.md`. If you changed the folder names inside `vault-retention.sh`
+([`docs/customizing.md` §2](docs/customizing.md)), take it as a merge rather than a copy. No note,
+rule, hook, frontmatter key or checker behaviour a vault relies on has moved.
+
+---
+
 ## 1.2.0 — 2026-09-22
 
 A release about the release check, which 1.1.0 introduced and which review rounds then read.
