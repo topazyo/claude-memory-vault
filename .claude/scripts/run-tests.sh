@@ -1353,6 +1353,12 @@ q r .git" ;;
   promote-edit-outside) printf 'promoted\n' >> 31-standards/existing.md
                   printf -- '---\ntier: medium\ntype: project-log\n---\n\nstray\n' > 20-projects/_logs/outside-stray.md
                   printf 'PROMOTION-SUMMARY: promoted=0 pending=0\n' ;;
+  promote-edit-contain) printf 'promoted\n' >> 31-standards/existing.md
+                  printf 'tampered\n' >> CLAUDE.md
+                  printf 'PROMOTION-SUMMARY: promoted=0 pending=0\n' ;;
+  promote-edit-outside-hang) printf 'promoted\n' >> 31-standards/existing.md
+                  printf -- '---\ntier: medium\ntype: project-log\n---\n\nstray\n' > 20-projects/_logs/outside-stray.md
+                  exec sleep 60 ;;
   line-break-link) journal
                   ln -s "$FAKE_LINK_TARGET" line-break-name-1
                   mkdir -p "20-projects/_logs/x
@@ -1532,7 +1538,10 @@ expect_rc "promotion-pass: new long-tier note -> OK"           0   "$(runner pro
 expect_rc "promotion-pass: error output only -> NO-ARTIFACT"   1   "$(runner promotion-pass.sh errors)"
 expect_rc "promotion-pass: writes CLAUDE.md -> VIOLATION"      2   "$(runner promotion-pass.sh promote-stray)"
 # CLAUDE.md steers every session, so the violation is contained, not just reported.
-if [ "$(cat "$RV/CLAUDE.md" 2>/dev/null)" = '# vault' ] && [ -f "$RV/.claude/logs/runner-tripwire" ]; then
+# The note it wrote beside CLAUDE.md is new, so the notes a contained pass left
+# changed name none.
+if [ "$(cat "$RV/CLAUDE.md" 2>/dev/null)" = '# vault' ] && [ -f "$RV/.claude/logs/runner-tripwire" ] \
+   && ! grep -qF 'Long-tier notes that were there before the pass changed during it' "$RV/.claude/logs/promotion-agent.log"; then
   ok "promotion-pass: the tampered CLAUDE.md is restored and the tripwire is set"
 else
   bad "promotion-pass: CLAUDE.md not restored or no tripwire -- CLAUDE.md now: $(tr '\n' ' ' < "$RV/CLAUDE.md" 2>/dev/null)"
@@ -3962,6 +3971,8 @@ if [ "$RV_GIT" -eq 1 ]; then
   # run, and the control is recorded as run only after that, so a fixture that
   # was never built cannot pass for a refusal.
   CO_TEXT='VIOLATION: long-tier notes that were there before the pass started changed during it.'
+  # The headline of the notes named on an exit that puts nothing back.
+  CO_LEFT='Long-tier notes that were there before the pass changed during it, and this exit puts nothing back'
   CO_NOTE=31-standards/existing.md
   CO_WIKI=40-llm-wiki/wiki/existing-entity.md
   # co_case <name>: settles the owned areas, notes HEAD, and starts a case with a
@@ -4018,7 +4029,7 @@ if [ "$RV_GIT" -eq 1 ]; then
        && [ ! -e "$RV/31-standards/beside-dirty.md" ] && [ -n "$(co_rejected 31-standards/beside-dirty.md)" ]; then
       ok "create-only: an edit to a committed standard is refused, the note restored and the pass's new note quarantined"
     else
-      bad "create-only: an edit to a committed standard was not refused and put back -- log: $(tr '\n' '|' < "$PROMO_LOG" | cut -c1-500)"
+      bad "create-only: an edit to a committed standard was not refused and put back -- log: $(tr '\n' '|' < "$PROMO_LOG" | cut -c1-2000)"
     fi
   else
     bad "create-only edit control: $CO_NOTE is not a clean note committed without a Vault-Pass trailer, so the control did not run"
@@ -4037,7 +4048,7 @@ if [ "$RV_GIT" -eq 1 ]; then
        && [ -n "$co_copy" ] && grep -q '^status: superseded' "$co_copy"; then
       ok "create-only: a supersession of a committed standard is refused, and the note carries no status: superseded"
     else
-      bad "create-only: a supersession of a committed standard was not refused and put back -- log: $(tr '\n' '|' < "$PROMO_LOG" | cut -c1-500)"
+      bad "create-only: a supersession of a committed standard was not refused and put back -- log: $(tr '\n' '|' < "$PROMO_LOG" | cut -c1-2000)"
     fi
   else
     bad "create-only supersede control: $CO_NOTE is not a clean committed note without a status, so the control did not run"
@@ -4063,7 +4074,7 @@ if [ "$RV_GIT" -eq 1 ]; then
        && grep -Eqx 'last_verified: "[0-9]{4}-[0-9]{2}-[0-9]{2}"' "$co_copy" && grep -qx 'confidence: high' "$co_copy"; then
       ok "create-only: an unprobed stamp that passes vault-check is refused by create-only, not by vault-check"
     else
-      bad "create-only: an unprobed stamp was not refused as create-only -- vault-check on the stamped copy: $co_stamp_rc, log: $(tr '\n' '|' < "$PROMO_LOG" | cut -c1-500)"
+      bad "create-only: an unprobed stamp was not refused as create-only -- vault-check on the stamped copy: $co_stamp_rc, log: $(tr '\n' '|' < "$PROMO_LOG" | cut -c1-2000)"
     fi
   else
     bad "create-only stamp control: $CO_NOTE is not a clean committed note without a stamp, so the control did not run"
@@ -4083,7 +4094,7 @@ if [ "$RV_GIT" -eq 1 ]; then
        && [ -n "$(co_front "$co_copy")" ] && [ "$(co_front "$co_copy")" = "$(co_front "$TMP/co-head-note")" ]; then
       ok "create-only: a reversed claim under untouched frontmatter is refused and the claim restored"
     else
-      bad "create-only: a reversed claim was not refused and put back -- log: $(tr '\n' '|' < "$PROMO_LOG" | cut -c1-500)"
+      bad "create-only: a reversed claim was not refused and put back -- log: $(tr '\n' '|' < "$PROMO_LOG" | cut -c1-2000)"
     fi
   else
     bad "create-only reverse control: $CO_NOTE is not a clean committed note stating its claim, so the control did not run"
@@ -4102,7 +4113,7 @@ if [ "$RV_GIT" -eq 1 ]; then
        && [ -n "$co_copy" ] && grep -qx 'promoted' "$co_copy"; then
       ok "create-only: an edit to a committed wiki entity is refused and put back"
     else
-      bad "create-only: an edit to a committed wiki entity was not refused and put back -- log: $(tr '\n' '|' < "$PROMO_LOG" | cut -c1-500)"
+      bad "create-only: an edit to a committed wiki entity was not refused and put back -- log: $(tr '\n' '|' < "$PROMO_LOG" | cut -c1-2000)"
     fi
   else
     bad "create-only wiki control: $CO_WIKI is not a clean note committed without a Vault-Pass trailer, so the control did not run"
@@ -4129,7 +4140,7 @@ if [ "$RV_GIT" -eq 1 ]; then
        && [ ! -e "$RV/31-standards/beside-ignored.md" ] && [ -n "$(co_rejected 31-standards/beside-ignored.md)" ]; then
       ok "create-only: an edit to a note git ignores that was there before the pass is refused, and the pass's new note quarantined"
     else
-      bad "create-only: an edit to a pre-existing ignored note was not refused -- log: $(tr '\n' '|' < "$PROMO_LOG" | cut -c1-500)"
+      bad "create-only: an edit to a pre-existing ignored note was not refused -- log: $(tr '\n' '|' < "$PROMO_LOG" | cut -c1-2000)"
     fi
   else
     bad "create-only ignored control: 31-standards/ignored-existing.md is not an ignored, uncommitted note on disk, so the control did not run"
@@ -4148,7 +4159,7 @@ if [ "$RV_GIT" -eq 1 ]; then
        && ! grep -qF "$CO_NOTE" "$CASE_STATE/promotion-pass.uncommitted" 2>/dev/null; then
       ok "create-only: a failing pass's edit to a committed standard is put back, not left for the next run"
     else
-      bad "create-only: a failing pass's edit to a committed standard was left or recorded -- log: $(tr '\n' '|' < "$PROMO_LOG" | cut -c1-500)"
+      bad "create-only: a failing pass's edit to a committed standard was left or recorded -- log: $(tr '\n' '|' < "$PROMO_LOG" | cut -c1-2000)"
     fi
   else
     bad "create-only failpath control: $CO_NOTE is not a clean note committed without a Vault-Pass trailer, so the control did not run"
@@ -4167,7 +4178,7 @@ if [ "$RV_GIT" -eq 1 ]; then
        && ! grep -qF "$CO_NOTE" "$CASE_STATE/promotion-pass.uncommitted" 2>/dev/null; then
       ok "create-only: a timed-out pass's edit to a committed standard is put back with its other notes"
     else
-      bad "create-only: a timed-out pass's edit to a committed standard was left or recorded -- log: $(tr '\n' '|' < "$PROMO_LOG" | cut -c1-500)"
+      bad "create-only: a timed-out pass's edit to a committed standard was left or recorded -- log: $(tr '\n' '|' < "$PROMO_LOG" | cut -c1-2000)"
     fi
   else
     bad "create-only timeout control: $CO_NOTE is not a clean note committed without a Vault-Pass trailer, so the control did not run"
@@ -4237,7 +4248,7 @@ if [ "$RV_GIT" -eq 1 ]; then
        && ! grep -q 'VIOLATION' "$PROMO_LOG"; then
       ok "create-only: a new note something committed during the pass is not taken for one that was there before"
     else
-      bad "create-only: a new note committed during the pass was refused, or never committed -- log: $(tr '\n' '|' < "$PROMO_LOG" | cut -c1-500)"
+      bad "create-only: a new note committed during the pass was refused, or never committed -- log: $(tr '\n' '|' < "$PROMO_LOG" | cut -c1-2000)"
     fi
   else
     bad "create-only syncnew control: 31-standards/synced-new.md already exists, so the control did not run"
@@ -4263,8 +4274,16 @@ if [ "$RV_GIT" -eq 1 ]; then
     ( . "$ROOT/.claude/scripts/lib/runner-common.sh" && HEAD_BEFORE="$1" \
         && check_owned "$RV" "$d/owned" "$d/predirty" "$d" "$d/log" ) >/dev/null 2>&1
     co_unit_rc=$?
-    if [ "$co_unit_rc" -eq 2 ] && PROMO_LOG="$d/log" co_named "$p"; then
-      co_unit_said=refused
+    # The refusal line for the path says which test refused it.
+    co_line="$(H="$CO_TEXT" P="    $p" awk 'index($0, ENVIRON["H"]) { f = 1; next } f && /^    / { if ($0 == ENVIRON["P"] || index($0, ENVIRON["P"] " (") == 1) { print; exit } next } { f = 0 }' "$d/log" 2>/dev/null)"
+    if [ "$co_unit_rc" -eq 2 ] && [ -n "$co_line" ]; then
+      case "$co_line" in
+        "    $p") co_unit_said=refused ;;
+        *"(its name differs only in case"*) co_unit_said=refused-case ;;
+        *"(there is no snapshot"*) co_unit_said=refused-nosnap ;;
+        *"(in no commit under this name)") co_unit_said=refused-nocommit ;;
+        *) co_unit_said="refused as: $co_line" ;;
+      esac
     elif [ "$co_unit_rc" -eq 0 ] && [ ! -s "$d/log" ]; then
       co_unit_said=passed
     else
@@ -4295,12 +4314,21 @@ if [ "$RV_GIT" -eq 1 ]; then
     co_e="$co_unit_said"
     co_unit "refs/heads/unit $co_sha" another no "$co_twin"
     co_f="$co_unit_said"
+    # An earlier pass's leftover is exempt, but not when it is a case twin.
+    co_unit "refs/heads/unit $co_sha" another yes "$co_twin"
+    co_g="$co_unit_said"
     [ "$co_twin_made" -eq 1 ] && ! [ "$RV/$co_twin" -ef "$RV/$CO_NOTE" ] && rm -f "$RV/$co_twin"
-    if [ "$co_a" = refused ] && [ "$co_b" = refused ] && [ "$co_c" = refused ] && [ "$co_d" = passed ] \
-       && [ "$co_e" = refused ] && [ "$co_f" = refused ]; then
-      ok "create-only: the commit before the pass refuses on its own and ahead of an adopted leftover's exemption, a missing snapshot refuses, and so does a name that differs only in case"
+    # The snapshot alone, for a note no commit holds.
+    co_unit "refs/heads/unit NONE" note no
+    co_h="$co_unit_said"
+    # Each case expects the line of the test meant to refuse it, so no test can
+    # stand in for another unnoticed.
+    if [ "$co_a" = refused ] && [ "$co_b" = refused ] && [ "$co_c" = refused-nosnap ] && [ "$co_d" = passed ] \
+       && [ "$co_e" = refused-case ] && [ "$co_f" = refused-case ] && [ "$co_g" = refused-case ] \
+       && [ "$co_h" = refused-nocommit ]; then
+      ok "create-only: each test refuses on its own: the commit before the pass, ahead of an adopted leftover's exemption; a missing snapshot; a name that differs only in case, adopted or not; and the snapshot"
     else
-      bad "create-only: check_owned's arms -- commit alone: $co_a; commit over an adopted leftover: $co_b; no snapshot: $co_c; neither, expected passed: $co_d; case twin of a snapshot note: $co_e; case twin of a committed note: $co_f"
+      bad "create-only: check_owned's arms -- commit alone: $co_a; commit over an adopted leftover: $co_b; no snapshot: $co_c; neither, expected passed: $co_d; case twin of a snapshot note: $co_e; case twin of a committed note: $co_f; adopted case twin: $co_g; snapshot alone: $co_h"
     fi
   else
     bad "create-only arms control: $CO_NOTE is not a clean note committed without a Vault-Pass trailer, so the control did not run"
@@ -4331,7 +4359,7 @@ if [ "$RV_GIT" -eq 1 ]; then
        && [ -n "$co_copy" ] && grep -qx 'promoted again' "$co_copy"; then
       ok "create-only: a note an earlier promotion pass committed is refused like one the owner wrote"
     else
-      bad "create-only: an edit to a pass-committed note was not refused and put back -- log: $(tr '\n' '|' < "$PROMO_LOG" | cut -c1-500)"
+      bad "create-only: an edit to a pass-committed note was not refused and put back -- log: $(tr '\n' '|' < "$PROMO_LOG" | cut -c1-2000)"
     fi
   else
     bad "create-only passnote control: $pn_note is not a clean note whose last commit carries the runner's trailers, so the control did not run"
@@ -4357,7 +4385,7 @@ if [ "$RV_GIT" -eq 1 ]; then
        && [ "$(git -C "$RV" rev-parse HEAD)" = "$co_head" ] && tree_matches_head "$RV" "$pn_note"; then
       ok "create-only: a new note named as a pattern is checked by its own name, and its committed sibling is untouched"
     else
-      bad "create-only: a new note named as a pattern was refused as create-only or checked as its sibling -- log: $(tr '\n' '|' < "$PROMO_LOG" | cut -c1-500)"
+      bad "create-only: a new note named as a pattern was refused as create-only or checked as its sibling -- log: $(tr '\n' '|' < "$PROMO_LOG" | cut -c1-2000)"
     fi
   else
     bad "create-only globnew control: the committed sibling $pn_note is missing or dirty, or $gn_note exists, so the control did not run"
@@ -4366,8 +4394,8 @@ if [ "$RV_GIT" -eq 1 ]; then
 
   # A writer that replaces a file, as the agent's own Write tool does, turns a
   # write to a name that differs from a note only in case into that same note
-  # under the new name on Windows and macOS, and into a second note beside it on
-  # Linux. Either way the pass is refused, and the note is put back under its
+  # under the new name on Windows, into the same note under its old name on
+  # macOS, and into a second note beside it on Linux. Either way the pass is refused, and the note is put back under its
   # own name with its committed bytes, whichever of the two names the put-back
   # reaches first. Both orders run: a new name that sorts first, and one that
   # sorts after the note's own.
@@ -4383,8 +4411,17 @@ if [ "$RV_GIT" -eq 1 ]; then
       ct_ok=$((ct_ok + 1))
       expect_rc "promotion-pass: the pass replaces $ct_note under the name $ct_twin -> VIOLATION" 2 \
         "$(runner promotion-pass.sh promote-case-twin FAKE_TWIN="$ct_twin")"
+      # By exact name, which [ -f ] and git cannot tell on a filesystem that
+      # folds case: the note is listed under its own name, and the twin is gone.
+      # The pass's bytes are in the quarantine under the name they ended up
+      # with: the twin's on NTFS and on Linux, the note's on APFS, where a
+      # rename over a name that differs only in case keeps the old name.
+      ct_copy="$(co_rejected "$ct_twin")"
+      [ -n "$ct_copy" ] || ct_copy="$(co_rejected "$ct_note")"
       if { co_named "$ct_twin" || co_named "$ct_note"; } && [ -f "$RV/$ct_note" ] && tree_matches_head "$RV" "$ct_note" \
-         && [ -n "$(co_rejected "$ct_twin")" ] && grep -qx 'case twin' "$(co_rejected "$ct_twin")" \
+         && ls "$RV/31-standards" | grep -qxF "$(basename "$ct_note")" \
+         && ! ls "$RV/31-standards" | grep -qxF "$(basename "$ct_twin")" \
+         && [ -n "$ct_copy" ] && grep -qx 'case twin' "$ct_copy" \
          && ! grep -q 'ERROR: some notes could not be put back' "$PROMO_LOG" \
          && [ "$(git -C "$RV" rev-parse HEAD)" = "$co_head" ]; then
         ct_said="$ct_said ok"
@@ -4409,7 +4446,6 @@ if [ "$RV_GIT" -eq 1 ]; then
   # A pass that also writes outside its folders is refused for that, and that
   # exit puts nothing back, so the committed note it changed is named instead of
   # being left unmentioned where every later session reads it.
-  CO_LEFT='The pass also changed long-tier notes that were there before it started, and this exit puts nothing back'
   co_case promotion-create-only-outside
   if co_owner_note "$CO_NOTE" && [ ! -e "$RV/20-projects/_logs/outside-stray.md" ]; then
     ran promo-create-only-outside
@@ -4419,10 +4455,49 @@ if [ "$RV_GIT" -eq 1 ]; then
        && co_named "$CO_NOTE" "$CO_LEFT" && [ "$(git -C "$RV" rev-parse HEAD)" = "$co_head" ]; then
       ok "create-only: a pass refused for a write outside its folders names the committed standard it changed and left"
     else
-      bad "create-only: a pass refused for a write outside its folders did not name the standard it left changed -- log: $(tr '\n' '|' < "$PROMO_LOG" | cut -c1-500)"
+      bad "create-only: a pass refused for a write outside its folders did not name the standard it left changed -- log: $(tr '\n' '|' < "$PROMO_LOG" | cut -c1-2000)"
     fi
   else
     bad "create-only outside control: $CO_NOTE is not a clean committed note, or the stray file exists, so the control did not run"
+  fi
+  rm -f "$RV/20-projects/_logs/outside-stray.md"
+  co_restore "$CO_NOTE"
+
+  # Containment puts back steering surfaces only, so a standard a contained pass
+  # changed is named the same way.
+  co_case promotion-create-only-contained
+  if co_owner_note "$CO_NOTE" && [ "$(cat "$RV/CLAUDE.md" 2>/dev/null)" = '# vault' ] \
+     && [ ! -e "$RV/.claude/logs/runner-tripwire" ]; then
+    ran promo-create-only-contained
+    expect_rc "promotion-pass: the pass appends to a committed standard and changes CLAUDE.md -> VIOLATION, contained" 2 \
+      "$(runner promotion-pass.sh promote-edit-contain)"
+    if [ -f "$RV/.claude/logs/runner-tripwire" ] && [ "$(cat "$RV/CLAUDE.md" 2>/dev/null)" = '# vault' ] \
+       && co_named "$CO_NOTE" "$CO_LEFT" && [ "$(git -C "$RV" rev-parse HEAD)" = "$co_head" ]; then
+      ok "create-only: a contained pass names the committed standard it changed and left"
+    else
+      bad "create-only: a contained pass did not name the standard it left changed -- log: $(tr '\n' '|' < "$PROMO_LOG" | cut -c1-2000)"
+    fi
+  else
+    bad "create-only contained control: $CO_NOTE or CLAUDE.md is not as committed, or a tripwire is set, so the control did not run"
+  fi
+  tripwire_clear
+  co_restore "$CO_NOTE"
+
+  # A pass killed after a write outside its folders is put back by nothing too.
+  co_case promotion-create-only-hangoutside
+  if co_owner_note "$CO_NOTE" && [ ! -e "$RV/20-projects/_logs/outside-stray.md" ]; then
+    ran promo-create-only-hangoutside
+    expect_rc "promotion-pass: a pass killed after appending to a committed standard and writing outside its folders -> TIMEOUT" 124 \
+      "$(runner promotion-pass.sh promote-edit-outside-hang PROMOTION_PASS_TIMEOUT=2)"
+    if grep -q 'TIMEOUT: promotion-agent exceeded' "$PROMO_LOG" \
+       && co_named 20-projects/_logs/outside-stray.md 'VIOLATION: files outside the allowed write areas changed before the pass was killed' \
+       && co_named "$CO_NOTE" "$CO_LEFT" && [ "$(git -C "$RV" rev-parse HEAD)" = "$co_head" ]; then
+      ok "create-only: a pass killed after a write outside its folders names the committed standard it changed and left"
+    else
+      bad "create-only: a killed pass with a write outside its folders did not name the standard it left changed -- log: $(tr '\n' '|' < "$PROMO_LOG" | cut -c1-2000)"
+    fi
+  else
+    bad "create-only hangoutside control: $CO_NOTE is not a clean committed note, or the stray file exists, so the control did not run"
   fi
   rm -f "$RV/20-projects/_logs/outside-stray.md"
   co_restore "$CO_NOTE"
@@ -4490,7 +4565,7 @@ if [ "$RV_GIT" -eq 1 ]; then
        && [ -n "$pr_copy" ] && grep -q 'overwritten without frontmatter' "$pr_copy"; then
       ok "a committed promotion report that fails vault-check is restored from the commit before the pass, its rejected bytes kept"
     else
-      bad "a committed promotion report that fails vault-check was not put back -- log: $(tr '\n' '|' < "$PROMO_LOG" | cut -c1-500)"
+      bad "a committed promotion report that fails vault-check was not put back -- log: $(tr '\n' '|' < "$PROMO_LOG" | cut -c1-2000)"
     fi
   else
     bad "the CHECK-FAILED report case: $pr_note is not committed and clean, so the case did not run"

@@ -10,10 +10,12 @@
 # 40-llm-wiki/wiki/ - your long tier, the notes that steer every future session.
 # It may add notes there but never change one already there, and in a vault
 # that is its own git repository a pass that does is refused and put back, as
-# far as a commit holds what to put back. It has no shell. This runner keeps
-# the history for it: it records the vault's recent history for the agent to
-# read, snapshots the vault before the run, and fails the run if anything
-# changed OUTSIDE the areas a promotion pass may write.
+# far as a commit holds what to put back. A pass that also wrote outside those
+# folders or changed a steering surface is refused for that and put back by
+# nothing, and the log names the notes instead. It has no shell. This runner
+# keeps the history for it: it records the vault's recent history for the
+# agent to read, snapshots the vault before the run, and fails the run if
+# anything changed OUTSIDE the areas a promotion pass may write.
 # A change to a steering or execution surface - including an instruction file
 # nested inside the long tier, such as 31-standards/CLAUDE.md - is also
 # CONTAINED: quarantined outside the vault, restored from a pre-pass backup, and
@@ -521,6 +523,7 @@ main() {
   if [ -s "$SNAP_DIR/outside" ]; then
     printf '[%s] VIOLATION: files outside the allowed write areas changed during the run:\n' "$(ts)" >> "$LOG"
     LC_ALL=C sort -u "$SNAP_DIR/outside" | sed 's/^/    /' >> "$LOG"
+    [ "$VAULT_GIT" -eq 1 ] && owned_predirty "$SNAP_DIR/owned" "$SNAP_DIR/predirty" "$SNAP_DIR" "$LOG"
     report_existing_left "$ROOT" "$SNAP_DIR/owned" "$SNAP_DIR" "$LOG"
     exit 2
   fi
