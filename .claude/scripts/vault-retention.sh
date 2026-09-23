@@ -34,8 +34,16 @@
 #
 # Usage:
 #   vault-retention.sh                         move what is eligible
-#   vault-retention.sh --dry-run               judge and log, move and write nothing
+#   vault-retention.sh --dry-run               judge, log and print, move and write nothing
 #   vault-retention.sh --adopt-legacy <report> move the legacy journals the report lists
+#
+# Output:
+#   Everything a run writes to .claude/logs/vault-retention.log is printed on
+#   standard output as the run ends, each line once and in order, as
+#   "vault-retention: <text>" without the timestamp. A run that ends with any
+#   code but 0 adds one last line saying which. Cron mails what it prints, so a
+#   crontab line without a redirect sends the judgement every week. Never
+#   redirect standard output into the log itself. See print_run.
 #
 # Environment:
 #   RETENTION_DAYS       days before a journal or stub may move (default 60)
@@ -82,6 +90,13 @@ export LC_ALL
 RUNNER=vault-retention
 SNAP_DIR=""
 LOG=""
+# Byte offsets into the log for print_run, empty when unknown: where this run's
+# lines begin, and the log's size just before the run lock was asked for and
+# just after it answered.
+LOG_MARK=""
+LOCK_FROM=""
+LOCK_TO=""
+LOCK_HELD=0
 STATE=""
 ROOT=""
 HOOKS=""
@@ -164,9 +179,114 @@ safe_name() {
   }'
 }
 
+# log_size - the log's size in bytes: 0 when there is no log yet, and nothing at
+# all when it cannot be read, which print_run reports rather than guesses at
+log_size() {
+  local s=""
+  [ -e "$LOG" ] || { printf '0'; return 0; }
+  s="$( { wc -c < "$LOG"; } 2>/dev/null | tr -d ' ')"
+  case "$s" in ''|*[!0123456789]*) s="" ;; esac
+  printf '%s' "$s"
+}
+
+# log_span <from> <to> - the log's bytes from offset <from> up to offset <to>
+# Bounded at both ends. The upper bound is what keeps a crontab line that sends
+# standard output back into this same log from reading its own output forever.
+log_span() {
+  [ -n "$1" ] && [ -n "$2" ] && [ "$2" -gt "$1" ] || return 0
+  tail -c +"$(($1 + 1))" "$LOG" 2>/dev/null | head -c "$(($2 - $1))" 2>/dev/null
+}
+
+# print_run <exit code>
+# What this run wrote to its log, printed on standard output as it ends, for
+# cron, launchd and whoever ran it by hand. They used to see nothing at all, so
+# a run that refused to start could not be told from one that found nothing to
+# move or one that never ran.
+#
+# It replays the log rather than printing beside each say, because a run can
+# end on a line the runner library wrote: the lock, the tripwire and git's own
+# refusals are written there, straight into the log it is handed, and that
+# library is shared with the dream and promotion runners. Every line comes out
+# once and in order, as "vault-retention: <text>" with the timestamp taken off,
+# and a run that did not end with 0 ends with one line saying so. That line is
+# what keeps a refused --adopt-legacy honest, because main logs the summary
+# after the refusal, and a summary is a claim: under cron it is all a reader
+# gets, with no exit code.
+#
+# The span spent waiting for the run lock is left out. Another retention run
+# holds the lock meanwhile and writes its whole run into the same log, and
+# printing it would show that run's moves and summary as this run's. When the
+# lock is refused, only the lock's own last line is shown.
+#
+# Every byte outside printable ASCII is spelled out, by the same allowlist as
+# safe_name, with the less-than sign kept so the names safe_name has already
+# escaped come through as the log holds them. A line here can carry text this
+# runner did not write, git's error output, a commit message, an environment
+# value, and what it prints reaches a terminal and a mail. The cost is that a
+# path with a letter outside ASCII reads as its bytes. The log keeps it as
+# written.
+print_run() {
+  local end=""
+  [ -n "$LOG" ] || return 0
+  [ -f "$LOG" ] && end="$(log_size)"
+  if [ -z "$LOG_MARK" ] || [ -z "$end" ] || [ "$end" -lt "$LOG_MARK" ]; then
+    printf 'vault-retention: nothing could be read back from .claude/logs/vault-retention.log, so what this run did cannot be shown here.\n'
+  else
+    [ -n "$LOCK_TO" ] || LOCK_TO="$LOCK_FROM"
+    {
+      if [ -z "$LOCK_FROM" ]; then
+        log_span "$LOG_MARK" "$end"
+      else
+        log_span "$LOG_MARK" "$LOCK_FROM"
+        if [ "$LOCK_HELD" -eq 1 ]; then
+          [ "$LOCK_TO" -gt "$LOCK_FROM" ] \
+            && printf 'NOTE: %s byte(s) reached the log while this run waited for the run lock. They are in the log and not shown here, because another run may have written them.\n' "$((LOCK_TO - LOCK_FROM))"
+          log_span "$LOCK_TO" "$end"
+        else
+          log_span "$LOCK_FROM" "$LOCK_TO" | tail -n 1
+        fi
+      fi
+    } | LC_ALL=C awk '
+      BEGIN {
+        for (i = 32; i < 127; i++) keep = keep sprintf("%c", i)
+        for (i = 1; i < 256; i++) hex[sprintf("%c", i)] = sprintf("%02X", i)
+      }
+      {
+        line = $0
+        # The timestamp say writes: a "[" with the date and a "T" at the twelfth
+        # character, up to the first "] ". Found by position rather than by a
+        # pattern, so a clock that adds fractions of a second strips the same.
+        if (substr(line, 1, 1) == "[" && substr(line, 12, 1) == "T" && (j = index(line, "] ")) > 12)
+          line = substr(line, j + 2)
+        o = ""
+        n = length(line)
+        for (i = 1; i <= n; i++) {
+          c = substr(line, i, 1)
+          if (index(keep, c) > 0) o = o c
+          else if (c == "\t") o = o "<TAB>"
+          else if (c == "\r") o = o "<CR>"
+          else if (c in hex) o = o "<" hex[c] ">"
+          else o = o "<?>"
+        }
+        print "vault-retention: " o
+        shown++
+      }
+      END { if (!shown) print "vault-retention: this run wrote nothing to its log before it stopped." }'
+  fi
+  [ "$1" -eq 0 ] || printf 'vault-retention: FAILED: this run ended with exit %s. The lines above are what it logged, and the header of vault-retention.sh says what the number means.\n' "$1"
+}
+
 on_exit() {
+  local st=$?
+  # Nothing may cut the printing short, and a reader that has gone away must
+  # cost a write error rather than a signal that replaces the exit code.
+  trap '' INT TERM HUP PIPE
   [ -n "$SNAP_DIR" ] && rm -rf "$SNAP_DIR"
   run_lock_release
+  # After the lock is released, so a reader that blocks holds nothing up, and
+  # to descriptor 9, the copy main takes of standard output before anything
+  # can redirect it.
+  print_run "$st" 2>/dev/null >&9
 }
 
 # On INT, TERM or HUP: stop a watched git command, then settle what the moves
@@ -223,11 +343,13 @@ watched_git() {
     idxenv=(GIT_INDEX_FILE="$RETENTION_GIT_INDEX")
   fi
   : > "$SNAP_DIR/git.err"
+  # Descriptor 9 is closed for git, so that one the watchdog could not stop does
+  # not hold open the pipe print_run writes to, which is cron's mail.
   run_with_watchdog "$GIT_TIMEOUT" "$SNAP_DIR/git.err" \
     env GIT_TERMINAL_PROMPT=0 GIT_NO_REPLACE_OBJECTS=1 $LITERAL_PATHS ${idxenv[@]+"${idxenv[@]}"} RETENTION_GIT_OUT="$o" RETENTION_GIT_IN="$i" \
     bash -c 'exec git "$@" < "$RETENTION_GIT_IN" > "$RETENTION_GIT_OUT"' vault-retention-git \
     -C "$ROOT" -c core.hooksPath="$HOOKS" -c core.fsmonitor=false -c log.showSignature=false \
-    -c log.follow=false -c core.quotePath=false "$@"
+    -c log.follow=false -c core.quotePath=false "$@" 9>&-
   RUN_PID=""
   [ "$RUN_TIMED_OUT" -eq 0 ] && [ "$RUN_RC" -eq 0 ]
 }
@@ -573,7 +695,8 @@ frontmatter_reason() {
     f {
       line = $0
       gsub(/\r/, "", line)
-      if (line ~ /^[ \t]*contradicts:/ || line ~ /^[ \t]*superseded_by:/) flagged = 1
+      if (line ~ /^[ \t]*contradicts:/) contra = 1
+      if (line ~ /^[ \t]*superseded_by:/) super = 1
       if (line ~ /^tier:/) {
         tiers++
         v = line
@@ -596,7 +719,17 @@ frontmatter_reason() {
     END {
       if (!f) { print "no frontmatter, so nothing says this is a medium tier note"; exit }
       if (!closed) { print "the frontmatter opens and is never closed, so nothing in it can be read as settled"; exit }
-      if (flagged) { print "contradicts or superseded_by is set, so it is still being argued over"; exit }
+      # One reason for each key, because they say different things, and one
+      # sentence for both told the reader that a note a person had marked as
+      # replaced was still being argued over. Each is a claim about the key and
+      # not its value, since the key alone decides, so each stays true of an
+      # empty one. No value read out of the note is put into either: every
+      # reason here is a fixed sentence, and what reaches a reason reaches
+      # standard output. contradicts comes first when a note carries both,
+      # because an unadjudicated contradiction is the stronger statement and
+      # reporting it as retired by hand would be the worse error.
+      if (contra) { print "contradicts: is set, so it is still being argued over"; exit }
+      if (super) { print "superseded_by: is set, so a human has recorded that something replaces it, and this pass does not decide what that means"; exit }
       if (tiers != 1 || value != "medium") { print "tier is not medium, so it is not a note this pass may retire"; exit }
       print "ok"
     }' "$1" 2>/dev/null
@@ -2870,6 +3003,21 @@ main() {
   LOG_DIR="$ROOT/.claude/logs"
   mkdir -p "$LOG_DIR" 2>/dev/null
   LOG="$LOG_DIR/vault-retention.log"
+  # Standard output is copied to descriptor 9 before anything can redirect it. A
+  # trap runs inside whatever redirection is active where its signal landed, and
+  # several blocks below write a temporary file through standard output, so
+  # without the copy what print_run owes the caller would go into that file and
+  # be deleted with it.
+  { exec 9>&1; } 2>/dev/null
+  LOG_MARK="$(log_size)"
+  # Set before anything can fail, so every way this run ends prints what it did.
+  # The signal traps come with the EXIT trap rather than later: a signal left at
+  # its default action ends bash with the EXIT trap seeing a status of 0, and
+  # print_run would report a stopped run as one that finished.
+  trap on_exit EXIT
+  trap 'on_signal 130' INT
+  trap 'on_signal 143' TERM
+  trap 'on_signal 129' HUP
   # Anything that reaches arithmetic is checked first, because the shell reads a
   # variable in arithmetic as an expression and a planted one would run.
   RETENTION_DAYS="$(uint_setting RETENTION_DAYS 60 1 "$LOG" days)"
@@ -2890,13 +3038,12 @@ main() {
   fi
   STATE="$STATE_REAL"
 
-  trap on_exit EXIT
-  trap 'on_signal 130' INT
-  trap 'on_signal 143' TERM
-  trap 'on_signal 129' HUP
+  LOCK_FROM="$(log_size)"
   run_lock_acquire "$STATE" "$ROOT" "$RUNNER" "$LOG" "$((GIT_TIMEOUT * 4 + WATCHDOG_GRACE + 900))"
   lock_rc=$?
+  LOCK_TO="$(log_size)"
   [ "$lock_rc" -eq 0 ] || return "$lock_rc"
+  LOCK_HELD=1
 
   tripwire_check "$ROOT" "$STATE" "$RUNNER" "$LOG"
   rc=$?
