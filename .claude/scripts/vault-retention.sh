@@ -343,13 +343,16 @@ watched_git() {
     idxenv=(GIT_INDEX_FILE="$RETENTION_GIT_INDEX")
   fi
   : > "$SNAP_DIR/git.err"
-  # Descriptor 9 is closed for git, so that one the watchdog could not stop does
-  # not hold open the pipe print_run writes to, which is cron's mail.
+  # Descriptor 9 is closed for git alone, inside its exec, so that a git the
+  # watchdog could not stop does not hold open the pipe print_run writes to,
+  # which is cron's mail. Not on this call: a redirection on a function call
+  # holds for the whole call in this shell too, and a signal landing while git
+  # runs would then find descriptor 9 closed and print nothing at all.
   run_with_watchdog "$GIT_TIMEOUT" "$SNAP_DIR/git.err" \
     env GIT_TERMINAL_PROMPT=0 GIT_NO_REPLACE_OBJECTS=1 $LITERAL_PATHS ${idxenv[@]+"${idxenv[@]}"} RETENTION_GIT_OUT="$o" RETENTION_GIT_IN="$i" \
-    bash -c 'exec git "$@" < "$RETENTION_GIT_IN" > "$RETENTION_GIT_OUT"' vault-retention-git \
+    bash -c 'exec git "$@" < "$RETENTION_GIT_IN" > "$RETENTION_GIT_OUT" 9>&-' vault-retention-git \
     -C "$ROOT" -c core.hooksPath="$HOOKS" -c core.fsmonitor=false -c log.showSignature=false \
-    -c log.follow=false -c core.quotePath=false "$@" 9>&-
+    -c log.follow=false -c core.quotePath=false "$@"
   RUN_PID=""
   [ "$RUN_TIMED_OUT" -eq 0 ] && [ "$RUN_RC" -eq 0 ]
 }
