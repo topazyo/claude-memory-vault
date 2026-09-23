@@ -830,9 +830,22 @@ Around that call, each runner does several things an exit code cannot:
   owns (a dream journal, or for the promotion pass a long-tier note or promotion report) that
   changed and was on that list exits **2**, and the runner commits none of them. Every other dirty
   or staged file is left as the runner found it.
+- **The long tier is create-only.** A promotion pass may add notes to `31-standards/` and
+  `40-llm-wiki/wiki/` but never change one that was there before it started, whoever wrote it. A
+  note was there when the commit HEAD pointed at before the pass holds it, or when it was on disk
+  before the pass, a note git ignores included, unless it is an earlier promotion pass's own
+  uncommitted note that this run adopted (below). A pass that changed one exits **2**, logs the
+  notes under `VIOLATION: the pass changed long-tier notes that were there before it started`,
+  commits nothing and puts back every note it changed, whether the agent succeeded, failed, timed
+  out or gave no summary. The check comes before vault-check, so such a pass exits 2 even when a
+  note of its own would fail the check. A freshness stamp, a supersession or a correction of an
+  existing note reaches you as a proposal in the pass's promotion report instead, and applying it
+  is yours. A promotion report is not in the long tier, so a pass may still change one. Like the
+  commit and the put-back, the check needs a vault that is its own git repository, and a pass in
+  any other vault is not checked for it.
 - **Runner commit.** A successful pass has the files it changed in the areas it owns committed by
   its runner, and nothing else. For the dream pass those are its journals. For the promotion pass
-  they are its long-tier notes and promotion report. The runner records their blob ids, runs
+  they are its new long-tier notes and its promotion report. The runner records their blob ids, runs
   `vault-check.sh` on exactly those files and exits **5** (CHECK-FAILED) when any fails. It then
   runs `git add -- <files>` and `git commit --only -- <files>` with `core.hooksPath` pointed at an
   empty folder, each step under the watchdog with `RUNNER_GIT_TIMEOUT`, so a signing prompt cannot
@@ -850,9 +863,9 @@ Around that call, each runner does several things an exit code cannot:
   On exit 5 the passes differ. The dream pass leaves the rejected journal in place, uncommitted,
   for you to fix or delete. The promotion pass puts back the notes it changed, because the long
   tier steers later sessions, and logs each under `REVERTED`. It does the same on exit 2 when a
-  note the pass changed was already being edited, or is no longer a regular file, whether the
-  agent succeeded, failed, timed out or gave no summary, so a pass that deletes one note cannot
-  keep its other notes in place. A dream pass in that state exits 2 too, and records nothing for
+  note the pass changed was already being edited, or is no longer a regular file, or was a
+  long-tier note that was there before the pass, whether the agent succeeded, failed, timed out or
+  gave no summary, so a pass that deletes or edits one note cannot keep its other notes in place. A dream pass in that state exits 2 too, and records nothing for
   the next run. A note someone was already editing is never put back, because its pre-pass bytes
   are in no commit.
   - A note that was in the commit HEAD pointed at before the pass is first copied to a quarantine
@@ -892,7 +905,9 @@ Around that call, each runner does several things an exit code cannot:
 
   The next run of the same pass checks each recorded file that nobody has changed since, on its
   own, before its agent starts. One that fails is logged under `LEFTOVER-REJECTED` with
-  vault-check's output. The promotion pass puts it back then, into a quarantine folder ending in
+  vault-check's output. So is a promotion leftover that changes a long-tier note the last commit
+  already holds, with a `create-only:` line, because the long tier is create-only and it would
+  otherwise take the run's own notes down with it. The promotion pass puts it back then, into a quarantine folder ending in
   `-leftover`, and the dream pass leaves it in place for review. Either way it cannot make that
   run's own files fail with it. The rest are logged under `ADOPTED` and join the files that run
   checks, whether or not the run touches them, and are committed with its changes or put back
@@ -900,9 +915,11 @@ Around that call, each runner does several things an exit code cannot:
   until a run commits or puts back its files, or records its own leftovers in its place. A
   recorded file edited since counts as someone's edit, so fix a rejected
   journal and commit it yourself, or delete it. A file that was clean before the pass and edited by
-  you or a sync client while the pass ran cannot be told apart from the pass's own writing, and is
-  committed under the pass's trailer. Avoid editing today's journal, or a long-tier note, during a
-  scheduled pass. In Obsidian that includes creating a note in the long tier. An empty new note
+  you or a sync client while the pass ran cannot be told apart from the pass's own writing. A
+  journal, a promotion report or a note the pass created is committed under the pass's trailer. A
+  long-tier note that was there before the pass counts as the pass changing it, so the pass is
+  refused and the note restored, and your edit is in the quarantine copy the log names. Avoid
+  editing today's journal, or a long-tier note, during a scheduled pass. In Obsidian that includes creating a note in the long tier. An empty new note
   there fails the check, so the promotion pass puts back every note it wrote and moves the new note
   to the quarantine while it is still open.
 
@@ -1069,7 +1086,7 @@ Known limits, each failing in the quiet direction:
 | --- | --- |
 | `0` | OK: the artifact assertion held, nothing outside the fence changed, and the pass's files were committed, HEAD already held them, git ignores them, or the vault is not a repository of its own |
 | `1` | NO-ARTIFACT, the runner could not create its temporary directory, use its state directory, write its in-flight marker or (promotion pass) its git state file, run `git status` or back up the steering surfaces, git cannot read the vault's repository, or (command mode) the agent definition file is missing |
-| `2` | VIOLATION: a file outside the allowed write areas changed during the run. When steering surfaces are among them they are contained and the tripwire is set. Also when the pass changed a file it owns that already had uncommitted changes before it started, or a file it owns and changed is no longer a regular file. The runner commits nothing. Those last two reasons give exit 2 even when the agent failed, timed out or (promotion pass) gave no summary, and nothing is recorded for the next run. The promotion pass also puts back its other notes, as for exit 5 |
+| `2` | VIOLATION: a file outside the allowed write areas changed during the run. When steering surfaces are among them they are contained and the tripwire is set. Also when the pass changed a file it owns that already had uncommitted changes before it started, or a file it owns and changed is no longer a regular file, or (promotion pass) it changed a long-tier note that was there before it started. The runner commits nothing. Those last three reasons give exit 2 even when the agent failed, timed out or (promotion pass) gave no summary, and nothing is recorded for the next run. The promotion pass also puts back its notes, as for exit 5, except one that already had uncommitted changes |
 | `3` | REFUSED: `VAULT_AGENT=command` without `VAULT_ALLOW_UNENFORCED_TOOLS=1`; the agent was not started |
 | `4` | COMMIT-FAILED: staging or committing the pass's files failed, ran longer than `RUNNER_GIT_TIMEOUT`, or a file changed while it was checked. The files are left in place and uncommitted, and the log says whether they could be unstaged. Also a commit that was made but does not hold the checked content, which the log names |
 | `5` | CHECK-FAILED: `vault-check.sh` rejected a file the pass changed, and nothing was committed. The dream pass leaves the journal in place. The promotion pass puts back every note it changed, except any the log lists as left as it is, and logs them under `REVERTED` |
@@ -1341,8 +1358,8 @@ to re-run or synthesize to close it: closing a gap is the owner's call.
 | Cadence | Weekly (`promotion-pass.sh` / `.cmd`) |
 | Tools | Read, Glob, Grep, Write, Edit. No shell and no skills, and in claude mode the runner also passes `--disallowedTools Bash PowerShell Monitor` |
 | Model | `sonnet`, `maxTurns: 30`, no agent memory (memory loads into later passes, so an unattended agent gets none) |
-| Writes | Notes in `31-standards/` and `40-llm-wiki/wiki/` (never their `templates/`); freshness stamps on notes it re-probed; optionally `20-projects/_logs/promotion-*.md` |
-| Never | Deletes or overwrites a note to resolve a conflict |
+| Writes | New notes in `31-standards/` and `40-llm-wiki/wiki/` (never their `templates/`); a `20-projects/_logs/promotion-*.md` report, which holds its proposals |
+| Never | Changes, retires or stamps a long-tier note that was there before the pass, whoever wrote it; deletes or overwrites a note to resolve a conflict |
 
 Safety constraints, all load-bearing:
 
@@ -1351,27 +1368,32 @@ Safety constraints, all load-bearing:
   then checks and commits exactly the notes it changed, or puts them back (§4.3). That commit
   is what makes a bad pass reversible, which is why `git` is a hard dependency. The runner's write
   fence catches writes outside the allowed areas, but only git can undo a bad write inside them.
-  A pass that times out or fails leaves its notes uncommitted, and the next pass checks them before
-  they are committed or put back. A pass stopped by a signal before containment sets the tripwire
-  instead, and its notes wait for your review.
-- **Leave a note alone that shows uncommitted changes no promotion pass made.** Someone may be
-  editing it. The agent reports it as pending, and the runner refuses to commit over such a note
-  anyway. A note someone committed since the last promotion pass is fair to build on, and so is a
-  note the git state file lists as left uncommitted by an earlier promotion pass.
-- **Run the trust sweep only on what reading can check.** The agent has no shell and no network,
-  so it re-verifies a claim only against other notes and files in the vault, and stamps
-  `last_verified` only for a claim it checked that way. A claim about a system outside the vault
-  is reported as unverified, not stamped.
+  A pass that times out or fails leaves its new notes uncommitted, and the next pass checks them
+  before they are committed or put back. One that changed a note already there is put back at once
+  instead, and exits 2. A pass stopped by a signal before containment sets the tripwire instead,
+  and its notes wait for your review.
+- **Add notes; never change one already in the long tier.** A note that was there before the pass
+  is the owner's to change, whoever wrote it, so the agent puts each stamp, retirement or
+  correction it would make in its promotion report as a proposal with the reason, and the runner
+  refuses a pass that changed one (§4.3). A note someone committed since the last promotion pass
+  is settled and fair to build on, and so is a note the git state file lists as left uncommitted
+  by an earlier promotion pass. One with uncommitted changes no promotion pass made may be someone's
+  work in progress, and the agent does not build on it.
+- **Run the trust sweep only on what reading can check, and report it.** The agent has no shell
+  and no network, so it re-verifies a claim only against other notes and files in the vault, and
+  proposes a `last_verified` stamp only for a claim it checked that way. A claim about a system
+  outside the vault is reported as unverified.
 - **End with `PROMOTION-SUMMARY: promoted=<n> pending=<n>`** on its own line. Without that line or
   a long-tier change, `promotion-pass.sh` reports NO-ARTIFACT.
 - **A note created from a template keeps `last_verified: ""`** unless the pass re-probed its claim.
-- **Only stamp what it actually re-probed.** A stamp applied without a probe is an unearned stamp
-  that suppresses its own detection by every later pass.
+- **Only stamp, or propose a stamp for, what it actually re-probed.** A stamp applied without a
+  probe is an unearned stamp that suppresses its own detection by every later pass.
 - **Spawned workers return status and a file path, never pasted content.** A path can be checked
   against the filesystem; a paragraph cannot. This bounds hallucination structurally.
 - **Re-read each written note** to confirm `tier`/`type` conformance before calling it done.
-- **Conflicts are marked, not resolved.** `status: superseded` + `superseded_by`, or a
-  `contradicts` edge left for a human.
+- **Conflicts are marked, not resolved.** The new note carries a `contradicts` edge to the old one,
+  and retiring the old one (`status: superseded` + `superseded_by`) is proposed in the report and
+  left to the owner.
 - Candidates below the promotion bar are left unwritten and reported **with the reason**; an
   unexplained non-promotion is indistinguishable from an oversight.
 

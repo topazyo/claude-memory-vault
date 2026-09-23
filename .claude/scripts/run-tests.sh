@@ -1136,6 +1136,9 @@ if [ -n "${FAKE_RECORD:-}" ]; then
   printf '%s\n' "${CLAUDE_CODE_DISABLE_AUTO_MEMORY:-unset}" > "$FAKE_RECORD.automemory"
   printf '%s\n' "${VAULT_RUN_NONCE:-unset}" > "$FAKE_RECORD.nonce"
 fi
+# FAKE_SEE=<vault path> copies that note, as the agent finds it when it starts,
+# to FAKE_SEEN=<path>.
+[ -n "${FAKE_SEE:-}" ] && [ -n "${FAKE_SEEN:-}" ] && cp -- "$FAKE_SEE" "$FAKE_SEEN" 2>/dev/null
 journal() {
   j="20-projects/_logs/dream-$(date +%F).md"
   mkdir -p 20-projects/_logs
@@ -1272,7 +1275,7 @@ case "${FAKE_MODE:-nothing}" in
   promote-unique) printf -- '---\ntier: long\ntype: standard\n---\n\nunique\n' > "31-standards/promoted-unique.md"
                   printf 'PROMOTION-SUMMARY: promoted=1 pending=0\n' ;;
   promote-bad)    printf 'no frontmatter\n' > "31-standards/rejected-new.md"
-                  printf 'overwritten without frontmatter\n' > "31-standards/existing.md"
+                  printf 'overwritten without frontmatter\n' > "${FAKE_OVERWRITE:-31-standards/existing.md}"
                   [ -f 31-standards/ignored-keep.md ] && printf 'pass edit\n' >> 31-standards/ignored-keep.md
                   printf 'PROMOTION-SUMMARY: promoted=2 pending=0\n' ;;
   promote-glob-bad) printf 'no frontmatter\n' > "31-standards/[e]xisting.md"
@@ -1317,6 +1320,28 @@ q r .git" ;;
   promote-wiki-bad) printf 'no frontmatter\n' > "40-llm-wiki/wiki/rejected-wiki.md"
                   printf 'PROMOTION-SUMMARY: promoted=1 pending=0\n' ;;
   promote-after-leftover) printf -- '---\ntier: long\ntype: standard\n---\n\ngood\n' > "31-standards/good-after-leftover.md"
+                  printf 'PROMOTION-SUMMARY: promoted=1 pending=0\n' ;;
+  # Create-only modes: each changes a long-tier note that was there before the
+  # pass in one way a steered pass could, and ends with a valid summary. The
+  # rewrites go through awk and mv, because BSD sed takes no newline in -i.
+  promote-supersede) awk 'NR == 1 { print; print "status: superseded"; print "superseded_by: \"[[promoted-successor]]\""; next } { print }' \
+                    31-standards/existing.md > 31-standards/existing.md.tmp && mv -f 31-standards/existing.md.tmp 31-standards/existing.md
+                  printf 'PROMOTION-SUMMARY: promoted=0 pending=0\n' ;;
+  promote-stamp)  awk -v d="$(date +%F)" 'NR == 1 { print; print "last_verified: \"" d "\""; print "confidence: high"; next } { print }' \
+                    31-standards/existing.md > 31-standards/existing.md.tmp && mv -f 31-standards/existing.md.tmp 31-standards/existing.md
+                  printf 'PROMOTION-SUMMARY: promoted=0 pending=0\n' ;;
+  promote-reverse) awk '$0 == "existing" { print "not existing"; next } { print }' \
+                    31-standards/existing.md > 31-standards/existing.md.tmp && mv -f 31-standards/existing.md.tmp 31-standards/existing.md
+                  printf 'PROMOTION-SUMMARY: promoted=0 pending=0\n' ;;
+  promote-wiki-edit) printf 'promoted\n' >> 40-llm-wiki/wiki/existing-entity.md
+                  printf 'PROMOTION-SUMMARY: promoted=0 pending=0\n' ;;
+  promote-ignored-edit) printf 'pass edit\n' >> 31-standards/ignored-existing.md
+                  printf -- '---\ntier: long\ntype: standard\n---\n\nbeside an ignored note\n' > 31-standards/beside-ignored.md
+                  printf 'PROMOTION-SUMMARY: promoted=1 pending=0\n' ;;
+  promote-syncnew) printf -- '---\ntier: long\ntype: standard\n---\n\nsynced\n' > 31-standards/synced-new.md
+                  git add -- 31-standards/synced-new.md >/dev/null 2>&1
+                  git -c user.name=sync -c user.email=sync@example.invalid -c commit.gpgsign=false \
+                    commit -q --no-verify -m "sync plugin" -- 31-standards/synced-new.md >/dev/null 2>&1
                   printf 'PROMOTION-SUMMARY: promoted=1 pending=0\n' ;;
   line-break-link) journal
                   ln -s "$FAKE_LINK_TARGET" line-break-name-1
@@ -3916,6 +3941,294 @@ if [ "$RV_GIT" -eq 1 ]; then
   fi
   git -C "$RV" checkout -q -- "$pc_note"
 
+  # --- the long tier is create-only ---
+  #
+  # A pass may add notes to 31-standards/ and 40-llm-wiki/wiki/ but never change
+  # one that was there before it started, whoever wrote it. Each control changes
+  # a note someone committed in one way a steered pass could, and the runner must
+  # refuse the whole pass with its own text and put every note back. Exit 2 is
+  # shared with the dirty-note and deleted-note refusals, so each control asserts
+  # on that text and on the note it names. Each fixture is checked before its
+  # run, and the control is recorded as run only after that, so a fixture that
+  # was never built cannot pass for a refusal.
+  CO_TEXT='VIOLATION: the pass changed long-tier notes that were there before it started.'
+  CO_NOTE=31-standards/existing.md
+  CO_WIKI=40-llm-wiki/wiki/existing-entity.md
+  # co_case <name>: settles the owned areas, notes HEAD, and starts a case with a
+  # fresh state directory and an empty log.
+  co_case() {
+    settle_owned "$RV"
+    co_head="$(git -C "$RV" rev-parse HEAD)"
+    new_case_state "$1"
+    : > "$PROMO_LOG"
+  }
+  # co_owner_note <path>: true when HEAD holds the note, the work tree matches
+  # it, and the commit that last changed it carries no Vault-Pass trailer.
+  co_owner_note() {
+    local msg
+    msg="$(git -C "$RV" log -1 --format='%H%n%B' -- "$1" 2>/dev/null)"
+    [ -f "$RV/$1" ] && [ -n "$msg" ] && git -C "$RV" rev-parse -q --verify "HEAD:$1" >/dev/null 2>&1 \
+      && tree_matches_head "$RV" "$1" && ! printf '%s\n' "$msg" | grep -q '^Vault-Pass:'
+  }
+  # co_named <path>: true when the create-only refusal in the promotion log
+  # lists <path> among the indented lines under its own headline.
+  co_named() {
+    H="$CO_TEXT" P="    $1" awk 'index($0, ENVIRON["H"]) { f = 1; next } f && /^    / { if ($0 == ENVIRON["P"]) { found = 1; exit } next } { f = 0 } END { exit found ? 0 : 1 }' "$PROMO_LOG" 2>/dev/null
+  }
+  # co_rejected <path>: the copy the put-back kept of <path> in the quarantine.
+  co_rejected() {
+    find "$CASE_STATE/quarantine" -path "*-rejected/$1" -type f 2>/dev/null | head -n 1
+  }
+  # co_front <file>: a note's frontmatter lines, without the fences.
+  co_front() {
+    awk 'NR == 1 { next } /^---/ { exit } { print }' "$1" | tr -d '\r'
+  }
+  # co_restore <path>: a control that fails by letting the pass commit over its
+  # note would fail every later fixture check for the wrong reason, so the note
+  # is committed back as it was before the control. After a control that
+  # passed there is nothing to put back.
+  co_restore() {
+    if ! git -C "$RV" diff --quiet "$co_head" HEAD -- "$1" 2>/dev/null; then
+      git -C "$RV" checkout -q "$co_head" -- "$1" 2>/dev/null
+      git -C "$RV" commit -q --no-verify -m "put the create-only fixture back" -- "$1" >/dev/null 2>&1
+    fi
+    git -C "$RV" checkout -q -- "$1" 2>/dev/null
+  }
+
+  co_case promotion-create-only-edit
+  if co_owner_note "$CO_NOTE" && [ ! -e "$RV/31-standards/beside-dirty.md" ]; then
+    ran promo-create-only-edit
+    expect_rc "promotion-pass: the pass appends to a committed standard and writes a valid new one -> VIOLATION" 2 \
+      "$(runner promotion-pass.sh promote-edit)"
+    co_copy="$(co_rejected "$CO_NOTE")"
+    if co_named "$CO_NOTE" && ! co_named 31-standards/beside-dirty.md \
+       && [ "$(git -C "$RV" rev-parse HEAD)" = "$co_head" ] && tree_matches_head "$RV" "$CO_NOTE" \
+       && [ -n "$co_copy" ] && grep -qx 'promoted' "$co_copy" \
+       && [ ! -e "$RV/31-standards/beside-dirty.md" ] && [ -n "$(co_rejected 31-standards/beside-dirty.md)" ]; then
+      ok "create-only: an edit to a committed standard is refused, the note restored and the pass's new note quarantined"
+    else
+      bad "create-only: an edit to a committed standard was not refused and put back -- log: $(tr '\n' '|' < "$PROMO_LOG" | cut -c1-500)"
+    fi
+  else
+    bad "create-only edit control: $CO_NOTE is not a clean note committed without a Vault-Pass trailer, so the control did not run"
+  fi
+  co_restore "$CO_NOTE"
+  rm -f "$RV/31-standards/beside-dirty.md"
+
+  co_case promotion-create-only-supersede
+  if co_owner_note "$CO_NOTE" && ! grep -q '^status:' "$RV/$CO_NOTE"; then
+    ran promo-create-only-supersede
+    expect_rc "promotion-pass: the pass marks a committed standard superseded -> VIOLATION" 2 \
+      "$(runner promotion-pass.sh promote-supersede)"
+    co_copy="$(co_rejected "$CO_NOTE")"
+    if co_named "$CO_NOTE" && ! grep -q '^status: superseded' "$RV/$CO_NOTE" && ! grep -q '^superseded_by:' "$RV/$CO_NOTE" \
+       && [ "$(git -C "$RV" rev-parse HEAD)" = "$co_head" ] && tree_matches_head "$RV" "$CO_NOTE" \
+       && [ -n "$co_copy" ] && grep -q '^status: superseded' "$co_copy"; then
+      ok "create-only: a supersession of a committed standard is refused, and the note carries no status: superseded"
+    else
+      bad "create-only: a supersession of a committed standard was not refused and put back -- log: $(tr '\n' '|' < "$PROMO_LOG" | cut -c1-500)"
+    fi
+  else
+    bad "create-only supersede control: $CO_NOTE is not a clean committed note without a status, so the control did not run"
+  fi
+  co_restore "$CO_NOTE"
+
+  co_case promotion-create-only-stamp
+  co_today="$(date +%F)"
+  if co_owner_note "$CO_NOTE" && ! grep -Eq '^(last_verified|confidence):' "$RV/$CO_NOTE"; then
+    ran promo-create-only-stamp
+    expect_rc "promotion-pass: the pass stamps last_verified and confidence on a committed standard without a probe -> VIOLATION" 2 \
+      "$(runner promotion-pass.sh promote-stamp)"
+    co_copy="$(co_rejected "$CO_NOTE")"
+    # The stamped note passes C1-C5, so vault-check alone would have let it in.
+    co_stamp_rc=1
+    rm -rf "$TMP/co-stamp"
+    if [ -n "$co_copy" ] && mkdir -p "$TMP/co-stamp/31-standards" && cp "$co_copy" "$TMP/co-stamp/$CO_NOTE"; then
+      CLAUDE_PROJECT_DIR="$TMP/co-stamp" bash "$CHECK" >/dev/null 2>&1
+      co_stamp_rc=$?
+    fi
+    if co_named "$CO_NOTE" && ! grep -q 'CHECK-FAILED' "$PROMO_LOG" && [ "$co_stamp_rc" -eq 0 ] \
+       && ! grep -Eq '^(last_verified|confidence):' "$RV/$CO_NOTE" \
+       && [ "$(git -C "$RV" rev-parse HEAD)" = "$co_head" ] && tree_matches_head "$RV" "$CO_NOTE" \
+       && grep -qxF "last_verified: \"$co_today\"" "$co_copy" && grep -qx 'confidence: high' "$co_copy"; then
+      ok "create-only: an unprobed stamp that passes vault-check is refused by create-only, not by vault-check"
+    else
+      bad "create-only: an unprobed stamp was not refused as create-only -- vault-check on the stamped copy: $co_stamp_rc, log: $(tr '\n' '|' < "$PROMO_LOG" | cut -c1-500)"
+    fi
+  else
+    bad "create-only stamp control: $CO_NOTE is not a clean committed note without a stamp, so the control did not run"
+  fi
+  co_restore "$CO_NOTE"
+
+  co_case promotion-create-only-reverse
+  if co_owner_note "$CO_NOTE" && grep -qx 'existing' "$RV/$CO_NOTE" && ! grep -q 'not existing' "$RV/$CO_NOTE"; then
+    ran promo-create-only-reverse
+    git -C "$RV" show "HEAD:$CO_NOTE" > "$TMP/co-head-note" 2>/dev/null
+    expect_rc "promotion-pass: the pass reverses a committed standard's claim and leaves its frontmatter alone -> VIOLATION" 2 \
+      "$(runner promotion-pass.sh promote-reverse)"
+    co_copy="$(co_rejected "$CO_NOTE")"
+    if co_named "$CO_NOTE" && grep -qx 'existing' "$RV/$CO_NOTE" && ! grep -q 'not existing' "$RV/$CO_NOTE" \
+       && [ "$(git -C "$RV" rev-parse HEAD)" = "$co_head" ] && tree_matches_head "$RV" "$CO_NOTE" \
+       && [ -n "$co_copy" ] && grep -qx 'not existing' "$co_copy" \
+       && [ -n "$(co_front "$co_copy")" ] && [ "$(co_front "$co_copy")" = "$(co_front "$TMP/co-head-note")" ]; then
+      ok "create-only: a reversed claim under untouched frontmatter is refused and the claim restored"
+    else
+      bad "create-only: a reversed claim was not refused and put back -- log: $(tr '\n' '|' < "$PROMO_LOG" | cut -c1-500)"
+    fi
+  else
+    bad "create-only reverse control: $CO_NOTE is not a clean committed note stating its claim, so the control did not run"
+  fi
+  co_restore "$CO_NOTE"
+
+  # A committed wiki entity, so the wiki half of the long tier is held too.
+  printf -- '---\ntier: long\ntype: wiki-entity\n---\n\nan entity\n' > "$RV/$CO_WIKI"
+  co_case promotion-create-only-wiki
+  if co_owner_note "$CO_WIKI"; then
+    ran promo-create-only-wiki
+    expect_rc "promotion-pass: the pass appends to a committed wiki entity -> VIOLATION" 2 \
+      "$(runner promotion-pass.sh promote-wiki-edit)"
+    co_copy="$(co_rejected "$CO_WIKI")"
+    if co_named "$CO_WIKI" && [ "$(git -C "$RV" rev-parse HEAD)" = "$co_head" ] && tree_matches_head "$RV" "$CO_WIKI" \
+       && [ -n "$co_copy" ] && grep -qx 'promoted' "$co_copy"; then
+      ok "create-only: an edit to a committed wiki entity is refused and put back"
+    else
+      bad "create-only: an edit to a committed wiki entity was not refused and put back -- log: $(tr '\n' '|' < "$PROMO_LOG" | cut -c1-500)"
+    fi
+  else
+    bad "create-only wiki control: $CO_WIKI is not a clean note committed without a Vault-Pass trailer, so the control did not run"
+  fi
+  co_restore "$CO_WIKI"
+
+  # A note git ignores is in no commit, so only the snapshot taken before the
+  # pass shows it was there. This control is what holds that half of the check.
+  cp "$RV/.git/info/exclude" "$TMP/exclude-create-only" 2>/dev/null || : > "$TMP/exclude-create-only"
+  printf '31-standards/ignored-existing.md\n' >> "$RV/.git/info/exclude"
+  printf -- '---\ntier: long\ntype: standard\n---\n\nignored\n' > "$RV/31-standards/ignored-existing.md"
+  co_case promotion-create-only-ignored
+  if git -C "$RV" check-ignore -q -- 31-standards/ignored-existing.md \
+     && ! git -C "$RV" rev-parse -q --verify "HEAD:31-standards/ignored-existing.md" >/dev/null 2>&1 \
+     && [ -z "$(git -C "$RV" status --porcelain --untracked-files=all -- 31-standards/ignored-existing.md)" ] \
+     && [ -f "$RV/31-standards/ignored-existing.md" ] && [ ! -e "$RV/31-standards/beside-ignored.md" ]; then
+    ran promo-create-only-ignored
+    expect_rc "promotion-pass: the pass edits a note git ignores that was there before it, beside a valid new note -> VIOLATION" 2 \
+      "$(runner promotion-pass.sh promote-ignored-edit)"
+    if co_named 31-standards/ignored-existing.md && ! co_named 31-standards/beside-ignored.md \
+       && [ "$(git -C "$RV" rev-parse HEAD)" = "$co_head" ] \
+       && grep -qx 'pass edit' "$RV/31-standards/ignored-existing.md" \
+       && grep -qF '31-standards/ignored-existing.md (existed before the pass but is in no commit' "$PROMO_LOG" \
+       && [ ! -e "$RV/31-standards/beside-ignored.md" ] && [ -n "$(co_rejected 31-standards/beside-ignored.md)" ]; then
+      ok "create-only: an edit to a note git ignores that was there before the pass is refused, and the pass's new note quarantined"
+    else
+      bad "create-only: an edit to a pre-existing ignored note was not refused -- log: $(tr '\n' '|' < "$PROMO_LOG" | cut -c1-500)"
+    fi
+  else
+    bad "create-only ignored control: 31-standards/ignored-existing.md is not an ignored, uncommitted note on disk, so the control did not run"
+  fi
+  cp "$TMP/exclude-create-only" "$RV/.git/info/exclude"
+  rm -f "$RV/31-standards/ignored-existing.md" "$RV/31-standards/beside-ignored.md"
+
+  co_case promotion-create-only-failpath
+  if co_owner_note "$CO_NOTE"; then
+    ran promo-create-only-failpath
+    expect_rc "promotion-pass: a failing pass that appended to a committed standard -> VIOLATION" 2 \
+      "$(runner promotion-pass.sh promote-edit-fail)"
+    co_copy="$(co_rejected "$CO_NOTE")"
+    if co_named "$CO_NOTE" && grep -q 'promotion-agent exited with code 3' "$PROMO_LOG" \
+       && tree_matches_head "$RV" "$CO_NOTE" && [ -n "$co_copy" ] && grep -qx 'promoted' "$co_copy" \
+       && ! grep -qF "$CO_NOTE" "$CASE_STATE/promotion-pass.uncommitted" 2>/dev/null; then
+      ok "create-only: a failing pass's edit to a committed standard is put back, not left for the next run"
+    else
+      bad "create-only: a failing pass's edit to a committed standard was left or recorded -- log: $(tr '\n' '|' < "$PROMO_LOG" | cut -c1-500)"
+    fi
+  else
+    bad "create-only failpath control: $CO_NOTE is not a clean note committed without a Vault-Pass trailer, so the control did not run"
+  fi
+  co_restore "$CO_NOTE"
+
+  co_case promotion-create-only-timeout
+  if co_owner_note "$CO_NOTE" && [ ! -e "$RV/31-standards/beside-hang.md" ]; then
+    ran promo-create-only-timeout
+    expect_rc "promotion-pass: a pass killed after appending to a committed standard -> VIOLATION" 2 \
+      "$(runner promotion-pass.sh promote-edit-hang PROMOTION_PASS_TIMEOUT=2)"
+    co_copy="$(co_rejected "$CO_NOTE")"
+    if co_named "$CO_NOTE" && grep -q 'TIMEOUT: promotion-agent exceeded' "$PROMO_LOG" \
+       && tree_matches_head "$RV" "$CO_NOTE" && [ -n "$co_copy" ] && grep -qx 'promoted' "$co_copy" \
+       && [ ! -e "$RV/31-standards/beside-hang.md" ] && [ -n "$(co_rejected 31-standards/beside-hang.md)" ] \
+       && ! grep -qF "$CO_NOTE" "$CASE_STATE/promotion-pass.uncommitted" 2>/dev/null; then
+      ok "create-only: a timed-out pass's edit to a committed standard is put back with its other notes"
+    else
+      bad "create-only: a timed-out pass's edit to a committed standard was left or recorded -- log: $(tr '\n' '|' < "$PROMO_LOG" | cut -c1-500)"
+    fi
+  else
+    bad "create-only timeout control: $CO_NOTE is not a clean note committed without a Vault-Pass trailer, so the control did not run"
+  fi
+  co_restore "$CO_NOTE"
+  rm -f "$RV/31-standards/beside-hang.md"
+
+  # A 1.2.0 pass could leave an uncommitted edit of a committed note for the next
+  # run to adopt. The first run under create-only puts it back before its agent
+  # starts, keeping a copy, so it cannot sink that run's own notes.
+  co_case promotion-create-only-leftover
+  rm -f "$TMP/co-seen"
+  if co_owner_note "$CO_NOTE" && co_owner_note "$CO_WIKI"; then
+    printf 'an earlier pass edit\n' >> "$RV/$CO_NOTE"
+    printf 'an earlier pass edit\n' >> "$RV/$CO_WIKI"
+    mkdir -p "$CASE_STATE"
+    for p in "$CO_NOTE" "$CO_WIKI"; do
+      printf '%s\t%s\n' "$(git -C "$RV" hash-object --no-filters -- "$p")" "$p"
+    done > "$CASE_STATE/promotion-pass.uncommitted"
+  fi
+  co_records="$(awk -F '\t' '$1 ~ /^[0-9a-f]+$/ && length($1) >= 40 { n++ } END { print n + 0 }' "$CASE_STATE/promotion-pass.uncommitted" 2>/dev/null)"
+  if [ "${co_records:-0}" -eq 2 ] \
+     && ! git -C "$RV" diff --quiet HEAD -- "$CO_NOTE" && ! git -C "$RV" diff --quiet HEAD -- "$CO_WIKI"; then
+    ran promo-create-only-leftover
+    expect_rc "promotion-pass: the first run after a pass left edits of committed notes uncommitted -> OK" 0 \
+      "$(RUNNER_NO_SETTLE=1 runner promotion-pass.sh summary FAKE_SEE="$CO_NOTE" FAKE_SEEN="$TMP/co-seen")"
+    co_lcopy="$(find "$CASE_STATE/quarantine" -path "*-leftover/$CO_NOTE" -type f 2>/dev/null | head -n 1)"
+    co_wcopy="$(find "$CASE_STATE/quarantine" -path "*-leftover/$CO_WIKI" -type f 2>/dev/null | head -n 1)"
+    if grep -q 'LEFTOVER-REJECTED' "$PROMO_LOG" \
+       && grep -qxF "    create-only: $CO_NOTE is a long-tier note the last commit already holds, and a pass may only add notes there" "$PROMO_LOG" \
+       && grep -qxF "    create-only: $CO_WIKI is a long-tier note the last commit already holds, and a pass may only add notes there" "$PROMO_LOG" \
+       && [ -f "$TMP/co-seen" ] && grep -qx 'existing' "$TMP/co-seen" && ! grep -q 'an earlier pass edit' "$TMP/co-seen" \
+       && [ "$(git -C "$RV" rev-parse HEAD)" = "$co_head" ] && tree_matches_head "$RV" "$CO_NOTE" && tree_matches_head "$RV" "$CO_WIKI" \
+       && [ -n "$co_lcopy" ] && grep -qx 'an earlier pass edit' "$co_lcopy" \
+       && [ -n "$co_wcopy" ] && grep -qx 'an earlier pass edit' "$co_wcopy"; then
+      ok "create-only: an earlier pass's uncommitted edits of committed notes are put back before the agent starts, with copies kept, and the pass ends OK"
+    else
+      bad "create-only: an earlier pass's edits of committed notes were adopted, or not put back before the agent -- log: $(tr '\n' '|' < "$PROMO_LOG" | cut -c1-600)"
+    fi
+  else
+    bad "create-only leftover control: the two edited notes and their uncommitted record were not built, so the control did not run"
+  fi
+  co_restore "$CO_NOTE"
+  co_restore "$CO_WIKI"
+  # The wiki folder goes back to empty, which the tier folder control below needs.
+  git -C "$RV" rm -q -- "$CO_WIKI" >/dev/null 2>&1
+  git -C "$RV" commit -q --no-verify -m "remove the create-only wiki fixture" -- "$CO_WIKI" >/dev/null 2>&1
+  mkdir -p "$RV/40-llm-wiki/wiki"
+
+  # A note the pass wrote and something else committed during the pass is new:
+  # HEAD after the pass holds it, the commit before the pass does not. The check
+  # reads the commit before the pass, or it would refuse a sync plugin's work.
+  co_case promotion-create-only-syncnew
+  if [ ! -e "$RV/31-standards/synced-new.md" ] \
+     && ! git -C "$RV" rev-parse -q --verify "HEAD:31-standards/synced-new.md" >/dev/null 2>&1; then
+    ran promo-create-only-syncnew
+    expect_rc "promotion-pass: the pass writes a new standard and something commits it during the pass -> OK" 0 \
+      "$(runner promotion-pass.sh promote-syncnew)"
+    if [ "$(git -C "$RV" log -1 --format=%s 2>/dev/null)" = "sync plugin" ] \
+       && [ "$(git -C "$RV" rev-parse -q --verify 'HEAD^' 2>/dev/null)" = "$co_head" ] \
+       && git -C "$RV" rev-parse -q --verify "HEAD:31-standards/synced-new.md" >/dev/null 2>&1 \
+       && grep -qF 'NOTE: HEAD already holds 31-standards/synced-new.md' "$PROMO_LOG" \
+       && ! grep -q 'VIOLATION' "$PROMO_LOG"; then
+      ok "create-only: a new note something committed during the pass is not taken for one that was there before"
+    else
+      bad "create-only: a new note committed during the pass was refused, or never committed -- log: $(tr '\n' '|' < "$PROMO_LOG" | cut -c1-500)"
+    fi
+  else
+    bad "create-only syncnew control: 31-standards/synced-new.md already exists, so the control did not run"
+  fi
+
   # A git state file the runner cannot write stops the run, rather than leave
   # the agent reading an earlier run's history.
   rm -f "$GIT_STATE"
@@ -3931,18 +4244,19 @@ if [ "$RV_GIT" -eq 1 ]; then
   fi
   rm -rf "$GIT_STATE"
 
-  # A pass whose notes fail vault-check has every note it changed put back: a
+  # A pass that overwrites a committed standard is refused as create-only before
+  # vault-check reads anything, and has every note it changed put back: a
   # tracked one restored from the commit before the pass, a new one moved out of
   # the vault. Nothing is committed.
   settle_owned "$RV"
   pb_head="$(git -C "$RV" rev-parse HEAD)"
   new_case_state promotion-check-fails
   : > "$PROMO_LOG"
-  expect_rc "promotion-pass: the pass writes notes that fail vault-check -> CHECK-FAILED" 5 "$(runner promotion-pass.sh promote-bad)"
+  expect_rc "promotion-pass: the pass overwrites a committed standard and writes a note that fails vault-check -> VIOLATION" 2 "$(runner promotion-pass.sh promote-bad)"
   if [ "$(git -C "$RV" rev-parse HEAD)" = "$pb_head" ] && tree_matches_head "$RV" 31-standards \
      && [ ! -e "$RV/31-standards/rejected-new.md" ] \
      && [ -n "$(find "$CASE_STATE/quarantine" -path '*-rejected/31-standards/rejected-new.md' -type f 2>/dev/null)" ] \
-     && grep -q 'CHECK-FAILED' "$PROMO_LOG" && grep -q 'REVERTED' "$PROMO_LOG" \
+     && grep -qF "$CO_TEXT" "$PROMO_LOG" && ! grep -q 'CHECK-FAILED' "$PROMO_LOG" && grep -q 'REVERTED' "$PROMO_LOG" \
      && grep -q '31-standards/existing.md (copied to .*-rejected/31-standards/existing.md, then restored from' "$PROMO_LOG"; then
     ok "rejected notes are put back, the new one quarantined, nothing committed, and the log lists each"
   else
@@ -3958,6 +4272,34 @@ if [ "$RV_GIT" -eq 1 ]; then
   git -C "$RV" checkout -q -- 31-standards/existing.md
   rm -f "$RV/31-standards/rejected-new.md"
 
+  # CHECK-FAILED puts back a committed note the pass may change, which a
+  # promotion report still is: restored from the commit before the pass, with
+  # the rejected bytes kept, and the pass's new note moved out.
+  pr_note=20-projects/_logs/promotion-committed-report.md
+  printf -- '---\ntier: medium\ntype: project-log\n---\n\nreport\n' > "$RV/$pr_note"
+  settle_owned "$RV"
+  pr_head="$(git -C "$RV" rev-parse HEAD)"
+  new_case_state promotion-check-fails-report
+  : > "$PROMO_LOG"
+  if git -C "$RV" rev-parse -q --verify "HEAD:$pr_note" >/dev/null 2>&1 && tree_matches_head "$RV" "$pr_note"; then
+    expect_rc "promotion-pass: the pass overwrites a committed promotion report and writes a note, both failing vault-check -> CHECK-FAILED" 5 \
+      "$(runner promotion-pass.sh promote-bad FAKE_OVERWRITE="$pr_note")"
+    pr_copy="$(find "$CASE_STATE/quarantine" -path "*-rejected/$pr_note" -type f 2>/dev/null | head -n 1)"
+    if [ "$(git -C "$RV" rev-parse HEAD)" = "$pr_head" ] && tree_matches_head "$RV" "$pr_note" \
+       && tree_matches_head "$RV" 31-standards && [ ! -e "$RV/31-standards/rejected-new.md" ] \
+       && grep -q 'CHECK-FAILED' "$PROMO_LOG" && ! grep -qF "$CO_TEXT" "$PROMO_LOG" \
+       && grep -qF "$pr_note (copied to " "$PROMO_LOG" \
+       && [ -n "$pr_copy" ] && grep -q 'overwritten without frontmatter' "$pr_copy"; then
+      ok "a committed promotion report that fails vault-check is restored from the commit before the pass, its rejected bytes kept"
+    else
+      bad "a committed promotion report that fails vault-check was not put back -- log: $(tr '\n' '|' < "$PROMO_LOG" | cut -c1-500)"
+    fi
+  else
+    bad "the CHECK-FAILED report case: $pr_note is not committed and clean, so the case did not run"
+  fi
+  git -C "$RV" checkout -q -- "$pr_note"
+  rm -f "$RV/31-standards/rejected-new.md"
+
   # A note git ignores that existed before the pass is in no commit, so there is
   # nothing to put back. It stays in the vault and is listed, never moved out.
   cp "$RV/.git/info/exclude" "$TMP/exclude-promotion" 2>/dev/null || : > "$TMP/exclude-promotion"
@@ -3966,7 +4308,7 @@ if [ "$RV_GIT" -eq 1 ]; then
   settle_owned "$RV"
   new_case_state promotion-check-fails-ignored
   : > "$PROMO_LOG"
-  expect_rc "promotion-pass: rejected notes and an edited note git ignores -> CHECK-FAILED" 5 "$(runner promotion-pass.sh promote-bad)"
+  expect_rc "promotion-pass: rejected notes and an edited note git ignores -> VIOLATION" 2 "$(runner promotion-pass.sh promote-bad)"
   if grep -q '^keep$' "$RV/31-standards/ignored-keep.md" 2>/dev/null && grep -q '^pass edit$' "$RV/31-standards/ignored-keep.md" \
      && grep -q '31-standards/ignored-keep.md (existed before the pass but is in no commit' "$PROMO_LOG" \
      && [ ! -e "$RV/31-standards/rejected-new.md" ]; then
@@ -3979,13 +4321,14 @@ if [ "$RV_GIT" -eq 1 ]; then
   rm -f "$RV/31-standards/rejected-new.md" "$RV/31-standards/ignored-keep.md"
 
   # A revert takes each path literally too. A rejected [e]xisting.md must not
-  # restore over someone's uncommitted edit to existing.md.
+  # restore over someone's uncommitted edit to existing.md. The bracketed note
+  # is committed before the pass, so the pass is refused as create-only.
   printf -- '---\ntier: long\ntype: standard\n---\n\nbracketed\n' > "$RV/31-standards/[e]xisting.md"
   settle_owned "$RV"
   printf 'a human edit\n' >> "$RV/31-standards/existing.md"
   new_case_state promotion-revert-literal
   : > "$PROMO_LOG"
-  expect_rc "promotion-pass: a rejected bracketed note next to a dirty sibling -> CHECK-FAILED" 5 \
+  expect_rc "promotion-pass: a rejected bracketed note next to a dirty sibling -> VIOLATION" 2 \
     "$(RUNNER_NO_SETTLE=1 runner promotion-pass.sh promote-glob-bad)"
   if grep -q '^a human edit' "$RV/31-standards/existing.md" && grep -q '^bracketed' "$RV/31-standards/[e]xisting.md"; then
     ok "the revert restores the bracketed note and leaves the dirty sibling it matches as a pattern alone"
@@ -3999,7 +4342,7 @@ if [ "$RV_GIT" -eq 1 ]; then
   settle_owned "$RV"
   new_case_state promotion-revert-committed
   : > "$PROMO_LOG"
-  expect_rc "promotion-pass: a rejected pass whose note was committed during it -> CHECK-FAILED" 5 \
+  expect_rc "promotion-pass: a rejected pass whose note was committed during it -> VIOLATION" 2 \
     "$(runner promotion-pass.sh promote-commit-bad)"
   if tree_matches_head "$RV" 31-standards/existing.md \
      && grep -q '^committed during the pass' "$RV/31-standards/existing.md" \

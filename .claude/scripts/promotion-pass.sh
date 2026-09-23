@@ -8,7 +8,8 @@
 # READ THIS BEFORE SCHEDULING IT.
 # Unlike the dream-agent, the promotion-agent WRITES into 31-standards/ and
 # 40-llm-wiki/wiki/ - your long tier, the notes that steer every future session.
-# It has no shell. This runner keeps the history for it: it records the vault's
+# It may add notes there but never change one already there, and a pass that
+# does is refused and put back. It has no shell. This runner keeps the history for it: it records the vault's
 # recent history for the agent to read, snapshots the vault before the run, and
 # fails the run if anything changed OUTSIDE the areas a promotion pass may write.
 # A change to a steering or execution surface - including an instruction file
@@ -48,7 +49,7 @@
 #                           newest part first (default 10000000, at least 1000)
 #
 # Exit codes:
-#   0    the pass reported a summary or changed the long tier, wrote nowhere else,
+#   0    the pass reported a summary or added to the long tier, wrote nowhere else,
 #        and its notes were committed (or the vault is not a repository of its
 #        own, git ignores them, or HEAD already holds them)
 #   1    NO-ARTIFACT: exited 0 with no summary line and no long-tier change,
@@ -59,8 +60,10 @@
 #        (steering surfaces among them are contained and the tripwire is set),
 #        or the pass changed a long-tier note or promotion report that already
 #        had uncommitted changes, or one it changed is no longer a regular file,
-#        even if the agent then failed, timed out or gave no summary. In those
-#        last two cases the pass's other notes are put back as for exit 5
+#        or it changed a long-tier note that was there before the pass, even if
+#        the agent then failed, timed out or gave no summary. In those last
+#        three cases the pass's notes are put back as for exit 5, except one
+#        that already had uncommitted changes
 #   3    REFUSED: command mode without VAULT_ALLOW_UNENFORCED_TOOLS=1
 #   4    COMMIT-FAILED: staging or committing the notes failed or ran past
 #        RUNNER_GIT_TIMEOUT, and they are left uncommitted
@@ -273,7 +276,7 @@ main() {
   preflight_rc=$?
   [ "$preflight_rc" -eq 0 ] || exit "$preflight_rc"
 
-  TASK="Run this week's promotion pass per your instructions: scan 20-projects/_logs/ for promotion candidates, run the trust sweep over the long-term notes, and write the ones that meet the promotion bar. You have no shell. The repository state recorded before this run, with the long-tier changes since the last promotion pass, is in .claude/logs/promotion-pass.git-state.txt, and the runner commits your notes after the pass. End your final message with one line of the form: ${SUMMARY_MARKER} promoted=<n> pending=<n>"
+  TASK="Run this week's promotion pass per your instructions: scan 20-projects/_logs/ for promotion candidates and write the ones that meet the promotion bar as new notes. Change no note already in the long tier: your trust sweep's stamps, and any retirement or correction of an existing note, go in your promotion report as proposals. You have no shell. The repository state recorded before this run, with the long-tier changes since the last promotion pass, is in .claude/logs/promotion-pass.git-state.txt, and the runner commits your notes after the pass. End your final message with one line of the form: ${SUMMARY_MARKER} promoted=<n> pending=<n>"
   PROMPT_REL=".claude/logs/promotion-pass.prompt.md"
   if [ "$AGENT_KIND" = command ]; then
     DEF="$ROOT/.claude/agents/promotion-agent.md"
@@ -450,7 +453,8 @@ main() {
   fi
 
   # WRITE FENCE. A promotion pass may write long-tier notes (never their
-  # templates), a promotion report in 20-projects/_logs/, and nothing else. An
+  # templates, and never one that was there before the pass, which check_owned
+  # refuses), a promotion report in 20-projects/_logs/, and nothing else. An
   # auto-written compaction stub is tolerated. Anything else - a rule, an agent
   # definition, CLAUDE.md, someone's daily note - is a violation. The pass owns
   # what it may write, except the compaction stub.

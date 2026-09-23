@@ -419,7 +419,7 @@ and `/preserve` during ordinary sessions.
 | Pass | Cadence | What it writes |
 | --- | --- | --- |
 | `dream-agent` | Nightly, if you want it | **One** dated dream-journal file. Nothing else, ever. |
-| `promotion-agent` | Weekly | **Creates and edits notes** in `31-standards/` and `40-llm-wiki/wiki/` |
+| `promotion-agent` | Weekly | **Creates notes** in `31-standards/` and `40-llm-wiki/wiki/`, never changes one already there, and proposes such changes in a `20-projects/_logs/promotion-*.md` report |
 | `vault-retention.sh` | Weekly, after the other two | **Writes no content.** Moves aged dream journals and compaction stubs from `20-projects/_logs/` into `99-archive/20-projects/_logs/` |
 
 The retention pass is the safest of the three to leave unattended, and for a different reason from
