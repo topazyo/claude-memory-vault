@@ -11,8 +11,8 @@
 # It may add notes there but never change one already there, and in a vault
 # that is its own git repository a pass that does is refused and put back, as
 # far as a commit holds what to put back. A pass that also wrote outside those
-# folders or changed a steering surface is refused for that and put back by
-# nothing, and the log names the notes instead. It has no shell. This runner
+# folders or changed a steering surface is refused for that, nothing puts its
+# notes back, and the log names them instead. It has no shell. This runner
 # keeps the history for it: it records the vault's recent history for the
 # agent to read, snapshots the vault before the run, and fails the run if
 # anything changed OUTSIDE the areas a promotion pass may write.
@@ -455,8 +455,11 @@ main() {
     [ "$RUN_TIMED_OUT" -eq 1 ] && printf '[%s] (the run had also exceeded %ss and was killed)\n' "$(ts)" "$TIMEOUT" >> "$LOG"
     [ "$RUN_STALLED" -eq 1 ] && printf '[%s] (the run had also stalled for %ss and was killed)\n' "$(ts)" "$AGENT_STALL_SECONDS" >> "$LOG"
     # Containment puts back steering surfaces only, so a long-tier note the pass
-    # changed is still as it wrote it, and is named.
+    # changed is still as it wrote it, and is named: under the dirty-note line
+    # when someone was already editing it, as on the other exits that put
+    # nothing back.
     grep -E '^(31-standards|40-llm-wiki/wiki)/' "$SNAP_DIR/changed" > "$SNAP_DIR/changed-long"
+    [ "$VAULT_GIT" -eq 1 ] && owned_predirty "$SNAP_DIR/changed-long" "$SNAP_DIR/predirty" "$SNAP_DIR" "$LOG"
     report_existing_left "$ROOT" "$SNAP_DIR/changed-long" "$SNAP_DIR" "$LOG"
     exit 2
   fi

@@ -43,25 +43,27 @@ supersessions and corrections of existing notes now reach you as proposals in it
   that this run adopted. A new name that differs from such a note only in ASCII case counts as that
   note, adopted or not, because on Windows and macOS it is one. Such a pass exits 2 with
   `VIOLATION: long-tier notes that were there before the pass started changed during it`, commits
-  nothing, and puts back every note it changed, whether the agent succeeded, failed, timed out or
-  gave no summary. A note git ignores is in no commit, so it is refused but left as the pass wrote
-  it, and the log says so. So a failing or timed-out pass that changed one, and wrote nowhere else,
-  now exits 2 rather than with the agent's status, 124 or 125, and its notes are no longer left for
-  the next run. A pass that also wrote outside its allowed folders, or changed a steering surface,
-  is refused for that first and puts nothing back, as before, but its log now names each long-tier
-  note that was there before the pass and changed during it. Such a note is left as it is and may
-  hold your edit as well as the pass's, so the log asks for a look with `git diff` before any
-  `git restore`. The check comes before
-  vault-check, so a pass that also wrote an invalid note exits 2 rather than 5. The dream pass is
-  unaffected.
+  nothing, and puts back every note it changed except one that already had uncommitted changes,
+  whether the agent succeeded, failed, timed out or gave no summary. When the commit from before
+  the pass cannot be listed, the pass is refused under a line that says so. A note git ignores is
+  in no commit, so it is refused but left as the pass wrote it, and the log says so. So a failing
+  or timed-out pass that changed one, and wrote nowhere else, now exits 2 rather than with the
+  agent's status, 124 or 125, and its notes are no longer left for the next run. A pass that also
+  wrote outside its allowed folders, or changed a steering surface, is refused for that first and
+  puts none of its notes back, as before, but its log now names each long-tier note that was there
+  before the pass and changed during it, and names one someone was already editing as such. Such a
+  note is left as it is and may hold your edit as well as the pass's, so the log asks for a look
+  with `git diff` against the commit from before the pass, which it names, before any
+  `git restore`. The check comes before vault-check, so a pass that also wrote an invalid note
+  exits 2 rather than 5. The dream pass is unaffected.
 - **The put-back no longer moves a note out of the vault when the pass wrote it under a name that
   differs only in case.** A writer that replaces files, as the agent's Write tool does, leaves the
   note under the new name on Windows, and the put-back could take that for a new note and move it
   to the quarantine, depending on which of the two names it reached first. The pass's bytes now go
   to the quarantine as a copy and the note is restored under its own name from the commit before
   the pass, whichever name comes first, unless no commit holds that name, someone was already
-  editing it, or it was committed while the pass ran, when it is left as it is and the log says
-  why. On macOS a rename over such a name was measured to keep the old one, so the note is put
+  editing it, it was committed while the pass ran, or the copy or the restore failed, when it is
+  left as it is and the log says why. On macOS a rename over such a name was measured to keep the old one, so the note is put
   back as any changed note is.
 - **The promotion agent writes new notes only.** It never changes, retires or stamps an existing
   long-tier note, whoever wrote it. Its trust sweep proposes the stamps it would make. When a new
@@ -102,13 +104,15 @@ every release. Then:
 - **Avoid editing an existing long-tier note while a promotion pass runs.** The runner cannot tell
   your edit from the pass's, so it refuses the pass and restores a committed note, and your edit is
   in the quarantine copy the log names, unless the log says the note was committed during the pass
-  or changed after it ended, or the pass also wrote outside its folders, when it was left as it
-  is. Read such a note with `git diff` before you restore it, because `git restore` discards your
+  or changed after it ended, or the pass also wrote outside its folders or changed a steering
+  surface, when it was left as it is. Read such a note with `git diff` against the commit from
+  before the pass, which the log names, before you restore it, because `git restore` discards your
   edit too.
 - **Pause any auto-commit, such as obsidian-git's, around the scheduled pass.** A sync client that
   commits during the pass can commit the pass's change to an existing note before the runner looks.
   The runner then refuses the pass and logs the note as committed while the pass ran, but it cannot
-  undo someone else's commit, so you would revert it yourself.
+  undo someone else's commit, so read that commit with `git show` and revert it yourself if the
+  change is the pass's.
 - Create-only needs the vault to be its own git repository, as the commit and the put-back already
   did. In any other vault the runner checks nothing of this.
 

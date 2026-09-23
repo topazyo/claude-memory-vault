@@ -841,24 +841,32 @@ Around that call, each runner does several things an exit code cannot:
   changed, whether the agent succeeded, failed, timed out or gave no summary. The notes are listed
   under that line even when the pass also wrote into a note someone was editing, or removed one,
   and that refusal is logged too. A note the snapshot alone knows is marked `in no commit under
-  this name`, and a case twin says so. The runner cannot tell the pass's
+  this name`, and a case twin says so. When the commit from before the pass cannot be listed, the
+  pass is refused under `VIOLATION: the runner could not list the commit from before the pass`,
+  because the runner cannot say whether a note that was there changed. The runner cannot tell the pass's
   change from one you or a sync client made while it ran, so either refuses the pass. A change a
   sync client *commits* while the pass runs stays committed: the runner logs it as committed while
-  the pass ran and cannot undo it, so revert that commit yourself, and pause any auto-commit around
-  the scheduled pass. The check comes before vault-check, so such a pass exits 2 even when a note
-  of its own would fail the check. A pass that also wrote outside the areas it may write, or
-  changed a steering surface, is refused for that first, and that refusal puts nothing back and
-  copies nothing to the quarantine (below). The log then names each long-tier note that was there
-  before the pass and is no longer as it was, under `Long-tier notes that were there before the
-  pass changed during it, and this exit puts nothing back`, leaving out one that already had
-  uncommitted changes, which the dirty-note line names. The runner cannot tell who changed them,
-  so read each with `git diff` before you restore it with `git restore`, which would discard an
-  edit of yours along with the pass's. A note git ignores, or one whose name on disk differs only
+  the pass ran and cannot undo it, so read that commit with `git show` and revert it yourself when
+  it holds the pass's change, and pause any auto-commit around the scheduled pass. The check comes
+  before vault-check, so such a pass exits 2 even when a note of its own would fail the check. A
+  pass that also wrote outside the areas it may write, or changed a steering surface, is refused
+  for that first, and that refusal puts none of the pass's notes back and copies none of them to
+  the quarantine (below). The log then names each long-tier note that was there before the pass
+  and is no longer as it was, under `Long-tier notes that were there before the pass changed
+  during it, and this exit puts none of them back`, leaving out one that already had uncommitted
+  changes, which the dirty-note line names. The runner cannot tell who changed them, so read each
+  with `git diff <commit> -- <path>`, the commit from before the pass that the line names, which
+  also shows a change a sync client has committed since, before you restore it with
+  `git restore --source=<commit> -- <path>`, which would discard an edit of yours along with the
+  pass's. When that commit cannot be listed, the log names every long-tier note that changed,
+  under a line that says so. A note git ignores, or one whose name on disk differs only
   in case from the name a commit holds it under (a case-only rename, such as one made in
   Obsidian, that git has not recorded), is in no commit under its name on disk, so it is refused
   but left as the pass wrote it, and the log says so. `git status` shows the second kind's change
-  under its committed name and later sessions read it from disk, so restore it before anything
-  commits it. A note the pass itself wrote under a new case is put back (below). A freshness
+  under its committed name and later sessions read it from disk, so read it with `git diff` and
+  restore what the pass wrote before anything commits it, because there is no quarantine copy and
+  `git restore` also discards an edit of yours. A note the pass itself wrote under a new case is
+  put back (below). A freshness
   stamp, a supersession or a correction of an existing note reaches you as a proposal in the
   pass's promotion report instead, and applying it is yours. A promotion report is not in the long
   tier, so a pass may still change one. Like the commit and the put-back, the check needs a vault
@@ -904,9 +912,9 @@ Around that call, each runner does several things an exit code cannot:
     differs only in case, is that note renamed by a writer that replaces files on a filesystem that
     folds case. Moving it out would take the note out of the vault, so it is copied to the
     quarantine and the note restored under its own name instead, unless no commit holds that name,
-    someone was already editing it, or it was committed while the pass ran, when it is left as it
-    is and the log says why. A link, or a second name for the same file, is never taken for such
-    a note.
+    someone was already editing it, it was committed while the pass ran, or the copy or the
+    restore failed, when it is left as it is and the log says why. A link, or a second name for
+    the same file, is never taken for such a note.
   - A note that is no longer exactly as the pass left it (changed again, removed, or now a folder
     or a link) is someone else's since, and is left as it is.
   - A note whose content in HEAD changed while the pass ran, because you or a sync plugin committed
@@ -948,8 +956,9 @@ Around that call, each runner does several things an exit code cannot:
   long-tier note that was there before the pass counts as the pass changing it, so the pass is
   refused and the note restored, and your edit is in the quarantine copy the log names. That copy
   exists only when the pass wrote nowhere outside its areas and changed no steering surface, and
-  the note was neither committed during the pass nor changed again after it ended; otherwise the
-  log says which, and the note is left as it is. Avoid editing today's
+  the note was in a commit under its name on disk and was neither committed during the pass nor
+  changed again after it ended; otherwise the log says which, and the note is left as it is.
+  Avoid editing today's
   journal, or a long-tier note, during a scheduled pass. In Obsidian that includes creating a note
   in the long tier. An empty new note there fails the check, so the promotion pass puts back every
   note it wrote and moves the new note to the quarantine while it is still open.

@@ -2201,11 +2201,11 @@ revert_owned() {
 # out first and the path can then be restored. One still holding anything after
 # that is left.
 #
-# A writer that replaces files, as the agent's Write tool does, on a filesystem
-# that folds case, leaves a note that was there under the new case it was given.
-# Both names are on the list then. The new one, the same file as the note, puts
-# the note back under its own name, and the old one says so rather than being
-# taken for a note someone changed after the pass.
+# A writer that replaces files, as the agent's Write tool does, can leave a note
+# that was there under the new case it was given, as NTFS does (APFS was
+# measured to keep the old name). Both names are on the list then. The new one,
+# the same file as the note, puts the note back under its own name, and the old
+# one says so rather than being taken for a note someone changed after the pass.
 revert_path() {
   local now was b_blob h_blob d twin t_blob
   now="$(path_state "$root" "$p")"
@@ -2224,7 +2224,14 @@ revert_path() {
   fi
   if [ "$now" != "$was" ]; then
     if [ -z "$was" ] && [ -n "$now" ] && twin="$(case_twin "$p" "$snap/after")" && [ -n "$twin" ] && [ "$root/$p" -ef "$root/$twin" ] && case_renamed "$p" "$twin" "$snap/before"; then
-      printf '    %s (on disk as %s after the pass, so the line for %s says whether it was put back)\n' "$p" "$twin" "$twin" >> "$log"
+      # The put-back skips a name that already had uncommitted changes, so no
+      # line for it follows.
+      if grep -qxF -- "$twin" "$snap/predirty" 2>/dev/null; then
+        printf '    %s (on disk as %s after the pass, which already had uncommitted changes before it, so it was left as it is)\n' "$p" "$twin" >> "$log"
+        rc=1
+      else
+        printf '    %s (on disk as %s after the pass, so the line for %s says whether it was put back)\n' "$p" "$twin" "$twin" >> "$log"
+      fi
       return 0
     fi
     printf '    %s (changed after the pass ended, so it was left as it is)\n' "$p" >> "$log"
@@ -2284,11 +2291,13 @@ revert_path() {
       elif grep -qxF -- "$twin" "$snap/predirty" 2>/dev/null; then
         printf '    %s (the same file as %s, whose name differs only in case and which already had uncommitted changes before the pass, so it was left as it is)\n' "$p" "$twin" >> "$log"
         rc=1
-      elif mkdir -p "$qdir/$(dirname "$p")" 2>/dev/null && cp -p "$root/$p" "$qdir/$p" 2>/dev/null \
-           && safe_git "$hooks" -C "$root" restore --source="$before" --worktree -- "$twin" 2>/dev/null; then
+      elif ! { mkdir -p "$qdir/$(dirname "$p")" && cp -p "$root/$p" "$qdir/$p"; } 2>/dev/null; then
+        printf '    %s (the same file as %s, whose name differs only in case, could not be copied to the quarantine, so %s was not restored)\n' "$p" "$twin" "$twin" >> "$log"
+        rc=1
+      elif safe_git "$hooks" -C "$root" restore --source="$before" --worktree -- "$twin" 2>/dev/null; then
         printf '    %s (the same file as %s, whose name differs only in case: copied to %s, then %s restored from %s)\n' "$p" "$twin" "$qdir/$p" "$twin" "$before" >> "$log"
       else
-        printf '    %s (the same file as %s, whose name differs only in case, and it could not be copied to the quarantine and restored, so it was left as it is: restore %s with git restore)\n' "$p" "$twin" "$twin" >> "$log"
+        printf '    %s (the same file as %s, whose name differs only in case: copied to %s, then %s could not be restored from %s)\n' "$p" "$twin" "$qdir/$p" "$twin" "$before" >> "$log"
         rc=1
       fi
     elif mkdir -p "$qdir/$(dirname "$p")" 2>/dev/null && mv -f "$root/$p" "$qdir/$p" 2>/dev/null; then
@@ -2392,17 +2401,19 @@ long_tier_existing() {
 # make, and the pass proposes it instead. The runner cannot tell the pass's
 # change from one someone made while the pass ran, so either refuses the pass. A
 # note git ignores is refused too, and so is one whose name on disk differs only
-# in case from the name a commit holds it under, though neither is in a commit
-# under that name for the put-back to restore. The refused paths are kept in a
-# variable rather than a file, so a write that fails cannot turn a refusal into
-# a commit, and a check that could not run refuses. They are logged even when an
-# earlier check refuses the pass, so the log always says an existing note
+# in case from the name a commit holds it under. The put-back cannot restore
+# either when it was so before the pass, because no commit holds it under the
+# name on disk, but a note the pass itself renamed by case is put back under its
+# committed name (revert_path). The refused paths are kept in a variable rather
+# than a file, so a write that fails cannot turn a refusal into a commit. A
+# check that could not run refuses under its own headline, because it cannot say
+# whether a note that was there changed. The refused paths are logged even when
+# an earlier check refuses the pass, so the log always says an existing note
 # changed. Dream journals are not in the long tier, so the dream pass is
 # unaffected.
 check_owned() {
-  local root="$1" owned="$2" p existing verdict=0
-  existing="$(long_tier_existing "$root" "$owned" "$4")" \
-    || existing="    (the check of which notes were there could not run)"
+  local root="$1" owned="$2" p existing listed=1 verdict=0
+  existing="$(long_tier_existing "$root" "$owned" "$4")" || listed=0
   if ! owned_predirty "$owned" "$3" "$4" "$5"; then
     verdict=2
   else
@@ -2415,7 +2426,10 @@ check_owned() {
       fi
     done < "$owned"
   fi
-  if [ -n "$existing" ]; then
+  if [ "$listed" -eq 0 ]; then
+    printf '[%s] VIOLATION: the runner could not list the commit from before the pass, so it cannot tell whether a long-tier note that was there changed during it, and nothing was committed.\n' "$(ts)" >> "$5"
+    verdict=2
+  elif [ -n "$existing" ]; then
     printf '[%s] VIOLATION: long-tier notes that were there before the pass started changed during it. A pass may add notes to 31-standards/ and 40-llm-wiki/wiki/ but never change one already there, and the runner cannot tell its change from anyone else'"'"'s, so nothing was committed:\n' "$(ts)" >> "$5"
     printf '%s\n' "$existing" >> "$5"
     verdict=2
@@ -2424,17 +2438,24 @@ check_owned() {
 }
 
 # report_existing_left <root> <path-list> <snap-dir> <log>
-# On an exit that puts nothing back, such as a write outside the fence, names
-# each long-tier note in <path-list> that was there before the pass and is not
-# as it was then, because every later session reads it from disk as it is now.
+# On an exit that puts none of the pass's notes back, such as a write outside
+# the fence or a contained pass, names each long-tier note in <path-list> that
+# was there before the pass and is not as it was then, because every later
+# session reads it from disk as it is now.
 # The runner cannot tell who changed it, and nothing goes to the quarantine on
-# these exits, so the log asks for a look before a restore. A note that already
-# had uncommitted changes before the pass is left out, because it holds work no
-# commit holds and owned_predirty names it, and so is one containment restored.
-# The candidates are kept in a variable, so a write that fails cannot silence it.
+# these exits, so the log asks for a look before a restore. The look compares
+# with the commit from before the pass, because a sync client may have committed
+# the change since, and git diff against the index would then show nothing. A
+# note that already had uncommitted changes before the pass is left out, because
+# it holds work no commit holds and owned_predirty names it, and so is one
+# containment restored. When the commit from before the pass cannot be listed,
+# every candidate is named under a headline that says so. The candidates are
+# kept in a variable, so a write that fails cannot silence it.
 report_existing_left() {
-  local p was cands="" left
+  local p was cands="" left before
   [ "${VAULT_GIT:-0}" -eq 1 ] || return 0
+  before="${HEAD_BEFORE:-HEAD HEAD}"
+  before="${before##* }"
   while IFS= read -r p; do
     [ -n "$p" ] || continue
     grep -qxF -- "$p" "$3/predirty" 2>/dev/null && continue
@@ -2444,10 +2465,17 @@ report_existing_left() {
 "
   done < "$2"
   [ -n "$cands" ] || return 0
-  left="$(printf '%s' "$cands" | long_tier_existing "$1" /dev/stdin "$3")" \
-    || left="    (the check of which notes were there could not run)"
+  if ! left="$(printf '%s' "$cands" | long_tier_existing "$1" /dev/stdin "$3")"; then
+    printf '[%s] The runner could not list the commit from before the pass, so it cannot tell which of these long-tier notes that changed during the pass were there before it. This exit puts none of them back and copies none of them to the quarantine, so each is left as it is: read each with git diff %s -- <path> before anything commits it:\n' "$(ts)" "$before" >> "$4"
+    printf '%s' "$cands" | sed 's/^/    /' >> "$4"
+    return 0
+  fi
   [ -n "$left" ] || return 0
-  printf '[%s] Long-tier notes that were there before the pass changed during it, and this exit puts nothing back and copies nothing to the quarantine, so each is left as it is. The runner cannot tell the pass'"'"'s change from anyone else'"'"'s: read each with git diff -- <path>, and run git restore -- <path> only on one whose whole change is the pass'"'"'s:\n' "$(ts)" >> "$4"
+  if [ "$before" = NONE ]; then
+    printf '[%s] Long-tier notes that were there before the pass changed during it, and this exit puts none of them back and copies none of them to the quarantine, so each is left as it is. The runner cannot tell the pass'"'"'s change from anyone else'"'"'s, and no commit from before the pass holds them to restore from:\n' "$(ts)" >> "$4"
+  else
+    printf '[%s] Long-tier notes that were there before the pass changed during it, and this exit puts none of them back and copies none of them to the quarantine, so each is left as it is. The runner cannot tell the pass'"'"'s change from anyone else'"'"'s: read each with git diff %s -- <path>, which shows every change since the commit from before the pass, and run git restore --source=%s -- <path> only on one whose whole change is the pass'"'"'s:\n' "$(ts)" "$before" "$before" >> "$4"
+  fi
   printf '%s\n' "$left" >> "$4"
 }
 
