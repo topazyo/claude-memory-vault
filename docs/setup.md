@@ -461,6 +461,13 @@ RECOVERY-NEEDED, and it has no `124` or `125` because it runs no agent.
 30 4 * * 0  /path/to/your-vault/.claude/scripts/vault-retention.sh
 ```
 
+The retention line has no redirect on purpose. The retention runner prints what it logged as it ends
+(`docs/reference.md` § 4.3.1), so cron mails you its judgement every week, and a run that could not
+start mails its reason and a closing `FAILED:` line rather than nothing. That mail carries note
+names, paths and refusal reasons from your vault. If your cron mail leaves the machine and you do
+not want that, end the line with `>/dev/null` and read `.claude/logs/vault-retention.log` instead.
+Never redirect it into that log itself.
+
 Give the retention pass a slot after the other two rather than beside them. All three take the same
 run lock, so an overlap costs one of them a wait of up to `RUN_LOCK_WAIT` and then exit 75.
 
@@ -649,6 +656,9 @@ starts no agent:
   <string>/Users/YOU/Vaults/my-vault/.claude/logs/vault-retention.launchd.err</string>
 ```
 
+What the retention runner prints as it ends goes to `vault-retention.launchd.out`, one block per
+run: its log's lines without the timestamps, and a `FAILED:` line after a failed run.
+
 `Weekday` 0 is Sunday; omit the key entirely for a daily job.
 
 Load them:
@@ -702,7 +712,8 @@ schtasks /create /tn "Vault-Retention" /tr "\"C:\path\to\your-vault\.claude\scri
 
 Arguments pass through the retention wrapper, so a task that runs
 `vault-retention.cmd --dry-run` is a good way to watch its judgement for a few weeks before you
-let it move anything.
+let it move anything. Task Scheduler discards what the runner prints, so read that judgement in
+`.claude/logs/vault-retention.log`.
 
 Those two files already encode the traps below. They are documented here anyway, because if you
 ever write your own wrapper you will meet all three.
