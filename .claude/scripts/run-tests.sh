@@ -5141,7 +5141,7 @@ if [ "$RV_GIT" -eq 1 ]; then
   # A line break in a file name must not become a second snapshot line. That line
   # could name .git, and containment would move the repository out of the vault.
   if is_windows_host; then
-    skip line-break-name 'a file name with a line break: NTFS does not allow one'
+    skip line-break-name 'a file name with a line break: not attempted on Windows, where Git Bash can make one (cntrl-name-log does) but this case has never been run'
   else
     LBV="$TMP/line-break-vault"
     make_lb_vault() {
@@ -8646,11 +8646,13 @@ fi
 # A candidate name holding a newline. The refusal for a control character IS the
 # log write, so the name reaches the log before any name rule has looked at it,
 # and an unescaped one writes whole lines of the author's choosing into the only
-# account an unattended scheduled pass leaves of what it did. NTFS forbids such
-# a name while ext4 and APFS allow it, so the fixture is attempted and the case
-# says plainly when the filesystem refused to make it, rather than passing over
-# a file that was never there. This is also the first control of any kind over
-# the control-character refusal.
+# account an unattended scheduled pass leaves of what it did. ext4 and APFS
+# allow such a name, and so does Git Bash on NTFS, which forbids the byte itself
+# but is given a stand-in character for it and reads it back as the byte, as the
+# Windows CI job shows by running this case. So the fixture is attempted
+# everywhere, and the case says plainly when the filesystem refused to make it,
+# rather than passing over a file that was never there. This is also the first
+# control of any kind over the control-character refusal.
 rf_bad=''
 RF="$(ret_copy cntrl-name)"
 rf_inj="$(printf 'dream-2020-01-01.md\nINJECTEDLINE')"
