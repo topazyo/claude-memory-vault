@@ -233,13 +233,14 @@ safe_name() {
 # after the refusal, and a summary is a claim: under cron it is all a reader
 # gets, with no exit code.
 #
-# Every byte outside printable ASCII is spelled out, by the same allowlist as
-# safe_name, with the less-than sign kept so the names safe_name has already
-# escaped come through as the log holds them. A line here can carry text this
-# runner did not write, git's error output, a commit message, an environment
-# value, and what it prints reaches a terminal and a mail. The cost is that a
-# path with a letter outside ASCII reads as its bytes. The log keeps it as
-# written.
+# Every byte outside printable ASCII is spelled out, much as safe_name spells
+# out a name, except that the less-than sign is kept, so the names safe_name has
+# already escaped come through as the log holds them. A line here can carry text
+# this runner did not write, git's error output, a commit message, an
+# environment value, and what it prints reaches a terminal and a mail. The cost
+# is that a path with a letter outside ASCII reads as its bytes. The log keeps
+# it as written, apart from a refused candidate's name, which safe_name has
+# already spelled out there.
 print_run() {
   if [ -z "$RUN_LOG" ]; then
     printf 'vault-retention: no copy of what this run logged could be kept, so it is only in .claude/logs/vault-retention.log.\n'
@@ -255,7 +256,8 @@ print_run() {
         line = $0
         # The timestamp say writes: a "[" with the date and a "T" at the twelfth
         # character, up to the first "] ". Found by position rather than by a
-        # pattern, so a clock that adds fractions of a second strips the same.
+        # pattern, because the two forms ts falls back between write the zone
+        # differently.
         if (substr(line, 1, 1) == "[" && substr(line, 12, 1) == "T" && (j = index(line, "] ")) > 12)
           line = substr(line, j + 2)
         o = ""
