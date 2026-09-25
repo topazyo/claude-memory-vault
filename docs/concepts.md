@@ -545,11 +545,10 @@ runner is the exception that shows what the rule is really for. It has no artifa
 because having nothing to move is its ordinary outcome and writing nothing is a correct exit 0.
 What stands in place of the assertion is that every run that judges logs the judgement it made about
 every candidate, with a reason for each, a run that cannot judge logs why, and each prints its lines
-to whoever ran it or scheduled it under cron or launchd, ending on a `FAILED:` line when it did not
-finish with 0. `--dry-run` produces exactly that judgement and
-nothing else. The demand is not that a pass must always produce something. It is that a pass must never leave you
-unable to tell whether it did. (`docs/setup.md` covers installing `jq`, `perl` and the Dataview
-plugin.)
+to whoever ran it or scheduled it under cron or launchd (`docs/reference.md` § 4.3.1). `--dry-run`
+produces exactly that judgement and nothing else. The demand is not that a pass must always produce
+something. It is that a pass must never leave you unable to tell whether it did. (`docs/setup.md`
+covers installing `jq`, `perl` and the Dataview plugin.)
 
 The shipped test suite in `.claude/scripts/run-tests.sh` applies the rule to itself with **both**
 positive and negative controls: a positive control is known-bad input the hook must flag, and a

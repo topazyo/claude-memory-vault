@@ -1032,24 +1032,32 @@ refusals, and counting them as refusals sent the reader looking for a reason tha
 written.
 
 **What it prints.** Every line a run logs goes to `vault-retention.log` and to a copy kept for that
-run alone, in its temporary folder. As the run ends it prints the copy on standard output, in order
-and once each, as `vault-retention: <text>` without the timestamp. Cron, launchd and a person at a
-terminal therefore read this run's judgement, and can tell a run that refused to start from one that
-found nothing to move. The copy is what makes the lines this run's: the log is shared, and nothing in
-it says which run wrote a line, so another retention run's lines, a line from a pass holding the run
-lock, or the log being emptied or rewritten while the run goes on never changes what it prints.
+run alone, in a temporary folder of its own. As the run ends it prints the copy on standard output,
+in order and once each, as `vault-retention: <text>` without the timestamp. Cron, launchd and a
+person at a terminal therefore read this run's judgement, and can tell a run that refused to start
+from one that found nothing to move. The copy is what makes the lines this run's: the log is shared,
+and nothing in it says which run wrote a line, so another retention run's lines, a line from a pass
+holding the run lock, or the log being emptied or rewritten while the run goes on never changes what
+it prints. That holds for a pass whose writes its harness keeps inside the vault. The copy is outside
+the vault, where the runners' fence does not look, so a pass that can write to the temporary folder
+could add a line to it.
 
 A run that ends with any code but `0` adds one last line,
 `vault-retention: FAILED: this run ended with exit N. …`, so a refusal is never silent and a summary
 is never the last thing a failed run says. A run that bash stops before it finishes, on an error in
-the script itself or a signal the runner does not catch such as `USR1`, ends on a `FAILED:` line that
-says so and gives no number, because what bash hands the run then does not say which of the two it
-was. A stop signal that arrives while the run is letting
-its lock go is kept until the lock is released, and then ends the run without printing, because its
-lines are in the log by then. The header of `vault-retention.sh` lists every code.
-A run that stops before it opens its log prints no `FAILED:` line: a usage error, written to
-standard error (exit `64`), the runner failing to enter its own vault folder (exit `1`), and
-`vault-retention.cmd` finding no Git Bash, which the `.cmd` writes to the log itself (exit `127`).
+the script itself or a signal the runner does not trap but bash can, such as `USR1`, ends on a
+`FAILED:` line that says so and gives no number, because what bash hands the run then does not say
+which of the two it was. The header of `vault-retention.sh` lists every code.
+
+Some ends print no `FAILED:` line:
+
+- A run that stops before it opens its log: a usage error, written to standard error (exit `64`),
+  the runner failing to enter its own vault folder (exit `1`), and `vault-retention.cmd` finding no
+  Git Bash, which the `.cmd` writes to the log itself (exit `127`).
+- A stop signal that arrives while the run is letting its lock go is kept until the lock is
+  released, and then ends the run without printing, because its lines are in the log by then.
+- A run killed outright, by `kill -9`, Task Scheduler's End or its time limit, or a reboot, prints
+  nothing at all. Its lines are in the log, as described below.
 
 The last printed line tells the ends of a run apart:
 
@@ -1066,9 +1074,9 @@ The last printed line tells the ends of a run apart:
 Every byte outside printable ASCII is spelled out, as `<1B>`, `<TAB>`, `<CR>` and so on, because a
 line can carry git's error output, a commit message or an environment value, and a terminal acts on
 control bytes. A path with a letter outside ASCII therefore reads as its bytes; the log keeps it as
-written, apart from a refused candidate's name, which the log spells out too. When the copy cannot
-be made, the run logs to the log alone and prints one line saying so
-in place of its lines.
+written, apart from a refused candidate's name and `find`'s error lines, which the log spells out
+too. When the copy cannot be made, the run logs to the log alone and prints one line saying so in
+place of its lines.
 
 The log keeps every line as it is written, including those of a run cut off with no chance to clean
 up, such as by Task Scheduler's End or its time limit, a reboot or `kill -9`. That is why every line
@@ -1080,9 +1088,10 @@ it reclaimed before it began to wait again.
 Under Task Scheduler what it prints is discarded, so the log is where to read it there. Elsewhere,
 send it to `/dev/null`, to a file outside the vault, or to a `*.log` file of your own under
 `.claude/logs`, which the runners' fence leaves alone. Not to any other file inside the vault: a
-dream or promotion pass running at that moment sees the file change and sets the tripwire. And not
-into `vault-retention.log` itself, where `>>` writes every line a second time and `>` empties the
-log as the run starts and then writes over it.
+dream or promotion pass running at that moment sees the file change and fails with exit 2, or, for a
+file under `.claude/` such as a name in `.claude/logs` that is not `*.log`, sets the tripwire. And
+not into `vault-retention.log` itself, where `>>` writes every line a second time and `>` empties
+the log as the run starts and then writes over it.
 
 **Journals older than the trailers.** A journal committed before any runner wrote trailers cannot
 be proved machine-written, and refusing it for good would leave it in the live tier forever. Those
@@ -1168,7 +1177,7 @@ Known limits, each failing in the quiet direction:
 | `0` | OK: the moves were committed, nothing was eligible, this was a dry run, or there is no `20-projects/_logs` folder. Its last printed line, and the log, say which |
 | `1` | setup failure, `20-projects/_logs` cannot be listed or entered, git cannot read the vault, the vault is not the top of its own repository, a shallow clone, `info/grafts`, or a sparse checkout. Also the script failing in itself, such as on an unset variable, which bash ends with `1`. A folder that cannot be listed is never read as an empty one, which is a clean `0` |
 | `2` | REPORT-REFUSED: the `--adopt-legacy` report was not written by this runner, or its list has changed since. Nothing moved |
-| `3` | PARTIAL: a move failed while HEAD was unchanged, and every file was put back. Nothing is committed. Also when the archive folders could not be made, where nothing had moved to put back |
+| `3` | PARTIAL: a move failed while HEAD was unchanged, and every file was put back. Nothing is committed. Also when the archive folders could not be made, or one turned out to be a link or not a folder just as the move was about to use it (the log says `ERROR:` or `PATH-BLOCKED:`), where nothing had moved to put back |
 | `4` | COMMIT-FAILED: the commit failed with HEAD unchanged, and the moves were put back |
 | `6` | PATH-BLOCKED: `20-projects`, `20-projects/_logs` or one of the archive folders is a link, a junction, not a folder, or another entry differs from it only in case. Checked before anything is judged, so nothing moved |
 | `64` | usage error: an unknown option, or a report file that is missing or unreadable |
@@ -1177,7 +1186,7 @@ Known limits, each failing in the quiet direction:
 | `75` | LOCKED: another runner's lock, git's `index.lock`, a git operation in progress, a detached HEAD, unmerged index entries, or a git read that did not finish within `RUNNER_GIT_TIMEOUT` |
 | `78` | TRIPWIRE, or a recovery file from an earlier run that does not check out |
 | `127` | `vault-retention.cmd` found no Git Bash, so the runner never ran. The `.cmd` writes that to the log |
-| `129`, `130`, `143` | stopped by HUP, INT or TERM. Moves in flight are settled first, exactly as a failure is |
+| `129`, `130`, `143` | stopped by HUP, INT or TERM. Moves in flight are settled first, exactly as a failure is. A run stopped after its `OK: … committed as <sha>.` line keeps that commit |
 | `128` + N | ended by signal N, one the runner does not catch, such as `USR1`. Nothing is settled, and a move in flight leaves `retention-inflight` for the next run to check |
 
 | Exit | Meaning (dream and promotion runners) |
@@ -1581,7 +1590,7 @@ while a note under `40-llm-wiki/wiki/` is covered by the six-tier rules only.
 | `.claude/scripts/run-tests.sh` | `0` all controls passed · `1` at least one failed · `130` SIGINT · `143` SIGTERM | stdout only; fixtures in a temp dir, removed on exit |
 | `.claude/scripts/dream-pass.sh` / `.cmd` | `0` OK · `1` NO-ARTIFACT · `2` VIOLATION · `3` REFUSED · `4` COMMIT-FAILED · `5` CHECK-FAILED · `64` unknown `VAULT_AGENT` · `70` TRIPWIRE-ERROR · `75` LOCKED · `78` TRIPWIRE · `124` TIMEOUT · `125` STALLED · `127` `claude`, wrapper or Git Bash not found · otherwise the agent's code | `.claude/logs/dream-agent.log` · agent output in `dream-agent.run.log` · `dream-pass.git-state.txt` · `dream-pass.prompt.md` in command mode · `runner-tripwire` after a contained violation or a `KILL_FAILED` stop · `dream-pass.interrupted.run` in the state directory after a signal or a `KILL_FAILED` stop, or when the run log could not be written, or `dream-pass.interrupted.run.<six characters>` beside it when something was in the way |
 | `.claude/scripts/promotion-pass.sh` / `.cmd` | `0` OK · `1` NO-ARTIFACT · `2` VIOLATION · `3` REFUSED · `4` COMMIT-FAILED · `5` CHECK-FAILED · `64` unknown `VAULT_AGENT` · `70` TRIPWIRE-ERROR · `75` LOCKED · `78` TRIPWIRE · `124` TIMEOUT · `125` STALLED · `127` `claude`, wrapper or Git Bash not found · otherwise the agent's code | `.claude/logs/promotion-agent.log` · agent output added to `promotion-agent.run.log` · `promotion-pass.git-state.txt` · `promotion-pass.prompt.md` in command mode · `runner-tripwire` after a contained violation or a `KILL_FAILED` stop · `promotion-pass.interrupted.run` in the state directory after a signal or a `KILL_FAILED` stop, or when the run log could not be written, or `promotion-pass.interrupted.run.<six characters>` beside it when something was in the way |
-| `.claude/scripts/vault-retention.sh` / `.cmd` | `0` OK · `1` setup, a `_logs` it cannot list or enter, git or repository shape · `2` REPORT-REFUSED · `3` PARTIAL · `4` COMMIT-FAILED · `6` PATH-BLOCKED · `64` usage · `70` TRIPWIRE-ERROR · `71` RECOVERY-NEEDED · `75` LOCKED · `78` TRIPWIRE · `127` Git Bash not found (from the `.cmd`) · `129` `130` `143` stopped by HUP, INT or TERM · `128`+N a signal it does not catch | `.claude/logs/vault-retention.log`, and on stdout as the run ends its own copy of the lines it logged, kept in its temporary folder until then, without timestamps and with a `FAILED:` line after a non-zero exit (§ 4.3.1) · in the state directory `retention-legacy-<date>-<hash8>.txt` and the `retention-legacy.hashes` index of reports it wrote, and `retention-inflight` while a move is in flight, which is left behind on exit 71 and holds later runs back · no run log and no prompt file, because it starts no agent |
+| `.claude/scripts/vault-retention.sh` / `.cmd` | `0` OK · `1` setup, a `_logs` it cannot list or enter, git or repository shape · `2` REPORT-REFUSED · `3` PARTIAL · `4` COMMIT-FAILED · `6` PATH-BLOCKED · `64` usage · `70` TRIPWIRE-ERROR · `71` RECOVERY-NEEDED · `75` LOCKED · `78` TRIPWIRE · `127` Git Bash not found (from the `.cmd`) · `129` `130` `143` stopped by HUP, INT or TERM · `128`+N a signal it does not catch | `.claude/logs/vault-retention.log`, and on stdout as the run ends its own copy of the lines it logged, kept in its temporary folder until then, in the form § 4.3.1 describes · in the state directory `retention-legacy-<date>-<hash8>.txt` and the `retention-legacy.hashes` index of reports it wrote, and `retention-inflight` while a move is in flight, which is left behind on exit 71 and holds later runs back · no run log and no prompt file, because it starts no agent |
 | `.claude/scripts/vault-update.sh` | `0` it could look and there is nothing to adopt · `10` it could look and there **is** something to adopt, meaning `--status` found local drift, `--check` found something upstream, or `--diff` printed a difference · `2` it could **not** look, meaning no manifest, no working hash tool, a file it could not read, an unreadable or non-template source, an unknown hash algorithm, a source older than this vault, a comparison of zero files on either side (`VACUOUS`, `SOURCE-VACUOUS`), a source that disagrees with its own manifest, a source reaching an entry through a symbolic link at any point in its path or naming one it cannot open, a source claiming machinery inside a folder of your own, or two copies claiming one version and disagreeing · `1` this vault has a problem, meaning a manifest that cannot be parsed, a version it will not print, a rules file it will not use, or a stale manifest under `--verify-manifest` · `11` refused for the state of the vault rather than the command line, meaning `--adopt` where a baseline already exists, and numbered away from the `3` the retention runner spends on a partial pass · `6` a manifest entry named a path outside the vault · `64` the command line was wrong, or `--generate` was run without `VAULT_TEMPLATE_MAINTAINER=1` · `75` a pass is in flight · `78` a runner tripwire is set · `130` interrupted · `143` terminated | stdout and stderr only. Writes `.claude/template-manifest` under `--adopt` and `--generate`, and nothing else, ever |
 | `.claude/githooks/pre-commit` | `vault-check.sh`'s status: `0` commit proceeds · `1` commit refused | stdout/stderr only |
 | `dream-agent` | n/a (agent) | one file: `20-projects/_logs/dream-<YYYY-MM-DD>.md` |

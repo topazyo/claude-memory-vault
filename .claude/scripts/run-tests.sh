@@ -72,6 +72,14 @@ WORK="$TMP/some one/my vault"
 # dependency. And cd out first, or the removal fails with "Device or resource busy".
 cleanup() {
   cd / 2>/dev/null || true
+  # A folder the unlistable-folder control has taken the account's rights to is
+  # given them back first, or the removal fails on it and leaves it behind.
+  if [ -n "${RET_LOCKED_DIR:-}" ]; then
+    if [ -n "${RET_LOCKED_ACL:-}" ]; then
+      MSYS_NO_PATHCONV=1 icacls "$RET_LOCKED_ACL" /remove:d "${USERNAME:-$USER}" >/dev/null 2>&1
+    fi
+    chmod 755 "$RET_LOCKED_DIR" 2>/dev/null
+  fi
   [ -n "${TMP:-}" ] && rm -rf "$TMP" 2>/dev/null
 }
 trap cleanup EXIT
@@ -7012,8 +7020,9 @@ else
 fi
 # --- what a run prints ---
 # The log used to be the only account a run left. Cron, launchd and whoever ran
-# the command by hand saw nothing at all, so a run that refused to start read
-# the same as one that found nothing to move and the same as one that never ran.
+# the command by hand saw nothing of it on standard output, so a run that
+# refused to start read the same as one that found nothing to move and the same
+# as one that never ran.
 # A run now prints what it wrote to the log, each line once and in order, after
 # a vault-retention: prefix and without the timestamp. Everything here reads the
 # captured file, because ret_run discards standard output and the log alone
@@ -8742,6 +8751,15 @@ case "$me:$mode" in
     if [ -n "${RETENTION_GIT_OUT:-}" ] && first git; then
       if [ -n "${RETENTION_OUT_FD:-}" ] && { true >&"$RETENTION_OUT_FD"; } 2>/dev/null; then echo open; else echo closed; fi > "$RET_SH_FLAGS/fd-state"
     fi ;;
+  git:quiet)
+    # A watched call only: silent for RET_SH_QUIET seconds, then a line on
+    # standard error, which is where the watchdog looks for progress, and two
+    # seconds more so that a poll sees the line arrive.
+    if [ -n "${RETENTION_GIT_OUT:-}" ] && first git; then
+      "$RET_SH_SLEEP" "${RET_SH_QUIET:-3}"
+      printf 'quiet-probe\n' >&2
+      "$RET_SH_SLEEP" 2
+    fi ;;
   rm:line|rm:term)
     "$real" "$@"
     rc=$?
@@ -8784,6 +8802,22 @@ case "$me:$mode" in
     esac ;;
   sleep:TERM|sleep:USR1) if first sleep; then kill -"$mode" "$PPID"; exit 0; fi ;;
   sleep:rewrite) first sleep && { : > "$RET_SH_LOG"; "$RET_SH_RM" -rf "$RET_SH_LOCK"; } ;;
+  sleep:plant)
+    # While the run waits for the lock: a hook that leaves a mark, in a nohooks
+    # folder inside every folder the run has in RET_SH_TMP by then, and then the
+    # holder's lock let go.
+    if first sleep; then
+      for d in "$RET_SH_TMP"/*/; do
+        [ -d "$d" ] || continue
+        "$RET_SH_MKDIR" -p "${d}nohooks"
+        for h in pre-commit commit-msg post-commit post-index-change reference-transaction; do
+          printf '#!/bin/sh\n: > "%s"\n' "$RET_SH_MARK" > "${d}nohooks/$h"
+          chmod +x "${d}nohooks/$h"
+        done
+        : > "$RET_SH_FLAGS/planted"
+      done
+      "$RET_SH_RM" -rf "$RET_SH_LOCK"
+    fi ;;
 esac
 exec "$real" "$@"
 SHIM_EOF
@@ -9059,6 +9093,92 @@ else
   bad "a run removed a lock its environment named, or did not say why it refused --$rp_bad printed: [$(tr '\n' '|' < "$RF.out" 2>/dev/null | cut -c1-600)]"
 fi
 
+# A hook planted while the run waits for the lock. The pass holding the lock is
+# running then, and a folder of this run's that exists by then is one that pass
+# could find. A sleep stand-in writes a hook that leaves a mark into a nohooks
+# folder in each, then lets the lock go. The folder whose nohooks every git call
+# takes its hooks from is made only after that, so the run moves and commits a
+# journal and no planted hook runs. Nine dates, so that the oldest is not one of
+# the newest eight, which are always kept.
+RF="$(ret_copy planted-hooks)"
+rp_batch=""
+for rp_i in 90 91 92 93 94 95 96 97 98; do
+  ret_journal "$RF" "dream-${RET_DATE[$rp_i]}.md" "tier: medium"
+  rp_batch="$rp_batch dream-${RET_DATE[$rp_i]}.md"
+done
+# shellcheck disable=SC2086
+ret_dream_commit "$RF" $rp_batch
+mkdir -p "$RF.state/run.lock" "$RF.tmp"
+printf "$rp_planted" "$$" "$(date +%s)" > "$RF.state/run.lock/owner"
+ret_shims "$RET/shim-plant" sleep
+rm -f "$RF.mark"
+rp_bad=''
+rp_rc="$( export RET_SH_FLAGS="$RET/shim-plant.flags" RET_SH_SLEEP_DO=plant RET_SH_TMP="$RF.tmp" RET_SH_MARK="$RF.mark" \
+    RET_SH_LOCK="$RF.state/run.lock" TMPDIR="$RF.tmp"
+  RET_LOCK_WAIT=60 RET_PATH="$RET/shim-plant" ret_out "$RF" "$RF.out" )"
+[ "$rp_rc" = 0 ] || rp_bad="$rp_bad rc:$rp_rc"
+[ -f "$RET/shim-plant.flags/sleep" ] || rp_bad="$rp_bad never-waited"
+[ -f "$RET/shim-plant.flags/planted" ] || rp_bad="$rp_bad no-folder-to-plant-in"
+[ ! -e "$RF.mark" ] || rp_bad="$rp_bad a-planted-hook-ran"
+[ "$(ret_printed "$RF.out" '^vault-retention: OK: 1 file\(s\) moved to 99-archive/20-projects/_logs and committed as ')" = 1 ] || rp_bad="$rp_bad no-commit"
+if [ -z "$rp_bad" ]; then
+  ok "a hook written into the run's temporary folders while it waits for the lock never runs, and the run moves and commits"
+else
+  bad "a hook planted while the run waited for the lock ran, or the run did not commit --$rp_bad printed: [$(tr '\n' '|' < "$RF.out" 2>/dev/null | cut -c1-600)]"
+fi
+
+# The watchdog's inputs named by the caller's environment. A git stand-in stays
+# silent for three seconds on the first watched call and then writes a line.
+# With RUN_STALL_SECONDS inherited that call would be stopped as stalled, and
+# with RUN_GAPS_FILE inherited the silence would be written into the file it
+# names. On Windows a git that runs past RUNNER_GIT_TIMEOUT is stopped with a
+# sweep for processes whose command line holds RUN_NONCE, so there an inherited
+# one must leave a process that is not the run's running.
+rp_bad=''
+for rp_case in stall gaps; do
+  RF="$(ret_copy "inherited-$rp_case")"
+  ret_journal "$RF" "dream-${RET_DATE[90]}.md" "tier: medium"
+  ret_dream_commit "$RF" "dream-${RET_DATE[90]}.md"
+  ret_shims "$RET/shim-$rp_case" git
+  rm -f "$RF.gaps"
+  rp_rc="$( export RET_SH_FLAGS="$RET/shim-$rp_case.flags" RET_SH_GIT_DO=quiet
+    case "$rp_case" in stall) export RUN_STALL_SECONDS=1 ;; gaps) export RUN_GAPS_FILE="$RF.gaps" ;; esac
+    RET_PATH="$RET/shim-$rp_case" ret_out "$RF" "$RF.out" --dry-run )"
+  [ "$rp_rc" = 0 ] || rp_bad="$rp_bad $rp_case-rc:$rp_rc"
+  [ -f "$RET/shim-$rp_case.flags/git" ] || rp_bad="$rp_bad $rp_case-never-quiet"
+  [ ! -e "$RF.gaps" ] || rp_bad="$rp_bad $rp_case-wrote-the-named-file"
+done
+if [ -z "$rp_bad" ]; then
+  ok "a stall limit or a gaps file named by the caller's environment changes nothing a run does"
+else
+  bad "a run used watchdog settings its environment named --$rp_bad printed: [$(tr '\n' '|' < "$RET/inherited-stall.out" 2>/dev/null | cut -c1-300)] [$(tr '\n' '|' < "$RET/inherited-gaps.out" 2>/dev/null | cut -c1-300)]"
+fi
+if is_windows_host; then
+  RF="$(ret_copy inherited-nonce)"
+  ret_journal "$RF" "dream-${RET_DATE[90]}.md" "tier: medium"
+  ret_dream_commit "$RF" "dream-${RET_DATE[90]}.md"
+  ret_shims "$RET/shim-nonce" git
+  rp_token="retention-victim-$$-$RANDOM"
+  bash -c "trap 'kill \$! 2>/dev/null; exit 0' TERM; \"$RET_SH_SLEEP\" 60 & wait; : $rp_token" &
+  rp_victim=$!
+  rp_bad=''
+  rp_rc="$( export RET_SH_FLAGS="$RET/shim-nonce.flags" RET_SH_GIT_DO=quiet RET_SH_QUIET=10 RUN_NONCE="$rp_token"
+    RET_GIT_TIMEOUT=1 RET_PATH="$RET/shim-nonce" ret_out "$RF" "$RF.out" --dry-run )"
+  ran retention-inherited-nonce
+  [ "$rp_rc" = 75 ] || rp_bad="$rp_bad rc:$rp_rc"
+  [ -f "$RET/shim-nonce.flags/git" ] || rp_bad="$rp_bad never-quiet"
+  kill -0 "$rp_victim" 2>/dev/null || rp_bad="$rp_bad stopped-a-process-not-its-own"
+  kill "$rp_victim" 2>/dev/null
+  wait "$rp_victim" 2>/dev/null
+  if [ -z "$rp_bad" ]; then
+    ok "a RUN_NONCE named by the caller's environment points the Windows stop sweep at nothing"
+  else
+    bad "a run's stop sweep used a RUN_NONCE its environment named --$rp_bad printed: [$(tr '\n' '|' < "$RF.out" 2>/dev/null | cut -c1-600)]"
+  fi
+else
+  skip retention-inherited-nonce "a RUN_NONCE named by the caller's environment: only the Windows stop sweep reads it"
+fi
+
 # TERM while the run lets its lock go, sent by an rm stand-in as it removes the
 # lock. The release is not cut short, and the TERM is not lost either: once the
 # lock is gone the run ends on it, printing nothing, with its lines in the log.
@@ -9138,17 +9258,23 @@ fi
 # settings of 30000 bytes each make warnings far larger than a pipe holds. When
 # the whole output fits the pipe anyway the run never stalls, and the case says
 # so rather than passing, while a run that ends before it has logged its
-# judgement fails. A run stopped mid-print leaves its temporary folder behind
-# by design, so this one keeps it inside the fixture.
+# judgement fails. A run stopped mid-print leaves its copy of its lines behind
+# by design, so this one keeps its temporary folders inside the fixture, and
+# that copy must be all that is left: the working folder, with its nohooks, goes
+# before the printing starts. The reader reads nothing until the run is gone
+# and then everything, and it must get less than the whole output, because
+# nothing the run started may go on printing for it once TERM has ended it.
 RF="$(ret_copy stalled-reader)"
 rp_big="$(printf '%030000d' 0 | tr 0 x)"
-rm -f "$RF.pid"
+rm -f "$RF.pid" "$RF.go" "$RF.count"
 mkdir -p "$RF.tmp"
 ( env VAULT_STATE_DIR="$RF.state" TMPDIR="$RF.tmp" RUN_LOCK_WAIT="$rp_big" RUN_LOCK_POLL="$rp_big" WATCHDOG_POLL=1 WATCHDOG_GRACE=2 \
     RETENTION_DAYS="$rp_big" RETENTION_MAX_MOVES="$rp_big" RUNNER_GIT_TIMEOUT="$rp_big" \
     bash "$RF/.claude/scripts/vault-retention.sh" --dry-run 2>/dev/null &
   echo "$!" > "$RF.pid"
-  wait ) | "$RET_SH_SLEEP" 300 &
+  wait ) | { rp_i=0
+    while [ ! -e "$RF.go" ] && [ "$rp_i" -lt 400 ]; do "$RET_SH_SLEEP" 1; rp_i=$((rp_i + 1)); done
+    wc -c > "$RF.count"; } &
 rp_reader=$!
 rp_w=0
 while [ ! -s "$RF.pid" ] && [ "$rp_w" -lt 30 ]; do "$RET_SH_SLEEP" 1; rp_w=$((rp_w + 1)); done
@@ -9169,11 +9295,29 @@ elif [ -n "$rp_pid" ] && kill -0 "$rp_pid" 2>/dev/null; then
     kill -KILL "$rp_pid" 2>/dev/null
     bad "a run whose reader stopped reading was still running 20s after TERM"
   else
-    ok "a run whose reader stopped reading ends on TERM"
+    : > "$RF.go"
+    rp_w=0
+    while [ ! -s "$RF.count" ] && [ "$rp_w" -lt 30 ]; do "$RET_SH_SLEEP" 1; rp_w=$((rp_w + 1)); done
+    rp_bad=''
+    rp_got="$(tr -d ' ' < "$RF.count" 2>/dev/null)"
+    rp_whole="$(find "$RF.tmp" -mindepth 2 -type f -name print -exec wc -c {} + 2>/dev/null | awk 'NR == 1 { print $1 + 0 }')"
+    [ -n "$rp_got" ] || rp_bad="$rp_bad the-pipe-was-still-held"
+    [ -n "$rp_whole" ] || rp_bad="$rp_bad no-copy-left"
+    [ -n "$rp_got" ] && [ -n "$rp_whole" ] && [ "$rp_got" -ge "$rp_whole" ] && rp_bad="$rp_bad printed-on-after-the-run($rp_got of $rp_whole)"
+    [ "$(find "$RF.tmp" -mindepth 2 -type d 2>/dev/null | awk 'END { print NR + 0 }')" = 0 ] || rp_bad="$rp_bad a-folder-left-in-the-copy"
+    [ "$(find "$RF.tmp" -mindepth 1 -maxdepth 1 2>/dev/null | awk 'END { print NR + 0 }')" = 1 ] || rp_bad="$rp_bad more-than-the-copy-left"
+    [ "$(find "$RF.tmp" -mindepth 2 -type f ! -name run.log ! -name lib.log ! -name print 2>/dev/null | awk 'END { print NR + 0 }')" = 0 ] \
+      || rp_bad="$rp_bad working-files-left"
+    if [ -z "$rp_bad" ]; then
+      ok "a run whose reader stopped reading ends on TERM, leaves no more than its copy of its lines, and nothing it started prints on"
+    else
+      bad "a run whose reader stopped reading ended on TERM but left something behind --$rp_bad left: [$(cd "$RF.tmp" 2>/dev/null && find . -mindepth 1 | LC_ALL=C sort | tr '\n' ' ')]"
+    fi
   fi
 else
   skip retention-stalled-reader "a reader that stops reading: the run logged its judgement and finished, so this pipe held all it printed and it never stalled"
 fi
+: > "$RF.go"
 kill "$rp_reader" 2>/dev/null
 wait "$rp_reader" 2>/dev/null
 
@@ -9194,10 +9338,13 @@ for rp_mode in deny-list no-enter; do
   ret_journal "$RF" "dream-${RET_DATE[90]}.md" "tier: medium"
   rp_dir="$RF/20-projects/_logs"
   rp_set=1
+  RET_LOCKED_DIR="$rp_dir"
+  RET_LOCKED_ACL=""
   case "$rp_mode" in
     deny-list)
       if is_windows_host; then
-        MSYS_NO_PATHCONV=1 icacls "$(cygpath -w "$rp_dir")" /deny "${USERNAME:-$USER}:(RD)" >/dev/null 2>&1 \
+        RET_LOCKED_ACL="$(cygpath -w "$rp_dir")"
+        MSYS_NO_PATHCONV=1 icacls "$RET_LOCKED_ACL" /deny "${USERNAME:-$USER}:(RD)" >/dev/null 2>&1 \
           || { rp_set=0; rp_why="$rp_why icacls-refused-the-entry"; }
       else
         chmod 000 "$rp_dir" 2>/dev/null
@@ -9219,6 +9366,8 @@ for rp_mode in deny-list no-enter; do
   else
     chmod 755 "$rp_dir" 2>/dev/null
   fi
+  RET_LOCKED_DIR=""
+  RET_LOCKED_ACL=""
   if [ "$rp_made" -eq 1 ]; then
     rp_cases=$((rp_cases + 1))
     [ "$rp_rc" = 1 ] || rp_bad="$rp_bad $rp_mode-rc:$rp_rc"

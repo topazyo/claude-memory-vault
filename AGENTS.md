@@ -209,7 +209,8 @@ its allowed folders (exit 2) and kill one that hangs (exit 124) or stops streami
 The retention pass is the third scheduled thing and it is not an agent, so `VAULT_AGENT` does not
 reach it and it has no stall detection. Its own refusals are 2 REPORT-REFUSED, 3 PARTIAL,
 4 COMMIT-FAILED, 6 PATH-BLOCKED and 71 RECOVERY-NEEDED, which means 2 and 3 do not mean there what
-they mean for the other two runners. It reads the same tripwire and the same run lock, and when one
+they mean for the other two runners. Its setup refusals, a `_logs` folder it cannot list or enter
+among them, are 1, as for the others. It reads the same tripwire and the same run lock, and when one
 of its own git steps could not be stopped it marks that lock so no later pass starts. See
 `docs/reference.md` §4.3. When a pass changes a steering or execution surface (Obsidian plugins,
 `.claude/`, harness configs, instruction files, memory, git config or hooks), the runner restores
