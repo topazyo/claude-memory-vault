@@ -28,22 +28,25 @@ bash .claude/scripts/vault-update.sh --check --from ../template-new
 ## 1.4.0 — 2026-09-25
 
 The retention pass now tells whoever ran it what it did. Its judgement used to go only to its log,
-so cron, launchd and a person at a terminal received nothing at all, and a run that refused to start
-could not be told from one that found nothing to move or one that never ran. It also stops
-describing a journal a person has marked as replaced as one that is still being argued over.
+so cron, launchd and a person at a terminal saw nothing of it on standard output, and a run that
+refused to start could not be told from one that found nothing to move or one that never ran. It
+also stops describing a journal a person has marked as replaced as one that is still being argued
+over, and stops reporting a `20-projects/_logs` folder it cannot list as an empty one.
 
 ### Changed
 
-- **`vault-retention.sh` prints what it logged.** As a run ends it prints every line it wrote to
-  `.claude/logs/vault-retention.log`, in order and once each, as `vault-retention: <text>` without
-  the timestamp, and a run that ends with any code but 0 adds a closing
-  `vault-retention: FAILED: this run ended with exit N. …` line, so a refusal is never silent and a
-  summary is never the last thing a failed run says. Failures the runner library writes itself — the
-  run lock, the tripwire and git's own refusals — come out too, because the lines are read back from
-  the log rather than printed beside each one. Three differences from the log are deliberate: every
-  byte outside printable ASCII is spelled out, the part of the log written while the run waited for
-  the run lock is left out with a `NOTE:` saying how much, and a refused lock shows only its own
-  line. [`docs/reference.md` § 4.3.1](docs/reference.md) has the contract. The log is unchanged.
+- **`vault-retention.sh` prints what it logged.** Every line a run logs goes to
+  `.claude/logs/vault-retention.log` and to a copy kept for that run alone, and as the run ends it
+  prints the copy on standard output as `vault-retention: <text>`, without the timestamp and with
+  every byte outside printable ASCII spelled out. A run that ends with any code but 0, or is ended by
+  a signal the runner does not catch, adds a closing `vault-retention: FAILED: …` line, so a refusal
+  is never silent and a summary is never the last thing a failed run says. The printed lines come
+  from the run's own copy, so another run's lines in the shared log, or the log being rewritten
+  while the run goes on, never appear as this run's. [`docs/reference.md` § 4.3.1](docs/reference.md)
+  has the contract.
+- **A `20-projects/_logs` folder the runner cannot list is refused**, with an `ERROR:` line of its
+  own and exit 1. It used to read exactly like an empty folder: `evaluated 0 candidate(s)`,
+  `OK: there is nothing in 20-projects/_logs to evaluate.` and exit 0.
 - **One refusal reason became two.** A journal carrying `contradicts:` or `superseded_by:` was
   refused with *"contradicts or superseded_by is set, so it is still being argued over"*, which is
   false of a journal a person has marked as replaced. It now reads
@@ -51,28 +54,38 @@ describing a journal a person has marked as replaced as one that is still being 
   `superseded_by: is set, so a human has recorded that something replaces it, and this pass does not
   decide what that means`, and a journal carrying both gets the `contradicts:` one. Which journals
   are refused has not changed.
-- The control suite reads what the retention runner prints, for each state it has to tell apart: a
-  run that moved, a dry run, an empty folder, no folder, a tripwire, a refused lock, a run that
-  waited for another run's lock, a refused adoption and a run stopped by TERM. It holds the escaping
-  with a raw escape sequence and carriage return, and holds both reasons, including a journal that
-  carries both keys. `ret_run` still throws standard output away, as its callers need.
+- The header of `vault-retention.sh` and `docs/reference.md` § 4.3.1 list every exit code the
+  runner can end with, including 127 from `vault-retention.cmd` and the signal codes.
+- The runner copies standard output to the first descriptor from 9 down to 3 that nothing holds
+  open, rather than always to 9, so a wrapper that keeps a `flock(1)` lock on 9 keeps it. The
+  printing at the end of a run can be stopped with TERM, so a reader that stops reading no longer
+  keeps the run alive until KILL. A run lock that the caller's environment names is no longer
+  removed by a run that never took it.
+- The control suite holds each of these. It lands other runs' lines, a rewritten log and signals at
+  chosen moments of a run by construction, and reads what the run printed. CI names the new
+  controls, and the existing control for a candidate name holding a line break, as ones that must
+  run.
 - `AGENTS.md`, `docs/reference.md`, `docs/setup.md` and `docs/concepts.md` describe the new output.
-  CI names the new controls, and the existing control for a candidate name holding a line break, as
-  ones that must run.
 
 ### Adopting this
 
-Two things change what you see, and the first may change your mail.
+Three things change what you see, and the first may change your mail.
 
 **A crontab line for the retention pass without a redirect now mails you its judgement every
-week**, and a run that could not start mails its reason. That is intended. If your cron mail leaves
-the machine and you would rather it did not carry note names and paths, end the line with
-`>/dev/null` and read the log instead. Never redirect it into `.claude/logs/vault-retention.log`
-itself. launchd appends the same lines to `vault-retention.launchd.out`. Task Scheduler discards
-them, so nothing changes there.
+week**, on a machine where cron can send mail, and a run that could not start mails its reason.
+That is intended. The mail carries note names, paths, refusal reasons, git's own error text and the
+value of any setting the run warns about. If your cron mail leaves the machine and you would rather
+it did not, end the line with `>/dev/null` and read the log instead.
+[`docs/reference.md` § 4.3.1](docs/reference.md) says where else the output may go, and why never
+into `.claude/logs/vault-retention.log` itself. launchd appends the same lines to
+`vault-retention.launchd.out`. Task Scheduler discards them, so nothing changes there.
 
 **Anything that searches the retention log for `contradicts or superseded_by is set` stops
 matching.** Search for `contradicts: is set` or `superseded_by: is set` instead.
+
+**A `20-projects/_logs` folder your account cannot list now stops the run with exit 1.** If a
+scheduled retention pass starts failing after you take this release, check that folder's
+permissions: before, it was never judged at all, only reported as empty.
 
 If your vault has never run the retention pass, this is a good release to start with: run
 `bash .claude/scripts/vault-retention.sh --dry-run` by hand and read what it prints before you
@@ -80,9 +93,9 @@ schedule it.
 
 `--check` will list `.claude/scripts/vault-retention.sh`, `.claude/scripts/run-tests.sh`,
 `AGENTS.md`, `docs/reference.md`, `docs/setup.md` and `docs/concepts.md` as safe to take, alongside
-`VERSION` and `CHANGELOG.md`. If you changed the folder names inside `vault-retention.sh`
-([`docs/customizing.md` §2](docs/customizing.md)), take it as a merge rather than a copy. No note,
-rule, hook, frontmatter key or checker behaviour a vault relies on has moved.
+`VERSION` and `CHANGELOG.md`. If you changed `LOGS_REL` or `ARCH_REL` inside `vault-retention.sh`,
+take it as a merge rather than a copy. No note, rule, hook, frontmatter key or checker behaviour a
+vault relies on has moved.
 
 ---
 

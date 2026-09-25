@@ -543,9 +543,10 @@ hangs is killed and exits 124 rather than holding the scheduler slot indefinitel
 output stops for longer than it normally goes quiet is killed sooner, with exit 125. The retention
 runner is the exception that shows what the rule is really for. It has no artifact to assert,
 because having nothing to move is its ordinary outcome and writing nothing is a correct exit 0.
-What stands in place of the assertion is that every run logs the judgement it made about every
-candidate, with a reason for each, and prints the same lines to whoever ran or scheduled it, ending
-on a `FAILED:` line when it did not finish with 0. `--dry-run` produces exactly that judgement and
+What stands in place of the assertion is that every run that judges logs the judgement it made about
+every candidate, with a reason for each, a run that cannot judge logs why, and each prints its lines
+to whoever ran it or scheduled it under cron or launchd, ending on a `FAILED:` line when it did not
+finish with 0. `--dry-run` produces exactly that judgement and
 nothing else. The demand is not that a pass must always produce something. It is that a pass must never leave you
 unable to tell whether it did. (`docs/setup.md` covers installing `jq`, `perl` and the Dataview
 plugin.)

@@ -448,9 +448,8 @@ fence or another refusal (`docs/reference.md` § 4.3), `3` refused (see below), 
 `claude` or wrapper. `docs/reference.md` § 4.3 has the full table.
 
 `vault-retention.sh` uses some of the same numbers for different things, so read its codes against
-its own table in `docs/reference.md` § 4.3.1 rather than the list above. They are `0` OK, `2`
-REPORT-REFUSED, `3` PARTIAL, `4` COMMIT-FAILED, `6` PATH-BLOCKED, `64` usage and `71`
-RECOVERY-NEEDED, and it has no `124` or `125` because it runs no agent.
+its own table in `docs/reference.md` § 4.3.1 rather than the list above. It has no `124` or `125`,
+because it runs no agent.
 
 ```cron
 # dream pass, nightly at 02:30
@@ -462,11 +461,12 @@ RECOVERY-NEEDED, and it has no `124` or `125` because it runs no agent.
 ```
 
 The retention line has no redirect on purpose. The retention runner prints what it logged as it ends
-(`docs/reference.md` § 4.3.1), so cron mails you its judgement every week, and a run that could not
-start mails its reason and a closing `FAILED:` line rather than nothing. That mail carries note
-names, paths and refusal reasons from your vault. If your cron mail leaves the machine and you do
-not want that, end the line with `>/dev/null` and read `.claude/logs/vault-retention.log` instead.
-Never redirect it into that log itself.
+(`docs/reference.md` § 4.3.1), so on a machine where cron can send mail it mails you its judgement
+every week, and a run that could not start mails its reason and a closing `FAILED:` line rather
+than nothing. That mail carries note names, paths and refusal reasons from your vault, git's own
+error text, and the value of any setting it warns about. If your cron mail leaves the machine and
+you do not want that, end the line with `>/dev/null` and read `.claude/logs/vault-retention.log`
+instead. § 4.3.1 says where else the output may go, and why never into that log.
 
 Give the retention pass a slot after the other two rather than beside them. All three take the same
 run lock, so an overlap costs one of them a wait of up to `RUN_LOCK_WAIT` and then exit 75.
@@ -657,7 +657,8 @@ starts no agent:
 ```
 
 What the retention runner prints as it ends goes to `vault-retention.launchd.out`, one block per
-run: its log's lines without the timestamps, and a `FAILED:` line after a failed run.
+run: the lines that run logged, without the timestamps, and a `FAILED:` line after a failed run. The
+blocks carry no date, so the log is where to see when each ran.
 
 `Weekday` 0 is Sunday; omit the key entirely for a daily job.
 
