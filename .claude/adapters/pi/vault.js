@@ -10,15 +10,16 @@
 //
 //   - Refuses a read, write, edit, grep, find or ls call that names .env,
 //     .env.* or anything under secrets/, the set .claude/rules/security.md
-//     names.
-//   - Runs .claude/hooks/vault-lint.sh on every file a write or edit changes.
+//     names, and a grep whose glob could reach one.
+//   - Runs .claude/hooks/vault-lint.sh on every file a write or edit changes,
+//     and adds what it reports to the tool's result.
 //   - Records each compaction with .claude/hooks/postcompact-wrap-up.sh.
 //
 // Both scripts are advisory: their failures never fail the tool call. When one
 // cannot run, the extension says so once instead of going quiet.
 
 import { spawn } from "node:child_process"
-import { existsSync, readFileSync, realpathSync } from "node:fs"
+import { existsSync, lstatSync, readFileSync, readlinkSync, realpathSync } from "node:fs"
 import { homedir } from "node:os"
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -31,6 +32,7 @@ const PATH_REQUIRED = new Set(["read", "write", "edit"])
 const WRITE_TOOLS = new Set(["write", "edit"])
 const DENIED = "vault: .env, .env.* and secrets/ are off limits (.claude/rules/security.md)"
 const NO_PATH = "vault: the secrets guard found no path in this call, so it is refused. Pi's tool input may have changed shape: see docs/harnesses/pi.md"
+const WINDOWS = process.platform === "win32"
 
 // The folder this file is in, when the loader provides import.meta.url.
 let HERE = null
@@ -45,7 +47,7 @@ try {
 // resolveToCwd, normalizePath and normalizeWindowsShellPath in Pi's
 // src/core/tools/path-utils.ts and src/utils/paths.ts as of v0.87.1, because
 // the guard has to test the file Pi is about to open, not the string it got.
-const UNICODE_SPACES = /[  -   　]/g
+const UNICODE_SPACES = /[\u{A0}\u{2000}-\u{200A}\u{202F}\u{205F}\u{3000}]/gu
 
 function windowsShellPath(path) {
   if (!path.startsWith("/") || path.startsWith("//") || path.includes("\\")) return path
@@ -57,45 +59,81 @@ function windowsShellPath(path) {
 
 function expandTilde(path) {
   if (path === "~") return homedir()
-  if (path.startsWith("~/") || (process.platform === "win32" && path.startsWith("~\\"))) {
-    return join(homedir(), path.slice(2))
-  }
+  if (path.startsWith("~/") || (WINDOWS && path.startsWith("~\\"))) return join(homedir(), path.slice(2))
   return null
 }
 
 function resolveLikePi(raw, cwd) {
   let path = raw.replace(UNICODE_SPACES, " ")
   if (path.startsWith("@")) path = path.slice(1)
-  if (process.platform === "win32") path = windowsShellPath(path)
+  if (WINDOWS) path = windowsShellPath(path)
   const home = expandTilde(path)
   if (home !== null) path = home
   else if (/^file:\/\//.test(path)) path = fileURLToPath(path)
   return isAbsolute(path) ? resolve(path) : resolve(cwd, path)
 }
 
-// The part of path below root, or all of it when it lies outside root. Only
-// that part is tested, so a vault kept inside a folder named secrets still works.
-function below(root, path) {
-  const rel = relative(root, path)
-  const inside = rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel))
-  return inside ? rel : path
+// The real path: every link on the way followed, including one whose target
+// does not exist yet, because writing through such a link creates the target.
+// Throws when a chain of links does not end.
+function realPath(path) {
+  let current = resolve(path)
+  for (let hops = 0; hops <= 40; hops++) {
+    const tail = []
+    let head = current
+    let next = null
+    while (next === null) {
+      try {
+        return join(realpathSync.native(head), ...tail)
+      } catch {
+        let link = null
+        try {
+          if (lstatSync(head).isSymbolicLink()) link = readlinkSync(head)
+        } catch {
+          link = null
+        }
+        if (link !== null) {
+          next = join(resolve(dirname(head), link), ...tail)
+        } else {
+          const up = dirname(head)
+          if (up === head) return current
+          tail.unshift(basename(head))
+          head = up
+        }
+      }
+    }
+    current = next
+  }
+  throw new Error("a chain of symbolic links in this path does not end")
 }
 
-// The real path of the nearest part of path that exists, with the rest put
-// back, so a link to .env, or a new file inside a linked secrets folder, is
-// seen for what it is.
-function realPath(path) {
-  const tail = []
-  for (let head = path; ; ) {
-    try {
-      return join(realpathSync.native(head), ...tail)
-    } catch {
-      const up = dirname(head)
-      if (up === head) return path
-      tail.unshift(basename(head))
-      head = up
-    }
+function isInside(rel) {
+  return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel))
+}
+
+// The part of path below the first root that holds it, or all of it. Only
+// that part is tested, so a vault kept inside a folder named secrets works.
+function below(roots, path) {
+  for (const root of roots) {
+    const rel = relative(root, path)
+    if (isInside(rel)) return rel
   }
+  return path
+}
+
+// The vault root in every spelling a path can arrive in. Pi resolves paths
+// against its cwd, while the loader names this file by its real path, so on
+// macOS, where /var is a link to /private/var, one vault has two spellings.
+function rootsFor(vault, cwd) {
+  const roots = [vault]
+  const realVault = realPath(vault)
+  if (!roots.includes(realVault)) roots.push(realVault)
+  const rel = relative(realVault, realPath(cwd))
+  if (isInside(rel)) {
+    const spelled = resolve(cwd, ...(rel === "" ? [] : rel.split(sep).map(() => "..")))
+    if (!roots.includes(spelled)) roots.push(spelled)
+  }
+  return roots
 }
 
 // NTFS compares names by upper-casing them, which is why "ſecrets" opens
@@ -110,16 +148,77 @@ function namesSecret(path) {
   return base === ".ENV" || base.startsWith(".ENV.") || parts.includes("SECRETS")
 }
 
-function isSecret(raw, cwd, root) {
+// Tested twice: as named below the vault, which catches secrets/ even when it
+// is a link to somewhere else, and as the real path, which catches a note that
+// is a link to .env. Outside any vault the whole path is tested.
+function isSecret(raw, cwd, vault) {
   const path = resolveLikePi(raw, cwd)
-  const top = root ?? cwd
-  return namesSecret(below(top, path)) || namesSecret(below(realPath(top), realPath(path)))
+  if (vault === null) return namesSecret(path) || namesSecret(realPath(path))
+  return namesSecret(below(rootsFor(vault, cwd), path)) || namesSecret(below([realPath(vault)], realPath(path)))
+}
+
+// ripgrep lets a glob that matches a file override .gitignore, so a grep glob
+// is refused when it could match a secret at all. It is read the way ripgrep
+// reads one, conservatively: * and ? stay within a name, ** crosses folders,
+// [...] and {a,b} are sets, case is ignored, and a glob with no slash is
+// matched against names. A glob that only excludes (!...) widens nothing.
+const SECRET_NAMES = [".env", ".env.local", "secrets"]
+const SECRET_PATHS = [".env", "a/.env", ".env.local", "secrets", "secrets/x", "a/secrets", "a/secrets/x"]
+
+function globRegex(glob) {
+  const literal = (c) => c.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")
+  let out = ""
+  let depth = 0
+  for (let i = 0; i < glob.length; i++) {
+    const c = glob[i]
+    if (c === "\\" && i + 1 < glob.length) {
+      i++
+      out += literal(glob[i])
+    } else if (c === "*" && glob[i + 1] === "*") {
+      i++
+      if (glob[i + 1] === "/") {
+        i++
+        out += "(?:.*/)?"
+      } else {
+        out += ".*"
+      }
+    } else if (c === "*") {
+      out += "[^/]*"
+    } else if (c === "?") {
+      out += "[^/]"
+    } else if (c === "[" && glob.indexOf("]", i + 2) !== -1) {
+      const end = glob.indexOf("]", i + 2)
+      const body = glob.slice(i + 1, end).replace(/\\/g, "\\\\")
+      out += body.startsWith("!") ? `[^${body.slice(1)}]` : `[${body}]`
+      i = end
+    } else if (c === "{") {
+      depth++
+      out += "(?:"
+    } else if (c === "}" && depth > 0) {
+      depth--
+      out += ")"
+    } else if (c === "," && depth > 0) {
+      out += "|"
+    } else {
+      out += literal(c)
+    }
+  }
+  // An unbalanced { leaves a group open, and the constructor throws, which the
+  // caller turns into a refusal.
+  return new RegExp(`^${out}$`, "i")
+}
+
+function globMaySeeSecret(glob) {
+  if (glob.startsWith("!")) return false
+  const pattern = glob.replace(/^\/+/, "")
+  const re = globRegex(pattern)
+  return (pattern.includes("/") ? SECRET_PATHS : SECRET_NAMES).some((probe) => re.test(probe))
 }
 
 // ---------------------------------------------------------------- vault --
 // The vault is the nearest folder above this file that holds the lint and the
 // checker, so starting Pi inside some other tree never runs that tree's
-// scripts. Only when the loader gives no file location is Pi's cwd used.
+// scripts. When the loader does not say where this file is, no script runs.
 function vaultAbove(start) {
   for (let dir = resolve(start); ; ) {
     if (existsSync(join(dir, LINT)) && existsSync(join(dir, CHECK))) return dir
@@ -129,19 +228,19 @@ function vaultAbove(start) {
   }
 }
 
-// Relative to the vault with forward slashes when the file is inside it.
-function lintArg(vault, file) {
-  return below(vault, file).split(sep).join("/")
-}
-
 // ----------------------------------------------------------------- bash --
 // The scripts need bash. On Windows this is the one Pi's own bash tool would
 // pick (shellPath in Pi's global settings, then Git under Program Files, then
-// bash.exe on PATH), except that WSL's launcher in System32 is passed over,
-// because the scripts are written for Git Bash. Only absolute candidates are
-// tried, so a bash.exe in the vault or the current folder is never run.
+// bash.exe on PATH), except that WSL's launcher is passed over, because the
+// scripts are written for Git Bash. Elsewhere it is /bin/bash, then bash in a
+// folder on PATH. Only absolute candidates are tried, so a bash in the vault or
+// the current folder is never run.
 function isWslLauncher(path) {
-  return /^[a-z]:\\windows\\(?:system32|sysnative)\\bash\.exe$/i.test(path.replace(/\//g, "\\"))
+  const lower = resolve(path).toLowerCase()
+  if (/^[a-z]:\\windows\\(?:system32|sysnative)\\bash\.exe$/.test(lower)) return true
+  return [process.env.SystemRoot, process.env.windir]
+    .filter((root) => typeof root === "string" && root !== "")
+    .some((root) => ["System32", "Sysnative"].some((dir) => lower === join(root, dir, "bash.exe").toLowerCase()))
 }
 
 function piShellPath() {
@@ -156,41 +255,59 @@ function piShellPath() {
 }
 
 function findBash() {
-  if (process.platform !== "win32") return existsSync("/bin/bash") ? "/bin/bash" : "bash"
+  const pathDirs = (process.env.PATH ?? "").split(WINDOWS ? ";" : ":").filter((dir) => dir !== "" && isAbsolute(dir))
+  if (!WINDOWS) {
+    const candidates = ["/bin/bash", ...pathDirs.map((dir) => join(dir, "bash"))]
+    return candidates.find((path) => existsSync(path)) ?? null
+  }
   const candidates = []
   const custom = piShellPath()
   if (custom !== null) candidates.push(custom)
   for (const programs of [process.env.ProgramFiles, process.env["ProgramFiles(x86)"]]) {
     if (programs) candidates.push(join(programs, "Git", "bin", "bash.exe"))
   }
-  for (const dir of (process.env.PATH ?? "").split(";")) {
-    if (dir !== "" && isAbsolute(dir)) candidates.push(join(dir, "bash.exe"))
-  }
+  for (const dir of pathDirs) candidates.push(join(dir, "bash.exe"))
   return candidates.find((path) => isAbsolute(path) && !isWslLauncher(path) && existsSync(path)) ?? null
 }
 
-// Runs one hook script from the vault root and resolves to null when it exited
-// 0, or to what went wrong. Both scripts always exit 0 by design, so anything
-// else is a setup problem worth saying out loud.
+// Runs one hook script from the vault root, with CLAUDE_PROJECT_DIR naming the
+// vault so an inherited one cannot send the scripts elsewhere. Resolves to
+// { problem, report }: problem is null when the script exited 0, and report is
+// what it wrote on stderr. On Windows every argument is quoted and passed as
+// written, because Git Bash's runtime otherwise reads a ' as a quote, globs
+// [ ] { } * ?, and treats @name as a file of arguments.
 function runHook(bash, vault, script, args, input) {
   return new Promise((done) => {
-    let child
-    try {
-      child = spawn(bash, [script, ...args], {
-        cwd: vault,
-        stdio: ["pipe", "ignore", "ignore"],
-        windowsHide: true,
-        timeout: 15000,
-      })
-    } catch (error) {
-      done(`could not start ${bash} (${error.message})`)
+    const argv = [script, ...args]
+    if (WINDOWS && argv.some((arg) => arg.includes('"'))) {
+      done({ problem: "was given a path holding a double quote, which no Windows path can", report: "" })
       return
     }
-    child.once("error", (error) => done(`could not start ${bash} (${error.code ?? error.message})`))
+    let report = ""
+    let child
+    try {
+      child = spawn(bash, WINDOWS ? argv.map((arg) => `"${arg}"`) : argv, {
+        cwd: vault,
+        env: { ...process.env, CLAUDE_PROJECT_DIR: vault },
+        stdio: ["pipe", "ignore", "pipe"],
+        windowsHide: true,
+        timeout: 15000,
+        ...(WINDOWS ? { windowsVerbatimArguments: true, argv0: `"${bash}"` } : {}),
+      })
+    } catch (error) {
+      done({ problem: `could not start ${bash} (${error.message})`, report: "" })
+      return
+    }
+    child.stderr.setEncoding("utf8")
+    child.stderr.on("data", (chunk) => {
+      if (report.length < 4000) report += chunk
+    })
+    child.once("error", (error) => done({ problem: `could not start ${bash} (${error.code ?? error.message})`, report }))
     child.once("close", (code, signal) => {
-      if (code === 0) done(null)
-      else if (signal) done(`was stopped by ${signal}, after the 15 s limit or from outside`)
-      else done(`exited ${code} under ${bash}`)
+      const kept = report.slice(0, 4000)
+      if (code === 0) done({ problem: null, report: kept })
+      else if (signal) done({ problem: `was stopped by ${signal}, after the 15 s limit or from outside`, report: kept })
+      else done({ problem: `exited ${code} under ${bash}`, report: kept })
     })
     child.stdin.once("error", () => {})
     child.stdin.end(input)
@@ -215,35 +332,39 @@ export default function vaultExtension(pi) {
   }
 
   const ownVault = HERE === null ? null : vaultAbove(HERE)
-  const vaultFor = (ctx) => ownVault ?? (HERE === null ? vaultAbove(ctx.cwd) : null)
 
+  // Runs a script of this extension's own vault. Resolves to what it reported.
   const runScript = async (ctx, script, argsFor, input) => {
-    const vault = vaultFor(ctx)
-    if (vault === null) {
-      warn(ctx, "vault", `vault: no vault holds ${HERE ?? ctx.cwd}, so written notes are not linted and compactions are not recorded. See docs/harnesses/pi.md`)
-      return
+    if (ownVault === null) {
+      const where = HERE === null ? "Pi did not say where this extension's file is" : `no vault holds ${HERE}`
+      warn(ctx, "vault", `vault: ${where}, so written notes are not linted and compactions are not recorded. See docs/harnesses/pi.md`)
+      return ""
     }
     const bash = findBash()
     if (bash === null) {
       warn(ctx, "bash", `vault: no Git Bash found, so ${script} did not run. See docs/harnesses/pi.md`)
-      return
+      return ""
     }
-    const problem = await runHook(bash, vault, script, argsFor(vault), input)
+    const { problem, report } = await runHook(bash, ownVault, script, argsFor(ownVault), input)
     if (problem !== null) warn(ctx, script, `vault: ${script} ${problem}. See docs/harnesses/pi.md`)
+    return report
   }
 
   pi.on("tool_call", async (event, ctx) => {
     if (!PATH_TOOLS.has(event?.toolName)) return undefined
     try {
       const input = event.input ?? {}
+      // The guard only reads, so outside this extension's vault it may use
+      // the vault Pi was started in, whose scripts it never runs.
+      const vault = ownVault ?? vaultAbove(ctx.cwd)
       if (typeof input.path === "string") {
-        if (isSecret(input.path, ctx.cwd, vaultFor(ctx) ?? undefined)) return { block: true, reason: DENIED }
+        if (isSecret(input.path, ctx.cwd, vault)) return { block: true, reason: DENIED }
       } else if (PATH_REQUIRED.has(event.toolName)) {
         // Fail closed: Pi's schema requires a path here, so its absence means the
         // tool changed shape and this guard can no longer see what it opens.
         return { block: true, reason: NO_PATH }
       }
-      if (event.toolName === "grep" && typeof input.glob === "string" && namesSecret(input.glob)) {
+      if (event.toolName === "grep" && typeof input.glob === "string" && globMaySeeSecret(input.glob)) {
         return { block: true, reason: DENIED }
       }
       return undefined
@@ -261,11 +382,14 @@ export default function vaultExtension(pi) {
         return undefined
       }
       const file = resolveLikePi(raw, ctx.cwd)
-      await runScript(ctx, LINT, (vault) => ["--", lintArg(vault, file)], "")
+      const report = await runScript(ctx, LINT, (vault) => ["--", below(rootsFor(vault, ctx.cwd), file).split(sep).join("/")], "")
+      if (report.trim() === "") return undefined
+      const content = Array.isArray(event.content) ? event.content : []
+      return { content: [...content, { type: "text", text: `vault-lint (advisory):\n${report.trim()}` }] }
     } catch (error) {
       warn(ctx, "lint-failed", `vault: the lint step failed (${error.message})`)
+      return undefined
     }
-    return undefined
   })
 
   pi.on("session_compact", async (event, ctx) => {

@@ -519,15 +519,16 @@ else
   bad "harness instruction files not scanned -- got: ${out_steer:-<silence>} / ${out_steer2:-<silence>}"
 fi
 
-# Pi's instruction files, and AGENTS.override.md, which Codex and Pi load in
-# place of AGENTS.md. Each in both forms the patterns have to catch: the
-# relative name the Pi extension passes from the vault root, and an absolute
-# path from a hook. Two look-alikes are the negative control, because a scan
-# widened to every file under .pi/ would pass the positive half as well.
+# Pi's instruction files, AGENTS.override.md, which Codex and Pi load in place
+# of AGENTS.md, and Claude Code's CLAUDE.local.md. Each in both forms the
+# patterns have to catch: the relative name the Pi extension passes from the
+# vault root, and an absolute path from a hook. Two look-alikes, also in both
+# forms, are the negative control, because a scan widened to every file under
+# .pi/ would pass the positive half as well.
 mkdir -p "$WORK/.pi/skills/probe" "$WORK/.pi/prompts" "$WORK/sub/.pi" "$WORK/pi"
 pi_steer_missed=""
 for pi_f in .pi/SYSTEM.md .pi/APPEND_SYSTEM.md .pi/skills/probe/SKILL.md .pi/prompts/probe.md \
-            AGENTS.override.md sub/.pi/SYSTEM.md sub/AGENTS.override.md; do
+            AGENTS.override.md sub/.pi/SYSTEM.md sub/AGENTS.override.md CLAUDE.local.md sub/CLAUDE.local.md; do
   printf 'steering file with a hidden character:\342\200\213\n' > "$WORK/$pi_f"
   pi_rel=$(cd "$WORK" && CLAUDE_PROJECT_DIR="$WORK" bash "$HOOK" -- "$pi_f" 2>&1 | strip_notices)
   pi_abs=$(lint "$WORK/$pi_f" | strip_notices)
@@ -536,15 +537,17 @@ for pi_f in .pi/SYSTEM.md .pi/APPEND_SYSTEM.md .pi/skills/probe/SKILL.md .pi/pro
 done
 for pi_f in .pi/other.md pi/SYSTEM.md; do
   printf 'not a steering file:\342\200\213\n' > "$WORK/$pi_f"
+  pi_rel=$(cd "$WORK" && CLAUDE_PROJECT_DIR="$WORK" bash "$HOOK" -- "$pi_f" 2>&1 | strip_notices)
   pi_abs=$(lint "$WORK/$pi_f" | strip_notices)
-  printf '%s' "$pi_abs" | grep -q "U+200B" && pi_steer_missed="$pi_steer_missed widened-to:$pi_f"
+  printf '%s' "$pi_rel" | grep -q "U+200B" && pi_steer_missed="$pi_steer_missed widened-to:relative:$pi_f"
+  printf '%s' "$pi_abs" | grep -q "U+200B" && pi_steer_missed="$pi_steer_missed widened-to:absolute:$pi_f"
 done
 if [ -z "$pi_steer_missed" ]; then
-  ok "invisible-char scan covers Pi's .pi/SYSTEM.md, .pi/APPEND_SYSTEM.md, .pi/skills/, .pi/prompts/ and AGENTS.override.md, by relative and absolute path, and not .pi/other.md or pi/SYSTEM.md"
+  ok "invisible-char scan covers Pi's .pi/SYSTEM.md, .pi/APPEND_SYSTEM.md, .pi/skills/, .pi/prompts/, AGENTS.override.md and CLAUDE.local.md, by relative and absolute path, and not .pi/other.md or pi/SYSTEM.md by either"
 else
-  bad "Pi steering files and AGENTS.override.md scan --$pi_steer_missed"
+  bad "Pi steering files, AGENTS.override.md and CLAUDE.local.md scan --$pi_steer_missed"
 fi
-rm -rf "$WORK/.pi" "$WORK/sub" "$WORK/pi" "$WORK/AGENTS.override.md"
+rm -rf "$WORK/.pi" "$WORK/sub" "$WORK/pi" "$WORK/AGENTS.override.md" "$WORK/CLAUDE.local.md"
 
 # The invisible-character scan is the security control in this hook, and the
 # no-jq branch is a realistic default rather than an edge case, because Git for
@@ -1068,6 +1071,33 @@ hits=$(cd "$ROOT" && bypass_hits .codex/config.toml .codex/hooks.json .gemini/se
 if [ -z "$hits" ]; then ok "no shipped harness config turns approvals off"
 else bad "approval bypass in a shipped config -- $(printf '%s' "$hits" | tr '\n' ';')"; fi
 
+# Pi's approval surface is project trust, and an extension loaded with -e may
+# answer Pi's project_trust event. The adapter must never do that, or loading
+# it would trust every project the session opens.
+pi_trust_hits() {  # pi_trust_hits <file>... - prints lines that touch Pi's project trust
+  grep -nE 'project_trust|defaultProjectTrust|trust\.json' "$@" 2>/dev/null
+}
+printf 'pi.on("project_trust", () => ({ trusted: "yes" }))\n' > "$TMP/fake-trust.js"
+if [ -n "$(pi_trust_hits "$TMP/fake-trust.js")" ]; then
+  ok "positive control: an extension answering Pi's project_trust is caught"
+else
+  bad "positive control: a project_trust handler went unnoticed"
+fi
+hits=$(pi_trust_hits "$ROOT/.claude/adapters/pi/vault.js")
+if [ -z "$hits" ]; then ok "the Pi extension never answers Pi's project trust"
+else bad "the Pi extension touches Pi's project trust -- $(printf '%s' "$hits" | tr '\n' ';')"; fi
+
+# The Pi adapter finds its vault by a hook and a script. A renamed script would
+# leave it warning, on every write, that no vault holds it.
+pi_script_refs=$(grep -oE '\.claude/scripts/[A-Za-z0-9_-]+\.sh' "$ROOT/.claude/adapters/pi/vault.js" 2>/dev/null | sort -u)
+pi_missing=""
+for pi_r in $pi_script_refs; do [ -f "$ROOT/$pi_r" ] || pi_missing="$pi_missing $pi_r"; done
+if [ -n "$pi_script_refs" ] && [ -z "$pi_missing" ]; then
+  ok ".claude/adapters/pi/vault.js names only scripts that exist: $(printf '%s' "$pi_script_refs" | tr '\n' ' ')"
+else
+  bad ".claude/adapters/pi/vault.js names scripts that do not exist --${pi_missing:- it names none at all}"
+fi
+
 # Gemini CLI hook timeouts are in milliseconds. A value copied from a config
 # measured in seconds (15) would kill the hook after 15 ms.
 gem_timeouts=$(grep -oE '"timeout"[[:space:]]*:[[:space:]]*[0-9]+' "$ROOT/.gemini/settings.json" 2>/dev/null | grep -oE '[0-9]+$')
@@ -1106,23 +1136,36 @@ pi_node_major=${pi_node_major%%.*}
 case "$pi_node_major" in ''|*[!0-9]*) pi_node_major=0 ;; esac
 if [ "$pi_node_major" -lt 18 ]; then
   skip pi-extension-behaviour "Pi extension: needs node 18 or later, and found ${pi_node_version:-no node}"
+  skip pi-extension-dirlink "Pi extension: needs node 18 or later, and found ${pi_node_version:-no node}"
   skip pi-extension-symlink "Pi extension: needs node 18 or later, and found ${pi_node_version:-no node}"
 else
+  # Two fake vaults, the second inside a folder named secrets, and one copy of
+  # the adapter that sits in no vault at all. The paths are left as mktemp
+  # spelled them. On macOS that is /var/..., while Node names the adapter by
+  # its real path under /private/var, which is a mismatch Pi can meet as well.
   PIV="$TMP/pi/my vault"
   PIV2="$TMP/pi/secrets/inner vault"
+  PIL="$TMP/pi/loose"
   for pi_v in "$PIV" "$PIV2"; do
-    mkdir -p "$pi_v/.claude/adapters/pi" "$pi_v/.claude/hooks" "$pi_v/.claude/scripts" "$pi_v/31-standards"
+    mkdir -p "$pi_v/.claude/adapters/pi" "$pi_v/.claude/hooks" "$pi_v/.claude/scripts" "$pi_v/31-standards" "$pi_v/secrets"
     # Node parses the adapter as an ES module only under .mjs, as CI does.
     cp "$ROOT/.claude/adapters/pi/vault.js" "$pi_v/.claude/adapters/pi/vault.mjs"
     : > "$pi_v/.claude/scripts/vault-check.sh"
     cat > "$pi_v/.claude/hooks/postcompact-wrap-up.sh" <<'PI_STUB_EOF'
 #!/usr/bin/env bash
+printf '%s\n' "${CLAUDE_PROJECT_DIR:-}" > stub-project-dir
 cat > stub-input
 PI_STUB_EOF
   done
+  mkdir -p "$PIL"
+  cp "$ROOT/.claude/adapters/pi/vault.js" "$PIL/vault.mjs"
+  # The lint records its arguments and its CLAUDE_PROJECT_DIR, and reports on
+  # stderr the way the real one does, so the extension has something to add.
   cat > "$PIV/.claude/hooks/vault-lint.sh" <<'PI_LINT_EOF'
 #!/usr/bin/env bash
+printf '%s\n' "${CLAUDE_PROJECT_DIR:-}" > lint-project-dir
 printf '%s\n' "$@" > lint-args
+printf 'probe finding for %s\n' "${2:-}" >&2
 PI_LINT_EOF
   # The inner vault's lint fails, which both hook scripts never do by design,
   # so the extension has to say so instead of going quiet.
@@ -1131,56 +1174,70 @@ PI_LINT_EOF
 // Loads the adapter the way Pi does (its default export, called with the
 // extension API) and calls its handlers. One line per verdict for run-tests.sh:
 // "ok <text>", "bad <text>", "ran <id>" or "skip <id> <text>".
-import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
-import { join } from "node:path"
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import { dirname, join, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 
-const [vault, innerVault] = process.argv.slice(2)
+const [vault, innerVault, loose] = process.argv.slice(2)
 const say = (line) => process.stdout.write(`${line}\n`)
-const verdict = (good, text) => say(`${good ? "ok" : "bad"} ${text}`)
+const verdict = (good, text, got) => say(`${good ? "ok" : "bad"} ${text}${good || got === undefined ? "" : ` -- got ${got}`}`)
+const win = process.platform === "win32"
+const sameDir = (a, b) => {
+  const norm = (p) => (win ? resolve(p.trim()).toLowerCase() : resolve(p.trim()))
+  return norm(a) === norm(b)
+}
 
-async function load(root) {
+async function load(file, cwd) {
   const handlers = {}
-  const mod = await import(pathToFileURL(join(root, ".claude", "adapters", "pi", "vault.mjs")).href)
+  const mod = await import(pathToFileURL(file).href)
   mod.default({ on: (name, handler) => { handlers[name] = handler } })
   const notes = []
-  const ctx = {
-    cwd: root,
+  const at = (dir) => ({
+    cwd: dir,
     hasUI: true,
     mode: "tui",
     ui: { notify: (message) => notes.push(message) },
-    sessionManager: { getSessionId: () => "probe-session", getSessionFile: () => join(root, "probe-session.jsonl") },
-  }
-  return { handlers, ctx, notes }
+    sessionManager: { getSessionId: () => "probe-session", getSessionFile: () => join(dir, "probe-session.jsonl") },
+  })
+  return { handlers, ctx: at(cwd), at, notes }
 }
+const adapterIn = (root) => join(root, ".claude", "adapters", "pi", "vault.mjs")
 
-async function call(pi, toolName, input) {
+async function call(pi, toolName, input, ctx = pi.ctx) {
   try {
-    const result = await pi.handlers.tool_call({ type: "tool_call", toolCallId: "c1", toolName, input }, pi.ctx)
+    const result = await pi.handlers.tool_call({ type: "tool_call", toolCallId: "c1", toolName, input }, ctx)
     if (result === undefined) return "allowed"
     return result.block === true && typeof result.reason === "string" ? "refused" : `returned ${JSON.stringify(result)}`
   } catch (error) {
     return `threw ${error.message}`
   }
 }
+async function expect(pi, tool, input, want, label, ctx) {
+  const got = await call(pi, tool, input, ctx)
+  verdict(got === want, `Pi guard: ${label} is ${want}`, got)
+}
 
-const pi = await load(vault)
+const pi = await load(adapterIn(vault), vault)
+// The home folder is inside secrets/ for this run, so ~/ has to be expanded
+// for the ~ case to be refused.
 const cases = [
   ["read", { path: "secrets/x.txt" }, "refused", "a file under secrets/"],
   ["read", { path: ".ENV" }, "refused", ".ENV in upper case"],
   ["read", { path: "@.env" }, "refused", "@.env, which Pi opens as .env"],
-  ["read", { path: ".env." }, "refused", ".env. with a trailing dot"],
+  ["read", { path: ".env." }, "refused", ".env., under the .env.* rule"],
   ["read", { path: ".env " }, "refused", ".env with a trailing space"],
-  ["read", { path: ".env " }, "refused", ".env with a trailing no-break space, which Pi reads as a space"],
+  ["read", { path: ".env\u{A0}" }, "refused", ".env with a trailing no-break space, which Pi reads as a space"],
   ["read", { path: ".env::$DATA" }, "refused", ".env::$DATA, an NTFS stream name"],
   ["read", { path: "secrets::$INDEX_ALLOCATION/x" }, "refused", "secrets::$INDEX_ALLOCATION/x"],
-  ["read", { path: "ſecrets/x" }, "refused", "ſecrets/x, which NTFS upper-cases to SECRETS"],
+  ["read", { path: "secrets./x" }, "refused", "secrets./x, a folder name with a trailing dot"],
+  ["grep", { pattern: "KEY", path: "secrets." }, "refused", "a grep of secrets. with a trailing dot"],
+  ["read", { path: "\u{17F}ecrets/x" }, "refused", "U+017F-ecrets/x, which NTFS upper-cases to SECRETS"],
   ["read", { path: `${pathToFileURL(vault).href}/%2Eenv` }, "refused", "a file:// URL spelling .env as %2Eenv"],
-  ["read", { path: "~/.env" }, "refused", "~/.env"],
+  ["read", { path: "~/k.txt" }, "refused", "~/k.txt with the home folder inside secrets/"],
+  ["read", { path: "file:///x%2Fy" }, "refused", "a file:// URL Pi cannot open either (the guard fails closed)"],
   ["write", { path: "notes/.env.local", content: "x" }, "refused", "a write to .env.local"],
   ["edit", { path: "Secrets/k", edits: [] }, "refused", "an edit under Secrets/"],
   ["grep", { pattern: "KEY", path: "secrets" }, "refused", "a grep of secrets/"],
-  ["grep", { pattern: "KEY", glob: ".env" }, "refused", "a grep whose glob names .env"],
   ["find", { pattern: "*", path: "secrets" }, "refused", "a find in secrets/"],
   ["ls", { path: "SECRETS" }, "refused", "an ls of SECRETS"],
   ["read", {}, "refused", "a read with no path (fails closed)"],
@@ -1192,52 +1249,107 @@ const cases = [
   ["ls", {}, "allowed", "an ls with no path"],
   ["bash", undefined, "allowed", "a tool the guard does not cover, with no input"],
 ]
-if (process.platform === "win32") {
-  cases.push(["read", { path: `${vault.slice(0, 2)}.env` }, "refused", "a drive-relative C:.env"])
-  cases.push(["read", { path: `/${vault[0].toLowerCase()}${vault.slice(2).replaceAll("\\", "/")}/.env` }, "refused", "a Git Bash /c/... path to .env"])
+for (const glob of [".env", ".env*", ".ENV*", "*", "{.env,x}", "secret?/**", ".[e]nv", "**/.env", "{.env"]) {
+  cases.push(["grep", { pattern: "KEY", glob }, "refused", `a grep with the glob ${glob}`])
 }
-for (const [tool, input, want, label] of cases) {
-  const got = await call(pi, tool, input)
-  verdict(got === want, `Pi guard: ${label} is ${want}${got === want ? "" : ` -- got ${got}`}`)
+for (const glob of ["*.md", "**/*.md", "!*.md"]) {
+  cases.push(["grep", { pattern: "KEY", glob }, "allowed", `a grep with the glob ${glob}`])
+}
+if (win) cases.push(["read", { path: `${vault.slice(0, 2)}.env` }, "refused", "a drive-relative C:.env"])
+for (const [tool, input, want, label] of cases) await expect(pi, tool, input, want, label)
+
+// Where Pi was started does not change what the guard sees.
+await expect(pi, "read", { path: "api-key.txt" }, "refused", "a file read from a session started in secrets/", pi.at(join(vault, "secrets")))
+await expect(pi, "read", { path: "../secrets/k" }, "refused", "../secrets/k from a session started in 31-standards/", pi.at(join(vault, "31-standards")))
+await expect(pi, "read", { path: "n.md" }, "allowed", "a note read from a session started in 31-standards/", pi.at(join(vault, "31-standards")))
+
+const inner = await load(adapterIn(innerVault), innerVault)
+await expect(inner, "read", { path: "31-standards/n.md" }, "allowed", "a note of a vault kept inside a folder named secrets")
+await expect(inner, "read", { path: "secrets/x" }, "refused", "that vault's own secrets/")
+if (win) {
+  const shell = `/${innerVault[0].toLowerCase()}${innerVault.slice(2)}/31-standards/n.md`
+  await expect(inner, "read", { path: shell }, "allowed", "a Git Bash /c/... path to that vault's note, which Pi converts first")
 }
 
-const inner = await load(innerVault)
-const innerNote = await call(inner, "read", { path: "31-standards/n.md" })
-verdict(innerNote === "allowed", `Pi guard: a vault inside a folder named secrets can still read its notes${innerNote === "allowed" ? "" : ` -- got ${innerNote}`}`)
-verdict((await call(inner, "read", { path: "secrets/x" })) === "refused", "Pi guard: that vault still refuses its own secrets/")
+// A copy of the adapter in no vault still guards, measuring from the vault
+// Pi was started in, and runs no script at all.
+const stray = await load(join(loose, "vault.mjs"), join(vault, "secrets"))
+await expect(stray, "read", { path: "k.txt" }, "refused", "a file in secrets/, for a copy of the adapter kept outside any vault")
+await expect(stray, "read", { path: "31-standards/n.md" }, "allowed", "a note, for a copy kept outside any vault", stray.at(vault))
 
 writeFileSync(join(vault, ".env"), "PROBE=1\n")
-mkdirSync(join(vault, "secrets"), { recursive: true })
-let linked = false
+writeFileSync(join(vault, "31-standards", "n.md"), "note\n")
+// Folder links are junctions on Windows, which any user may make, so these
+// run on every platform. File links need a privilege Windows rarely grants.
+const dirType = win ? "junction" : "dir"
+let dirLinked = false
+try {
+  symlinkSync(join(vault, "secrets"), join(vault, "notes-link"), dirType)
+  dirLinked = true
+} catch (error) {
+  say(`skip pi-extension-dirlink Pi guard: this host cannot link a folder (${error.code ?? error.message})`)
+}
+if (dirLinked) {
+  symlinkSync(join(vault, "secrets", "new-folder"), join(vault, "notes-gone"), dirType)
+  mkdirSync(join(vault, "sub"), { recursive: true })
+  symlinkSync(join(vault, "31-standards"), join(vault, "sub", "secrets"), dirType)
+  symlinkSync(join(vault, "loop-b"), join(vault, "loop-a"), dirType)
+  symlinkSync(join(vault, "loop-a"), join(vault, "loop-b"), dirType)
+  say("ran pi-extension-dirlink")
+  await expect(pi, "write", { path: "notes-link/new.md", content: "x" }, "refused", "a new file inside a linked secrets folder")
+  await expect(pi, "write", { path: "notes-gone/x.md", content: "x" }, "refused", "a write through a link to a folder in secrets/ that does not exist yet")
+  await expect(pi, "read", { path: "sub/secrets/n.md" }, "refused", "sub/secrets/n.md, where sub/secrets is a link to an ordinary folder")
+  await expect(pi, "ls", { path: "sub/secrets" }, "refused", "an ls of sub/secrets itself")
+  await expect(pi, "read", { path: "loop-a/x" }, "refused", "a path through a loop of links (the guard fails closed)")
+}
+let fileLinked = false
 try {
   symlinkSync(join(vault, ".env"), join(vault, "31-standards", "link.md"))
-  symlinkSync(join(vault, "secrets"), join(vault, "notes-link"), "dir")
-  linked = true
+  fileLinked = true
 } catch (error) {
-  say(`skip pi-extension-symlink Pi guard: this host cannot make a symbolic link (${error.code ?? error.message})`)
+  say(`skip pi-extension-symlink Pi guard: this host cannot make a file link (${error.code ?? error.message})`)
 }
-if (linked) {
+if (fileLinked) {
+  symlinkSync(join(vault, ".env.production"), join(vault, "31-standards", "dangling.md"))
+  symlinkSync(join(vault, "31-standards", "n.md"), join(vault, "31-standards", "ok-link.md"))
   say("ran pi-extension-symlink")
-  verdict((await call(pi, "read", { path: "31-standards/link.md" })) === "refused", "Pi guard: a note that is a link to .env is refused")
-  verdict((await call(pi, "write", { path: "notes-link/new.md", content: "x" })) === "refused", "Pi guard: a new file inside a linked secrets folder is refused")
+  await expect(pi, "read", { path: "31-standards/link.md" }, "refused", "a note that is a link to .env")
+  await expect(pi, "write", { path: "31-standards/dangling.md", content: "x" }, "refused", "a write through a link to a .env that does not exist yet")
+  await expect(pi, "read", { path: "31-standards/ok-link.md" }, "allowed", "a note that is a link to an ordinary note")
 }
 
 const lintArgs = join(vault, "lint-args")
 const lintRecord = () => (existsSync(lintArgs) ? readFileSync(lintArgs, "utf8").split(/\r?\n/).filter(Boolean) : null)
-const result = (p, toolName, input, isError) =>
-  p.handlers.tool_result({ type: "tool_result", toolCallId: "c2", toolName, input, content: [], isError }, p.ctx)
+const result = (p, toolName, input, isError, ctx = p.ctx) =>
+  p.handlers.tool_result({ type: "tool_result", toolCallId: "c2", toolName, input, content: [{ type: "text", text: "wrote it" }], isError }, ctx)
 const same = (got, want) => JSON.stringify(got) === JSON.stringify(want)
+const lintCase = async (p, input, want, label, ctx) => {
+  rmSync(lintArgs, { force: true })
+  const answer = await result(p, "write", input, false, ctx)
+  const got = lintRecord()
+  verdict(same(got, want), `Pi lint: ${label}`, JSON.stringify(got))
+  return answer
+}
 
 rmSync(lintArgs, { force: true })
 await result(pi, "write", { path: "31-standards/p.md", content: "x" }, true)
 verdict(lintRecord() === null, "Pi lint: a failed write is not linted")
-await result(pi, "write", { path: "31-standards/p.md", content: "x" }, false)
-let got = lintRecord()
-verdict(same(got, ["--", "31-standards/p.md"]), `Pi lint: a write runs vault-lint.sh -- 31-standards/p.md from the vault root${same(got, ["--", "31-standards/p.md"]) ? "" : ` -- got ${JSON.stringify(got)}`}`)
+const answer = await lintCase(pi, { path: "31-standards/p.md", content: "x" }, ["--", "31-standards/p.md"], "a write runs vault-lint.sh -- 31-standards/p.md from the vault root")
+const added = answer?.content?.at(-1)?.text ?? ""
+verdict(answer?.content?.[0]?.text === "wrote it" && added.includes("probe finding for 31-standards/p.md"),
+  "Pi lint: what the lint reports is added to the tool's result, after what the tool said", JSON.stringify(answer))
+const lintDir = existsSync(join(vault, "lint-project-dir")) ? readFileSync(join(vault, "lint-project-dir"), "utf8") : ""
+verdict(sameDir(lintDir, realpathSync(vault)), "Pi lint: the lint runs with CLAUDE_PROJECT_DIR naming the vault, not the one Pi inherited", lintDir.trim())
 rmSync(lintArgs, { force: true })
 await result(pi, "edit", { path: "@31-standards/q.md", edits: [] }, false)
-got = lintRecord()
-verdict(same(got, ["--", "31-standards/q.md"]), `Pi lint: an edit of @31-standards/q.md lints 31-standards/q.md${same(got, ["--", "31-standards/q.md"]) ? "" : ` -- got ${JSON.stringify(got)}`}`)
+verdict(same(lintRecord(), ["--", "31-standards/q.md"]), "Pi lint: an edit of @31-standards/q.md lints 31-standards/q.md", JSON.stringify(lintRecord()))
+await lintCase(pi, { path: "31-standards/O'Brien[1].md", content: "x" }, ["--", "31-standards/O'Brien[1].md"], "a name holding ' and [ ] reaches the lint as written")
+await lintCase(pi, { path: "p.md", content: "x" }, ["--", "31-standards/p.md"], "a write from a session started in 31-standards/ lints the vault-relative path", pi.at(join(vault, "31-standards")))
+if (dirLinked) {
+  const alias = join(dirname(vault), "alias")
+  symlinkSync(vault, alias, dirType)
+  await lintCase(pi, { path: "31-standards/p.md", content: "x" }, ["--", "31-standards/p.md"], "a session started through a link to the vault lints the vault-relative path", pi.at(alias))
+}
 rmSync(lintArgs, { force: true })
 await result(pi, "read", { path: "31-standards/p.md" }, false)
 verdict(lintRecord() === null, "Pi lint: a read is not linted")
@@ -1246,26 +1358,38 @@ const stubInput = join(vault, "stub-input")
 const stubRecord = () => (existsSync(stubInput) ? JSON.parse(readFileSync(stubInput, "utf8")) : null)
 const compact = (p, reason) =>
   p.handlers.session_compact({ type: "session_compact", compactionEntry: {}, fromExtension: false, reason, willRetry: false }, p.ctx)
-const gotStub = (good, stub) => (good ? "" : ` -- got ${JSON.stringify(stub)}`)
 await compact(pi, "threshold")
 let stub = stubRecord()
 const autoOk = stub?.session_id === "probe-session" && stub?.trigger === "auto" && stub?.transcript_path === join(vault, "probe-session.jsonl")
-verdict(autoOk, `Pi stub: an automatic compaction sends the session id, trigger auto and the session file${gotStub(autoOk, stub)}`)
+verdict(autoOk, "Pi stub: an automatic compaction sends the session id, trigger auto and the session file", JSON.stringify(stub))
+const stubDir = existsSync(join(vault, "stub-project-dir")) ? readFileSync(join(vault, "stub-project-dir"), "utf8") : ""
+verdict(sameDir(stubDir, realpathSync(vault)), "Pi stub: the stub runs with CLAUDE_PROJECT_DIR naming the vault", stubDir.trim())
 rmSync(stubInput, { force: true })
 await compact(pi, "manual")
 stub = stubRecord()
-verdict(stub?.trigger === "manual", `Pi stub: /compact sends trigger manual${gotStub(stub?.trigger === "manual", stub)}`)
-verdict(pi.notes.length === 0, `Pi extension: no warning while both scripts worked${pi.notes.length === 0 ? "" : ` -- got ${pi.notes.join(" | ")}`}`)
+verdict(stub?.trigger === "manual", "Pi stub: /compact sends trigger manual", JSON.stringify(stub))
+verdict(pi.notes.length === 0, "Pi extension: no warning while both scripts worked", pi.notes.join(" | "))
 
 await result(inner, "write", { path: "31-standards/n.md", content: "x" }, false)
 await result(inner, "write", { path: "31-standards/n.md", content: "x" }, false)
 const failed = inner.notes.filter((note) => note.includes("vault-lint.sh") && note.includes("exited 3"))
-verdict(failed.length === 1, `Pi extension: a lint that exits 3 is reported, once${failed.length === 1 ? "" : ` -- got ${JSON.stringify(inner.notes)}`}`)
+verdict(failed.length === 1, "Pi extension: a lint that exits 3 is reported, once", JSON.stringify(inner.notes))
+
+rmSync(lintArgs, { force: true })
+await result(stray, "write", { path: "31-standards/p.md", content: "x" }, false, stray.at(vault))
+await result(stray, "write", { path: "31-standards/p.md", content: "x" }, false, stray.at(vault))
+const strayNotes = stray.notes.filter((note) => note.includes("no vault holds"))
+verdict(strayNotes.length === 1 && lintRecord() === null,
+  "Pi extension: a copy kept outside any vault runs no vault's lint, and says so once", JSON.stringify(stray.notes))
 
 say("ran pi-extension-behaviour")
 PI_DRIVER_EOF
-  pi_out=$(PI_CODING_AGENT_DIR="$(pi_native "$TMP/pi/agent")" node "$(pi_native "$TMP/pi/driver.mjs")" \
-    "$(pi_native "$PIV")" "$(pi_native "$PIV2")" 2>"$TMP/pi/driver.err")
+  # A decoy CLAUDE_PROJECT_DIR, which the extension must not pass on, and a
+  # home folder inside secrets/, so that the ~ case needs expanding.
+  pi_out=$(CLAUDE_PROJECT_DIR="$(pi_native "$TMP/pi/decoy")" HOME="$(pi_native "$PIV/secrets")" \
+    USERPROFILE="$(pi_native "$PIV/secrets")" PI_CODING_AGENT_DIR="$(pi_native "$TMP/pi/agent")" \
+    node "$(pi_native "$TMP/pi/driver.mjs")" "$(pi_native "$PIV")" "$(pi_native "$PIV2")" "$(pi_native "$PIL")" \
+    2>"$TMP/pi/driver.err")
   pi_rc=$?
   pi_reached_end=0
   while IFS= read -r pi_line; do

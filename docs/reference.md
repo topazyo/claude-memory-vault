@@ -162,8 +162,9 @@ What it does, in order:
    anchored pattern `vault-check.sh` uses, so the two cannot disagree about where frontmatter ends.
 4. **Invisible-character scan** (content tiers **plus** `.claude/rules/`, `.claude/agents/`,
    `.claude/skills/`, `.agents/skills/`, Pi's `.pi/skills/` and `.pi/prompts/`, and any
-   `AGENTS.md`, `AGENTS.override.md`, `CLAUDE.md`, `GEMINI.md`, `.github/copilot-instructions.md`,
-   `.hermes.md`, `.pi/SYSTEM.md` or `.pi/APPEND_SYSTEM.md`, in any letter case; this is the one
+   `AGENTS.md`, `AGENTS.override.md`, `CLAUDE.md`, `CLAUDE.local.md`, `GEMINI.md`,
+   `.github/copilot-instructions.md`, `.hermes.md`, `.pi/SYSTEM.md` or `.pi/APPEND_SYSTEM.md`, in
+   any letter case; this is the one
    complete list, which the other documents point to): flags zero-width `U+200B`–`U+200D`,
    `U+FEFF`, and bidi controls `U+202A`–`U+202E`, `U+2066`–`U+2069`. This is the "Rules File
    Backdoor" class (steering files carrying instructions no reviewer can see), which is why the
@@ -223,8 +224,10 @@ output.
 Claude Code does not use it: `.claude/settings.json` denies the same paths natively. OpenCode's
 plugin applies the same test in JavaScript. Pi's opt-in extension applies its own, which first
 reads a path the way Pi's file tools will open it (a leading `@`, `~`, `file://` URLs, Windows
-drive and Git Bash forms, trailing dots and spaces, NTFS stream names and symbolic links) and
-compares names as NTFS does, and it fails closed when a file tool's call carries no path
+drive and Git Bash forms, trailing dots and spaces, NTFS stream names, and symbolic links,
+including one whose target does not exist yet) and compares names as NTFS does. It also refuses a
+grep whose glob could match a secret, because ripgrep lets a matching glob override `.gitignore`,
+and it fails closed when a `read`, `write` or `edit` call carries no path
 ([`docs/harnesses/pi.md`](harnesses/pi.md)). Like every deny here, it does not stop a shell
 command such as `cat`.
 
@@ -367,20 +370,30 @@ a lint that does nothing and a lint that found nothing wrong print the same thin
   path and lints it; the invisible-character scan covers `AGENTS.md`, `GEMINI.md` and
   `.github/copilot-instructions.md`.
 - **Pi's steering files** — the invisible-character scan covers `.pi/SYSTEM.md`,
-  `.pi/APPEND_SYSTEM.md`, `.pi/skills/`, `.pi/prompts/` and `AGENTS.override.md`, each by a
-  relative name from the vault root and by an absolute path, and leaves `.pi/other.md` and
-  `pi/SYSTEM.md` alone.
+  `.pi/APPEND_SYSTEM.md`, `.pi/skills/`, `.pi/prompts/`, `AGENTS.override.md` and
+  `CLAUDE.local.md`, each by a relative name from the vault root and by an absolute path, and
+  leaves `.pi/other.md` and `pi/SYSTEM.md` alone by either.
 - **Pi extension** — with Node 18 or later, `.claude/adapters/pi/vault.js` is loaded with a
-  stand-in for Pi's extension API and a fake vault whose hook scripts record what they get. Every
-  spelling of a secret path Pi would open is refused (`@.env`, `.ENV`, `.env.`, `.env `, an NTFS
-  stream name, `ſecrets/`, a `file://` URL with `%2Eenv`, `~/.env`, and on Windows `C:.env` and a
-  Git Bash `/c/...` path), and so are a grep `glob` naming `.env`, a `read` or `write` with no path,
-  and, where the host can make one, a symbolic link to `.env`. `.envrc`, `notes/env.md`, a note
-  called `secrets.md` and the notes of a vault kept inside a folder named `secrets` are let
-  through. A successful `write` or `edit` runs the lint with the vault-relative path, a failed one
-  and a `read` do not, a compaction sends the session id, trigger and session file to the stub,
-  and a lint that exits non-zero is reported once. The ids are `pi-extension-behaviour` and
-  `pi-extension-symlink`. A copy in `.pi/extensions/` must match the adapter.
+  stand-in for Pi's extension API and fake vaults whose hook scripts record what they get. Each of
+  these is refused: `@.env`, `.ENV`, `.env.`, `.env ` and a trailing no-break space, an NTFS
+  stream name, `secrets./x`, `ſecrets/`, a `file://` URL with `%2Eenv`, `~/` with the home folder
+  inside `secrets/`, a `file://` URL Pi cannot open, a grep glob that could match a secret (`.env*`,
+  `*`, `{.env,x}`, `secret?/**` and others), a `read` or `write` with no path, a file named from a
+  session started inside `secrets/` or below the root, and on Windows `C:.env`. Links are followed:
+  a linked `secrets` folder, a link to a folder or a `.env` that does not exist yet, a loop of
+  links, and `sub/secrets` even when it links to an ordinary folder are refused, and a link to an
+  ordinary note is not. Folder links are junctions on Windows, so those cases run there too, and
+  the file links need a host that can make them. `.envrc`, `notes/env.md`, a note called
+  `secrets.md`, a glob such as `*.md`, and the notes of a vault kept inside a folder named
+  `secrets` are let through, including by a Git Bash `/c/...` path on Windows. A successful
+  `write` or `edit` runs the lint with the vault-relative path, even from a subfolder or through a
+  link to the vault, with `CLAUDE_PROJECT_DIR` naming the vault rather than an inherited decoy, and
+  with a name holding `'` and `[ ]` intact; what the lint reports is added to the tool's result; a
+  failed write and a `read` are not linted. A compaction sends the session id, trigger and session
+  file to the stub, a lint that exits non-zero is reported once, and a copy of the adapter kept in
+  no vault runs no script and says so once. The ids are `pi-extension-behaviour`,
+  `pi-extension-dirlink` and `pi-extension-symlink`. A copy in `.pi/extensions/` must match the
+  adapter, and the adapter must never answer Pi's `project_trust` event.
 - **postcompact-wrap-up.sh** — two compactions of one session append to one stub, with and without
   `jq`; a `../` session id stays inside `20-projects/_logs/`; the 50-entry cap writes
   `CAP REACHED` exactly once.
@@ -413,26 +426,27 @@ a lint that does nothing and a lint that found nothing wrong print the same thin
   stopped with 125 together with a grandchild whose parent already exited, a timeout reaches that
   grandchild too, a failed stop marks and keeps the run lock, and in claude mode the summary line
   counts only inside the stream's result event.
-- **Dependency report** (informational, never fails the run) — whether `jq`, `perl`, or `grep -P`
-  are present, and what degrades without each.
+- **Dependency report** (informational, never fails the run) — whether `jq`, `perl`, `grep -P`
+  and `node` 18 or later are present, and what degrades without each.
 
 A control that cannot run on the platform in hand prints `SKIP [<id>] <reason> (not counted)`.
 Set `RUN_TESTS_REQUIRED` to a space-separated list of those ids and the suite fails any of them
-that did not run. The CI jobs set it per operating system, on Windows to
+that did not run. The CI jobs set it per operating system. On Windows the list includes
 
 ```
 win-native-tree noncesweep win-sweep-report win-orphan-stop win-fork-stop signal-scope
 runlog-tmp-case retention-junction
 ```
 
-and on Linux, macOS and bash 3.2 to
+and on Linux, macOS and bash 3.2 it includes
 
 ```
 groupkill symlink run-log-link run-log-dirlink reaped-group line-break-name signal-scope
 runlog-tmp-case keep-output-dirlink tripwire-name keep-output-fifo retention-symlink
 ```
 
-Both lists are one line each in `.github/workflows/ci.yml`, wrapped here only to fit the page.
+The complete lists, one line each, are in `.github/workflows/ci.yml`, and that file is the one to
+read.
 Adding a platform-gated control means adding its id there as well, because a control nobody
 requires can quietly stop running on the platform it was written for. A fake pass whose stop is reported as `KILL_FAILED` fails the suite at
 the end, and its marked lock and the tripwire its stop set are moved aside after that run, so the
@@ -1529,7 +1543,7 @@ while a note under `40-llm-wiki/wiki/` is covered by the six-tier rules only.
 | `jq` | reliable hook-input parsing | The lint falls back to a `sed` path parse and warns loudly; the compaction stub degrades to placeholders. **Not bundled with Git for Windows.** |
 | `perl` | the invisible-character scan | Falls back to `grep -P`; if that is absent too, the hook says the scan did not run. Present on macOS, most Linux distributions, and Git for Windows. |
 | `grep -P` | fallback for the same scan | A GNU extension — **absent on macOS BSD grep**, which is why `perl` is preferred rather than the other way round. |
-| `node` 18 or later | the control suite's Pi extension checks, and the Pi extension itself (Pi runs on Node) | The suite skips those checks with a reason, as `pi-extension-behaviour` and `pi-extension-symlink`, and nothing else changes. |
+| `node` 18 or later | the control suite's Pi extension checks | The suite skips those checks with a reason, as `pi-extension-behaviour`, `pi-extension-dirlink` and `pi-extension-symlink`, and nothing else changes. |
 | Obsidian + Dataview | the 13 dashboard queries | `VAULT-INDEX.md` renders as inert code fences. |
 
 ---

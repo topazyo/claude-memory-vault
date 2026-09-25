@@ -40,7 +40,7 @@ and the agent must follow it.
 | Windsurf / Devin Desktop | `AGENTS.md` natively | Via `AGENTS.md` | Hook | None | Denied (read hook) | Follow `SKILL.md` | Not covered |
 | Aider | `.aider.conf.yml` | `.aider.conf.yml` | Commit gate only | None | Guidance | Follow `SKILL.md` | Not recommended |
 | Hermes Agent | `AGENTS.md` natively | Via `AGENTS.md` | Hook (user config) | None | Guidance | `.agents/skills/` (after trust) | Command mode, in a container |
-| Pi | `AGENTS.md` natively | Via `AGENTS.md` | Extension (opt-in) | Extension (opt-in) | Denied by the opt-in extension | `.agents/skills/` (after trust) | Command mode, in a container |
+| Pi | `AGENTS.md` natively | Via `AGENTS.md` | Extension (opt-in) | Extension (opt-in) | Denied by the opt-in extension when a file tool names them | `.agents/skills/` (after trust) | Command mode, in a container |
 
 "Both skill folders" means the harness reads `.claude/skills/` and `.agents/skills/`. The two
 copies are byte-identical (the control suite fails if they drift). How each of those harnesses
