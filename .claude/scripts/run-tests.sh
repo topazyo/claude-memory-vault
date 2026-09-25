@@ -519,6 +519,33 @@ else
   bad "harness instruction files not scanned -- got: ${out_steer:-<silence>} / ${out_steer2:-<silence>}"
 fi
 
+# Pi's instruction files, and AGENTS.override.md, which Codex and Pi load in
+# place of AGENTS.md. Each in both forms the patterns have to catch: the
+# relative name the Pi extension passes from the vault root, and an absolute
+# path from a hook. Two look-alikes are the negative control, because a scan
+# widened to every file under .pi/ would pass the positive half as well.
+mkdir -p "$WORK/.pi/skills/probe" "$WORK/.pi/prompts" "$WORK/sub/.pi" "$WORK/pi"
+pi_steer_missed=""
+for pi_f in .pi/SYSTEM.md .pi/APPEND_SYSTEM.md .pi/skills/probe/SKILL.md .pi/prompts/probe.md \
+            AGENTS.override.md sub/.pi/SYSTEM.md sub/AGENTS.override.md; do
+  printf 'steering file with a hidden character:\342\200\213\n' > "$WORK/$pi_f"
+  pi_rel=$(cd "$WORK" && CLAUDE_PROJECT_DIR="$WORK" bash "$HOOK" -- "$pi_f" 2>&1 | strip_notices)
+  pi_abs=$(lint "$WORK/$pi_f" | strip_notices)
+  printf '%s' "$pi_rel" | grep -q "U+200B" || pi_steer_missed="$pi_steer_missed relative:$pi_f"
+  printf '%s' "$pi_abs" | grep -q "U+200B" || pi_steer_missed="$pi_steer_missed absolute:$pi_f"
+done
+for pi_f in .pi/other.md pi/SYSTEM.md; do
+  printf 'not a steering file:\342\200\213\n' > "$WORK/$pi_f"
+  pi_abs=$(lint "$WORK/$pi_f" | strip_notices)
+  printf '%s' "$pi_abs" | grep -q "U+200B" && pi_steer_missed="$pi_steer_missed widened-to:$pi_f"
+done
+if [ -z "$pi_steer_missed" ]; then
+  ok "invisible-char scan covers Pi's .pi/SYSTEM.md, .pi/APPEND_SYSTEM.md, .pi/skills/, .pi/prompts/ and AGENTS.override.md, by relative and absolute path, and not .pi/other.md or pi/SYSTEM.md"
+else
+  bad "Pi steering files and AGENTS.override.md scan --$pi_steer_missed"
+fi
+rm -rf "$WORK/.pi" "$WORK/sub" "$WORK/pi" "$WORK/AGENTS.override.md"
+
 # The invisible-character scan is the security control in this hook, and the
 # no-jq branch is a realistic default rather than an edge case, because Git for
 # Windows ships no jq. That branch was only ever proven to still find a missing
@@ -985,7 +1012,7 @@ else
 fi
 
 for cfg in .codex/hooks.json .gemini/settings.json .cursor/hooks.json .github/hooks/vault.json \
-           .windsurf/hooks.json .claude/adapters/opencode/vault.js; do
+           .windsurf/hooks.json .claude/adapters/opencode/vault.js .claude/adapters/pi/vault.js; do
   if [ ! -f "$ROOT/$cfg" ]; then
     bad "$cfg is missing"
     continue
@@ -1014,6 +1041,15 @@ if plugin_copy_ok "$ROOT/.claude/adapters/opencode/vault.js" "$ROOT/.opencode/pl
 else
   bad ".opencode/plugins/vault.js differs from .claude/adapters/opencode/vault.js"
 fi
+# Pi runs .pi/extensions/ once a project is trusted, and trust saved for a
+# folder covers every folder below it, so its extension ships opt-in on the
+# same terms.
+if plugin_copy_ok "$ROOT/.claude/adapters/pi/vault.js" "$ROOT/.pi/extensions/vault.js"; then
+  if [ -e "$ROOT/.pi/extensions/vault.js" ]; then ok "the enabled Pi extension matches the reviewed adapter"
+  else ok "the Pi extension is not copied into .pi/extensions/ on this clone (opt-in)"; fi
+else
+  bad ".pi/extensions/vault.js differs from .claude/adapters/pi/vault.js"
+fi
 
 # No shipped config may switch a harness's approvals off. Those settings belong
 # to a user who chose them, never to a template someone cloned.
@@ -1027,7 +1063,8 @@ else
   bad "positive control: an approval bypass went unnoticed"
 fi
 hits=$(cd "$ROOT" && bypass_hits .codex/config.toml .codex/hooks.json .gemini/settings.json .cursor/hooks.json \
-  .github/hooks/vault.json .windsurf/hooks.json opencode.json .aider.conf.yml .claude/adapters/opencode/vault.js)
+  .github/hooks/vault.json .windsurf/hooks.json opencode.json .aider.conf.yml .claude/adapters/opencode/vault.js \
+  .claude/adapters/pi/vault.js)
 if [ -z "$hits" ]; then ok "no shipped harness config turns approvals off"
 else bad "approval bypass in a shipped config -- $(printf '%s' "$hits" | tr '\n' ';')"; fi
 
@@ -1048,11 +1085,213 @@ else
   bad ".aider.conf.yml lacks git-commit-verify: true or gitignore: false"
 fi
 
+# ------------------------------------------------ the Pi extension ---------
+#
+# The Pi adapter is JavaScript, so it is driven through Node with a stand-in
+# for Pi's extension API: its handlers are called with the event shapes Pi's
+# source declares as of v0.87.1 (tool_call, tool_result, session_compact), in a
+# fake vault whose two hook scripts record what they were given. The guard is
+# a security control, so each way of spelling a secret path that Pi's own tools
+# would open is a case of its own, next to the names it must let through.
+
+printf '\n=== Pi extension (.claude/adapters/pi/vault.js) ===\n'
+
+pi_native() {  # pi_native <path> - the path in a form Node on Windows can open
+  if command -v cygpath >/dev/null 2>&1; then cygpath -m "$1"; else printf '%s' "$1"; fi
+}
+pi_node_version=""
+command -v node >/dev/null 2>&1 && pi_node_version=$(node --version 2>/dev/null)
+pi_node_major=${pi_node_version#v}
+pi_node_major=${pi_node_major%%.*}
+case "$pi_node_major" in ''|*[!0-9]*) pi_node_major=0 ;; esac
+if [ "$pi_node_major" -lt 18 ]; then
+  skip pi-extension-behaviour "Pi extension: needs node 18 or later, and found ${pi_node_version:-no node}"
+  skip pi-extension-symlink "Pi extension: needs node 18 or later, and found ${pi_node_version:-no node}"
+else
+  PIV="$TMP/pi/my vault"
+  PIV2="$TMP/pi/secrets/inner vault"
+  for pi_v in "$PIV" "$PIV2"; do
+    mkdir -p "$pi_v/.claude/adapters/pi" "$pi_v/.claude/hooks" "$pi_v/.claude/scripts" "$pi_v/31-standards"
+    # Node parses the adapter as an ES module only under .mjs, as CI does.
+    cp "$ROOT/.claude/adapters/pi/vault.js" "$pi_v/.claude/adapters/pi/vault.mjs"
+    : > "$pi_v/.claude/scripts/vault-check.sh"
+    cat > "$pi_v/.claude/hooks/postcompact-wrap-up.sh" <<'PI_STUB_EOF'
+#!/usr/bin/env bash
+cat > stub-input
+PI_STUB_EOF
+  done
+  cat > "$PIV/.claude/hooks/vault-lint.sh" <<'PI_LINT_EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$@" > lint-args
+PI_LINT_EOF
+  # The inner vault's lint fails, which both hook scripts never do by design,
+  # so the extension has to say so instead of going quiet.
+  printf '#!/usr/bin/env bash\nexit 3\n' > "$PIV2/.claude/hooks/vault-lint.sh"
+  cat > "$TMP/pi/driver.mjs" <<'PI_DRIVER_EOF'
+// Loads the adapter the way Pi does (its default export, called with the
+// extension API) and calls its handlers. One line per verdict for run-tests.sh:
+// "ok <text>", "bad <text>", "ran <id>" or "skip <id> <text>".
+import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import { join } from "node:path"
+import { pathToFileURL } from "node:url"
+
+const [vault, innerVault] = process.argv.slice(2)
+const say = (line) => process.stdout.write(`${line}\n`)
+const verdict = (good, text) => say(`${good ? "ok" : "bad"} ${text}`)
+
+async function load(root) {
+  const handlers = {}
+  const mod = await import(pathToFileURL(join(root, ".claude", "adapters", "pi", "vault.mjs")).href)
+  mod.default({ on: (name, handler) => { handlers[name] = handler } })
+  const notes = []
+  const ctx = {
+    cwd: root,
+    hasUI: true,
+    mode: "tui",
+    ui: { notify: (message) => notes.push(message) },
+    sessionManager: { getSessionId: () => "probe-session", getSessionFile: () => join(root, "probe-session.jsonl") },
+  }
+  return { handlers, ctx, notes }
+}
+
+async function call(pi, toolName, input) {
+  try {
+    const result = await pi.handlers.tool_call({ type: "tool_call", toolCallId: "c1", toolName, input }, pi.ctx)
+    if (result === undefined) return "allowed"
+    return result.block === true && typeof result.reason === "string" ? "refused" : `returned ${JSON.stringify(result)}`
+  } catch (error) {
+    return `threw ${error.message}`
+  }
+}
+
+const pi = await load(vault)
+const cases = [
+  ["read", { path: "secrets/x.txt" }, "refused", "a file under secrets/"],
+  ["read", { path: ".ENV" }, "refused", ".ENV in upper case"],
+  ["read", { path: "@.env" }, "refused", "@.env, which Pi opens as .env"],
+  ["read", { path: ".env." }, "refused", ".env. with a trailing dot"],
+  ["read", { path: ".env " }, "refused", ".env with a trailing space"],
+  ["read", { path: ".env " }, "refused", ".env with a trailing no-break space, which Pi reads as a space"],
+  ["read", { path: ".env::$DATA" }, "refused", ".env::$DATA, an NTFS stream name"],
+  ["read", { path: "secrets::$INDEX_ALLOCATION/x" }, "refused", "secrets::$INDEX_ALLOCATION/x"],
+  ["read", { path: "ſecrets/x" }, "refused", "ſecrets/x, which NTFS upper-cases to SECRETS"],
+  ["read", { path: `${pathToFileURL(vault).href}/%2Eenv` }, "refused", "a file:// URL spelling .env as %2Eenv"],
+  ["read", { path: "~/.env" }, "refused", "~/.env"],
+  ["write", { path: "notes/.env.local", content: "x" }, "refused", "a write to .env.local"],
+  ["edit", { path: "Secrets/k", edits: [] }, "refused", "an edit under Secrets/"],
+  ["grep", { pattern: "KEY", path: "secrets" }, "refused", "a grep of secrets/"],
+  ["grep", { pattern: "KEY", glob: ".env" }, "refused", "a grep whose glob names .env"],
+  ["find", { pattern: "*", path: "secrets" }, "refused", "a find in secrets/"],
+  ["ls", { path: "SECRETS" }, "refused", "an ls of SECRETS"],
+  ["read", {}, "refused", "a read with no path (fails closed)"],
+  ["write", { content: "x" }, "refused", "a write with no path (fails closed)"],
+  ["read", { path: "31-standards/secrets.md" }, "allowed", "a note named secrets.md"],
+  ["read", { path: ".envrc" }, "allowed", ".envrc"],
+  ["read", { path: "notes/env.md" }, "allowed", "notes/env.md"],
+  ["grep", { pattern: "x" }, "allowed", "a grep with no path"],
+  ["ls", {}, "allowed", "an ls with no path"],
+  ["bash", undefined, "allowed", "a tool the guard does not cover, with no input"],
+]
+if (process.platform === "win32") {
+  cases.push(["read", { path: `${vault.slice(0, 2)}.env` }, "refused", "a drive-relative C:.env"])
+  cases.push(["read", { path: `/${vault[0].toLowerCase()}${vault.slice(2).replaceAll("\\", "/")}/.env` }, "refused", "a Git Bash /c/... path to .env"])
+}
+for (const [tool, input, want, label] of cases) {
+  const got = await call(pi, tool, input)
+  verdict(got === want, `Pi guard: ${label} is ${want}${got === want ? "" : ` -- got ${got}`}`)
+}
+
+const inner = await load(innerVault)
+const innerNote = await call(inner, "read", { path: "31-standards/n.md" })
+verdict(innerNote === "allowed", `Pi guard: a vault inside a folder named secrets can still read its notes${innerNote === "allowed" ? "" : ` -- got ${innerNote}`}`)
+verdict((await call(inner, "read", { path: "secrets/x" })) === "refused", "Pi guard: that vault still refuses its own secrets/")
+
+writeFileSync(join(vault, ".env"), "PROBE=1\n")
+mkdirSync(join(vault, "secrets"), { recursive: true })
+let linked = false
+try {
+  symlinkSync(join(vault, ".env"), join(vault, "31-standards", "link.md"))
+  symlinkSync(join(vault, "secrets"), join(vault, "notes-link"), "dir")
+  linked = true
+} catch (error) {
+  say(`skip pi-extension-symlink Pi guard: this host cannot make a symbolic link (${error.code ?? error.message})`)
+}
+if (linked) {
+  say("ran pi-extension-symlink")
+  verdict((await call(pi, "read", { path: "31-standards/link.md" })) === "refused", "Pi guard: a note that is a link to .env is refused")
+  verdict((await call(pi, "write", { path: "notes-link/new.md", content: "x" })) === "refused", "Pi guard: a new file inside a linked secrets folder is refused")
+}
+
+const lintArgs = join(vault, "lint-args")
+const lintRecord = () => (existsSync(lintArgs) ? readFileSync(lintArgs, "utf8").split(/\r?\n/).filter(Boolean) : null)
+const result = (p, toolName, input, isError) =>
+  p.handlers.tool_result({ type: "tool_result", toolCallId: "c2", toolName, input, content: [], isError }, p.ctx)
+const same = (got, want) => JSON.stringify(got) === JSON.stringify(want)
+
+rmSync(lintArgs, { force: true })
+await result(pi, "write", { path: "31-standards/p.md", content: "x" }, true)
+verdict(lintRecord() === null, "Pi lint: a failed write is not linted")
+await result(pi, "write", { path: "31-standards/p.md", content: "x" }, false)
+let got = lintRecord()
+verdict(same(got, ["--", "31-standards/p.md"]), `Pi lint: a write runs vault-lint.sh -- 31-standards/p.md from the vault root${same(got, ["--", "31-standards/p.md"]) ? "" : ` -- got ${JSON.stringify(got)}`}`)
+rmSync(lintArgs, { force: true })
+await result(pi, "edit", { path: "@31-standards/q.md", edits: [] }, false)
+got = lintRecord()
+verdict(same(got, ["--", "31-standards/q.md"]), `Pi lint: an edit of @31-standards/q.md lints 31-standards/q.md${same(got, ["--", "31-standards/q.md"]) ? "" : ` -- got ${JSON.stringify(got)}`}`)
+rmSync(lintArgs, { force: true })
+await result(pi, "read", { path: "31-standards/p.md" }, false)
+verdict(lintRecord() === null, "Pi lint: a read is not linted")
+
+const stubInput = join(vault, "stub-input")
+const stubRecord = () => (existsSync(stubInput) ? JSON.parse(readFileSync(stubInput, "utf8")) : null)
+const compact = (p, reason) =>
+  p.handlers.session_compact({ type: "session_compact", compactionEntry: {}, fromExtension: false, reason, willRetry: false }, p.ctx)
+const gotStub = (good, stub) => (good ? "" : ` -- got ${JSON.stringify(stub)}`)
+await compact(pi, "threshold")
+let stub = stubRecord()
+const autoOk = stub?.session_id === "probe-session" && stub?.trigger === "auto" && stub?.transcript_path === join(vault, "probe-session.jsonl")
+verdict(autoOk, `Pi stub: an automatic compaction sends the session id, trigger auto and the session file${gotStub(autoOk, stub)}`)
+rmSync(stubInput, { force: true })
+await compact(pi, "manual")
+stub = stubRecord()
+verdict(stub?.trigger === "manual", `Pi stub: /compact sends trigger manual${gotStub(stub?.trigger === "manual", stub)}`)
+verdict(pi.notes.length === 0, `Pi extension: no warning while both scripts worked${pi.notes.length === 0 ? "" : ` -- got ${pi.notes.join(" | ")}`}`)
+
+await result(inner, "write", { path: "31-standards/n.md", content: "x" }, false)
+await result(inner, "write", { path: "31-standards/n.md", content: "x" }, false)
+const failed = inner.notes.filter((note) => note.includes("vault-lint.sh") && note.includes("exited 3"))
+verdict(failed.length === 1, `Pi extension: a lint that exits 3 is reported, once${failed.length === 1 ? "" : ` -- got ${JSON.stringify(inner.notes)}`}`)
+
+say("ran pi-extension-behaviour")
+PI_DRIVER_EOF
+  pi_out=$(PI_CODING_AGENT_DIR="$(pi_native "$TMP/pi/agent")" node "$(pi_native "$TMP/pi/driver.mjs")" \
+    "$(pi_native "$PIV")" "$(pi_native "$PIV2")" 2>"$TMP/pi/driver.err")
+  pi_rc=$?
+  pi_reached_end=0
+  while IFS= read -r pi_line; do
+    case "$pi_line" in
+      "ok "*)   ok "${pi_line#ok }" ;;
+      "bad "*)  bad "${pi_line#bad }" ;;
+      "ran "*)  ran "${pi_line#ran }"
+                [ "${pi_line#ran }" = pi-extension-behaviour ] && pi_reached_end=1 ;;
+      "skip "*) pi_rest=${pi_line#skip }
+                skip "${pi_rest%% *}" "${pi_rest#* }" ;;
+      "")       ;;
+      *)        bad "the Pi extension driver printed a line it should not: $pi_line" ;;
+    esac
+  done <<PI_OUT_EOF
+$pi_out
+PI_OUT_EOF
+  if [ "$pi_rc" -ne 0 ] || [ "$pi_reached_end" -ne 1 ]; then
+    bad "the Pi extension driver stopped early (exit $pi_rc) -- $(tail -n 5 "$TMP/pi/driver.err" 2>/dev/null | tr '\n' ' ' | cut -c1-600)"
+  fi
+fi
+
 # ------------------------------------------------ mirrored skills ----------
 #
-# Codex, Gemini CLI and Hermes read skills only from .agents/skills/, Claude
-# Code only from .claude/skills/. The two copies must stay byte-identical, or
-# harnesses silently follow different procedures.
+# Codex, Gemini CLI, Hermes and Pi read skills only from .agents/skills/,
+# Claude Code only from .claude/skills/. The two copies must stay
+# byte-identical, or harnesses silently follow different procedures.
 
 printf '\n=== mirrored skills (.claude/skills <-> .agents/skills) ===\n'
 
@@ -1875,9 +2114,9 @@ done
 if [ -n "$sf_loc" ]; then
   sf_out="$( . "$RV/.claude/scripts/lib/runner-common.sh"
     export LC_ALL="$sf_loc"
-    printf 'GEMINI.md\nCLAUDE.md\nAGENTS.md\n20-projects/_logs/ordinary.md\n' | steering_filter )"
+    printf 'GEMINI.md\nCLAUDE.md\nAGENTS.md\n.PI/extensions/x.js\n20-projects/_logs/ordinary.md\n' | steering_filter )"
   sf_bad=''
-  for sf_want in GEMINI.md CLAUDE.md AGENTS.md; do
+  for sf_want in GEMINI.md CLAUDE.md AGENTS.md .PI/extensions/x.js; do
     printf '%s\n' "$sf_out" | grep -qxF "$sf_want" || sf_bad="$sf_bad missed:$sf_want"
   done
   printf '%s\n' "$sf_out" | grep -qxF '20-projects/_logs/ordinary.md' && sf_bad="$sf_bad swept-an-ordinary-note"
@@ -3360,6 +3599,7 @@ rm -rf "$RV/.obsidian/plugins"
 sf_got="$( . "$ROOT/.claude/scripts/lib/runner-common.sh" && printf '%s\n' \
   '31-standards/.claude' '40-llm-wiki/wiki/sub/.agents' 'notes/AGENTS.override.md' \
   '.GitHub' '10-daily/2026-01-01.md' '.claude/logs/runner-tripwire' '.claude/logs/CLAUDE.md' '31-standards/claude-notes.md' \
+  '.pi/extensions/x.js' '.PI/settings.json' '31-standards/.pi' '31-standards/pi.md' '.pilot/notes.md' \
   '.obsidian/app.json' '40-llm-wiki/wiki/ext/.git' '31-standards/ext/.git/config' \
   '31-standards/ext/.git/hooks/post-checkout' '31-standards/ext/.git/index' \
   '31-standards/ext/.git/refs/heads/config' '31-standards/ext/.git/objects/ab/cdef' \
@@ -3369,8 +3609,8 @@ sf_got="$( . "$ROOT/.claude/scripts/lib/runner-common.sh" && printf '%s\n' \
   '31-standards/ext/.git/refs/tags/hooks/x' '31-standards/ext/.git/refs/remotes/origin/config' \
   '31-standards/ext/.git/refs/prefetch/remotes/origin/config' '31-standards/ext/.git/refs/notes/config' \
   '31-standards/ext/.git/refs/rewritten/hooks/x' | steering_filter | tr '\n' '|')"
-if [ "$sf_got" = '31-standards/.claude|40-llm-wiki/wiki/sub/.agents|notes/AGENTS.override.md|.GitHub|.claude/logs/CLAUDE.md|40-llm-wiki/wiki/ext/.git|31-standards/ext/.git/config|31-standards/ext/.git/hooks/post-checkout|31-standards/ext/.git/modules/refs/config|31-standards/ext/.git/modules/refs/hooks/post-checkout|31-standards/ext/.git/worktrees/logs/commondir|31-standards/ext/.git/info/attributes|31-standards/ext/.git/objects/info/alternates|' ]; then
-  ok "steering_filter matches harness folders as the last component, AGENTS.override.md, a planted file in .claude/logs, nested .git entries and their code files (in a submodule or worktree named refs or logs too), and ignores notes, runner logs, branches, tags and objects"
+if [ "$sf_got" = '31-standards/.claude|40-llm-wiki/wiki/sub/.agents|notes/AGENTS.override.md|.GitHub|.claude/logs/CLAUDE.md|.pi/extensions/x.js|.PI/settings.json|31-standards/.pi|40-llm-wiki/wiki/ext/.git|31-standards/ext/.git/config|31-standards/ext/.git/hooks/post-checkout|31-standards/ext/.git/modules/refs/config|31-standards/ext/.git/modules/refs/hooks/post-checkout|31-standards/ext/.git/worktrees/logs/commondir|31-standards/ext/.git/info/attributes|31-standards/ext/.git/objects/info/alternates|' ]; then
+  ok "steering_filter matches harness folders, Pi's .pi among them, as the last component too, AGENTS.override.md, a planted file in .claude/logs, nested .git entries and their code files (in a submodule or worktree named refs or logs too), and ignores notes, runner logs, branches, tags and objects"
 else
   bad "steering_filter classification -- got: $sf_got"
 fi
@@ -13362,6 +13602,11 @@ elif echo x | grep -qP x 2>/dev/null; then
   printf '  present  grep -P (invisible-character scan fallback)\n'
 else
   printf '  MISSING  perl and grep -P -- the invisible-character scan CANNOT RUN and will say so.\n'
+fi
+if [ "${pi_node_major:-0}" -ge 18 ] 2>/dev/null; then
+  printf '  present  node    %s (the Pi extension checks)\n' "$pi_node_version"
+else
+  printf '  MISSING  node 18+ -- the Pi extension checks were skipped, and said so.\n'
 fi
 
 printf '\n=== the suite itself (missing commands) ===\n'

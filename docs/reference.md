@@ -161,8 +161,10 @@ What it does, in order:
    and the block must contain `tier:` and `type:`. The closing fence is found with the same
    anchored pattern `vault-check.sh` uses, so the two cannot disagree about where frontmatter ends.
 4. **Invisible-character scan** (content tiers **plus** `.claude/rules/`, `.claude/agents/`,
-   `.claude/skills/`, and any `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` or
-   `.github/copilot-instructions.md`): flags zero-width `U+200B`–`U+200D`,
+   `.claude/skills/`, `.agents/skills/`, Pi's `.pi/skills/` and `.pi/prompts/`, and any
+   `AGENTS.md`, `AGENTS.override.md`, `CLAUDE.md`, `GEMINI.md`, `.github/copilot-instructions.md`,
+   `.hermes.md`, `.pi/SYSTEM.md` or `.pi/APPEND_SYSTEM.md`, in any letter case; this is the one
+   complete list, which the other documents point to): flags zero-width `U+200B`–`U+200D`,
    `U+FEFF`, and bidi controls `U+202A`–`U+202E`, `U+2066`–`U+2069`. This is the "Rules File
    Backdoor" class (steering files carrying instructions no reviewer can see), which is why the
    scan reaches the files that steer the agent, including the always-loaded ones the frontmatter
@@ -219,8 +221,12 @@ output.
 | Logs | `.claude/logs/read-guard.log` |
 
 Claude Code does not use it: `.claude/settings.json` denies the same paths natively. OpenCode's
-plugin applies the same test in JavaScript. Like every deny here, it does not stop a shell command
-such as `cat`.
+plugin applies the same test in JavaScript. Pi's opt-in extension applies its own, which first
+reads a path the way Pi's file tools will open it (a leading `@`, `~`, `file://` URLs, Windows
+drive and Git Bash forms, trailing dots and spaces, NTFS stream names and symbolic links) and
+compares names as NTFS does, and it fails closed when a file tool's call carries no path
+([`docs/harnesses/pi.md`](harnesses/pi.md)). Like every deny here, it does not stop a shell
+command such as `cat`.
 
 ### 3.3 `instructions-loaded-log.sh` — instruction-load audit
 
@@ -360,6 +366,21 @@ a lint that does nothing and a lint that found nothing wrong print the same thin
 - **No-jq fallback** — with `VAULT_FORCE_NO_JQ=1`, `vault-lint.sh` still parses an escaped Windows
   path and lints it; the invisible-character scan covers `AGENTS.md`, `GEMINI.md` and
   `.github/copilot-instructions.md`.
+- **Pi's steering files** — the invisible-character scan covers `.pi/SYSTEM.md`,
+  `.pi/APPEND_SYSTEM.md`, `.pi/skills/`, `.pi/prompts/` and `AGENTS.override.md`, each by a
+  relative name from the vault root and by an absolute path, and leaves `.pi/other.md` and
+  `pi/SYSTEM.md` alone.
+- **Pi extension** — with Node 18 or later, `.claude/adapters/pi/vault.js` is loaded with a
+  stand-in for Pi's extension API and a fake vault whose hook scripts record what they get. Every
+  spelling of a secret path Pi would open is refused (`@.env`, `.ENV`, `.env.`, `.env `, an NTFS
+  stream name, `ſecrets/`, a `file://` URL with `%2Eenv`, `~/.env`, and on Windows `C:.env` and a
+  Git Bash `/c/...` path), and so are a grep `glob` naming `.env`, a `read` or `write` with no path,
+  and, where the host can make one, a symbolic link to `.env`. `.envrc`, `notes/env.md`, a note
+  called `secrets.md` and the notes of a vault kept inside a folder named `secrets` are let
+  through. A successful `write` or `edit` runs the lint with the vault-relative path, a failed one
+  and a `read` do not, a compaction sends the session id, trigger and session file to the stub,
+  and a lint that exits non-zero is reported once. The ids are `pi-extension-behaviour` and
+  `pi-extension-symlink`. A copy in `.pi/extensions/` must match the adapter.
 - **postcompact-wrap-up.sh** — two compactions of one session append to one stub, with and without
   `jq`; a `../` session id stays inside `20-projects/_logs/`; the 50-entry cap writes
   `CAP REACHED` exactly once.
@@ -666,8 +687,9 @@ Around that call, each runner does several things an exit code cannot:
   time something opens the vault. So when the changed paths include a *steering or execution
   surface*, the runner contains it before anything else, including before it looks at the agent's
   exit code. Steering surfaces are the fenced Obsidian and git files above, memory, `.claude/`
-  except `logs/`, `.agents/`, each shipped harness's configuration folder or file, `.github/`,
-  `.vscode/`, and, **at any depth**, `CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md`,
+  except `logs/`, `.agents/`, each shipped harness's configuration folder or file, OpenCode's
+  `.opencode/` and Pi's `.pi/` (which the template does not ship but both harnesses run code from),
+  `.github/`, `.vscode/`, and, **at any depth**, `CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md`,
   `AGENTS.override.md`, `GEMINI.md`, `.mcp.json`, `.gitattributes`, `.gitignore` and any `.claude/`
   or other harness folder, including one that is the last part of the path, such as a symlink named
   `.claude`. Matching ignores case. A nested file counts because Claude Code loads
@@ -1507,6 +1529,7 @@ while a note under `40-llm-wiki/wiki/` is covered by the six-tier rules only.
 | `jq` | reliable hook-input parsing | The lint falls back to a `sed` path parse and warns loudly; the compaction stub degrades to placeholders. **Not bundled with Git for Windows.** |
 | `perl` | the invisible-character scan | Falls back to `grep -P`; if that is absent too, the hook says the scan did not run. Present on macOS, most Linux distributions, and Git for Windows. |
 | `grep -P` | fallback for the same scan | A GNU extension — **absent on macOS BSD grep**, which is why `perl` is preferred rather than the other way round. |
+| `node` 18 or later | the control suite's Pi extension checks, and the Pi extension itself (Pi runs on Node) | The suite skips those checks with a reason, as `pi-extension-behaviour` and `pi-extension-symlink`, and nothing else changes. |
 | Obsidian + Dataview | the 13 dashboard queries | `VAULT-INDEX.md` renders as inert code fences. |
 
 ---

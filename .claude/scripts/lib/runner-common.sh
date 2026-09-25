@@ -861,7 +861,7 @@ steering_filter() {
       # Every component, the last included: a symlink named .claude is a harness
       # folder too, wherever it points.
       for (i = 1; i <= n; i++) {
-        if (part[i] == ".claude" || part[i] == ".agents" || part[i] == ".codex" || part[i] == ".gemini" || part[i] == ".cursor" || part[i] == ".windsurf" || part[i] == ".opencode" || part[i] == ".github" || part[i] == ".vscode") return 1
+        if (part[i] == ".claude" || part[i] == ".agents" || part[i] == ".codex" || part[i] == ".gemini" || part[i] == ".cursor" || part[i] == ".windsurf" || part[i] == ".opencode" || part[i] == ".pi" || part[i] == ".github" || part[i] == ".vscode") return 1
       }
       return 0
     }

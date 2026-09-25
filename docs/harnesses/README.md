@@ -6,7 +6,8 @@ up once, and gives a prompt you paste into the harness so its agent onboards the
 the wiring works.
 
 The facts in these guides were checked against each harness's official documentation on
-2026-09-13, and every guide lists its sources. Harnesses change quickly. The onboarding checks
+2026-09-13, and the Pi guide against Pi's documentation and source on 2026-09-25. Every guide lists
+its sources. Harnesses change quickly. The onboarding checks
 exist so you prove the wiring on your own machine instead of trusting a page written on a
 different date.
 
@@ -21,6 +22,7 @@ different date.
 | Windsurf / Devin Desktop | [`windsurf.md`](windsurf.md) |
 | Aider | [`aider.md`](aider.md) |
 | Hermes Agent | [`hermes.md`](hermes.md) |
+| Pi | [`pi.md`](pi.md) |
 
 ## Support at a glance
 
@@ -38,6 +40,7 @@ and the agent must follow it.
 | Windsurf / Devin Desktop | `AGENTS.md` natively | Via `AGENTS.md` | Hook | None | Denied (read hook) | Follow `SKILL.md` | Not covered |
 | Aider | `.aider.conf.yml` | `.aider.conf.yml` | Commit gate only | None | Guidance | Follow `SKILL.md` | Not recommended |
 | Hermes Agent | `AGENTS.md` natively | Via `AGENTS.md` | Hook (user config) | None | Guidance | `.agents/skills/` (after trust) | Command mode, in a container |
+| Pi | `AGENTS.md` natively | Via `AGENTS.md` | Extension (opt-in) | Extension (opt-in) | Denied by the opt-in extension | `.agents/skills/` (after trust) | Command mode, in a container |
 
 "Both skill folders" means the harness reads `.claude/skills/` and `.agents/skills/`. The two
 copies are byte-identical (the control suite fails if they drift). How each of those harnesses

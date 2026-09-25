@@ -277,9 +277,8 @@ or enabled the commit gate, turn it off there too: that harness's own hook confi
 **`vault-lint.sh` always exits 0, by design.** It writes advice — missing `tier`/`type`
 frontmatter, and any zero-width or bidirectional-override codepoints it finds (the "Rules File
 Backdoor" class, where invisible characters hide instructions inside a note). The character scan
-is widened to `.claude/rules/`, `.claude/agents/`, `.claude/skills/`, and any `AGENTS.md`,
-`CLAUDE.md`, `GEMINI.md` or `.github/copilot-instructions.md` — the steering files that attack
-targets.
+is widened to the steering files that attack targets, such as `.claude/rules/`, the skills and any
+`AGENTS.md` or `CLAUDE.md`. [`reference.md`](reference.md) §3.1 has the full list.
 
 You could make it exit non-zero on a violation, but be clear about what that does and does not
 buy you:

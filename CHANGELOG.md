@@ -25,6 +25,74 @@ bash .claude/scripts/vault-update.sh --check --from ../template-new
 
 ---
 
+## 1.3.2 — 2026-09-25
+
+Pi, the terminal coding agent from Earendil Works, becomes the tenth harness with a guide. It gets an
+opt-in extension that guards the secret paths, lints written notes and records compactions, and an
+onboarding prompt whose checks prove the extension runs. The scheduled passes now contain a file
+planted under `.pi/`, and the lint's invisible-character scan reaches Pi's instruction files and
+`AGENTS.override.md`.
+
+### Added
+
+- **`docs/harnesses/pi.md`**, the guide: what ships, what is enforced and what stays guidance, the
+  one-time setup, the onboarding prompt and its checks, a wrapper for the scheduled passes, and its
+  sources, checked against Pi v0.87.1 on 2026-09-25.
+- **`.claude/adapters/pi/vault.js`, the extension, which is opt-in.** Pi runs `.pi/extensions/`
+  once a project is trusted, and it treats a trust decision saved for a folder as covering every
+  folder below it, so a vault cloned into a trusted folder would run a shipped extension without
+  asking. The extension therefore ships where Pi does not look, and you load it with `pi -e` or
+  copy it into `.pi/extensions/`. Once loaded it refuses a `read`, `write`, `edit`, `grep`, `find`
+  or `ls` call that names `.env`, `.env.*` or anything under `secrets/`, reading the path the way
+  Pi's own tools will open it, and it refuses a file-tool call that carries no path rather than
+  letting it through unchecked. It runs `vault-lint.sh` after each successful `write` and `edit`
+  and `postcompact-wrap-up.sh` after each compaction, and says once when either could not run.
+- **Controls for the extension**, driven through Node 18 or later: each spelling of a secret path
+  Pi would open, the names it must let through, the lint and stub calls, and the warning when a
+  script fails. Without Node they skip with a reason, and CI requires them on every job.
+
+### Changed
+
+- **A scheduled pass that writes under a `.pi/` folder is now contained.** `.pi` joins the harness
+  folders the runners treat as a steering or execution surface, in any letter case and at any
+  depth, because Pi runs code from `.pi/extensions/`, installs what `.pi/settings.json` declares
+  and replaces its system prompt from `.pi/SYSTEM.md`. Until now such a write was handled like any
+  other file the pass wrote, and left where the pass put it. Now the runner puts it aside and sets
+  `.claude/logs/runner-tripwire`, so later runs exit 78 until you have looked.
+- **The lint's invisible-character scan reaches Pi's instruction files**: `.pi/SYSTEM.md`,
+  `.pi/APPEND_SYSTEM.md`, `.pi/skills/` and `.pi/prompts/`.
+- **It also reaches `AGENTS.override.md`**, which Codex and Pi load in place of `AGENTS.md` in the
+  folder that holds it. That gap predates Pi: the runners already contained the file, and the lint
+  did not scan it.
+- **`docs/reference.md` §3.1 is now the one complete list of what the scan covers.** `README.md`,
+  `docs/setup.md` and `docs/customizing.md` point to it instead of repeating a list that had fallen
+  behind, since none of them named `.agents/skills/` or `.hermes.md`.
+- `AGENTS.md` §8, `docs/harnesses/README.md`, `README.md` and `docs/setup.md` name Pi alongside
+  the other harnesses. `docs/reference.md` describes Pi's guard and the new controls, lists Node as
+  an optional dependency of the suite, and names `.opencode/` and `.pi/` among the containment
+  surfaces. The comments in `postcompact-wrap-up.sh` name Pi's event.
+
+### Adopting this
+
+Take the changed owned files. The one that changes what your vault does is
+`.claude/scripts/lib/runner-common.sh`: once you have it, a scheduled pass that writes under `.pi/`
+sets the tripwire, and later runs exit 78 until you have looked. If you already use Pi and keep a
+`.pi/` folder in your vault, look at what it holds before you take that file, because a pass that
+writes there will now stop the schedule. `.claude/hooks/vault-lint.sh` scans five more kinds of
+steering file and still always exits 0. `AGENTS.md` is a standing instruction every harness loads,
+and its §8 table names Pi in five rows.
+
+The rest is documentation, comments and the control suite. `docs/harnesses/pi.md` and
+`.claude/adapters/pi/vault.js` are new. `docs/harnesses/README.md`, `docs/reference.md`,
+`docs/setup.md`, `docs/customizing.md`, `.claude/hooks/postcompact-wrap-up.sh` and
+`.claude/scripts/run-tests.sh` changed, and `VERSION` and `CHANGELOG.md` move as on every release.
+Nothing runs the extension until you load it, so to use Pi with this vault, follow
+`docs/harnesses/pi.md`. No rule, note, frontmatter key or checker changed.
+
+`README.md` changed too, and it is seed, so your copy stays as you wrote it.
+
+---
+
 ## 1.3.1 — 2026-09-25
 
 Of the files a vault is offered, this release changes only the control suite. Some of its run-lock

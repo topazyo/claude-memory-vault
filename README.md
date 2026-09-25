@@ -20,8 +20,9 @@ your own knowledge.
 Markdown and bash, and `AGENTS.md` is the entry point every agent reads. Claude Code gets the
 most automation, because the template ships hooks, subagents and a Read deny for it in `.claude/`.
 The template also ships working config for Codex CLI, Gemini CLI, Cursor, GitHub Copilot, OpenCode,
-Windsurf / Devin Desktop and Aider, plus a setup snippet for Hermes Agent. Each gets hooks or a
-plugin for the lint where the harness supports one, and every harness gets an opt-in git
+Windsurf / Devin Desktop and Aider, an opt-in extension for Pi, plus a setup snippet for Hermes
+Agent. Each gets hooks, a plugin or an extension for the lint where the harness supports one, and
+every harness gets an opt-in git
 pre-commit gate. [`docs/harnesses/`](docs/harnesses/README.md) has a guide for each, with a prompt
 that has the agent onboard the vault and prove the wiring works, and the
 [harness support table](AGENTS.md#8-harness-support) lists exactly what each harness enforces. The
@@ -157,6 +158,7 @@ claude-memory-vault/
 │   ├── settings.json                # Claude Code: registers the three hooks; denies reads of .env and secrets/
 │   ├── githooks/pre-commit          # opt-in commit gate for any harness: runs vault-check.sh
 │   ├── adapters/opencode/vault.js   # OpenCode plugin, opt-in: copy to .opencode/plugins/ to enable
+│   ├── adapters/pi/vault.js         # Pi extension, opt-in: load with pi -e, or copy to .pi/extensions/
 │   ├── agents/
 │   │   ├── dream-agent.md           # scheduled consolidation; READ-AND-PROPOSE ONLY, one output file
 │   │   └── promotion-agent.md       # weekly medium → long promotion, no shell, the runner commits its notes
@@ -454,9 +456,9 @@ reporting clean. The lint hook needs `jq` to parse hook input (without it, it fa
 `sed` path-parse and warns), and `perl` (preferred) or `grep -P` to scan for zero-width and
 bidirectional-override codepoints. That is the "Rules File Backdoor" class, where invisible
 characters hide instructions inside a file that looks innocuous in every editor. The scan covers
-the content tiers plus the files that steer the model: `.claude/rules/`, `.claude/agents/`,
-`.claude/skills/`, and any `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` or
-`.github/copilot-instructions.md`. If neither scanner is available, the hook reports that the scan
+the content tiers plus the files that steer the model, such as `.claude/rules/`, the skills and any
+`AGENTS.md` or `CLAUDE.md`, with the full list in [`docs/reference.md`](docs/reference.md) §3.1.
+If neither scanner is available, the hook reports that the scan
 **did not run** rather than passing the file. It still exits 0, and it could not do otherwise: a
 post-write hook fires *after* the write has landed on disk, so no exit code from it could ever
 block one. The lint is advisory by construction, not by choice. The pre-commit gate is the place

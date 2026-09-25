@@ -134,11 +134,13 @@ lint_file() {
   esac
 
   # character-scan scope: content tiers PLUS every file that steers an agent -
-  # .claude/rules/, .claude/agents/, .claude/skills/, and the instruction files
-  # the common harnesses load at startup (AGENTS.md, CLAUDE.md, GEMINI.md,
-  # .github/copilot-instructions.md). The Rules File Backdoor targets exactly
-  # these steering files, which the tier-scoped frontmatter check above never
-  # reaches. The instruction files are the ones loaded most eagerly, so leaving
+  # .claude/rules/, .claude/agents/, .claude/skills/, .agents/skills/, and the
+  # instruction files the shipped harnesses load (AGENTS.md, AGENTS.override.md,
+  # CLAUDE.md, GEMINI.md, .github/copilot-instructions.md, .hermes.md, and Pi's
+  # .pi/SYSTEM.md, .pi/APPEND_SYSTEM.md, .pi/skills/ and .pi/prompts/), which
+  # docs/reference.md section 3.1 lists in full. The Rules File Backdoor targets
+  # exactly these steering files, which the tier-scoped frontmatter check above
+  # never reaches. The instruction files are the ones loaded most eagerly, so leaving
   # them out would scan the lazily-loaded files and skip the always-loaded ones.
   # Widen this scan only, not the frontmatter check.
   #
@@ -159,9 +161,12 @@ lint_file() {
     *"/.claude/rules/"*|*"/.claude/agents/"*|*"/.claude/skills/"*) IS_CHAR_SCAN_SCOPE=1 ;;
     .claude/rules/*|.claude/agents/*|.claude/skills/*) IS_CHAR_SCAN_SCOPE=1 ;;
     */CLAUDE.md|CLAUDE.md|*/AGENTS.md|AGENTS.md|*/GEMINI.md|GEMINI.md) IS_CHAR_SCAN_SCOPE=1 ;;
+    */AGENTS.override.md|AGENTS.override.md) IS_CHAR_SCAN_SCOPE=1 ;;
     */.github/copilot-instructions.md|.github/copilot-instructions.md) IS_CHAR_SCAN_SCOPE=1 ;;
     */.hermes.md|.hermes.md) IS_CHAR_SCAN_SCOPE=1 ;;
     *"/.agents/skills/"*|.agents/skills/*) IS_CHAR_SCAN_SCOPE=1 ;;
+    */.pi/SYSTEM.md|.pi/SYSTEM.md|*/.pi/APPEND_SYSTEM.md|.pi/APPEND_SYSTEM.md) IS_CHAR_SCAN_SCOPE=1 ;;
+    *"/.pi/skills/"*|.pi/skills/*|*"/.pi/prompts/"*|.pi/prompts/*) IS_CHAR_SCAN_SCOPE=1 ;;
   esac
   shopt -u nocasematch
 
