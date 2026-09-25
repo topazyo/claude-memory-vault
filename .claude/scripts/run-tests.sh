@@ -8787,6 +8787,11 @@ case "$me:$mode" in
         fi ;;
     esac
     exit "$rc" ;;
+  mkdir:term)
+    "$real" "$@"
+    rc=$?
+    case "$args" in *"/nohooks "*) first mkdir && kill -TERM "$PPID" ;; esac
+    exit "$rc" ;;
   mkdir:line)
     case "$args" in
       *" -p "*) ;;
@@ -8955,6 +8960,8 @@ fi
 # returned 1 and bash hands that to the EXIT trap. The holder's lock is left
 # alone every time. The TERM case also runs with RUN_PID in its environment,
 # naming a process that is not the run's, which must still be running after.
+# While the run waits it has no working folder, so on_signal stops nothing then
+# anyway; the control that holds the reset of RUN_PID is inherited-pid.
 rp_bad=''
 for rp_case in sig-term:TERM:abc:60 sig-first:TERM:1:60 sig-usr1:USR1:30:5; do
   rp_name="${rp_case%%:*}"
@@ -9108,6 +9115,29 @@ if [ -z "$rp_bad" ]; then
   ok "a run lock named by the caller's environment is left alone by a run that refuses before taking its own"
 else
   bad "a run removed a lock its environment named, or did not say why it refused --$rp_bad printed: [$(tr '\n' '|' < "$RF.out" 2>/dev/null | cut -c1-600)]"
+fi
+
+# A process id the caller's environment names as RUN_PID, and a TERM sent by a
+# mkdir stand-in as the run makes its working folder: the first moment a signal
+# has on_signal stop a watched git's processes, and before any watched git has
+# run. The process is not the run's, and must still be running afterwards.
+RF="$(ret_copy inherited-pid)"
+ret_shims "$RET/shim-pid" mkdir
+"$RET_SH_SLEEP" 120 &
+rp_victim=$!
+rp_bad=''
+rp_rc="$( export RET_SH_FLAGS="$RET/shim-pid.flags" RET_SH_MKDIR_DO=term RUN_PID="$rp_victim"
+  RET_PATH="$RET/shim-pid" ret_out "$RF" "$RF.out" --dry-run )"
+[ "$rp_rc" = 143 ] || rp_bad="$rp_bad rc:$rp_rc"
+[ -f "$RET/shim-pid.flags/mkdir" ] || rp_bad="$rp_bad never-landed"
+kill -0 "$rp_victim" 2>/dev/null || rp_bad="$rp_bad stopped-a-process-not-its-own"
+kill "$rp_victim" 2>/dev/null
+wait "$rp_victim" 2>/dev/null
+[ "$(tail -n 1 "$RF.out" 2>/dev/null)" = "$(printf "$ro_failed" 143)" ] || rp_bad="$rp_bad last"
+if [ -z "$rp_bad" ]; then
+  ok "a process id named by the caller's environment is left alone by a signal that arrives before any git of the run's own"
+else
+  bad "a run's signal handling stopped a process its environment named --$rp_bad printed: [$(tr '\n' '|' < "$RF.out" 2>/dev/null | cut -c1-600)]"
 fi
 
 # A hook planted while the run waits for the lock. The pass holding the lock is
