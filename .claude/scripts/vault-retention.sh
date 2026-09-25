@@ -266,15 +266,20 @@ safe_name() {
 # by awk: a reader that stops reading then holds up this process, which TERM
 # ends, and not a child that would go on holding the caller's pipe once the run
 # is gone. When that file cannot be written, the temporary folder being full or
-# something in its place, awk prints them itself, as it did before.
+# something in its place, the lines are made ready in the shell's memory
+# instead, and printed by it all the same.
 print_run() {
-  local line
+  local line lines
   if [ -z "$RUN_LOG" ]; then
     printf 'vault-retention: no copy of what this run logged could be kept, so it is only in .claude/logs/vault-retention.log.\n'
   elif [ ! -r "$RUN_LOG" ]; then
     printf 'vault-retention: this run'"'"'s copy of what it logged could not be read back, so it is only in .claude/logs/vault-retention.log.\n'
   elif ! render_run > "$COPY_DIR/print" 2>/dev/null; then
-    render_run
+    if lines="$(render_run 2>/dev/null)" && [ -n "$lines" ]; then
+      printf '%s\n' "$lines"
+    else
+      printf 'vault-retention: this run'"'"'s copy of what it logged could not be read back, so it is only in .claude/logs/vault-retention.log.\n'
+    fi
   else
     while IFS= read -r line; do printf '%s\n' "$line"; done < "$COPY_DIR/print"
   fi

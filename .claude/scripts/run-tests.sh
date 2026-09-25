@@ -9176,15 +9176,18 @@ if is_windows_host; then
   ret_dream_commit "$RF" "dream-${RET_DATE[90]}.md"
   ret_shims "$RET/shim-nonce" git
   rp_token="retention-victim-$$-$RANDOM"
-  bash -c "trap 'kill \$! 2>/dev/null; exit 0' TERM; \"$RET_SH_SLEEP\" 60 & wait; : $rp_token" &
+  # Far longer than a run takes, so that a victim gone afterwards was stopped.
+  bash -c "trap 'kill \$! 2>/dev/null; exit 0' TERM; \"$RET_SH_SLEEP\" 600 & wait; : $rp_token" &
   rp_victim=$!
   rp_bad=''
+  rp_t0="$(date +%s)"
   rp_rc="$( export RET_SH_FLAGS="$RET/shim-nonce.flags" RET_SH_GIT_DO=quiet RET_SH_QUIET=10 RUN_NONCE="$rp_token"
     RET_GIT_TIMEOUT=1 RET_PATH="$RET/shim-nonce" ret_out "$RF" "$RF.out" --dry-run )"
+  rp_took=$(( $(date +%s) - rp_t0 ))
   ran retention-inherited-nonce
   [ "$rp_rc" = 75 ] || rp_bad="$rp_bad rc:$rp_rc"
   [ -f "$RET/shim-nonce.flags/git" ] || rp_bad="$rp_bad never-quiet"
-  kill -0 "$rp_victim" 2>/dev/null || rp_bad="$rp_bad stopped-a-process-not-its-own"
+  kill -0 "$rp_victim" 2>/dev/null || rp_bad="$rp_bad stopped-a-process-not-its-own(the run took ${rp_took}s)"
   kill "$rp_victim" 2>/dev/null
   wait "$rp_victim" 2>/dev/null
   if [ -z "$rp_bad" ]; then
@@ -9300,15 +9303,13 @@ rp_pid="$(cat "$RF.pid" 2>/dev/null)"
 rp_w=0
 while ! grep -q 'OK: there is nothing' "$(ret_log "$RF")" 2>/dev/null && kill -0 "$rp_pid" 2>/dev/null && [ "$rp_w" -lt 300 ]; do "$RET_SH_SLEEP" 1; rp_w=$((rp_w + 1)); done
 # The printing starts once the lines are made ready, which on a slow awk takes a
-# while at this size: a print file in the copy folder whose size has stopped
-# changing. TERM goes a moment after that, so that it lands in the printing and
-# not while awk is still making the lines ready.
+# while at this size: a print file in the copy folder that ends on the run's own
+# last line, which awk writes last. TERM goes a moment after that, so that it
+# lands in the printing and not while awk is still making the lines ready.
 rp_w=0
-rp_prev=-1
-while [ "$rp_w" -lt 60 ] && kill -0 "$rp_pid" 2>/dev/null; do
-  rp_size="$(find "$RF.tmp" -mindepth 2 -maxdepth 2 -type f -name print -exec wc -c {} + 2>/dev/null | awk 'NR == 1 { print $1 + 0 }')"
-  [ -n "$rp_size" ] && [ "$rp_size" = "$rp_prev" ] && break
-  rp_prev="${rp_size:--1}"
+while [ "$rp_w" -lt 120 ] && kill -0 "$rp_pid" 2>/dev/null; do
+  rp_print="$(find "$RF.tmp" -mindepth 2 -maxdepth 2 -type f -name print 2>/dev/null | head -n 1)"
+  [ -n "$rp_print" ] && [ "$(tail -n 1 "$rp_print" 2>/dev/null)" = "vault-retention: OK: there is nothing in 20-projects/_logs to evaluate." ] && break
   "$RET_SH_SLEEP" 1
   rp_w=$((rp_w + 1))
 done
@@ -9333,7 +9334,7 @@ elif [ -n "$rp_pid" ] && kill -0 "$rp_pid" 2>/dev/null; then
     rp_got="$(tr -d ' ' < "$RF.count" 2>/dev/null)"
     rp_whole="$(find "$RF.tmp" -mindepth 2 -type f -name print -exec wc -c {} + 2>/dev/null | awk 'NR == 1 { print $1 + 0 }')"
     [ -n "$rp_got" ] || rp_bad="$rp_bad the-pipe-was-still-held"
-    [ "${rp_got:-0}" -gt 0 ] 2>/dev/null || rp_bad="$rp_bad never-reached-the-printing"
+    [ -z "$rp_got" ] || [ "$rp_got" -gt 0 ] 2>/dev/null || rp_bad="$rp_bad never-reached-the-printing"
     [ -n "$rp_whole" ] || rp_bad="$rp_bad no-copy-left"
     [ -n "$rp_got" ] && [ -n "$rp_whole" ] && [ "$rp_got" -ge "$rp_whole" ] && rp_bad="$rp_bad printed-on-after-the-run($rp_got of $rp_whole)"
     [ "$(find "$RF.tmp" -mindepth 2 -type d 2>/dev/null | awk 'END { print NR + 0 }')" = 0 ] || rp_bad="$rp_bad a-folder-left-in-the-copy"

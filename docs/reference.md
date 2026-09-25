@@ -398,9 +398,10 @@ a lint that does nothing and a lint that found nothing wrong print the same thin
 A control that cannot run on the platform in hand prints `SKIP [<id>] <reason> (not counted)`.
 Set `RUN_TESTS_REQUIRED` to a space-separated list of those ids and the suite fails any of them
 that did not run. Each CI job sets it for its own platform in `.github/workflows/ci.yml`: four
-lists, for Windows, Linux and macOS in the matrix job's line and for the bash 3.2 job in its own. A
-step in the hygiene job compares them with the lists of the branch a change lands on, and fails
-when one loses an id that the change does not name as retired. Adding a platform-gated control
+lists, for Windows, Linux and macOS in the matrix job's line and for the bash 3.2 job in its own. In
+the template's own repository a step in the hygiene job compares them with the lists of the branch
+a change lands on, and fails when one loses an id that the change does not name as retired; in a
+vault made from the template that step does not run. Adding a platform-gated control
 means adding its id there as well, because a control nobody requires can quietly stop running on
 the platform it was written for.
 
