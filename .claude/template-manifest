@@ -12,7 +12,7 @@
 # Each entry is "<class> <sha256> <path>". owned is template machinery and
 # seed was shipped once and is yours now. Paths absent from this file are
 # yours and are never read.
-version 1.3.0
+version 1.3.1
 hash sha256
 owned 04f1a09f05fa705129cc0387c96c6fffa1a855c53e3a0ffae592087bef2fdfed .agents/skills/obsidian-save/SKILL.md
 owned e1a10cb4a4506aa2f3b2c06e2582b23d479833d6866d7e1e2361d369717b43b4 .agents/skills/onboard-project/SKILL.md
@@ -37,7 +37,7 @@ owned a50a2118e7db218c99ff512a386381fce7b4f2ae4f7f7f7ccde51a01a8d67d3e .claude/s
 owned 9e6d54e96e047daf7a6880543ef72776c2405d3ed31bc2b32caa118d51a8b980 .claude/scripts/lib/runner-common.sh
 owned 95e5d269d414120d3161dc220769a4bc3640fd03b8b144a1a4c8756f075d3ac0 .claude/scripts/promotion-pass.cmd
 owned b970042c616ed678f261880f5707b87321579ad2dbf5f2fb0798dc41d3a82a60 .claude/scripts/promotion-pass.sh
-owned f1c80089991ed31a15eb1770e53bf2407eac3152545833aafbb255c6586ac9b1 .claude/scripts/run-tests.sh
+owned f36f3cf53b35018f5d77de2953d4d24d5b94ee89ae920cae00055b7dd0d0fdb7 .claude/scripts/run-tests.sh
 owned 9b1452f95e10311c165212adfbbe85251d6b4776ba4d4eacec2d2f10b64d3b8c .claude/scripts/vault-check.sh
 owned b4c66fcbd06bed308ef89b2efc62392c717d6cb41bd53c3857a9d028ef0d7993 .claude/scripts/vault-retention.cmd
 owned c63b6a2767389293f35e8f96599ee18d5e93e7b8c6b115644f4df1a24d3ab8ec .claude/scripts/vault-retention.sh
@@ -83,11 +83,11 @@ owned 3c717fccd4318c3e5b298dd89cc69efb23a874c422bcd781502c0937334c7e51 40-llm-wi
 seed e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 90-auto-memory/.gitkeep
 seed e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 99-archive/.gitkeep
 owned 9864bf29da837563fcf9e40cff78c01664bac5723ca0201035a9ea459953725e AGENTS.md
-owned e36e112a7f346a767547ceeda175eb4a112c2862954f2286819b279cb0027e40 CHANGELOG.md
+owned de7b4e5480a25bbf909ccdc89a4cf49c4a9a32545ba953737f38ae186c611408 CHANGELOG.md
 owned 98eb7be29c109a98805f2d612c422a4e05926201d385189131cb6b81cd3e0b12 CLAUDE.md
 owned 7960cfa62e9e835500310e6eb59f85bdab2e2e15ec9c6f28f4f4ae9c1f8e30d7 LICENSE
 seed 09b0e0fecdfb3f969dae2a906eb62e171a13f69eae4be02156e69ac13007fe66 README.md
-owned 64d23f858ef51b0f996e4966d4e27c0371b437e2d2787890b1f7ad22d4ec5663 VERSION
+owned 10e2e117b01523891ca271a615ae36e9d5e52348fd7d642f66727602c1b8dcbe VERSION
 owned 497c539da2306580f4592b77493a923a964a8cb06052c75b1aa0226dc261fb01 docs/agent-onboarding.md
 owned 76bb48b79b0f214cab92f70e21273ffc95a15a8c9355c93b9c21c60f438bb23c docs/concepts.md
 owned 0ed826ae4454a31256a5620e74bc49ab1ac8f381ddd27069b6726c9d821caabe docs/customizing.md
