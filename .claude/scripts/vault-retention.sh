@@ -41,8 +41,9 @@
 #   Every line a run logs goes to .claude/logs/vault-retention.log and to a copy
 #   kept for that run alone, and the copy is printed on standard output as the
 #   run ends, as "vault-retention: <text>" without the timestamp. A run that
-#   ends with any code but 0 adds one last line saying which. Cron mails what it
-#   prints. docs/reference.md 4.3.1 has the contract. See print_run.
+#   ends with any code but 0 adds one last line saying which, apart from the few
+#   ends docs/reference.md 4.3.1 lists, which has the whole contract. Cron mails
+#   what it prints. See print_run.
 #
 # Environment:
 #   RETENTION_DAYS       days before a journal or stub may move (default 60)
@@ -112,6 +113,15 @@ LIB_LOG=""
 # once main has returned. See main and print_run.
 OUT_FD=9
 MAIN_DONE=0
+# How on_signal behaves, and what it has held back. SIGNALLED is 1 once it has
+# acted on a signal, IN_EXIT once on_exit has begun and COPYING while lib_logged
+# copies; in those last two it only records the signal, in EXIT_SIG or
+# COPY_SIG, to be acted on when that is done.
+SIGNALLED=0
+IN_EXIT=0
+COPYING=0
+EXIT_SIG=""
+COPY_SIG=""
 STATE=""
 ROOT=""
 HOOKS=""
@@ -160,13 +170,19 @@ say() {  # say <text> - one timestamped line in the log, and the same in RUN_LOG
 # wrote there is added to the log and to RUN_LOG as soon as each call returns.
 # A run killed outright while a call is still going, which in practice means
 # while it waits for the run lock, therefore leaves that call's lines out of the
-# log. A signal that lands between the two copies can leave them in one file
-# twice.
+# log. A signal that lands while it copies is held until the copies are done,
+# so that each line reaches each file once.
 lib_logged() {
+  local held=""
   [ -n "$RUN_LOG" ] && [ -s "$LIB_LOG" ] || return 0
+  COPYING=1
   cat "$LIB_LOG" >> "$LOG" 2>/dev/null
   cat "$LIB_LOG" >> "$RUN_LOG" 2>/dev/null
   : 2>/dev/null > "$LIB_LOG"
+  COPYING=0
+  held="$COPY_SIG"
+  COPY_SIG=""
+  [ -z "$held" ] || on_signal "$held"
 }
 
 # safe_name <name> - a name with its invisible bytes spelled out, for a log line
@@ -275,27 +291,26 @@ print_run() {
       }
       END { if (!shown) print "vault-retention: this run wrote nothing to its log before it stopped." }' "$RUN_LOG"
   fi
-  if [ "$1" -ne 0 ]; then
+  if [ "$MAIN_DONE" -ne 1 ] && [ "$SIGNALLED" -ne 1 ]; then
+    # Neither main nor on_signal ended the run, so bash stopped it: an error in
+    # the script itself, or a signal no trap here catches. The status the EXIT
+    # trap is handed then does not say which, nor what the caller will see, so
+    # no number is given.
+    printf 'vault-retention: FAILED: this run stopped before it finished, on an error in the script itself or a signal it does not catch. The lines above are what it logged, and the header of vault-retention.sh says what its exit code means.\n'
+  elif [ "$1" -ne 0 ]; then
     printf 'vault-retention: FAILED: this run ended with exit %s. The lines above are what it logged, and the header of vault-retention.sh says what the number means.\n' "$1"
-  elif [ "$MAIN_DONE" -ne 1 ]; then
-    # A signal no trap here catches ends bash with the EXIT trap seeing 0, as
-    # if main had returned it.
-    printf 'vault-retention: FAILED: this run was ended by a signal it does not catch, before it finished. The lines above are what it logged, and the header of vault-retention.sh says what that means.\n'
   fi
 }
 
 on_exit() {
   local st=$?
-  # A signal while the last of the library's lines are passed on and the lock is
-  # let go is kept rather than acted on, so neither is cut short, and kept
-  # rather than ignored, so a TERM sent then still ends the run: once the lock is
-  # gone it is sent again, and the run ends there without printing, its lines
-  # being in the log. A reader that has gone away costs a write error rather
-  # than a signal that replaces the exit code.
-  EXIT_SIG=""
-  trap 'EXIT_SIG=INT' INT
-  trap 'EXIT_SIG=TERM' TERM
-  trap 'EXIT_SIG=HUP' HUP
+  # From here on_signal only records a signal, so neither the last of the
+  # library's lines nor the release of the lock is cut short, and a TERM sent
+  # meanwhile is not lost: once the lock is gone it is sent again, and the run
+  # ends there without printing, its lines being in the log. A reader that has
+  # gone away costs a write error rather than a signal that replaces the exit
+  # code.
+  IN_EXIT=1
   trap '' PIPE
   lib_logged
   run_lock_release
@@ -315,8 +330,18 @@ on_exit() {
 
 # On INT, TERM or HUP: stop a watched git command, then settle what the moves
 # did. A second signal while that runs is ignored, so the put-back is not cut in
-# two.
+# two. Once on_exit has begun, or while lib_logged copies, the signal is only
+# recorded, and acted on when that is done.
 on_signal() {
+  if [ "$IN_EXIT" -eq 1 ]; then
+    case "$1" in 130) EXIT_SIG=INT ;; 143) EXIT_SIG=TERM ;; *) EXIT_SIG=HUP ;; esac
+    return 0
+  fi
+  if [ "$COPYING" -eq 1 ]; then
+    COPY_SIG="$1"
+    return 0
+  fi
+  SIGNALLED=1
   trap '' INT TERM HUP
   if [ -n "${RUN_PID:-}" ] && [ -n "$SNAP_DIR" ] && [ -d "$SNAP_DIR" ]; then
     stop_tree "$RUN_PID" 2 "$SNAP_DIR/signal-stop" "" 1
@@ -476,13 +501,13 @@ case_variant() {
 }
 
 # logs_unreadable - the refusal for a 20-projects/_logs that cannot be listed
-# A folder that cannot be listed has to read differently from an empty one,
+# or entered. Such a folder has to read differently from an empty one,
 # which is a clean result, so it gets a line of its own, exit 1 and no summary.
 # 1 because it is the runner that cannot read the vault, which is what 1 means
 # here, where 2, the could-not-run code of vault-check.sh, already means a
 # refused report.
 logs_unreadable() {
-  say "ERROR: $LOGS_REL could not be listed, so nothing in it was judged. Refusing to run."
+  say "ERROR: $LOGS_REL could not be listed or entered, so nothing in it was judged. Refusing to run."
 }
 
 # folder_checks
@@ -502,7 +527,7 @@ folder_checks() {
     if [ -e "$ROOT/$rel" ] || [ -L "$ROOT/$rel" ]; then
       # Before real_dir_ok, which could not tell such a folder from a link.
       if [ "$rel" = "$LOGS_REL" ] && [ -d "$ROOT/$rel" ] && [ ! -L "$ROOT/$rel" ] \
-         && ! ls -A "$ROOT/$rel" > /dev/null 2>&1; then
+         && { ! ls -A "$ROOT/$rel" > /dev/null 2>&1 || [ ! -x "$ROOT/$rel" ]; }; then
         logs_unreadable
         return 1
       fi
@@ -632,7 +657,7 @@ enumerate_candidates() {
   : > "$SNAP_DIR/names"
   if ! LC_ALL=C find "$ROOT/$LOGS_REL/" -maxdepth 1 -mindepth 1 -print0 > "$SNAP_DIR/find.out" 2> "$SNAP_DIR/find.err"; then
     logs_unreadable
-    while IFS= read -r line; do say "    $line"; done < "$SNAP_DIR/find.err"
+    while IFS= read -r line; do say "    $(safe_name "$line")"; done < "$SNAP_DIR/find.err"
     return 1
   fi
   while IFS= read -r -d '' p; do
@@ -3026,12 +3051,15 @@ usage() {
 
 main() {
   local rc=0 lock_rc=0 state_rc=0 folder_rc=0 fd=""
-  # The run lock's own variables, emptied before any trap is set. Inherited
-  # from the caller's environment, they would have on_exit remove a lock this
-  # run never took.
+  # The run lock's own variables, and the pid of a watched git, emptied before
+  # any trap is set. Inherited from the caller's environment, the first would
+  # have on_exit remove a lock this run never took, and RUN_PID would have
+  # on_signal stop a process tree that is not this run's.
   RUN_LOCK_DIR=""
   RUN_LOCK_NONCE=""
   RUN_LOCK_MADE=0
+  RUN_PID=""
+  RUN_REAPED=0
   ADOPT_MODE=0
   DRY_RUN=0
   ADOPT_REPORT=""
@@ -3074,7 +3102,7 @@ main() {
   # the caller's lock.
   OUT_FD=""
   for fd in 9 8 7 6 5 4 3; do
-    { : >&"$fd"; } 2>/dev/null || { OUT_FD="$fd"; break; }
+    { true >&"$fd"; } 2>/dev/null || { OUT_FD="$fd"; break; }
   done
   [ -n "$OUT_FD" ] || OUT_FD=9
   { eval "exec $OUT_FD>&1"; } 2>/dev/null

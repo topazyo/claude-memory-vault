@@ -31,7 +31,7 @@ The retention pass now tells whoever ran it what it did. Its judgement used to g
 so cron, launchd and a person at a terminal saw nothing of it on standard output, and a run that
 refused to start could not be told from one that found nothing to move or one that never ran. It
 also stops describing a journal a person has marked as replaced as one that is still being argued
-over, and stops reporting a `20-projects/_logs` folder it cannot list as an empty one.
+over, and stops reporting a `20-projects/_logs` folder it cannot list or enter as an empty one.
 
 ### Changed
 
@@ -44,9 +44,9 @@ over, and stops reporting a `20-projects/_logs` folder it cannot list as an empt
   from the run's own copy, so another run's lines in the shared log, or the log being rewritten
   while the run goes on, never appear as this run's. [`docs/reference.md` § 4.3.1](docs/reference.md)
   has the contract.
-- **A `20-projects/_logs` folder the runner cannot list is refused**, with an `ERROR:` line of its
-  own and exit 1. It used to read exactly like an empty folder: `evaluated 0 candidate(s)`,
-  `OK: there is nothing in 20-projects/_logs to evaluate.` and exit 0.
+- **A `20-projects/_logs` folder the runner cannot list or enter is refused**, with an `ERROR:`
+  line of its own and exit 1. It used to read exactly like an empty folder:
+  `evaluated 0 candidate(s)`, `OK: there is nothing in 20-projects/_logs to evaluate.` and exit 0.
 - **One refusal reason became two.** A journal carrying `contradicts:` or `superseded_by:` was
   refused with *"contradicts or superseded_by is set, so it is still being argued over"*, which is
   false of a journal a person has marked as replaced. It now reads
@@ -59,8 +59,9 @@ over, and stops reporting a `20-projects/_logs` folder it cannot list as an empt
 - The runner copies standard output to the first descriptor from 9 down to 3 that nothing holds
   open, rather than always to 9, so a wrapper that keeps a `flock(1)` lock on 9 keeps it. The
   printing at the end of a run can be stopped with TERM, so a reader that stops reading no longer
-  keeps the run alive until KILL. A run lock that the caller's environment names is no longer
-  removed by a run that never took it.
+  keeps the run alive until KILL, and a TERM that lands while the run lets its lock go is kept
+  until the lock is released rather than lost. A run lock, or a process id, that the caller's
+  environment names is no longer touched by a run that never took it.
 - The control suite holds each of these. It lands other runs' lines, a rewritten log and signals at
   chosen moments of a run by construction, and reads what the run printed. CI names the new
   controls, and the existing control for a candidate name holding a line break, as ones that must
@@ -83,8 +84,8 @@ into `.claude/logs/vault-retention.log` itself. launchd appends the same lines t
 **Anything that searches the retention log for `contradicts or superseded_by is set` stops
 matching.** Search for `contradicts: is set` or `superseded_by: is set` instead.
 
-**A `20-projects/_logs` folder your account cannot list now stops the run with exit 1.** If a
-scheduled retention pass starts failing after you take this release, check that folder's
+**A `20-projects/_logs` folder your account cannot list or enter now stops the run with exit 1.**
+If a scheduled retention pass starts failing after you take this release, check that folder's
 permissions: before, it was never judged at all, only reported as empty.
 
 If your vault has never run the retention pass, this is a good release to start with: run
