@@ -1042,7 +1042,9 @@ lock, or the log being emptied or rewritten while the run goes on never changes 
 A run that ends with any code but `0` adds one last line,
 `vault-retention: FAILED: this run ended with exit N. …`, so a refusal is never silent and a summary
 is never the last thing a failed run says. A run ended by a signal the runner does not catch, such as
-`USR1`, ends on a `FAILED:` line that says so. The header of `vault-retention.sh` lists every code.
+`USR1`, ends on a `FAILED:` line that says so. A stop signal that arrives while the run is letting
+its lock go is kept until the lock is released, and then ends the run without printing, because its
+lines are in the log by then. The header of `vault-retention.sh` lists every code.
 A run that stops before it opens its log prints no `FAILED:` line: a usage error, written to
 standard error (exit `64`), the runner failing to enter its own vault folder (exit `1`), and
 `vault-retention.cmd` finding no Git Bash, which the `.cmd` writes to the log itself (exit `127`).

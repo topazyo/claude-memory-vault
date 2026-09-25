@@ -8733,10 +8733,15 @@ case "$me:$mode" in
           esac
         fi ;;
     esac ;;
-  rm:line)
+  rm:line|rm:term)
     "$real" "$@"
     rc=$?
-    case "$args" in *"/run.lock "*) first rm && printf '%s\n' "$RET_SH_LINE3" >> "$RET_SH_LOG" ;; esac
+    case "$args" in
+      *"/run.lock "*)
+        if first rm; then
+          if [ "$mode" = line ]; then printf '%s\n' "$RET_SH_LINE3" >> "$RET_SH_LOG"; else kill -TERM "$PPID"; fi
+        fi ;;
+    esac
     exit "$rc" ;;
   mkdir:line)
     case "$args" in
@@ -9001,6 +9006,25 @@ if [ -z "$rp_bad" ]; then
   ok "a run lock named by the caller's environment is left alone by a run that refuses before taking its own"
 else
   bad "a run removed a lock its environment named, or did not say why it refused --$rp_bad printed: [$(tr '\n' '|' < "$RF.out" 2>/dev/null | cut -c1-600)]"
+fi
+
+# TERM while the run lets its lock go, sent by an rm stand-in as it removes the
+# lock. The release is not cut short, and the TERM is not lost either: once the
+# lock is gone the run ends on it, printing nothing, with its lines in the log.
+RF="$(ret_copy sig-releasing)"
+ret_shims "$RET/shim-releasing" rm
+rp_bad=''
+rp_rc="$( export RET_SH_FLAGS="$RET/shim-releasing.flags" RET_SH_RM_DO=term
+  RET_PATH="$RET/shim-releasing" ret_out "$RF" "$RF.out" --dry-run )"
+[ "$rp_rc" = 143 ] || rp_bad="$rp_bad rc:$rp_rc"
+[ -f "$RET/shim-releasing.flags/rm" ] || rp_bad="$rp_bad never-landed"
+[ ! -e "$RF.state/run.lock" ] || rp_bad="$rp_bad lock-left"
+[ ! -s "$RF.out" ] || rp_bad="$rp_bad printed-after-the-signal"
+grep -q 'OK: there is nothing in 20-projects/_logs to evaluate' "$(ret_log "$RF")" 2>/dev/null || rp_bad="$rp_bad log-lost"
+if [ -z "$rp_bad" ]; then
+  ok "TERM while the lock is let go does not cut the release short, and ends the run once it is done"
+else
+  bad "TERM while the lock is let go was lost or cut the release short --$rp_bad printed: [$(tr '\n' '|' < "$RF.out" 2>/dev/null | cut -c1-600)]"
 fi
 
 # A reader that stops reading. The printing comes after the lock is let go and

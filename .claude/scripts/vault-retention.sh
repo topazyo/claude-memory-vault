@@ -286,18 +286,29 @@ print_run() {
 
 on_exit() {
   local st=$?
-  # Nothing may cut short the last of the library's lines or the release of the
-  # lock, and a reader that has gone away must cost a write error rather than a
-  # signal that replaces the exit code.
-  trap '' INT TERM HUP PIPE
+  # A signal while the last of the library's lines are passed on and the lock is
+  # let go is kept rather than acted on, so neither is cut short, and kept
+  # rather than ignored, so a TERM sent then still ends the run: once the lock is
+  # gone it is sent again, and the run ends there without printing, its lines
+  # being in the log. A reader that has gone away costs a write error rather
+  # than a signal that replaces the exit code.
+  EXIT_SIG=""
+  trap 'EXIT_SIG=INT' INT
+  trap 'EXIT_SIG=TERM' TERM
+  trap 'EXIT_SIG=HUP' HUP
+  trap '' PIPE
   lib_logged
   run_lock_release
+  trap - INT TERM HUP
+  if [ -n "$EXIT_SIG" ]; then
+    [ -n "$SNAP_DIR" ] && rm -rf "$SNAP_DIR"
+    kill -s "$EXIT_SIG" "$$"
+  fi
   # The printing may be stopped, so a reader that stops reading cannot keep the
   # run alive after TERM, and nothing waits on this run once its lock is gone.
   # It goes to OUT_FD, the copy main takes of standard output before anything
   # can redirect it. The folder holding RUN_LOG goes last, and a signal that
   # stops the printing leaves it behind.
-  trap - INT TERM HUP
   print_run "$st" 2>/dev/null >&"$OUT_FD"
   [ -n "$SNAP_DIR" ] && rm -rf "$SNAP_DIR"
 }
