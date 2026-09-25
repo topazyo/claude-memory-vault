@@ -226,11 +226,12 @@ plugin applies the same test in JavaScript. Pi's opt-in extension applies its ow
 reads a path the way Pi's file tools will open it (a leading `@`, `~`, `file://` URLs, Windows
 drive and Git Bash forms, trailing dots and spaces, NTFS stream names, and symbolic links,
 including one whose target does not exist yet) and compares names as NTFS does. It also refuses a
-grep whose glob names a secret, by its text or by matching `.env`, `.env.local` or `secrets`,
-because ripgrep lets a matching glob override `.gitignore`, and it fails closed when a `read`,
-`write` or `edit` call carries no path
-([`docs/harnesses/pi.md`](harnesses/pi.md)). Like every deny here, it does not stop a shell
-command such as `cat`.
+grep whose glob names a secret, by its text or by a part that matches one, because ripgrep lets a
+matching glob override `.gitignore`; a glob that reaches a secret only through a `*` standing in
+for `.env`, such as `*.production` or `*.md`, is let through. It fails closed when a `read`,
+`write` or `edit` call carries no path and when it cannot decide a call
+([`docs/harnesses/pi.md`](harnesses/pi.md) has the exact rules). Like every deny here, it does not
+stop a shell command such as `cat`.
 
 ### 3.3 `instructions-loaded-log.sh` — instruction-load audit
 
@@ -380,17 +381,21 @@ a lint that does nothing and a lint that found nothing wrong print the same thin
   stream name, `secrets./x`, `ſecrets/`, a `file://` URL with `%2Eenv`, `~/` with the home folder
   inside `secrets/`, a `file://` URL Pi cannot open, a grep glob whose text names a secret
   (`.env.production`, `.env.p*`, `20-projects/.env`, `20-projects/secrets{,/**}` and others) or
-  that matches one by wildcards (`*`, `.[e]nv`, `.e{n}v`, `*/*/*` and others), a glob over 256
-  characters or of more than 32 brace alternatives, a `read` or `write` with no path, a file named
-  from a session started inside `secrets/` or below the root, an `ls` or `grep` with no path from
-  a session started inside `secrets/`, and on Windows `C:.env`. A glob of a hundred stars is
-  decided in under 2 s. Links are followed: a linked `secrets` folder, a link to a folder or a
+  whose parts match one (`*`, `.[e]nv`, `.e{n}v`, `20-projects/.[e]nv`, `.[e]nv.production`,
+  `31-standards/s?crets/*.md`, `.[!E]nv`, `.[_-f]nv`, `{[,.]env,x}` and others), a glob over 256
+  characters, of more than 32 brace alternatives, with an unclosed `{`, or that is not text, a
+  `read` or `write` with no path, a file read from a session started inside `secrets/`, a
+  `../secrets/k` read from a session started in `31-standards/`, an `ls`, `grep` or `find` with no
+  path from a session started inside `secrets/`, and on Windows `C:.env` and a glob using `\` for
+  a slash. Two globs built to make a backtracking matcher run for ever, one of which a regex
+  translation took more than 30 s over, are decided in under 2 s. Links are followed: a linked `secrets` folder, a link to a folder or a
   `.env` that does not exist yet, a relative link inside a linked folder, a loop of links, and
   `sub/secrets` even when it links to an ordinary folder are refused, a link to an ordinary note is
   not, and a session started through a link deeper into the vault does not take the vault's parent
   for its root. Folder links are junctions on Windows, so those cases run there too, and the file
   links need a host that can make them. `.envrc`, `notes/env.md`, a note called `secrets.md`,
-  globs such as `*.md` and `{a,b}.md`, and the notes of a vault kept inside a folder named
+  globs such as `*.md`, `{a,b}.md`, `*/x` and `[{]*.md`, a `find` with no path at the vault root,
+  and the notes of a vault kept inside a folder named
   `secrets` are let through, including by a Git Bash `/c/...` path on Windows. A successful
   `write` or `edit` runs the lint with the vault-relative path, even from a subfolder or through a
   link to the vault, with `CLAUDE_PROJECT_DIR` naming the vault rather than an inherited decoy, and

@@ -13,7 +13,7 @@ name. It is unrelated to Inflection AI's Pi assistant.
 
 | File | What it does |
 | --- | --- |
-| `.claude/adapters/pi/vault.js` | The extension, kept outside `.pi/extensions/` so Pi does not load it by itself. Once loaded it refuses a `read`, `write`, `edit`, `grep`, `find` or `ls` call whose path names `.env` or `.env.*`, or passes through a folder named `secrets` at any depth, and a `grep` whose glob names one of them; runs `vault-lint.sh` after each successful `write` and `edit` and adds what it reports to the tool's result; runs `postcompact-wrap-up.sh` on `session_compact` |
+| `.claude/adapters/pi/vault.js` | The extension, kept outside `.pi/extensions/` so Pi does not load it by itself. Once loaded it refuses a `read`, `write`, `edit`, `grep`, `find` or `ls` call whose path names `.env` or `.env.*`, or passes through or ends at a part named `secrets` at any depth, and a `grep` whose glob names one of them; runs `vault-lint.sh` after each successful `write` and `edit` and adds what it reports to the tool's result; runs `postcompact-wrap-up.sh` on `session_compact` |
 | `.agents/skills/*/SKILL.md` | The five skills. Pi reads them once the project is trusted. It never reads `.claude/skills/`, so each skill is listed once |
 
 At the vault root Pi reads `AGENTS.md` and not `CLAUDE.md`, because in each folder it loads only
@@ -36,8 +36,8 @@ as Claude Code's own read deny does.
 - **Enforced without the extension:** nothing. Pi loads `AGENTS.md` and, once the project is
   trusted, the skills, but it runs every tool without asking, and nothing stops a read of `.env`.
 - **Enforced once the extension is loaded:**
-  - A file-tool call is refused when its path names `.env` or `.env.*`, or passes through a folder
-    named `secrets` at any depth, in any letter case. Inside the vault only the part below the
+  - A file-tool call is refused when its path names `.env` or `.env.*`, or passes through or ends
+    at a part named `secrets` at any depth, in any letter case. Inside the vault only the part below the
     vault is tested, and outside it the whole path. The extension reads the path the way Pi's own
     tools will open it: a leading `@`, `~`, `file://` URLs, Windows drive and Git Bash forms,
     trailing dots and spaces, and NTFS stream names. It follows symbolic links too, including one
@@ -46,16 +46,21 @@ as Claude Code's own read deny does.
     in, which it searches. A `read`, `write` or `edit` with no path is refused rather than let
     through unchecked.
   - A `grep` glob is refused when its text holds `.env` or `secret` in any letter case, such as
-    `.env.production` or `secrets/*.txt`, or when it matches `.env`, `.env.local` or `secrets` by
-    wildcards, such as `*`, `.[e]nv` or `{.env,x}`. ripgrep lets a glob that matches a file
-    override `.gitignore`, which is why the glob is checked at all. A glob that reaches a secret
-    through wildcards alone, such as `*.production` for `.env.production`, is let through, and so
-    is `*.md`, although it would also match a file called `.env.md`.
+    `.env.production` or `secrets/*.txt`; when its last part matches `.env`, `.env.local` or
+    `secrets`, such as `*`, `.[e]nv`, `.e{n}v` or `20-projects/.[e]nv`; when its last part spells
+    a name starting `.env.` with `?`, `[...]` or `{...}` standing in for letters of `.env`, such as
+    `.[e]nv.production`; and when a folder part other than `*` or `**` matches `secrets`, such as
+    `31-standards/s?crets/*.md`. Letters and sets are compared without regard to case. ripgrep
+    lets a glob that matches a file override `.gitignore`, which is why the glob is checked at
+    all. A glob that reaches a secret only through a `*` standing in for `.env`, such as
+    `*.production` for `.env.production`, is let through, and so is `*.md`, although it would also
+    match a file called `.env.md`.
   - After each successful `write` and `edit` the lint runs, and what it reports on stderr, a
     missing `tier:` or a hidden character or a scan that could not run, is added to the end of the
-    tool's result. Pi's `tool_result` handlers may return new content for the result, and O4 checks
-    that the model saw it. Compactions are recorded. Both scripts run with `CLAUDE_PROJECT_DIR`
-    naming the vault, whatever the shell Pi started from had set, and each is stopped after 15 s.
+    tool's result, cut at 4000 characters with a line saying so. Pi's `tool_result` handlers may
+    return new content for the result, and O4 checks that the model saw it. Compactions are
+    recorded. Both scripts run with `CLAUDE_PROJECT_DIR` naming the vault, whatever the shell Pi
+    started from had set; each is sent SIGTERM at 15 s, then SIGKILL, and answered by 16 s.
 - **Not covered:**
   - The `bash` tool, and `powershell` where you enable it, can still read a secret, and a file
     written from either is not linted.
@@ -67,6 +72,8 @@ as Claude Code's own read deny does.
   - Pi runs its `find` so that it honours `.gitignore` in a vault that is not a git repository
     too, so a `find` lists secret names only where `.gitignore` does not list them, and never their
     contents. An `ls` of a folder lists the names in it.
+  - The other paths in `.claude/rules/security.md`, such as `**/credentials*` and `~/.ssh/`, are
+    guidance only, as in every harness.
   - The rule is the control for all of these. The commit gate runs `vault-check.sh`, so it catches
     a note written from the shell without `tier:` or `type:`, but not a hidden character or a
     steering file: run `bash .claude/hooks/vault-lint.sh <file>` on those.
@@ -116,9 +123,10 @@ Onboard this vault for Pi. Work from the vault root.
 1. Follow docs/harnesses/README.md, section "Common onboarding checklist", steps O1 to O6.
    Before O4, ask me whether I loaded the vault extension (docs/harnesses/pi.md, setup step 4).
    If I did not, do not load or copy it yourself: point me to that setup step, and mark O4, H2
-   and H4 NOT VERIFIED. If I did, run every step. Write the O4 probe with the write tool, and as
-   part of O4's evidence quote the "vault-lint (advisory):" text your write tool's result ended
-   with.
+   and H4 NOT VERIFIED. If I did, run every step. Write the O4 probe with the write tool. O4 is
+   PASS only if the log has the entry and your write tool's result also ended with
+   "vault-lint (advisory):" text, which you quote; the log entry without that text is FAILED
+   (see H3).
 2. Then run the checks in docs/harnesses/pi.md, section "Harness-specific checks".
 3. Report every step as PASS, FAILED or NOT VERIFIED, with the evidence for each PASS.
 
@@ -136,15 +144,16 @@ without asking me.
   found" error means the extension did not run: FAILED.
 - **H3. Hook failure causes.** If O4 or H2 FAILED, name the one cause you can confirm:
   - The write or read was refused with `the secrets guard found no path in this call` or `the
-    secrets guard failed on this call`. Pi's tool input has changed shape, or a path could not be
-    resolved (Known limits). You can see this one yourself.
+    secrets guard failed on this call`. Pi's tool input has changed shape, or the guard could not
+    decide the call (both in Known limits). You can see this one yourself.
   - The lint log has the O4 entry but your write tool's result carried no `vault-lint
     (advisory):` text. Pi did not apply the extension's change to the result.
   - The rest show on the human's screen, not to you, so ask the human what Pi showed. The
     extension did not load: check Pi's startup output for an error naming `vault.js`. The copy is
     in `.pi/extensions/` but the project is not trusted, so Pi did not load it (H1 fails too).
     Bash could not run the scripts: the extension shows one warning naming the script and what
-    went wrong. The extension is not inside this vault: it says so at the first write.
+    went wrong. The extension is not inside this vault: it says so at the first write or
+    compaction.
 - **H4. Compaction stub.** NOT VERIFIED unless the session compacts. You can ask the human to run
   `/compact`. Afterwards a `20-projects/_logs/compaction-<session>.md` file gains an entry.
 
@@ -173,8 +182,8 @@ exec pi --print --no-session --no-approve --no-extensions --no-skills --offline 
   already carries the agent's instructions. `--no-extensions` and `--no-skills` keep your personal
   extensions and skills out as well, and `--offline` stops Pi's own automatic network requests.
 - **No extension loads, this vault's included, so nothing refuses a read of `.env` or `secrets/`
-  during a pass.** Keep them out of the container: leave `.env*` out of what you mount, and mount an
-  empty folder over `secrets/`. Adding `-e .claude/adapters/pi/vault.js` would load the guard,
+  during a pass.** Keep them out of the container: leave every `.env` and `.env.*` out of what you
+  mount, at any depth, and mount an empty folder over every `secrets/` folder. Adding `-e .claude/adapters/pi/vault.js` would load the guard,
   since Pi loads an extension named with `-e` even with `--no-extensions`, but it would also lint
   every write and could record a compaction into `20-projects/_logs/` during the pass.
 - Pi still loads its global `~/.pi/agent/AGENTS.md` and any `AGENTS.override.md`, `AGENTS.md` or
@@ -193,13 +202,19 @@ once against a scratch copy of the vault and diff the tree before you schedule i
 
 ## Known limits
 
-- The extension is written against Pi's extension API as of v0.87.1: the `tool_call`,
-  `tool_result` and `session_compact` events and the `path` field of the file tools. If a later Pi
-  renames that field, the guard refuses every `read`, `write` and `edit` and names this guide, so
-  the O4 probe is refused too, while a `grep`, `find` or `ls` would pass unchecked.
+- The extension is written against Pi's extension API as of v0.87.1, with the source read at
+  commit `8930b9e`: the `tool_call`, `tool_result` and `session_compact` events and the `path` and
+  `glob` fields of the file tools. If a later Pi renames the path field, the guard refuses every
+  `read`, `write` and `edit` and names this guide, so the O4 probe is refused too, while a
+  `grep`, `find` or `ls` would be tested against the folder Pi was started in.
+- The guard refuses a call it cannot decide, saying `the secrets guard failed on this call` with
+  the reason: a path Pi could not open either, such as a `file://` URL with an encoded slash; a
+  loop of symbolic links, or a chain of more than 40; and a `grep` glob longer than 256
+  characters, of more than 32 brace alternatives, or with a `{` that never closes. A `grep` glob
+  that is not text is refused as a changed tool input.
 - `bash` and `powershell` reads and writes bypass the extension.
-- A `grep` glob that reaches a secret through wildcards alone is let through, and so is a `grep`
-  with no glob in a vault that is not a git repository, which reads `.env`.
+- A `grep` glob that reaches a secret only through a `*` standing in for `.env` is let through,
+  and so is a `grep` with no glob in a vault that is not a git repository, which reads `.env`.
 - A write to one of Pi's own execution surfaces, such as `.pi/extensions/` or `.pi/settings.json`,
   is neither refused nor linted, and takes effect the next time Pi loads it. The scheduled passes
   contain such a write, and an interactive session does not.

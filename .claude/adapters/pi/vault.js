@@ -9,9 +9,9 @@
 // once you have read it. Not both, or it runs twice.
 //
 //   - Refuses a read, write, edit, grep, find or ls call that names .env,
-//     .env.* or anything under secrets/, the set .claude/rules/security.md
-//     names, and a grep whose glob names one. Pi's bash tool can still read
-//     them, so this keeps the file tools from doing it by accident.
+//     .env.* or anything under secrets/, the three paths .claude/rules/security.md
+//     has Claude Code deny, and a grep whose glob names one. Pi's bash tool can
+//     still read them, so this keeps the file tools from doing it by accident.
 //   - Runs .claude/hooks/vault-lint.sh on every file a write or edit changes,
 //     and adds what it reports to the tool's result.
 //   - Records each compaction with .claude/hooks/postcompact-wrap-up.sh.
@@ -33,6 +33,7 @@ const PATH_REQUIRED = new Set(["read", "write", "edit"])
 const WRITE_TOOLS = new Set(["write", "edit"])
 const DENIED = "vault: .env, .env.* and secrets/ are off limits (.claude/rules/security.md)"
 const NO_PATH = "vault: the secrets guard found no path in this call, so it is refused. Pi's tool input may have changed shape: see docs/harnesses/pi.md"
+const NO_GLOB = "vault: the secrets guard cannot read this grep's glob, so it is refused. Pi's tool input may have changed shape: see docs/harnesses/pi.md"
 const WINDOWS = process.platform === "win32"
 
 // The folder this file is in, when the loader provides import.meta.url.
@@ -46,7 +47,8 @@ try {
 // ---------------------------------------------------------------- paths --
 // Where Pi's file tools will look for a path the model gave them. This follows
 // resolveToCwd, normalizePath and normalizeWindowsShellPath in Pi's
-// src/core/tools/path-utils.ts and src/utils/paths.ts as of v0.87.1, because
+// src/core/tools/path-utils.ts and src/utils/paths.ts as of v0.87.1 (read at
+// commit 8930b9e), because
 // the guard has to test the file Pi is about to open, not the string it got.
 const UNICODE_SPACES = /[\u{A0}\u{2000}-\u{200A}\u{202F}\u{205F}\u{3000}]/gu
 
@@ -135,7 +137,15 @@ function below(roots, path) {
 // against its cwd, while the loader names this file by its real path, so on
 // macOS, where /var is a link to /private/var, one vault has two spellings. The
 // cwd's spelling is the nearest folder on its way up that really is the vault.
+const rootsCache = new Map()
+
 function rootsFor(vault, cwd) {
+  const key = `${vault}\u{0}${cwd}`
+  if (!rootsCache.has(key)) rootsCache.set(key, findRoots(vault, cwd))
+  return rootsCache.get(key)
+}
+
+function findRoots(vault, cwd) {
   const roots = [vault]
   const realVault = realPath(vault)
   if (!roots.includes(realVault)) roots.push(realVault)
@@ -173,24 +183,30 @@ function isSecret(raw, cwd, vault) {
 }
 
 // ripgrep lets a glob that matches a file override .gitignore, so a grep glob
-// that names a secret is refused: one whose text holds .env or secret in any
-// case, and one that matches any of a few secret names and paths, read the way
-// ripgrep reads a glob (* and ? stay within a name, ** crosses folders, [...]
-// and {a,b} are sets, and a glob with no slash is matched against names). A
-// glob can still reach a secret through wildcards alone, such as *.production
-// for .env.production, and that is not refused: refusing every glob that could
-// would refuse *.md too. A glob that only excludes (!...) widens nothing.
-const SECRET_NAMES = [".ENV", ".ENV.LOCAL", "SECRETS"]
-const SECRET_PATHS = [".ENV", "A/.ENV", "A/B/.ENV", ".ENV.LOCAL", "A/.ENV.LOCAL", "SECRETS", "SECRETS/X", "A/SECRETS",
-  "A/SECRETS/X", "A/B/SECRETS/X"]
+// that names a secret is refused. Read the way ripgrep reads a glob (* and ?
+// stay within a name, ** crosses folders, [...] and {a,b} are sets), it is
+// refused when:
+//   - its text holds .env or secret in any case;
+//   - its last part matches .env, .env.local or secrets, or spells a name
+//     starting .env. with ?, [...] or {...} standing in for letters of .env;
+//   - or a folder part other than * or ** matches secrets.
+// Letters are compared without regard to case, and a [...] set is tried with
+// both cases of a letter, because ripgrep compares case as written while the
+// file on disk may be spelled either way. A glob that reaches a secret only
+// through a * standing in for .env, such as *.production for .env.production,
+// is let through: refusing it would refuse *.md too. A glob that only excludes
+// (!...) widens nothing.
+const SECRET_NAMES = [".env", ".env.local", "secrets"]
 const MAX_GLOB = 256
 const MAX_ALTERNATIVES = 32
 
 // The alternatives a glob's {a,b} sets spell out, or null past MAX_ALTERNATIVES.
+// A [...] set is one character, so a { , or } inside one is not a brace.
 function braceAlternatives(glob) {
   let open = -1
   for (let i = 0; i < glob.length && open === -1; i++) {
     if (glob[i] === "\\") i++
+    else if (glob[i] === "[" && classAt(glob, i) !== null) i = classAt(glob, i).end - 1
     else if (glob[i] === "{") open = i
   }
   if (open === -1) return [glob]
@@ -201,6 +217,8 @@ function braceAlternatives(glob) {
     const c = glob[i]
     if (c === "\\") {
       i++
+    } else if (c === "[" && classAt(glob, i) !== null) {
+      i = classAt(glob, i).end - 1
     } else if (c === "{") {
       depth++
     } else if (c === "," && depth === 1) {
@@ -230,7 +248,7 @@ function classAt(glob, p) {
   while (i < glob.length && glob[i] !== "]") i++
   if (i >= glob.length) return null
   const body = glob.slice(first, i)
-  const test = (c) => {
+  const one = (c) => {
     let inside = false
     for (let k = 0; k < body.length; k++) {
       if (body[k + 1] === "-" && k + 2 < body.length) {
@@ -242,31 +260,42 @@ function classAt(glob, p) {
     }
     return inside !== negated
   }
+  // Either case of the letter will do, since the name on disk may be either.
+  const test = (c) => one(c) || one(c.toLowerCase()) || one(c.toUpperCase())
   return { test, end: i + 1 }
 }
 
-// Whether a glob with no braces matches all of text. Memoised over the two
+function sameLetter(a, b) {
+  return a === b || a.toLowerCase() === b.toLowerCase() || a.toUpperCase() === b.toUpperCase()
+}
+
+// Whether a glob with no braces matches all of text, or with prefix set only
+// its start (whatever follows can always be matched by something). A * may not
+// consume any of the first starFrom characters of text. Memoised over the two
 // positions, so its time grows with their lengths multiplied, never
 // exponentially the way a backtracking regex can with many stars.
-function globMatches(glob, text) {
+function globMatches(glob, text, prefix = false, starFrom = 0) {
   const memo = new Map()
   const at = (p, s) => {
     const key = p * (text.length + 1) + s
     if (memo.has(key)) return memo.get(key)
     let hit = false
     const c = glob[p]
-    if (p === glob.length) {
+    const reach = s < starFrom ? s : text.length
+    if (prefix && s === text.length) {
+      hit = true
+    } else if (p === glob.length) {
       hit = s === text.length
     } else if (c === "*") {
       let q = p
       while (glob[q] === "*") q++
       if (q - p >= 2 && glob[q] === "/") {
         hit = at(q + 1, s)
-        for (let k = s; !hit && k < text.length; k++) if (text[k] === "/") hit = at(q + 1, k + 1)
+        for (let k = s; !hit && k < reach; k++) if (text[k] === "/") hit = at(q + 1, k + 1)
       } else if (q - p >= 2) {
-        for (let k = s; !hit && k <= text.length; k++) hit = at(q, k)
+        for (let k = s; !hit && k <= reach; k++) hit = at(q, k)
       } else {
-        for (let k = s; !hit && k <= text.length; k++) {
+        for (let k = s; !hit && k <= reach; k++) {
           hit = at(q, k)
           if (text[k] === "/") break
         }
@@ -278,7 +307,7 @@ function globMatches(glob, text) {
       hit = s < text.length && text[s] !== "/" && set.test(text[s]) && at(set.end, s + 1)
     } else {
       const escaped = c === "\\" && p + 1 < glob.length ? 1 : 0
-      hit = s < text.length && text[s] === glob[p + escaped] && at(p + 1 + escaped, s + 1)
+      hit = s < text.length && sameLetter(text[s], glob[p + escaped]) && at(p + 1 + escaped, s + 1)
     }
     memo.set(key, hit)
     return hit
@@ -290,11 +319,18 @@ function globMatches(glob, text) {
 function globMaySeeSecret(raw) {
   if (raw.length > MAX_GLOB) throw new Error(`the glob is longer than ${MAX_GLOB} characters`)
   if (raw.startsWith("!")) return false
-  const glob = (WINDOWS ? raw.replace(/\\/g, "/") : raw).replace(/^\/+/, "").toUpperCase()
-  if (glob.includes(".ENV") || glob.includes("SECRET")) return true
+  const glob = (WINDOWS ? raw.replace(/\\/g, "/") : raw).replace(/^\/+/, "")
+  const folded = glob.toUpperCase()
+  if (folded.includes(".ENV") || folded.includes("SECRET")) return true
   const alternatives = braceAlternatives(glob)
   if (alternatives === null) throw new Error(`the glob spells out more than ${MAX_ALTERNATIVES} alternatives`)
-  return alternatives.some((alt) => (alt.includes("/") ? SECRET_PATHS : SECRET_NAMES).some((probe) => globMatches(alt, probe)))
+  return alternatives.some((alt) => {
+    const parts = alt.split("/")
+    const name = parts[parts.length - 1]
+    if (SECRET_NAMES.some((probe) => globMatches(name, probe))) return true
+    if (globMatches(name, ".env.", true, 4)) return true
+    return parts.slice(0, -1).some((part) => part !== "*" && part !== "**" && globMatches(part, "secrets"))
+  })
 }
 
 // ---------------------------------------------------------------- vault --
@@ -402,6 +438,14 @@ function runHook(bash, vault, script, args, input) {
       settle(`could not start ${bash} (${error.message})`)
       return
     }
+    // First, before anything touches its pipes: Node reports some start
+    // failures, such as running out of file handles, as a later error event on
+    // a child that has no pipes at all.
+    child.once("error", (error) => settle(`could not start ${bash} (${error.code ?? error.message})`))
+    if (!child.stdin || !child.stderr) {
+      settle(`could not start ${bash} (no pipes to it)`)
+      return
+    }
     child.stderr.setEncoding("utf8")
     child.stderr.on("data", (chunk) => {
       if (report.length <= REPORT_LIMIT) report += chunk
@@ -412,14 +456,13 @@ function runHook(bash, vault, script, args, input) {
       if (signal) return `was stopped by ${signal}, after the ${HOOK_TIMEOUT_MS / 1000} s limit or from outside`
       return `exited ${code} under ${bash}`
     }
-    child.once("error", (error) => settle(`could not start ${bash} (${error.code ?? error.message})`))
     child.once("close", (code, signal) => settle(verdict(code, signal)))
     child.once("exit", (code, signal) => {
-      timers.push(setTimeout(() => settle(verdict(code, signal)), 1000))
+      if (!settled) timers.push(setTimeout(() => settle(verdict(code, signal)), 1000))
     })
     timers.push(setTimeout(() => {
       try {
-        child.kill()
+        child.kill("SIGKILL")
       } catch {
         // gone already
       }
@@ -466,7 +509,7 @@ export default function vaultExtension(pi) {
     }
     if (bash === undefined) bash = findBash()
     if (bash === null) {
-      warn(ctx, "bash", `vault: no Git Bash found, so ${script} did not run. See docs/harnesses/pi.md`)
+      warn(ctx, "bash", `vault: no ${WINDOWS ? "Git Bash" : "bash"} found, so ${script} did not run. See docs/harnesses/pi.md`)
       return ""
     }
     const { problem, report } = await runHook(bash, ownVault, script, argsFor(ownVault), input)
@@ -491,8 +534,10 @@ export default function vaultExtension(pi) {
         // grep, find and ls with no path search the folder Pi was started in.
         return { block: true, reason: DENIED }
       }
-      if (event.toolName === "grep" && typeof input.glob === "string" && globMaySeeSecret(input.glob)) {
-        return { block: true, reason: DENIED }
+      if (event.toolName === "grep" && input.glob !== undefined && input.glob !== null) {
+        // A glob that is not text means Pi's grep changed shape, as for a missing path.
+        if (typeof input.glob !== "string") return { block: true, reason: NO_GLOB }
+        if (globMaySeeSecret(input.glob)) return { block: true, reason: DENIED }
       }
       return undefined
     } catch (error) {

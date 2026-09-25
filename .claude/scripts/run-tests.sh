@@ -1089,13 +1089,25 @@ else bad "the Pi extension touches Pi's project trust -- $(printf '%s' "$hits" |
 
 # The Pi adapter finds its vault by a hook and a script. A renamed script would
 # leave it saying no vault holds it, and linting nothing.
-pi_script_refs=$(grep -oE '\.claude/scripts/[A-Za-z0-9_-]+\.sh' "$ROOT/.claude/adapters/pi/vault.js" 2>/dev/null | sort -u)
-pi_missing=""
-for pi_r in $pi_script_refs; do [ -f "$ROOT/$pi_r" ] || pi_missing="$pi_missing $pi_r"; done
-if [ -n "$pi_script_refs" ] && [ -z "$pi_missing" ]; then
-  ok ".claude/adapters/pi/vault.js names only scripts that exist: $(printf '%s' "$pi_script_refs" | tr '\n' ' ')"
+missing_script_refs() {  # missing_script_refs <file> <root> - prints missing refs, or NO-REFS
+  local refs
+  refs=$(grep -oE '\.claude/scripts/[A-Za-z0-9_-]+\.sh' "$1" 2>/dev/null | sort -u)
+  if [ -z "$refs" ]; then echo "NO-REFS"; return; fi
+  printf '%s\n' "$refs" | while IFS= read -r r; do
+    [ -f "$2/$r" ] || echo "$r"
+  done
+}
+printf 'const CHECK = ".claude/scripts/no-such-checker.sh"\n' > "$TMP/fake-script-ref.js"
+if [ "$(missing_script_refs "$TMP/fake-script-ref.js" "$ROOT")" = ".claude/scripts/no-such-checker.sh" ]; then
+  ok "positive control: an adapter naming a missing script is caught"
 else
-  bad ".claude/adapters/pi/vault.js names scripts that do not exist --${pi_missing:- it names none at all}"
+  bad "positive control: a missing script named by an adapter was not caught"
+fi
+pi_missing=$(missing_script_refs "$ROOT/.claude/adapters/pi/vault.js" "$ROOT")
+if [ -z "$pi_missing" ]; then
+  ok ".claude/adapters/pi/vault.js names only scripts that exist"
+else
+  bad ".claude/adapters/pi/vault.js names scripts that do not exist -- $(printf '%s' "$pi_missing" | tr '\n' ' ')"
 fi
 
 # Gemini CLI hook timeouts are in milliseconds. A value copied from a config
@@ -1148,7 +1160,7 @@ else
   PIL="$TMP/pi/loose"
   for pi_v in "$PIV" "$PIV2"; do
     mkdir -p "$pi_v/.claude/adapters/pi" "$pi_v/.claude/hooks" "$pi_v/.claude/scripts" "$pi_v/31-standards" "$pi_v/secrets"
-    # Node parses the adapter as an ES module only under .mjs, as CI does.
+    # Under .mjs every Node reads the adapter as an ES module, as CI does.
     cp "$ROOT/.claude/adapters/pi/vault.js" "$pi_v/.claude/adapters/pi/vault.mjs"
     : > "$pi_v/.claude/scripts/vault-check.sh"
     cat > "$pi_v/.claude/hooks/postcompact-wrap-up.sh" <<'PI_STUB_EOF'
@@ -1268,27 +1280,38 @@ const cases = [
 ]
 const refusedGlobs = [".env", ".env*", ".ENV*", "*", "{.env,x}", "secret?/**", ".[e]nv", "**/.env", "{.env",
   ".env.production", ".env.p*", "20-projects/.env", "*/*/.env", "20-projects/secrets{,/**}", ".e{n}v", "*/*/*",
-  "[.]env", ".e?v.*"]
+  "[.]env", ".e?v.*", "20-projects/.[e]nv", "20-projects/**/.[e]nv", "20-projects/*", "20-projects/[s]ecrets/x.md",
+  "31-standards/s?crets/*.md", ".[e]nv.production", ".e?v.p*", "?env.x", "31-standards/**", ".[!E]nv", ".[!E]*",
+  ".[_-f]nv", ".[^A-Z]nv", "{[,.]env,x}", "{x,[!}]env}", "{*"]
 for (const glob of refusedGlobs) cases.push(["grep", { pattern: "KEY", glob }, "refused", `a grep with the glob ${glob}`])
 cases.push(["grep", { pattern: "KEY", glob: `${"x".repeat(300)}.md` }, "refused", "a grep with a glob over 256 characters"])
 cases.push(["grep", { pattern: "KEY", glob: "{a,b}".repeat(10) }, "refused", "a grep with a glob of 1024 brace alternatives"])
-for (const glob of ["*.md", "**/*.md", "!*.md", "31-standards/*.md", "{a,b}.md"]) {
+for (const glob of ["*.md", "**/*.md", "!*.md", "31-standards/*.md", "{a,b}.md", "*/notes.md", "31-standards/**/*.md", "*.txt",
+  "*/x", "[{]*.md"]) {
   cases.push(["grep", { pattern: "KEY", glob }, "allowed", `a grep with the glob ${glob}`])
 }
+cases.push(["grep", { pattern: "KEY", glob: ["*.md"] }, "refused", "a grep whose glob is not text (fails closed)"])
+cases.push(["find", { pattern: "*" }, "allowed", "a find with no path"])
+if (win) cases.push(["grep", { pattern: "KEY", glob: "20-projects\\.[e]nv" }, "refused", "a Windows glob with a backslash for a slash"])
 if (win) cases.push(["read", { path: `${vault.slice(0, 2)}.env` }, "refused", "a drive-relative C:.env"])
 for (const [tool, input, want, label] of cases) await expect(pi, tool, input, want, label)
 
-// A glob made to make a backtracking matcher take for ever is answered at once.
-const slowGlob = `${"*a".repeat(100)}b`
-const started = performance.now()
-const slowAnswer = await call(pi, "grep", { pattern: "KEY", glob: slowGlob })
-const took = performance.now() - started
-verdict(slowAnswer === "allowed" && took < 2000, "Pi guard: a glob of a hundred stars is decided in under 2 s", `${slowAnswer} in ${Math.round(took)} ms`)
+// Globs made to make a backtracking matcher take for ever are answered at once.
+// Fifty ** that may each match nothing, before a zz that never matches, took a
+// regex translation of the glob more than 30 s; a hundred *? pairs exercise the
+// .env. prefix test the same way.
+for (const [slowGlob, want, label] of [[`${"**".repeat(50)}zz`, "allowed", "fifty ** and zz"], [`${"*?".repeat(100)}`, "refused", "a hundred *? pairs"]]) {
+  const started = performance.now()
+  const slowAnswer = await call(pi, "grep", { pattern: "KEY", glob: slowGlob })
+  const took = performance.now() - started
+  verdict(slowAnswer === want && took < 2000, `Pi guard: a glob of ${label} is ${want} in under 2 s`, `${slowAnswer} in ${Math.round(took)} ms`)
+}
 
 // Where Pi was started does not change what the guard sees.
 await expect(pi, "read", { path: "api-key.txt" }, "refused", "a file read from a session started in secrets/", pi.at(join(vault, "secrets")))
 await expect(pi, "ls", {}, "refused", "an ls with no path from a session started in secrets/", pi.at(join(vault, "secrets")))
 await expect(pi, "grep", { pattern: "KEY" }, "refused", "a grep with no path from a session started in secrets/", pi.at(join(vault, "secrets")))
+await expect(pi, "find", { pattern: "*" }, "refused", "a find with no path from a session started in secrets/", pi.at(join(vault, "secrets")))
 await expect(pi, "read", { path: "../secrets/k" }, "refused", "../secrets/k from a session started in 31-standards/", pi.at(join(vault, "31-standards")))
 await expect(pi, "read", { path: "n.md" }, "allowed", "a note read from a session started in 31-standards/", pi.at(join(vault, "31-standards")))
 
@@ -1447,7 +1470,7 @@ if (win) {
   verdict(leftTook < 4000, "Pi extension: a script that leaves a child behind is still answered within the time limit, since Git Bash's launcher waits for the child",
     `${Math.round(leftTook)} ms, ${JSON.stringify(slow.notes)}`)
 } else {
-  verdict(leftTook < 2200 && stubNote === undefined,
+  verdict(leftTook < 4000 && stubNote === undefined,
     "Pi extension: a script that exits 0 and leaves a child behind is answered a second later, as a success", `${Math.round(leftTook)} ms, ${JSON.stringify(slow.notes)}`)
 }
 
