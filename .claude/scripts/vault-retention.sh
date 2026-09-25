@@ -43,7 +43,7 @@
 #   run ends, as "vault-retention: <text>" without the timestamp. A run that
 #   ends with any code but 0 adds one last line saying which, apart from the few
 #   ends docs/reference.md 4.3.1 lists, which has the whole contract. Cron mails
-#   what it prints. See print_run.
+#   what it prints, where it can send mail. See print_run.
 #
 # Environment:
 #   RETENTION_DAYS       days before a journal or stub may move (default 60)
@@ -56,13 +56,16 @@
 # Exit codes:
 #   0    moved and committed, nothing to move, a dry run, or no
 #        20-projects/_logs folder
-#   1    setup failure, 20-projects/_logs cannot be read, git cannot read the
-#        vault, the vault is not the top of its own repository, a shallow
-#        clone, grafts, or a sparse checkout. Also this script failing in
-#        itself, such as on an unset variable, which bash ends with 1
+#   1    setup failure, 20-projects/_logs cannot be listed or entered, git
+#        cannot read the vault, the vault is not the top of its own
+#        repository, a shallow clone, grafts, or a sparse checkout. Also this
+#        script failing in itself, such as on an unset variable, which bash
+#        ends with 1
 #   2    REPORT-REFUSED: the report was not written by this runner, or changed
-#   3    PARTIAL: the move failed and the vault was put back to HEAD, or the
-#        archive folders could not be made and nothing had moved
+#   3    PARTIAL: the move failed and the vault was put back to HEAD, or an
+#        archive folder could not be made, or turned out to be a link or not a
+#        folder just as the move was about to use it (PATH-BLOCKED:), and
+#        nothing had moved
 #   4    COMMIT-FAILED: the commit failed with HEAD unchanged and was put back
 #   6    PATH-BLOCKED: 20-projects, 20-projects/_logs or an archive folder is a
 #        link, a junction or not a folder, or a folder differs only in case
@@ -106,7 +109,8 @@ LOG=""
 # the file the runner library logs into until lib_logged passes its lines on.
 # The log is shared with every other run, and nothing in it says which run wrote
 # a line. RUN_LOG stays empty when no copy could be made, and LIB_LOG is then
-# the log itself.
+# the log itself. Both are in COPY_DIR, a folder apart from SNAP_DIR (see main).
+COPY_DIR=""
 RUN_LOG=""
 LIB_LOG=""
 # OUT_FD is the descriptor main copies standard output to, and MAIN_DONE is 1
@@ -234,9 +238,9 @@ safe_name() {
 
 # print_run <exit code>
 # What this run logged, printed on standard output as it ends, for cron,
-# launchd and whoever ran it by hand. They used to see nothing at all, so a run
-# that refused to start could not be told from one that found nothing to move
-# or one that never ran.
+# launchd and whoever ran it by hand. They used to see nothing of it on standard
+# output, so a run that refused to start could not be told from one that found
+# nothing to move or one that never ran.
 #
 # It prints RUN_LOG rather than printing beside each say, because a run can end
 # on a line the runner library wrote: the lock, the tripwire and git's own
@@ -255,15 +259,18 @@ safe_name() {
 # this runner did not write, git's error output, a commit message, an
 # environment value, and what it prints reaches a terminal and a mail. The cost
 # is that a path with a letter outside ASCII reads as its bytes. The log keeps
-# it as written, apart from a refused candidate's name, which safe_name has
-# already spelled out there.
+# it as written, apart from a refused candidate's name and find's error lines,
+# which safe_name has already spelled out there.
+#
+# The lines are made ready in a file and then printed by the shell itself, not
+# by awk: a reader that stops reading then holds up this process, which TERM
+# ends, and not a child that would go on holding the caller's pipe once the run
+# is gone.
 print_run() {
+  local line
   if [ -z "$RUN_LOG" ]; then
     printf 'vault-retention: no copy of what this run logged could be kept, so it is only in .claude/logs/vault-retention.log.\n'
-  elif [ ! -r "$RUN_LOG" ]; then
-    printf 'vault-retention: this run'"'"'s copy of what it logged could not be read back, so it is only in .claude/logs/vault-retention.log.\n'
-  else
-    LC_ALL=C awk '
+  elif [ ! -r "$RUN_LOG" ] || ! LC_ALL=C awk '
       BEGIN {
         for (i = 32; i < 127; i++) keep = keep sprintf("%c", i)
         for (i = 1; i < 256; i++) hex[sprintf("%c", i)] = sprintf("%02X", i)
@@ -289,7 +296,10 @@ print_run() {
         print "vault-retention: " o
         shown++
       }
-      END { if (!shown) print "vault-retention: this run wrote nothing to its log before it stopped." }' "$RUN_LOG"
+      END { if (!shown) print "vault-retention: this run wrote nothing to its log before it stopped." }' "$RUN_LOG" > "$COPY_DIR/print" 2>/dev/null; then
+    printf 'vault-retention: this run'"'"'s copy of what it logged could not be read back, so it is only in .claude/logs/vault-retention.log.\n'
+  else
+    while IFS= read -r line; do printf '%s\n' "$line"; done < "$COPY_DIR/print"
   fi
   if [ "$MAIN_DONE" -ne 1 ] && [ "$SIGNALLED" -ne 1 ]; then
     # Neither main nor on_signal ended the run, so bash stopped it: an error in
@@ -314,9 +324,13 @@ on_exit() {
   trap '' PIPE
   lib_logged
   run_lock_release
+  # The working folder goes while a signal is still held, since print_run needs
+  # nothing in it, so a signal that stops the printing leaves behind no more
+  # than this run's copy of its lines.
+  [ -n "$SNAP_DIR" ] && rm -rf "$SNAP_DIR"
   trap - INT TERM HUP
   if [ -n "$EXIT_SIG" ]; then
-    [ -n "$SNAP_DIR" ] && rm -rf "$SNAP_DIR"
+    [ -n "$COPY_DIR" ] && rm -rf "$COPY_DIR"
     kill -s "$EXIT_SIG" "$$"
   fi
   # The printing may be stopped, so a reader that stops reading cannot keep the
@@ -325,7 +339,7 @@ on_exit() {
   # can redirect it. The folder holding RUN_LOG goes last, and a signal that
   # stops the printing leaves it behind.
   print_run "$st" 2>/dev/null >&"$OUT_FD"
-  [ -n "$SNAP_DIR" ] && rm -rf "$SNAP_DIR"
+  [ -n "$COPY_DIR" ] && rm -rf "$COPY_DIR"
 }
 
 # On INT, TERM or HUP: stop a watched git command, then settle what the moves
@@ -3060,6 +3074,14 @@ main() {
   RUN_LOCK_MADE=0
   RUN_PID=""
   RUN_REAPED=0
+  # The same for the inputs the library's watchdog reads from the environment on
+  # every call. Inherited, RUN_NONCE would point the Windows stop sweep at every
+  # process whose command line holds it, RUN_STALL_SECONDS would have a quiet git
+  # stopped as stalled, and RUN_GAPS_FILE would have numbers appended to any
+  # file it names. Empty is what the library reads as not set.
+  RUN_NONCE=""
+  RUN_STALL_SECONDS=""
+  RUN_GAPS_FILE=""
   ADOPT_MODE=0
   DRY_RUN=0
   ADOPT_REPORT=""
@@ -3106,13 +3128,17 @@ main() {
   done
   [ -n "$OUT_FD" ] || OUT_FD=9
   { eval "exec $OUT_FD>&1"; } 2>/dev/null
-  # This run's own copy of what it logs, made before anything can fail, in the
-  # folder the rest of the run works in. When it cannot be made the run goes on
-  # logging to the log alone, and print_run says so in place of the lines.
-  SNAP_DIR="$(mktemp -d 2>/dev/null || mktemp -d -t vaultretention 2>/dev/null)" || SNAP_DIR=""
-  if [ -n "$SNAP_DIR" ] && { : > "$SNAP_DIR/run.log" && : > "$SNAP_DIR/lib.log"; } 2>/dev/null; then
-    RUN_LOG="$SNAP_DIR/run.log"
-    LIB_LOG="$SNAP_DIR/lib.log"
+  # This run's own copy of what it logs, made before anything can fail, in a
+  # folder of its own. When it cannot be made the run goes on logging to the log
+  # alone, and print_run says so in place of the lines. It is not the folder the
+  # rest of the run works in, which holds the nohooks folder every git call takes
+  # its hooks from: that one is made only once this run holds the lock, because
+  # while it waits a pass that holds the lock is running, and a folder of this
+  # run's that exists then is one that pass could find and write a hook into.
+  COPY_DIR="$(mktemp -d 2>/dev/null || mktemp -d -t vaultretention 2>/dev/null)" || COPY_DIR=""
+  if [ -n "$COPY_DIR" ] && { : > "$COPY_DIR/run.log" && : > "$COPY_DIR/lib.log"; } 2>/dev/null; then
+    RUN_LOG="$COPY_DIR/run.log"
+    LIB_LOG="$COPY_DIR/lib.log"
   else
     LIB_LOG="$LOG"
   fi
@@ -3155,9 +3181,9 @@ main() {
   lib_logged
   [ "$rc" -eq 0 ] || return "$rc"
 
-  # Made at the start, or refused here, after the lock and the tripwire have had
-  # their say.
-  [ -n "$SNAP_DIR" ] || SNAP_DIR="$(mktemp -d 2>/dev/null || mktemp -d -t vaultretention)" || {
+  # Made here, after the lock and the tripwire have had their say, for the reason
+  # given where COPY_DIR is made.
+  SNAP_DIR="$(mktemp -d 2>/dev/null || mktemp -d -t vaultretention)" || {
     SNAP_DIR=""
     say "ERROR: could not create a temporary directory"
     return 1
