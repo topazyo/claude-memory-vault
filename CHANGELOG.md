@@ -25,6 +25,43 @@ bash .claude/scripts/vault-update.sh --check --from ../template-new
 
 ---
 
+## 1.3.1 — 2026-09-25
+
+Of the files a vault is offered, this release changes only the control suite. Some of its run-lock
+controls depended on how fast the machine running them was. On a slow Windows host the suite
+failed two of them against a correct runner library, and skipped three others with a reason that
+was not true.
+
+### Changed
+
+- **The control for a bad `RUN_LOCK_POLL` counts sleeps instead of timing the run.** It required
+  the whole run to finish within 20 s, which no fixed limit can promise on every host: on a slow
+  Windows host a run that the lock refuses with no wait at all takes about 30 s. The control now
+  waits 25 s and records every sleep the runner takes. It fails when a sleep is longer than the
+  whole wait or is not a whole number of seconds above zero, when the wait never slept at all, and
+  when the replacement poll the log names is not longer than the wait, so an uncut sleep of the
+  30 s replacement poll still fails it.
+- **The control for a file named `run.lock` counts retries instead of timing them.** It required
+  the lock to give up within 3 s, and loading the runner library and asking for the lock took 3–4 s
+  on that host. It now requires the lock to give up without a single retry, after first showing
+  that the count can see one.
+- **The Windows process-id lock controls start their own lock holder.** They used to read the
+  Windows process id of the holder started at the top of the run-lock section. That holder lives
+  ten minutes, and on a slow host it can be gone by the time they run. They then skipped, reporting
+  "not Git Bash on Windows" whatever the cause. They now start a holder of their own, and a skip
+  names what was missing. The repository's CI now requires them on its Windows job, so a skip
+  there fails the run. It could not do that before, because they never recorded that they had run.
+
+### Adopting this
+
+Nothing to do. Taking `.claude/scripts/run-tests.sh` is optional, and it changes nothing about how
+your vault is written or checked. It stops the suite from failing two run-lock controls, and
+skipping three others, on a slow Windows host. No runner, hook, rule, doc, note or frontmatter key
+changed. `--check` will list `.claude/scripts/run-tests.sh` as safe to take, alongside `VERSION` and
+`CHANGELOG.md`, which move on every release.
+
+---
+
 ## 1.3.0 — 2026-09-23
 
 The weekly promotion pass becomes create-only over the long tier. It may add notes to
