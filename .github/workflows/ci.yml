@@ -284,7 +284,7 @@ jobs:
           git show "$base:.github/workflows/ci.yml" > /tmp/ci.base.yml \
             || { echo "::error title=No base to compare::ci.yml could not be read at $base."; exit 1; }
           arms() {  # arms <file> - one line per RUN_TESTS_REQUIRED list: its position, then its ids
-            awk '/RUN_TESTS_REQUIRED:/ {
+            awk '/^[ \t]*RUN_TESTS_REQUIRED:/ {
               if (index($0, "matrix.os")) {
                 n = split($0, q, "\047")
                 for (i = 2; i <= n; i += 2) if (q[i] != "windows-latest" && q[i] != "ubuntu-latest") print "list" (++k), q[i]

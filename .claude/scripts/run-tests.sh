@@ -8772,7 +8772,6 @@ ret_shims() {  # ret_shims <folder> <command>... - a PATH folder holding the sta
 }
 export RET_SH_DATE RET_SH_RM RET_SH_MKDIR RET_SH_LN RET_SH_CAT RET_SH_FIND RET_SH_SLEEP RET_REAL_GIT
 rp_planted='runner=dream-pass\npid=%s\nwinpid=\nstarted=%s\nlongest=100000\nnonce=planted\n'
-rp_failed="vault-retention: FAILED: this run ended with exit %s. The lines above are what it logged, and the header of vault-retention.sh says what the number means."
 
 # Another run's lines in every span of this one. date lands one before this run
 # asks for the lock, because the first date it calls is the timestamp of the
@@ -8851,7 +8850,7 @@ rp_rc="$( export RET_SH_FLAGS="$RET/shim-holder.flags" RET_SH_LOG="$(ret_log "$R
 [ -f "$RET/shim-holder.flags/mkdir" ] || rp_bad="$rp_bad never-landed"
 LC_ALL=C sed -n 1p "$RF.out" 2>/dev/null | grep -q '^vault-retention: WARNING: RUN_LOCK_POLL "abc" ' || rp_bad="$rp_bad own-warning"
 [ "$(sed -n 2p "$RF.out" 2>/dev/null)" = "vault-retention: LOCKED: the run lock is held by dream-pass (pid $$) after waiting 0s. Not starting." ] || rp_bad="$rp_bad lock-line"
-[ "$(sed -n 3p "$RF.out" 2>/dev/null)" = "$(printf "$rp_failed" 75)" ] || rp_bad="$rp_bad last"
+[ "$(sed -n 3p "$RF.out" 2>/dev/null)" = "$(printf "$ro_failed" 75)" ] || rp_bad="$rp_bad last"
 [ "$(awk 'END { print NR }' "$RF.out" 2>/dev/null)" = 3 ] || rp_bad="$rp_bad line-count"
 [ -f "$RF.state/run.lock/owner" ] || rp_bad="$rp_bad took-the-holders-lock"
 if [ -z "$rp_bad" ]; then
@@ -8884,13 +8883,13 @@ for rp_case in sig-term:TERM:abc sig-first:TERM:1 sig-usr1:USR1:1; do
     sig-term)
       [ "$rp_rc" = 143 ] || rp_bad="$rp_bad $rp_name-rc:$rp_rc"
       LC_ALL=C sed -n 1p "$RF.out" 2>/dev/null | grep -q '^vault-retention: WARNING: RUN_LOCK_POLL "abc" ' || rp_bad="$rp_bad $rp_name-own-warning"
-      [ "$(sed -n 2p "$RF.out" 2>/dev/null)" = "$(printf "$rp_failed" 143)" ] || rp_bad="$rp_bad $rp_name-last"
+      [ "$(sed -n 2p "$RF.out" 2>/dev/null)" = "$(printf "$ro_failed" 143)" ] || rp_bad="$rp_bad $rp_name-last"
       [ "$(awk 'END { print NR }' "$RF.out" 2>/dev/null)" = 2 ] || rp_bad="$rp_bad $rp_name-line-count" ;;
     sig-first)
       [ "$rp_rc" = 143 ] || rp_bad="$rp_bad $rp_name-rc:$rp_rc"
       [ ! -e "$(ret_log "$RF")" ] || rp_bad="$rp_bad $rp_name-a-log-exists"
       [ "$(sed -n 1p "$RF.out" 2>/dev/null)" = "vault-retention: this run wrote nothing to its log before it stopped." ] || rp_bad="$rp_bad $rp_name-wrote-nothing"
-      [ "$(sed -n 2p "$RF.out" 2>/dev/null)" = "$(printf "$rp_failed" 143)" ] || rp_bad="$rp_bad $rp_name-last"
+      [ "$(sed -n 2p "$RF.out" 2>/dev/null)" = "$(printf "$ro_failed" 143)" ] || rp_bad="$rp_bad $rp_name-last"
       [ "$(awk 'END { print NR }' "$RF.out" 2>/dev/null)" = 2 ] || rp_bad="$rp_bad $rp_name-line-count" ;;
     sig-usr1)
       case "$rp_rc" in 129|130|143|0|75) rp_bad="$rp_bad $rp_name-rc:$rp_rc" ;; esac
@@ -8917,7 +8916,7 @@ rp_rc="$( export RET_SH_FLAGS="$RET/shim-acquired.flags" RET_SH_LN_DO=term
 [ "$rp_rc" = 143 ] || rp_bad="$rp_bad rc:$rp_rc"
 [ -f "$RET/shim-acquired.flags/ln" ] || rp_bad="$rp_bad never-landed"
 LC_ALL=C sed -n 1p "$RF.out" 2>/dev/null | grep -q '^vault-retention: WARNING: RUN_LOCK_POLL "abc" ' || rp_bad="$rp_bad own-warning"
-[ "$(sed -n 2p "$RF.out" 2>/dev/null)" = "$(printf "$rp_failed" 143)" ] || rp_bad="$rp_bad last"
+[ "$(sed -n 2p "$RF.out" 2>/dev/null)" = "$(printf "$ro_failed" 143)" ] || rp_bad="$rp_bad last"
 [ "$(awk 'END { print NR }' "$RF.out" 2>/dev/null)" = 2 ] || rp_bad="$rp_bad line-count"
 grep -qF 'RUN_LOCK_POLL "abc"' "$(ret_log "$RF")" 2>/dev/null || rp_bad="$rp_bad log-lost-it"
 [ ! -e "$RF.state/run.lock" ] || rp_bad="$rp_bad lock-left"
@@ -8975,7 +8974,7 @@ rp_rc="$( export RET_SH_FLAGS="$RET/shim-block.flags" RET_SH_CAT_DO=term
 [ "$rp_rc" = 143 ] || rp_bad="$rp_bad rc:$rp_rc"
 [ -f "$RET/shim-block.flags/cat" ] || rp_bad="$rp_bad never-landed"
 [ "$(ret_printed "$RF.out" '^vault-retention: WARNING: RETENTION_DAYS "abc" ')" = 1 ] || rp_bad="$rp_bad own-warning"
-[ "$(tail -n 1 "$RF.out" 2>/dev/null)" = "$(printf "$rp_failed" 143)" ] || rp_bad="$rp_bad last"
+[ "$(tail -n 1 "$RF.out" 2>/dev/null)" = "$(printf "$ro_failed" 143)" ] || rp_bad="$rp_bad last"
 if [ -z "$rp_bad" ]; then
   ok "TERM inside a block that writes a temporary file through standard output still prints the run's lines to the caller"
 else
@@ -8997,7 +8996,7 @@ rp_rc="$( export RUN_LOCK_DIR="$RET/inherited-victim" RUN_LOCK_NONCE=inherited-1
 [ "$rp_rc" = 1 ] || rp_bad="$rp_bad rc:$rp_rc"
 [ -f "$RET/inherited-victim/canary" ] || rp_bad="$rp_bad removed-a-lock-it-never-took"
 [ "$(ret_printed "$RF.out" '^vault-retention: ERROR: the state directory ')" = 1 ] || rp_bad="$rp_bad no-reason"
-[ "$(tail -n 1 "$RF.out" 2>/dev/null)" = "$(printf "$rp_failed" 1)" ] || rp_bad="$rp_bad last"
+[ "$(tail -n 1 "$RF.out" 2>/dev/null)" = "$(printf "$ro_failed" 1)" ] || rp_bad="$rp_bad last"
 if [ -z "$rp_bad" ]; then
   ok "a run lock named by the caller's environment is left alone by a run that refuses before taking its own"
 else
@@ -9067,7 +9066,7 @@ if [ "$rp_made" -eq 1 ]; then
   rp_bad=''
   [ "$rp_rc" = 1 ] || rp_bad="$rp_bad rc:$rp_rc"
   [ "$(sed -n 1p "$RF.out" 2>/dev/null)" = "vault-retention: ERROR: 20-projects/_logs could not be listed, so nothing in it was judged. Refusing to run." ] || rp_bad="$rp_bad no-reason"
-  [ "$(sed -n 2p "$RF.out" 2>/dev/null)" = "$(printf "$rp_failed" 1)" ] || rp_bad="$rp_bad last"
+  [ "$(sed -n 2p "$RF.out" 2>/dev/null)" = "$(printf "$ro_failed" 1)" ] || rp_bad="$rp_bad last"
   [ "$(awk 'END { print NR }' "$RF.out" 2>/dev/null)" = 2 ] || rp_bad="$rp_bad line-count"
   ls "$rp_dir" >/dev/null 2>&1 || rp_bad="$rp_bad fixture-not-restored"
   # The listing failing after the folder looked listable, by a find stand-in:
@@ -9080,7 +9079,7 @@ if [ "$rp_made" -eq 1 ]; then
   [ -f "$RET/shim-find.flags/find" ] || rp_bad="$rp_bad find-never-failed"
   [ "$(sed -n 1p "$RF.out" 2>/dev/null)" = "vault-retention: ERROR: 20-projects/_logs could not be listed, so nothing in it was judged. Refusing to run." ] || rp_bad="$rp_bad find-no-reason"
   [ "$(sed -n 2p "$RF.out" 2>/dev/null)" = "vault-retention:     find: $RF/20-projects/_logs/x: Permission denied" ] || rp_bad="$rp_bad find-words"
-  [ "$(tail -n 1 "$RF.out" 2>/dev/null)" = "$(printf "$rp_failed" 1)" ] || rp_bad="$rp_bad find-last"
+  [ "$(tail -n 1 "$RF.out" 2>/dev/null)" = "$(printf "$ro_failed" 1)" ] || rp_bad="$rp_bad find-last"
   [ "$(ret_printed "$RF.out" '^vault-retention: (evaluated|OK:)')" = 0 ] || rp_bad="$rp_bad find-claims"
   if [ -z "$rp_bad" ]; then
     ok "a _logs folder that cannot be listed, or whose listing fails, is refused with exit 1 and never reads as an empty one"

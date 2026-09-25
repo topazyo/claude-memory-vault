@@ -1062,7 +1062,8 @@ The last printed line tells the ends of a run apart:
 Every byte outside printable ASCII is spelled out, as `<1B>`, `<TAB>`, `<CR>` and so on, because a
 line can carry git's error output, a commit message or an environment value, and a terminal acts on
 control bytes. A path with a letter outside ASCII therefore reads as its bytes; the log keeps it as
-written. When the copy cannot be made, the run logs to the log alone and prints one line saying so
+written, apart from a refused candidate's name, which the log spells out too. When the copy cannot
+be made, the run logs to the log alone and prints one line saying so
 in place of its lines.
 
 The log keeps every line as it is written, including those of a run cut off with no chance to clean
