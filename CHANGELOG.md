@@ -43,17 +43,22 @@ planted under `.pi/`, and the lint's invisible-character scan reaches Pi's instr
   folder below it, so a vault cloned into a trusted folder would run a shipped extension without
   asking. The extension therefore ships where Pi does not look, and you load it with `pi -e` or
   copy it into `.pi/extensions/`. Once loaded it:
-  - refuses a `read`, `write`, `edit`, `grep`, `find` or `ls` call whose path names `.env`,
-    `.env.*` or anything under `secrets/`, reading the path the way Pi's own tools will open it
-    and following symbolic links, including one whose target does not exist yet;
-  - refuses a `grep` whose glob could match one of them, because ripgrep lets a matching glob
-    override `.gitignore`;
+  - refuses a `read`, `write`, `edit`, `grep`, `find` or `ls` call whose path names `.env` or
+    `.env.*`, or passes through a folder named `secrets` at any depth, reading the path the way
+    Pi's own tools will open it and following symbolic links, including one whose target does not
+    exist yet. A `grep`, `find` or `ls` with no path is tested against the folder it searches;
+  - refuses a `grep` whose glob names one of them, by its text or by matching `.env`, `.env.local`
+    or `secrets`, because ripgrep lets a matching glob override `.gitignore`. A glob that reaches a
+    secret through wildcards alone, such as `*.production`, is let through, and the guide says so;
   - refuses a `read`, `write` or `edit` call that carries no path, rather than letting it through
     unchecked;
   - runs `vault-lint.sh` after each successful `write` and `edit` and adds what it reports to the
-    tool's result, so the model sees it, and runs `postcompact-wrap-up.sh` after each compaction.
-    Both run with `CLAUDE_PROJECT_DIR` naming the vault, and the extension says once when either
-    could not run.
+    tool's result, and runs `postcompact-wrap-up.sh` after each compaction. Both run with
+    `CLAUDE_PROJECT_DIR` naming the vault and are stopped after 15 s, and the extension says once
+    when either could not run.
+
+  Pi's `bash` tool runs without asking and can read any of these files, so the guard keeps the
+  file tools from reading a secret by accident and is not a boundary.
 - **Controls for the extension**, driven through Node 18 or later: each spelling of a secret path
   Pi would open, the globs and links that reach one, the names it must let through, the lint and
   stub calls, and the warning when a script fails. Without Node they skip with a reason. CI
@@ -88,7 +93,9 @@ planted under `.pi/`, and the lint's invisible-character scan reaches Pi's instr
 Take the changed owned files. The one that changes what your scheduled passes do is
 `.claude/scripts/lib/runner-common.sh`: once you have it, a pass that writes under `.pi/` sets the
 tripwire, and later runs exit 78 until you have looked. A `.pi/` folder you keep for interactive
-use is unaffected, because only what a pass changes counts. If you run the passes under Pi, use the
+use does not stop the schedule, because only what a pass changes counts, though the runner now
+backs it up with the other steering files before every run, which a large `.pi/npm` makes slower.
+If you run the passes under Pi, use the
 wrapper in `docs/harnesses/pi.md`: its `--no-approve` stops Pi installing project packages into
 `.pi/npm` during a pass, which would now stop the schedule. `.claude/hooks/vault-lint.sh` scans six
 more kinds of steering file and still always exits 0. `AGENTS.md` is a standing instruction every

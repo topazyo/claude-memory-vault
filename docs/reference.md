@@ -226,8 +226,9 @@ plugin applies the same test in JavaScript. Pi's opt-in extension applies its ow
 reads a path the way Pi's file tools will open it (a leading `@`, `~`, `file://` URLs, Windows
 drive and Git Bash forms, trailing dots and spaces, NTFS stream names, and symbolic links,
 including one whose target does not exist yet) and compares names as NTFS does. It also refuses a
-grep whose glob could match a secret, because ripgrep lets a matching glob override `.gitignore`,
-and it fails closed when a `read`, `write` or `edit` call carries no path
+grep whose glob names a secret, by its text or by matching `.env`, `.env.local` or `secrets`,
+because ripgrep lets a matching glob override `.gitignore`, and it fails closed when a `read`,
+`write` or `edit` call carries no path
 ([`docs/harnesses/pi.md`](harnesses/pi.md)). Like every deny here, it does not stop a shell
 command such as `cat`.
 
@@ -377,23 +378,32 @@ a lint that does nothing and a lint that found nothing wrong print the same thin
   stand-in for Pi's extension API and fake vaults whose hook scripts record what they get. Each of
   these is refused: `@.env`, `.ENV`, `.env.`, `.env ` and a trailing no-break space, an NTFS
   stream name, `secrets./x`, `ſecrets/`, a `file://` URL with `%2Eenv`, `~/` with the home folder
-  inside `secrets/`, a `file://` URL Pi cannot open, a grep glob that could match a secret (`.env*`,
-  `*`, `{.env,x}`, `secret?/**` and others), a `read` or `write` with no path, a file named from a
-  session started inside `secrets/` or below the root, and on Windows `C:.env`. Links are followed:
-  a linked `secrets` folder, a link to a folder or a `.env` that does not exist yet, a loop of
-  links, and `sub/secrets` even when it links to an ordinary folder are refused, and a link to an
-  ordinary note is not. Folder links are junctions on Windows, so those cases run there too, and
-  the file links need a host that can make them. `.envrc`, `notes/env.md`, a note called
-  `secrets.md`, a glob such as `*.md`, and the notes of a vault kept inside a folder named
+  inside `secrets/`, a `file://` URL Pi cannot open, a grep glob whose text names a secret
+  (`.env.production`, `.env.p*`, `20-projects/.env`, `20-projects/secrets{,/**}` and others) or
+  that matches one by wildcards (`*`, `.[e]nv`, `.e{n}v`, `*/*/*` and others), a glob over 256
+  characters or of more than 32 brace alternatives, a `read` or `write` with no path, a file named
+  from a session started inside `secrets/` or below the root, an `ls` or `grep` with no path from
+  a session started inside `secrets/`, and on Windows `C:.env`. A glob of a hundred stars is
+  decided in under 2 s. Links are followed: a linked `secrets` folder, a link to a folder or a
+  `.env` that does not exist yet, a relative link inside a linked folder, a loop of links, and
+  `sub/secrets` even when it links to an ordinary folder are refused, a link to an ordinary note is
+  not, and a session started through a link deeper into the vault does not take the vault's parent
+  for its root. Folder links are junctions on Windows, so those cases run there too, and the file
+  links need a host that can make them. `.envrc`, `notes/env.md`, a note called `secrets.md`,
+  globs such as `*.md` and `{a,b}.md`, and the notes of a vault kept inside a folder named
   `secrets` are let through, including by a Git Bash `/c/...` path on Windows. A successful
   `write` or `edit` runs the lint with the vault-relative path, even from a subfolder or through a
   link to the vault, with `CLAUDE_PROJECT_DIR` naming the vault rather than an inherited decoy, and
-  with a name holding `'` and `[ ]` intact; what the lint reports is added to the tool's result; a
-  failed write and a `read` are not linted. A compaction sends the session id, trigger and session
-  file to the stub, a lint that exits non-zero is reported once, and a copy of the adapter kept in
-  no vault runs no script and says so once. The ids are `pi-extension-behaviour`,
-  `pi-extension-dirlink` and `pi-extension-symlink`. A copy in `.pi/extensions/` must match the
-  adapter, and the adapter must never answer Pi's `project_trust` event.
+  with a name holding `'` and `[ ]` intact; what the lint reports is added to the tool's result,
+  cut at 4000 characters with a note saying so; a failed write and a `read` are not linted. A
+  compaction sends the session id, trigger and session file to the stub. A lint that exits
+  non-zero is reported once, a lint that hangs is stopped at the time limit and reported without
+  waiting for what it left running, and a script that exits 0 while a child holds its stderr is
+  answered a second later as a success (on Windows, where Git Bash's launcher waits for the child,
+  within the time limit). A copy of the adapter kept in no vault runs no script and says so once.
+  The ids are `pi-extension-behaviour`, `pi-extension-dirlink` and `pi-extension-symlink`. A copy
+  in `.pi/extensions/` must match the adapter, the adapter must never answer Pi's `project_trust`
+  event (with a positive control), and every script it names must exist.
 - **postcompact-wrap-up.sh** — two compactions of one session append to one stub, with and without
   `jq`; a `../` session id stays inside `20-projects/_logs/`; the 50-entry cap writes
   `CAP REACHED` exactly once.

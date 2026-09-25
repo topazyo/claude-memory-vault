@@ -10,7 +10,8 @@
 //
 //   - Refuses a read, write, edit, grep, find or ls call that names .env,
 //     .env.* or anything under secrets/, the set .claude/rules/security.md
-//     names, and a grep whose glob could reach one.
+//     names, and a grep whose glob names one. Pi's bash tool can still read
+//     them, so this keeps the file tools from doing it by accident.
 //   - Runs .claude/hooks/vault-lint.sh on every file a write or edit changes,
 //     and adds what it reports to the tool's result.
 //   - Records each compaction with .claude/hooks/postcompact-wrap-up.sh.
@@ -93,7 +94,16 @@ function realPath(path) {
           link = null
         }
         if (link !== null) {
-          next = join(resolve(dirname(head), link), ...tail)
+          // A relative target is read from the folder the link really sits
+          // in, which is not the folder its spelling names when a link on the
+          // way points elsewhere.
+          let parent = dirname(head)
+          try {
+            parent = realpathSync.native(parent)
+          } catch {
+            // the spelling is the best there is
+          }
+          next = join(resolve(parent, link), ...tail)
         } else {
           const up = dirname(head)
           if (up === head) return current
@@ -123,15 +133,20 @@ function below(roots, path) {
 
 // The vault root in every spelling a path can arrive in. Pi resolves paths
 // against its cwd, while the loader names this file by its real path, so on
-// macOS, where /var is a link to /private/var, one vault has two spellings.
+// macOS, where /var is a link to /private/var, one vault has two spellings. The
+// cwd's spelling is the nearest folder on its way up that really is the vault.
 function rootsFor(vault, cwd) {
   const roots = [vault]
   const realVault = realPath(vault)
   if (!roots.includes(realVault)) roots.push(realVault)
-  const rel = relative(realVault, realPath(cwd))
-  if (isInside(rel)) {
-    const spelled = resolve(cwd, ...(rel === "" ? [] : rel.split(sep).map(() => "..")))
-    if (!roots.includes(spelled)) roots.push(spelled)
+  for (let dir = resolve(cwd); ; ) {
+    if (relative(realPath(dir), realVault) === "") {
+      if (!roots.includes(dir)) roots.push(dir)
+      break
+    }
+    const up = dirname(dir)
+    if (up === dir) break
+    dir = up
   }
   return roots
 }
@@ -158,61 +173,128 @@ function isSecret(raw, cwd, vault) {
 }
 
 // ripgrep lets a glob that matches a file override .gitignore, so a grep glob
-// is refused when it could match a secret at all. It is read the way ripgrep
-// reads one, conservatively: * and ? stay within a name, ** crosses folders,
-// [...] and {a,b} are sets, case is ignored, and a glob with no slash is
-// matched against names. A glob that only excludes (!...) widens nothing.
-const SECRET_NAMES = [".env", ".env.local", "secrets"]
-const SECRET_PATHS = [".env", "a/.env", ".env.local", "secrets", "secrets/x", "a/secrets", "a/secrets/x"]
+// that names a secret is refused: one whose text holds .env or secret in any
+// case, and one that matches any of a few secret names and paths, read the way
+// ripgrep reads a glob (* and ? stay within a name, ** crosses folders, [...]
+// and {a,b} are sets, and a glob with no slash is matched against names). A
+// glob can still reach a secret through wildcards alone, such as *.production
+// for .env.production, and that is not refused: refusing every glob that could
+// would refuse *.md too. A glob that only excludes (!...) widens nothing.
+const SECRET_NAMES = [".ENV", ".ENV.LOCAL", "SECRETS"]
+const SECRET_PATHS = [".ENV", "A/.ENV", "A/B/.ENV", ".ENV.LOCAL", "A/.ENV.LOCAL", "SECRETS", "SECRETS/X", "A/SECRETS",
+  "A/SECRETS/X", "A/B/SECRETS/X"]
+const MAX_GLOB = 256
+const MAX_ALTERNATIVES = 32
 
-function globRegex(glob) {
-  const literal = (c) => c.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")
-  let out = ""
+// The alternatives a glob's {a,b} sets spell out, or null past MAX_ALTERNATIVES.
+function braceAlternatives(glob) {
+  let open = -1
+  for (let i = 0; i < glob.length && open === -1; i++) {
+    if (glob[i] === "\\") i++
+    else if (glob[i] === "{") open = i
+  }
+  if (open === -1) return [glob]
+  const parts = []
   let depth = 0
-  for (let i = 0; i < glob.length; i++) {
+  let start = open + 1
+  for (let i = open; i < glob.length; i++) {
     const c = glob[i]
-    if (c === "\\" && i + 1 < glob.length) {
+    if (c === "\\") {
       i++
-      out += literal(glob[i])
-    } else if (c === "*" && glob[i + 1] === "*") {
-      i++
-      if (glob[i + 1] === "/") {
-        i++
-        out += "(?:.*/)?"
-      } else {
-        out += ".*"
-      }
-    } else if (c === "*") {
-      out += "[^/]*"
-    } else if (c === "?") {
-      out += "[^/]"
-    } else if (c === "[" && glob.indexOf("]", i + 2) !== -1) {
-      const end = glob.indexOf("]", i + 2)
-      const body = glob.slice(i + 1, end).replace(/\\/g, "\\\\")
-      out += body.startsWith("!") ? `[^${body.slice(1)}]` : `[${body}]`
-      i = end
     } else if (c === "{") {
       depth++
-      out += "(?:"
-    } else if (c === "}" && depth > 0) {
-      depth--
-      out += ")"
-    } else if (c === "," && depth > 0) {
-      out += "|"
-    } else {
-      out += literal(c)
+    } else if (c === "," && depth === 1) {
+      parts.push(glob.slice(start, i))
+      start = i + 1
+    } else if (c === "}" && --depth === 0) {
+      parts.push(glob.slice(start, i))
+      const out = []
+      for (const part of parts) {
+        const more = braceAlternatives(glob.slice(0, open) + part + glob.slice(i + 1))
+        if (more === null || out.length + more.length > MAX_ALTERNATIVES) return null
+        out.push(...more)
+      }
+      return out
     }
   }
-  // An unbalanced { leaves a group open, and the constructor throws, which the
-  // caller turns into a refusal.
-  return new RegExp(`^${out}$`, "i")
+  throw new Error("the glob has a { with no }")
 }
 
-function globMaySeeSecret(glob) {
-  if (glob.startsWith("!")) return false
-  const pattern = glob.replace(/^\/+/, "")
-  const re = globRegex(pattern)
-  return (pattern.includes("/") ? SECRET_PATHS : SECRET_NAMES).some((probe) => re.test(probe))
+// A [...] set at glob[p]: its test and where it ends, or null with no ].
+function classAt(glob, p) {
+  let i = p + 1
+  const negated = glob[i] === "!" || glob[i] === "^"
+  if (negated) i++
+  const first = i
+  if (glob[i] === "]") i++
+  while (i < glob.length && glob[i] !== "]") i++
+  if (i >= glob.length) return null
+  const body = glob.slice(first, i)
+  const test = (c) => {
+    let inside = false
+    for (let k = 0; k < body.length; k++) {
+      if (body[k + 1] === "-" && k + 2 < body.length) {
+        if (c >= body[k] && c <= body[k + 2]) inside = true
+        k += 2
+      } else if (body[k] === c) {
+        inside = true
+      }
+    }
+    return inside !== negated
+  }
+  return { test, end: i + 1 }
+}
+
+// Whether a glob with no braces matches all of text. Memoised over the two
+// positions, so its time grows with their lengths multiplied, never
+// exponentially the way a backtracking regex can with many stars.
+function globMatches(glob, text) {
+  const memo = new Map()
+  const at = (p, s) => {
+    const key = p * (text.length + 1) + s
+    if (memo.has(key)) return memo.get(key)
+    let hit = false
+    const c = glob[p]
+    if (p === glob.length) {
+      hit = s === text.length
+    } else if (c === "*") {
+      let q = p
+      while (glob[q] === "*") q++
+      if (q - p >= 2 && glob[q] === "/") {
+        hit = at(q + 1, s)
+        for (let k = s; !hit && k < text.length; k++) if (text[k] === "/") hit = at(q + 1, k + 1)
+      } else if (q - p >= 2) {
+        for (let k = s; !hit && k <= text.length; k++) hit = at(q, k)
+      } else {
+        for (let k = s; !hit && k <= text.length; k++) {
+          hit = at(q, k)
+          if (text[k] === "/") break
+        }
+      }
+    } else if (c === "?") {
+      hit = s < text.length && text[s] !== "/" && at(p + 1, s + 1)
+    } else if (c === "[" && classAt(glob, p) !== null) {
+      const set = classAt(glob, p)
+      hit = s < text.length && text[s] !== "/" && set.test(text[s]) && at(set.end, s + 1)
+    } else {
+      const escaped = c === "\\" && p + 1 < glob.length ? 1 : 0
+      hit = s < text.length && text[s] === glob[p + escaped] && at(p + 1 + escaped, s + 1)
+    }
+    memo.set(key, hit)
+    return hit
+  }
+  return at(0, 0)
+}
+
+// Windows ripgrep reads a backslash in a glob as a folder separator.
+function globMaySeeSecret(raw) {
+  if (raw.length > MAX_GLOB) throw new Error(`the glob is longer than ${MAX_GLOB} characters`)
+  if (raw.startsWith("!")) return false
+  const glob = (WINDOWS ? raw.replace(/\\/g, "/") : raw).replace(/^\/+/, "").toUpperCase()
+  if (glob.includes(".ENV") || glob.includes("SECRET")) return true
+  const alternatives = braceAlternatives(glob)
+  if (alternatives === null) throw new Error(`the glob spells out more than ${MAX_ALTERNATIVES} alternatives`)
+  return alternatives.some((alt) => (alt.includes("/") ? SECRET_PATHS : SECRET_NAMES).some((probe) => globMatches(alt, probe)))
 }
 
 // ---------------------------------------------------------------- vault --
@@ -255,7 +337,10 @@ function piShellPath() {
 }
 
 function findBash() {
-  const pathDirs = (process.env.PATH ?? "").split(WINDOWS ? ";" : ":").filter((dir) => dir !== "" && isAbsolute(dir))
+  const pathDirs = (process.env.PATH ?? "")
+    .split(WINDOWS ? ";" : ":")
+    .map((dir) => (WINDOWS ? dir.replace(/^"(.*)"$/, "$1") : dir))
+    .filter((dir) => dir !== "" && isAbsolute(dir))
   if (!WINDOWS) {
     const candidates = ["/bin/bash", ...pathDirs.map((dir) => join(dir, "bash"))]
     return candidates.find((path) => existsSync(path)) ?? null
@@ -270,12 +355,17 @@ function findBash() {
   return candidates.find((path) => isAbsolute(path) && !isWslLauncher(path) && existsSync(path)) ?? null
 }
 
+const HOOK_TIMEOUT_MS = 15000
+const REPORT_LIMIT = 4000
+
 // Runs one hook script from the vault root, with CLAUDE_PROJECT_DIR naming the
 // vault so an inherited one cannot send the scripts elsewhere. Resolves to
 // { problem, report }: problem is null when the script exited 0, and report is
 // what it wrote on stderr. On Windows every argument is quoted and passed as
 // written, because Git Bash's runtime otherwise reads a ' as a quote, globs
-// [ ] { } * ?, and treats @name as a file of arguments.
+// [ ] { } * ?, and treats @name as a file of arguments. It always settles:
+// after HOOK_TIMEOUT_MS bash is stopped, and a second later the answer is
+// given even if a process bash left behind still holds its stderr open.
 function runHook(bash, vault, script, args, input) {
   return new Promise((done) => {
     const argv = [script, ...args]
@@ -284,31 +374,57 @@ function runHook(bash, vault, script, args, input) {
       return
     }
     let report = ""
-    let child
+    let settled = false
+    let child = null
+    const timers = []
+    const settle = (problem) => {
+      if (settled) return
+      settled = true
+      for (const timer of timers) clearTimeout(timer)
+      try {
+        child?.stderr?.destroy()
+      } catch {
+        // already closed
+      }
+      const cut = report.length > REPORT_LIMIT
+      done({ problem, report: cut ? `${report.slice(0, REPORT_LIMIT)}\n(cut off at ${REPORT_LIMIT} characters)` : report })
+    }
     try {
       child = spawn(bash, WINDOWS ? argv.map((arg) => `"${arg}"`) : argv, {
         cwd: vault,
         env: { ...process.env, CLAUDE_PROJECT_DIR: vault },
         stdio: ["pipe", "ignore", "pipe"],
         windowsHide: true,
-        timeout: 15000,
+        timeout: HOOK_TIMEOUT_MS,
         ...(WINDOWS ? { windowsVerbatimArguments: true, argv0: `"${bash}"` } : {}),
       })
     } catch (error) {
-      done({ problem: `could not start ${bash} (${error.message})`, report: "" })
+      settle(`could not start ${bash} (${error.message})`)
       return
     }
     child.stderr.setEncoding("utf8")
     child.stderr.on("data", (chunk) => {
-      if (report.length < 4000) report += chunk
+      if (report.length <= REPORT_LIMIT) report += chunk
     })
-    child.once("error", (error) => done({ problem: `could not start ${bash} (${error.code ?? error.message})`, report }))
-    child.once("close", (code, signal) => {
-      const kept = report.slice(0, 4000)
-      if (code === 0) done({ problem: null, report: kept })
-      else if (signal) done({ problem: `was stopped by ${signal}, after the 15 s limit or from outside`, report: kept })
-      else done({ problem: `exited ${code} under ${bash}`, report: kept })
+    child.stderr.on("error", () => {})
+    const verdict = (code, signal) => {
+      if (code === 0) return null
+      if (signal) return `was stopped by ${signal}, after the ${HOOK_TIMEOUT_MS / 1000} s limit or from outside`
+      return `exited ${code} under ${bash}`
+    }
+    child.once("error", (error) => settle(`could not start ${bash} (${error.code ?? error.message})`))
+    child.once("close", (code, signal) => settle(verdict(code, signal)))
+    child.once("exit", (code, signal) => {
+      timers.push(setTimeout(() => settle(verdict(code, signal)), 1000))
     })
+    timers.push(setTimeout(() => {
+      try {
+        child.kill()
+      } catch {
+        // gone already
+      }
+      settle(`did not finish within ${HOOK_TIMEOUT_MS / 1000} s`)
+    }, HOOK_TIMEOUT_MS + 1000))
     child.stdin.once("error", () => {})
     child.stdin.end(input)
   })
@@ -332,6 +448,14 @@ export default function vaultExtension(pi) {
   }
 
   const ownVault = HERE === null ? null : vaultAbove(HERE)
+  // Found once, when a script first has to run.
+  let bash
+  const vaultsByCwd = new Map()
+  const guardVault = (cwd) => {
+    if (ownVault !== null) return ownVault
+    if (!vaultsByCwd.has(cwd)) vaultsByCwd.set(cwd, vaultAbove(cwd))
+    return vaultsByCwd.get(cwd)
+  }
 
   // Runs a script of this extension's own vault. Resolves to what it reported.
   const runScript = async (ctx, script, argsFor, input) => {
@@ -340,7 +464,7 @@ export default function vaultExtension(pi) {
       warn(ctx, "vault", `vault: ${where}, so written notes are not linted and compactions are not recorded. See docs/harnesses/pi.md`)
       return ""
     }
-    const bash = findBash()
+    if (bash === undefined) bash = findBash()
     if (bash === null) {
       warn(ctx, "bash", `vault: no Git Bash found, so ${script} did not run. See docs/harnesses/pi.md`)
       return ""
@@ -356,13 +480,16 @@ export default function vaultExtension(pi) {
       const input = event.input ?? {}
       // The guard only reads, so outside this extension's vault it may use
       // the vault Pi was started in, whose scripts it never runs.
-      const vault = ownVault ?? vaultAbove(ctx.cwd)
+      const vault = guardVault(ctx.cwd)
       if (typeof input.path === "string") {
         if (isSecret(input.path, ctx.cwd, vault)) return { block: true, reason: DENIED }
       } else if (PATH_REQUIRED.has(event.toolName)) {
         // Fail closed: Pi's schema requires a path here, so its absence means the
         // tool changed shape and this guard can no longer see what it opens.
         return { block: true, reason: NO_PATH }
+      } else if (isSecret(".", ctx.cwd, vault)) {
+        // grep, find and ls with no path search the folder Pi was started in.
+        return { block: true, reason: DENIED }
       }
       if (event.toolName === "grep" && typeof input.glob === "string" && globMaySeeSecret(input.glob)) {
         return { block: true, reason: DENIED }

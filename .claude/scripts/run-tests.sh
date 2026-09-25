@@ -1088,7 +1088,7 @@ if [ -z "$hits" ]; then ok "the Pi extension never answers Pi's project trust"
 else bad "the Pi extension touches Pi's project trust -- $(printf '%s' "$hits" | tr '\n' ';')"; fi
 
 # The Pi adapter finds its vault by a hook and a script. A renamed script would
-# leave it warning, on every write, that no vault holds it.
+# leave it saying no vault holds it, and linting nothing.
 pi_script_refs=$(grep -oE '\.claude/scripts/[A-Za-z0-9_-]+\.sh' "$ROOT/.claude/adapters/pi/vault.js" 2>/dev/null | sort -u)
 pi_missing=""
 for pi_r in $pi_script_refs; do [ -f "$ROOT/$pi_r" ] || pi_missing="$pi_missing $pi_r"; done
@@ -1161,12 +1161,29 @@ PI_STUB_EOF
   cp "$ROOT/.claude/adapters/pi/vault.js" "$PIL/vault.mjs"
   # The lint records its arguments and its CLAUDE_PROJECT_DIR, and reports on
   # stderr the way the real one does, so the extension has something to add.
+  # For loud.md it reports more than the extension keeps.
   cat > "$PIV/.claude/hooks/vault-lint.sh" <<'PI_LINT_EOF'
 #!/usr/bin/env bash
 printf '%s\n' "${CLAUDE_PROJECT_DIR:-}" > lint-project-dir
 printf '%s\n' "$@" > lint-args
 printf 'probe finding for %s\n' "${2:-}" >&2
+case "${2:-}" in *loud.md) head -c 5000 /dev/zero | tr '\0' 'x' >&2 ;; esac
 PI_LINT_EOF
+  # A third vault whose lint hangs, with the adapter's time limit cut to 1.5 s
+  # so the control does not wait 15. The sleep is bash's child and holds its
+  # stderr open after bash is stopped, which is what the second deadline is for.
+  PIS="$TMP/pi/slow vault"
+  mkdir -p "$PIS/.claude/adapters/pi" "$PIS/.claude/hooks" "$PIS/.claude/scripts" "$PIS/31-standards"
+  : > "$PIS/.claude/scripts/vault-check.sh"
+  printf '#!/usr/bin/env bash\nsleep 6\n' > "$PIS/.claude/hooks/vault-lint.sh"
+  # Its stub exits at once and leaves a child holding stderr, which is a script
+  # that succeeded: the answer should come a second after bash exits.
+  printf '#!/usr/bin/env bash\ncat > /dev/null\nsleep 6 &\nexit 0\n' > "$PIS/.claude/hooks/postcompact-wrap-up.sh"
+  sed 's/^const HOOK_TIMEOUT_MS = 15000$/const HOOK_TIMEOUT_MS = 1500/' "$ROOT/.claude/adapters/pi/vault.js" \
+    > "$PIS/.claude/adapters/pi/vault.mjs"
+  if ! grep -q '^const HOOK_TIMEOUT_MS = 1500$' "$PIS/.claude/adapters/pi/vault.mjs"; then
+    bad "the Pi extension's HOOK_TIMEOUT_MS line was not found, so the slow-hook control cannot be built"
+  fi
   # The inner vault's lint fails, which both hook scripts never do by design,
   # so the extension has to say so instead of going quiet.
   printf '#!/usr/bin/env bash\nexit 3\n' > "$PIV2/.claude/hooks/vault-lint.sh"
@@ -1178,7 +1195,7 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync,
 import { dirname, join, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 
-const [vault, innerVault, loose] = process.argv.slice(2)
+const [vault, innerVault, loose, slowVault] = process.argv.slice(2)
 const say = (line) => process.stdout.write(`${line}\n`)
 const verdict = (good, text, got) => say(`${good ? "ok" : "bad"} ${text}${good || got === undefined ? "" : ` -- got ${got}`}`)
 const win = process.platform === "win32"
@@ -1249,17 +1266,29 @@ const cases = [
   ["ls", {}, "allowed", "an ls with no path"],
   ["bash", undefined, "allowed", "a tool the guard does not cover, with no input"],
 ]
-for (const glob of [".env", ".env*", ".ENV*", "*", "{.env,x}", "secret?/**", ".[e]nv", "**/.env", "{.env"]) {
-  cases.push(["grep", { pattern: "KEY", glob }, "refused", `a grep with the glob ${glob}`])
-}
-for (const glob of ["*.md", "**/*.md", "!*.md"]) {
+const refusedGlobs = [".env", ".env*", ".ENV*", "*", "{.env,x}", "secret?/**", ".[e]nv", "**/.env", "{.env",
+  ".env.production", ".env.p*", "20-projects/.env", "*/*/.env", "20-projects/secrets{,/**}", ".e{n}v", "*/*/*",
+  "[.]env", ".e?v.*"]
+for (const glob of refusedGlobs) cases.push(["grep", { pattern: "KEY", glob }, "refused", `a grep with the glob ${glob}`])
+cases.push(["grep", { pattern: "KEY", glob: `${"x".repeat(300)}.md` }, "refused", "a grep with a glob over 256 characters"])
+cases.push(["grep", { pattern: "KEY", glob: "{a,b}".repeat(10) }, "refused", "a grep with a glob of 1024 brace alternatives"])
+for (const glob of ["*.md", "**/*.md", "!*.md", "31-standards/*.md", "{a,b}.md"]) {
   cases.push(["grep", { pattern: "KEY", glob }, "allowed", `a grep with the glob ${glob}`])
 }
 if (win) cases.push(["read", { path: `${vault.slice(0, 2)}.env` }, "refused", "a drive-relative C:.env"])
 for (const [tool, input, want, label] of cases) await expect(pi, tool, input, want, label)
 
+// A glob made to make a backtracking matcher take for ever is answered at once.
+const slowGlob = `${"*a".repeat(100)}b`
+const started = performance.now()
+const slowAnswer = await call(pi, "grep", { pattern: "KEY", glob: slowGlob })
+const took = performance.now() - started
+verdict(slowAnswer === "allowed" && took < 2000, "Pi guard: a glob of a hundred stars is decided in under 2 s", `${slowAnswer} in ${Math.round(took)} ms`)
+
 // Where Pi was started does not change what the guard sees.
 await expect(pi, "read", { path: "api-key.txt" }, "refused", "a file read from a session started in secrets/", pi.at(join(vault, "secrets")))
+await expect(pi, "ls", {}, "refused", "an ls with no path from a session started in secrets/", pi.at(join(vault, "secrets")))
+await expect(pi, "grep", { pattern: "KEY" }, "refused", "a grep with no path from a session started in secrets/", pi.at(join(vault, "secrets")))
 await expect(pi, "read", { path: "../secrets/k" }, "refused", "../secrets/k from a session started in 31-standards/", pi.at(join(vault, "31-standards")))
 await expect(pi, "read", { path: "n.md" }, "allowed", "a note read from a session started in 31-standards/", pi.at(join(vault, "31-standards")))
 
@@ -1312,10 +1341,24 @@ try {
 if (fileLinked) {
   symlinkSync(join(vault, ".env.production"), join(vault, "31-standards", "dangling.md"))
   symlinkSync(join(vault, "31-standards", "n.md"), join(vault, "31-standards", "ok-link.md"))
+  // A relative link inside a linked folder names its target from the folder
+  // it really sits in: L1/L2 is secrets/b/L2, and its ../k is secrets/k.
+  mkdirSync(join(vault, "secrets", "b"), { recursive: true })
+  symlinkSync(join(vault, "secrets", "b"), join(vault, "L1"), dirType)
+  symlinkSync(join("..", "k"), join(vault, "secrets", "b", "L2"))
+  // A session started through a link that lands deeper inside the vault must
+  // not take the vault's parent, here a folder named secrets, for its root.
+  mkdirSync(join(innerVault, "a", "b"), { recursive: true })
+  symlinkSync(join(innerVault, "a", "b"), join(innerVault, "l"), dirType)
+  writeFileSync(join(dirname(dirname(innerVault)), "outside-k"), "x\n")
+  symlinkSync(join(dirname(dirname(innerVault)), "outside-k"), join(dirname(innerVault), "k2"))
   say("ran pi-extension-symlink")
   await expect(pi, "read", { path: "31-standards/link.md" }, "refused", "a note that is a link to .env")
   await expect(pi, "write", { path: "31-standards/dangling.md", content: "x" }, "refused", "a write through a link to a .env that does not exist yet")
   await expect(pi, "read", { path: "31-standards/ok-link.md" }, "allowed", "a note that is a link to an ordinary note")
+  await expect(pi, "write", { path: "L1/L2", content: "x" }, "refused", "a write through a relative link inside a linked folder, which lands in secrets/")
+  await expect(inner, "read", { path: join(dirname(innerVault), "k2") }, "refused",
+    "a link inside the folder named secrets that holds the vault, from a session started through a deeper link", inner.at(join(innerVault, "l")))
 }
 
 const lintArgs = join(vault, "lint-args")
@@ -1344,6 +1387,10 @@ rmSync(lintArgs, { force: true })
 await result(pi, "edit", { path: "@31-standards/q.md", edits: [] }, false)
 verdict(same(lintRecord(), ["--", "31-standards/q.md"]), "Pi lint: an edit of @31-standards/q.md lints 31-standards/q.md", JSON.stringify(lintRecord()))
 await lintCase(pi, { path: "31-standards/O'Brien[1].md", content: "x" }, ["--", "31-standards/O'Brien[1].md"], "a name holding ' and [ ] reaches the lint as written")
+const loud = await result(pi, "write", { path: "31-standards/loud.md", content: "x" }, false)
+const loudText = loud?.content?.at(-1)?.text ?? ""
+verdict(loudText.endsWith("(cut off at 4000 characters)") && loudText.length < 4200,
+  "Pi lint: a report longer than 4000 characters is cut there and says so", `${loudText.length} characters, ending ${JSON.stringify(loudText.slice(-40))}`)
 await lintCase(pi, { path: "p.md", content: "x" }, ["--", "31-standards/p.md"], "a write from a session started in 31-standards/ lints the vault-relative path", pi.at(join(vault, "31-standards")))
 if (dirLinked) {
   const alias = join(dirname(vault), "alias")
@@ -1382,13 +1429,35 @@ const strayNotes = stray.notes.filter((note) => note.includes("no vault holds"))
 verdict(strayNotes.length === 1 && lintRecord() === null,
   "Pi extension: a copy kept outside any vault runs no vault's lint, and says so once", JSON.stringify(stray.notes))
 
+// A hook that hangs is stopped, and the answer does not wait for what it left behind.
+const slow = await load(adapterIn(slowVault), slowVault)
+const slowStart = performance.now()
+await result(slow, "write", { path: "31-standards/s.md", content: "x" }, false)
+const slowTook = performance.now() - slowStart
+const slowNote = slow.notes.find((note) => note.includes("vault-lint.sh")) ?? ""
+verdict(slowTook < 5000 && /stopped|did not finish/.test(slowNote),
+  "Pi extension: a lint that hangs is stopped at the time limit and reported, without waiting for the process it left", `${Math.round(slowTook)} ms, ${JSON.stringify(slow.notes)}`)
+const leftStart = performance.now()
+await slow.handlers.session_compact({ type: "session_compact", compactionEntry: {}, fromExtension: false, reason: "manual", willRetry: false }, slow.ctx)
+const leftTook = performance.now() - leftStart
+const stubNote = slow.notes.find((note) => note.includes("postcompact-wrap-up.sh"))
+if (win) {
+  // Git Bash's launcher waits for the child, so to Windows the script has not
+  // finished, and the time limit is what answers.
+  verdict(leftTook < 4000, "Pi extension: a script that leaves a child behind is still answered within the time limit, since Git Bash's launcher waits for the child",
+    `${Math.round(leftTook)} ms, ${JSON.stringify(slow.notes)}`)
+} else {
+  verdict(leftTook < 2200 && stubNote === undefined,
+    "Pi extension: a script that exits 0 and leaves a child behind is answered a second later, as a success", `${Math.round(leftTook)} ms, ${JSON.stringify(slow.notes)}`)
+}
+
 say("ran pi-extension-behaviour")
 PI_DRIVER_EOF
   # A decoy CLAUDE_PROJECT_DIR, which the extension must not pass on, and a
   # home folder inside secrets/, so that the ~ case needs expanding.
   pi_out=$(CLAUDE_PROJECT_DIR="$(pi_native "$TMP/pi/decoy")" HOME="$(pi_native "$PIV/secrets")" \
     USERPROFILE="$(pi_native "$PIV/secrets")" PI_CODING_AGENT_DIR="$(pi_native "$TMP/pi/agent")" \
-    node "$(pi_native "$TMP/pi/driver.mjs")" "$(pi_native "$PIV")" "$(pi_native "$PIV2")" "$(pi_native "$PIL")" \
+    node "$(pi_native "$TMP/pi/driver.mjs")" "$(pi_native "$PIV")" "$(pi_native "$PIV2")" "$(pi_native "$PIL")" "$(pi_native "$PIS")" \
     2>"$TMP/pi/driver.err")
   pi_rc=$?
   pi_reached_end=0
@@ -1413,9 +1482,10 @@ fi
 
 # ------------------------------------------------ mirrored skills ----------
 #
-# Codex, Gemini CLI, Hermes and Pi read skills only from .agents/skills/,
-# Claude Code only from .claude/skills/. The two copies must stay
-# byte-identical, or harnesses silently follow different procedures.
+# Codex, Gemini CLI and Hermes read skills only from .agents/skills/, Pi from
+# there and its own .pi/skills/, and Claude Code only from .claude/skills/. The
+# two copies must stay byte-identical, or harnesses silently follow different
+# procedures.
 
 printf '\n=== mirrored skills (.claude/skills <-> .agents/skills) ===\n'
 
