@@ -265,39 +265,16 @@ safe_name() {
 # The lines are made ready in a file and then printed by the shell itself, not
 # by awk: a reader that stops reading then holds up this process, which TERM
 # ends, and not a child that would go on holding the caller's pipe once the run
-# is gone.
+# is gone. When that file cannot be written, the temporary folder being full or
+# something in its place, awk prints them itself, as it did before.
 print_run() {
   local line
   if [ -z "$RUN_LOG" ]; then
     printf 'vault-retention: no copy of what this run logged could be kept, so it is only in .claude/logs/vault-retention.log.\n'
-  elif [ ! -r "$RUN_LOG" ] || ! LC_ALL=C awk '
-      BEGIN {
-        for (i = 32; i < 127; i++) keep = keep sprintf("%c", i)
-        for (i = 1; i < 256; i++) hex[sprintf("%c", i)] = sprintf("%02X", i)
-      }
-      {
-        line = $0
-        # The timestamp say writes: a "[" with the date and a "T" at the twelfth
-        # character, up to the first "] ". Found by position rather than by a
-        # pattern, because the two forms ts falls back between write the zone
-        # differently.
-        if (substr(line, 1, 1) == "[" && substr(line, 12, 1) == "T" && (j = index(line, "] ")) > 12)
-          line = substr(line, j + 2)
-        o = ""
-        n = length(line)
-        for (i = 1; i <= n; i++) {
-          c = substr(line, i, 1)
-          if (index(keep, c) > 0) o = o c
-          else if (c == "\t") o = o "<TAB>"
-          else if (c == "\r") o = o "<CR>"
-          else if (c in hex) o = o "<" hex[c] ">"
-          else o = o "<?>"
-        }
-        print "vault-retention: " o
-        shown++
-      }
-      END { if (!shown) print "vault-retention: this run wrote nothing to its log before it stopped." }' "$RUN_LOG" > "$COPY_DIR/print" 2>/dev/null; then
+  elif [ ! -r "$RUN_LOG" ]; then
     printf 'vault-retention: this run'"'"'s copy of what it logged could not be read back, so it is only in .claude/logs/vault-retention.log.\n'
+  elif ! render_run > "$COPY_DIR/print" 2>/dev/null; then
+    render_run
   else
     while IFS= read -r line; do printf '%s\n' "$line"; done < "$COPY_DIR/print"
   fi
@@ -310,6 +287,37 @@ print_run() {
   elif [ "$1" -ne 0 ]; then
     printf 'vault-retention: FAILED: this run ended with exit %s. The lines above are what it logged, and the header of vault-retention.sh says what the number means.\n' "$1"
   fi
+}
+
+# render_run - RUN_LOG as print_run prints it, on standard output
+render_run() {
+  LC_ALL=C awk '
+    BEGIN {
+      for (i = 32; i < 127; i++) keep = keep sprintf("%c", i)
+      for (i = 1; i < 256; i++) hex[sprintf("%c", i)] = sprintf("%02X", i)
+    }
+    {
+      line = $0
+      # The timestamp say writes: a "[" with the date and a "T" at the twelfth
+      # character, up to the first "] ". Found by position rather than by a
+      # pattern, because the two forms ts falls back between write the zone
+      # differently.
+      if (substr(line, 1, 1) == "[" && substr(line, 12, 1) == "T" && (j = index(line, "] ")) > 12)
+        line = substr(line, j + 2)
+      o = ""
+      n = length(line)
+      for (i = 1; i <= n; i++) {
+        c = substr(line, i, 1)
+        if (index(keep, c) > 0) o = o c
+        else if (c == "\t") o = o "<TAB>"
+        else if (c == "\r") o = o "<CR>"
+        else if (c in hex) o = o "<" hex[c] ">"
+        else o = o "<?>"
+      }
+      print "vault-retention: " o
+      shown++
+    }
+    END { if (!shown) print "vault-retention: this run wrote nothing to its log before it stopped." }' "$RUN_LOG"
 }
 
 on_exit() {

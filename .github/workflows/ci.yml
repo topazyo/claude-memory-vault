@@ -157,11 +157,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      # fetch-depth 0, for the release check below and for nothing else in this
-      # job. The default shallow checkout carries no tags, and a checkout with
-      # no tags looks exactly like a project that has never released one, so
-      # the check would report "could not determine" on every run and a reader
-      # would learn to expect that from a healthy repository.
+      # fetch-depth 0, for the release check below and the two steps after it,
+      # which read the tags and the commit a change lands on, and for nothing
+      # else in this job. The default shallow checkout carries no tags, and a
+      # checkout with no tags looks exactly like a project that has never
+      # released one, so the check would report "could not determine" on every
+      # run and a reader would learn to expect that from a healthy repository.
       # persist-credentials false because nothing in this job needs network
       # git. Every step here is local, and the default leaves this job's token
       # in .git/config as an http extraheader, inside the very directory the
@@ -241,9 +242,12 @@ jobs:
       # one side's text under the other's published heading, and every other
       # check passed, because the version checks read only the newest heading.
       # Each tag's own entry is compared with the same entry here, byte for
-      # byte, and a comparison of nothing fails rather than passing.
+      # byte, and a comparison of nothing fails rather than passing. It and the
+      # step after it run even when the release step above has failed, which
+      # every merge of a release does until its tag is cut, because neither
+      # depends on that answer. Guarded by repository as that step is.
       - name: Published CHANGELOG entries are as they were tagged
-        if: github.repository == 'topazyo/claude-memory-vault'
+        if: ${{ !cancelled() && github.repository == 'topazyo/claude-memory-vault' }}
         run: |
           entry() {  # entry <version> - that release's entry, heading to the next release heading
             ENTRY_H="## $1 — " awk 'BEGIN { h = ENVIRON["ENTRY_H"] }
@@ -251,13 +255,22 @@ jobs:
               on && /^## [0-9]/ { exit }
               on { print }'
           }
+          headings() {  # headings <version> - how many lines of standard input are that release's heading
+            ENTRY_H="## $1 — " awk 'BEGIN { h = ENVIRON["ENTRY_H"] } index($0, h) == 1 { c++ } END { print c + 0 }'
+          }
           n=0; bad=0
           for t in $(git tag --list '[0-9]*.[0-9]*.[0-9]*'); do
-            { git show "$t:CHANGELOG.md" 2>/dev/null || true; } | entry "$t" > /tmp/cl.tag
-            [ -s /tmp/cl.tag ] || { echo "$t: its own CHANGELOG has no entry for it, so there is nothing to compare"; continue; }
+            git cat-file -e "$t:CHANGELOG.md" 2>/dev/null \
+              || { echo "$t: the tag holds no CHANGELOG.md, so there is nothing to compare"; continue; }
+            git show "$t:CHANGELOG.md" | entry "$t" > /tmp/cl.tag
+            [ -s /tmp/cl.tag ] || { echo "::warning title=A tag's CHANGELOG has no entry for it::$t has a CHANGELOG.md with no $t heading, so there is nothing to compare."; continue; }
             entry "$t" < CHANGELOG.md > /tmp/cl.now
             n=$((n + 1))
-            if cmp -s /tmp/cl.tag /tmp/cl.now; then
+            c="$(headings "$t" < CHANGELOG.md)"
+            if [ "$c" -ne 1 ]; then
+              bad=$((bad + 1))
+              echo "::error title=A published CHANGELOG heading is not unique::The $t heading is on $c lines here, and a published release has exactly one."
+            elif cmp -s /tmp/cl.tag /tmp/cl.now; then
               echo "$t: the entry is as it was tagged"
             else
               bad=$((bad + 1))
@@ -275,12 +288,26 @@ jobs:
       # conflict on one of these long lines by taking one side dropped the
       # other side's ids with no signal at all. RETIRED names, space-separated,
       # an id this change stops requiring on purpose, so the diff says so.
+      #
+      # The side compared against is what this change lands on: on a pull
+      # request the checkout is the merge commit, whose first parent is the
+      # branch it merges into, as it was when the run began, so a re-run and a
+      # pull request based on another one are each held to their own base. On
+      # a push to main it is the main the push replaced, however many commits
+      # the push carries, and the parent commit when that one is not here.
       - name: Required controls are not dropped against main
+        if: ${{ !cancelled() && github.repository == 'topazyo/claude-memory-vault' }}
         env:
           RETIRED: ''
+          BEFORE: ${{ github.event.before }}
         run: |
-          base=origin/main
-          [ "$GITHUB_REF" = "refs/heads/main" ] && base=HEAD^1
+          case "$GITHUB_EVENT_NAME" in
+            pull_request) base=HEAD^1 ;;
+            push)
+              base="$BEFORE"
+              git cat-file -e "$base^{commit}" 2>/dev/null || base=HEAD^1 ;;
+            *) base=origin/main ;;
+          esac
           git show "$base:.github/workflows/ci.yml" > /tmp/ci.base.yml \
             || { echo "::error title=No base to compare::ci.yml could not be read at $base."; exit 1; }
           arms() {  # arms <file> - one line per RUN_TESTS_REQUIRED list: its position, then its ids

@@ -8770,6 +8770,21 @@ case "$me:$mode" in
         fi ;;
     esac
     exit "$rc" ;;
+  rm:print)
+    # As the run removes its working folder, just before it prints: a folder
+    # named print in each copy folder in RET_SH_TMP, so the lines cannot be
+    # made ready there.
+    "$real" "$@"
+    rc=$?
+    case "$args" in
+      *" -rf $RET_SH_TMP/"*)
+        if first rm; then
+          for d in "$RET_SH_TMP"/*/; do
+            [ -f "${d}run.log" ] && "$RET_SH_MKDIR" "${d}print" && : > "$RET_SH_FLAGS/planted"
+          done
+        fi ;;
+    esac
+    exit "$rc" ;;
   mkdir:line)
     case "$args" in
       *" -p "*) ;;
@@ -9263,7 +9278,8 @@ fi
 # that copy must be all that is left: the working folder, with its nohooks, goes
 # before the printing starts. The reader reads nothing until the run is gone
 # and then everything, and it must get less than the whole output, because
-# nothing the run started may go on printing for it once TERM has ended it.
+# nothing the run started may go on printing for it once TERM has ended it, and
+# more than nothing, or TERM never reached the printing and the case says so.
 RF="$(ret_copy stalled-reader)"
 rp_big="$(printf '%030000d' 0 | tr 0 x)"
 rm -f "$RF.pid" "$RF.go" "$RF.count"
@@ -9281,7 +9297,20 @@ while [ ! -s "$RF.pid" ] && [ "$rp_w" -lt 30 ]; do "$RET_SH_SLEEP" 1; rp_w=$((rp
 rp_pid="$(cat "$RF.pid" 2>/dev/null)"
 rp_w=0
 while ! grep -q 'OK: there is nothing' "$(ret_log "$RF")" 2>/dev/null && kill -0 "$rp_pid" 2>/dev/null && [ "$rp_w" -lt 300 ]; do "$RET_SH_SLEEP" 1; rp_w=$((rp_w + 1)); done
-"$RET_SH_SLEEP" 3
+# The printing starts once the lines are made ready, which on a slow awk takes a
+# while at this size: a print file in the copy folder whose size has stopped
+# changing. TERM goes a moment after that, so that it lands in the printing and
+# not while awk is still making the lines ready.
+rp_w=0
+rp_prev=-1
+while [ "$rp_w" -lt 60 ] && kill -0 "$rp_pid" 2>/dev/null; do
+  rp_size="$(find "$RF.tmp" -mindepth 2 -maxdepth 2 -type f -name print -exec wc -c {} + 2>/dev/null | awk 'NR == 1 { print $1 + 0 }')"
+  [ -n "$rp_size" ] && [ "$rp_size" = "$rp_prev" ] && break
+  rp_prev="${rp_size:--1}"
+  "$RET_SH_SLEEP" 1
+  rp_w=$((rp_w + 1))
+done
+"$RET_SH_SLEEP" 1
 if ! grep -q 'OK: there is nothing' "$(ret_log "$RF")" 2>/dev/null; then
   ran retention-stalled-reader
   kill -KILL "$rp_pid" 2>/dev/null
@@ -9302,6 +9331,7 @@ elif [ -n "$rp_pid" ] && kill -0 "$rp_pid" 2>/dev/null; then
     rp_got="$(tr -d ' ' < "$RF.count" 2>/dev/null)"
     rp_whole="$(find "$RF.tmp" -mindepth 2 -type f -name print -exec wc -c {} + 2>/dev/null | awk 'NR == 1 { print $1 + 0 }')"
     [ -n "$rp_got" ] || rp_bad="$rp_bad the-pipe-was-still-held"
+    [ "${rp_got:-0}" -gt 0 ] 2>/dev/null || rp_bad="$rp_bad never-reached-the-printing"
     [ -n "$rp_whole" ] || rp_bad="$rp_bad no-copy-left"
     [ -n "$rp_got" ] && [ -n "$rp_whole" ] && [ "$rp_got" -ge "$rp_whole" ] && rp_bad="$rp_bad printed-on-after-the-run($rp_got of $rp_whole)"
     [ "$(find "$RF.tmp" -mindepth 2 -type d 2>/dev/null | awk 'END { print NR + 0 }')" = 0 ] || rp_bad="$rp_bad a-folder-left-in-the-copy"
@@ -9320,6 +9350,27 @@ fi
 : > "$RF.go"
 kill "$rp_reader" 2>/dev/null
 wait "$rp_reader" 2>/dev/null
+
+# The lines cannot be made ready in the copy folder: an rm stand-in puts a
+# folder named print there as the run removes its working folder, just before
+# it prints. The run prints its own lines all the same, straight from awk.
+RF="$(ret_copy print-fallback)"
+mkdir -p "$RF.tmp"
+ret_shims "$RET/shim-print" rm
+rp_bad=''
+rp_rc="$( export RET_SH_FLAGS="$RET/shim-print.flags" RET_SH_RM_DO=print RET_SH_TMP="$RF.tmp" TMPDIR="$RF.tmp"
+  RET_PATH="$RET/shim-print" ret_out "$RF" "$RF.out" --dry-run )"
+printf '%s\n' "vault-retention: evaluated 0 candidate(s): 0 eligible, 0 legacy, 0 kept, 0 left alone, 0 refused, 0 moved" \
+  "vault-retention: OK: there is nothing in 20-projects/_logs to evaluate." > "$RF.want"
+[ "$rp_rc" = 0 ] || rp_bad="$rp_bad rc:$rp_rc"
+[ -f "$RET/shim-print.flags/rm" ] || rp_bad="$rp_bad never-landed"
+[ -f "$RET/shim-print.flags/planted" ] || rp_bad="$rp_bad nothing-in-the-way"
+cmp -s "$RF.want" "$RF.out" || rp_bad="$rp_bad printed-changed"
+if [ -z "$rp_bad" ]; then
+  ok "a run whose lines cannot be made ready in its copy folder still prints them"
+else
+  bad "a run whose lines could not be made ready printed something else --$rp_bad printed: [$(tr '\n' '|' < "$RF.out" 2>/dev/null | cut -c1-600)]"
+fi
 
 # A _logs folder this account cannot list, or can list and not enter. Neither
 # may read as an empty folder, which is a clean result: each prints its own
@@ -9414,23 +9465,33 @@ fi
 # POSIX mode, which POSIXLY_CORRECT in the environment turns on. The runner has
 # to get as far as its first line there too: a failed redirection on a special
 # builtin such as ":" ends a POSIX shell, and finding a free descriptor means
-# redirecting to ones that are not open. Where the runner does not parse in
-# POSIX mode at all, as under bash before 5.1, there is nothing to hold.
+# redirecting to ones that are not open. Bash before 5.1 has no process
+# substitution in POSIX mode and so cannot parse the runner there, which leaves
+# nothing to hold. From 5.1 a runner that does not parse in POSIX mode fails
+# here, because that is one of the regressions this control is for.
 RF="$(ret_copy posix-mode)"
-if env POSIXLY_CORRECT=1 bash -n "$RF/.claude/scripts/vault-retention.sh" 2>/dev/null; then
-  # Through env to the runner alone: set here, it would put this suite's own
-  # shell into POSIX mode.
-  rp_rc="$(env VAULT_STATE_DIR="$RF.state" RUN_LOCK_WAIT=0 RUN_LOCK_POLL=1 WATCHDOG_POLL=1 WATCHDOG_GRACE=2 POSIXLY_CORRECT=1 \
-    bash "$RF/.claude/scripts/vault-retention.sh" --dry-run > "$RF.out" 2>/dev/null; echo "$?")"
-  printf '%s\n' "vault-retention: evaluated 0 candidate(s): 0 eligible, 0 legacy, 0 kept, 0 left alone, 0 refused, 0 moved" \
-    "vault-retention: OK: there is nothing in 20-projects/_logs to evaluate." > "$RF.want"
-  if [ "$rp_rc" = 0 ] && cmp -s "$RF.want" "$RF.out"; then
-    ok "a run in POSIX mode gets past its start and prints what it judged"
-  else
-    bad "a run in POSIX mode stopped at its start -- rc $rp_rc printed: [$(tr '\n' '|' < "$RF.out" 2>/dev/null | cut -c1-300)]"
-  fi
+rp_bv="$(bash -c 'echo "${BASH_VERSINFO[0]} ${BASH_VERSINFO[1]}"' 2>/dev/null)"
+rp_major="${rp_bv%% *}"
+rp_minor="${rp_bv#* }"
+if [ "$rp_major" -lt 5 ] 2>/dev/null || { [ "$rp_major" -eq 5 ] 2>/dev/null && [ "$rp_minor" -lt 1 ] 2>/dev/null; }; then
+  skip retention-posix-mode "a run in POSIX mode: bash $rp_major.$rp_minor is older than 5.1, which cannot parse the runner in POSIX mode"
 else
-  skip retention-posix-mode "a run in POSIX mode: this bash does not parse the runner in POSIX mode"
+  ran retention-posix-mode
+  if ! env POSIXLY_CORRECT=1 bash -n "$RF/.claude/scripts/vault-retention.sh" 2>/dev/null; then
+    bad "the runner does not parse in POSIX mode under bash ${rp_bv:-of unknown version}"
+  else
+    # Through env to the runner alone: set here, it would put this suite's own
+    # shell into POSIX mode.
+    rp_rc="$(env VAULT_STATE_DIR="$RF.state" RUN_LOCK_WAIT=0 RUN_LOCK_POLL=1 WATCHDOG_POLL=1 WATCHDOG_GRACE=2 POSIXLY_CORRECT=1 \
+      bash "$RF/.claude/scripts/vault-retention.sh" --dry-run > "$RF.out" 2>/dev/null; echo "$?")"
+    printf '%s\n' "vault-retention: evaluated 0 candidate(s): 0 eligible, 0 legacy, 0 kept, 0 left alone, 0 refused, 0 moved" \
+      "vault-retention: OK: there is nothing in 20-projects/_logs to evaluate." > "$RF.want"
+    if [ "$rp_rc" = 0 ] && cmp -s "$RF.want" "$RF.out"; then
+      ok "a run in POSIX mode gets past its start and prints what it judged"
+    else
+      bad "a run in POSIX mode stopped at its start -- rc $rp_rc printed: [$(tr '\n' '|' < "$RF.out" 2>/dev/null | cut -c1-300)]"
+    fi
+  fi
 fi
 RF="$(ret_copy linked-logs)"
 ret_journal "$RF" "dream-${RET_DATE[70]}.md" "tier: medium"

@@ -397,25 +397,15 @@ a lint that does nothing and a lint that found nothing wrong print the same thin
 
 A control that cannot run on the platform in hand prints `SKIP [<id>] <reason> (not counted)`.
 Set `RUN_TESTS_REQUIRED` to a space-separated list of those ids and the suite fails any of them
-that did not run. The CI jobs set it per operating system, on Windows to
+that did not run. Each CI job sets it for its own platform in `.github/workflows/ci.yml`: four
+lists, for Windows, Linux and macOS in the matrix job's line and for the bash 3.2 job in its own. A
+step in the hygiene job compares them with the lists of the branch a change lands on, and fails
+when one loses an id that the change does not name as retired. Adding a platform-gated control
+means adding its id there as well, because a control nobody requires can quietly stop running on
+the platform it was written for.
 
-```
-win-native-tree noncesweep win-sweep-report win-orphan-stop win-fork-stop signal-scope
-runlog-tmp-case retention-junction
-```
-
-and on Linux, macOS and bash 3.2 to
-
-```
-groupkill symlink run-log-link run-log-dirlink reaped-group line-break-name signal-scope
-runlog-tmp-case keep-output-dirlink tripwire-name keep-output-fifo retention-symlink
-```
-
-Both lists are one line each in `.github/workflows/ci.yml`, wrapped here only to fit the page.
-Adding a platform-gated control means adding its id there as well, because a control nobody
-requires can quietly stop running on the platform it was written for. A fake pass whose stop is reported as `KILL_FAILED` fails the suite at
-the end, and its marked lock and the tripwire its stop set are moved aside after that run, so the
-cases after it still run.
+A fake pass whose stop is reported as `KILL_FAILED` fails the suite at the end, and its marked lock
+and the tripwire its stop set are moved aside after that run, so the cases after it still run.
 
 The fixture vault is created at a path containing spaces (`.../some one/my vault/`) on purpose:
 that is the case word-splitting bugs break on, while still printing a reassuring "0 violations".
