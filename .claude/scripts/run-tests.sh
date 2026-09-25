@@ -5650,22 +5650,46 @@ tripwire_clear
 rm -rf "$RV/.obsidian/plugins"
 
 # A bad RUN_LOCK_POLL must neither spin nor stretch the wait past RUN_LOCK_WAIT.
+# The sleeps are recorded rather than the run timed, because no fixed time limit
+# holds on every host: on a slow Windows host a run the lock refused at once,
+# with no wait at all, took about 30 s. The replacement poll is longer than the
+# wait, so a sleep that is not cut to the time left records the whole poll, and a
+# spin records sleeps of 0, or none. Every sleep must be a whole number of
+# seconds from 1 to the whole wait, there must be at least one, and the poll the
+# log names must be longer than the wait, or an uncut sleep would pass unseen.
+# The first pass through the lock loop, which runs before any sleep, took about
+# 10 s on the slow Windows host measured, and one that used the whole wait would
+# fail here as a wait that never slept.
+lp_wait=25
+mkdir -p "$SHIM/sleep-record"
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "%s"\nexec "%s" "$@"\n' "$TMP/lock-poll.sleeps" "$(command -v sleep)" > "$SHIM/sleep-record/sleep"
+chmod +x "$SHIM/sleep-record/sleep"
+rm -f "$TMP/lock-poll.sleeps"
 new_case_state lock-poll
 plant_lock dream-pass "$holder_pid" "$now_s" 100000
 poll_t0="$(date +%s)"
-expect_rc "RUN_LOCK_POLL=0 while the lock is held -> LOCKED within the wait" 75 "$(runner dream-pass.sh journal RUN_LOCK_POLL=0 RUN_LOCK_WAIT=2)"
+expect_rc "RUN_LOCK_POLL=0 while the lock is held -> LOCKED after the wait" 75 "$(runner dream-pass.sh journal RUN_LOCK_POLL=0 RUN_LOCK_WAIT="$lp_wait" PATH="$SHIM/sleep-record:$PATH")"
 poll_s=$(( $(date +%s) - poll_t0 ))
 if grep -q 'WARNING: RUN_LOCK_POLL "0"' "$RV/.claude/logs/dream-agent.log" 2>/dev/null; then
   ok "an invalid RUN_LOCK_POLL is logged and replaced"
 else
   bad "an invalid RUN_LOCK_POLL was not logged"
 fi
-# The replacement poll is 30 s, and the wait is 2 s. A sleep that is not cut to
-# the time remaining would take 30 s.
-if [ "$poll_s" -lt 20 ]; then
-  ok "the wait ends on time although one poll is longer than the time left (${poll_s}s)"
+lp_poll="$(LC_ALL=C sed -n 's/.*WARNING: RUN_LOCK_POLL "0" .* Using \([0-9][0-9]*\)\.$/\1/p' "$RV/.claude/logs/dream-agent.log" 2>/dev/null | tail -n 1)"
+poll_n=0
+poll_sleeps=""
+poll_bad=1
+if [ -s "$TMP/lock-poll.sleeps" ]; then
+  poll_n="$(awk 'END { print NR }' "$TMP/lock-poll.sleeps")"
+  poll_sleeps="$(head -n 20 "$TMP/lock-poll.sleeps" | tr '\n' ' ')"
+  poll_bad="$(LP_MAX="$lp_wait" awk '!/^[1-9][0-9]*$/ || $0 + 0 > ENVIRON["LP_MAX"] + 0 { n++ } END { print n + 0 }' "$TMP/lock-poll.sleeps")"
+fi
+if [ "$poll_bad" != 0 ]; then
+  bad "a sleep outlasted RUN_LOCK_WAIT, the wait spun, or it never slept ($poll_n sleep(s); the first 20: [${poll_sleeps% }])"
+elif [ -z "$lp_poll" ] || [ "$lp_poll" -le "$lp_wait" ]; then
+  bad "this control cannot see a sleep that is not cut to the time left -- the replacement poll the log names (${lp_poll:-none}) is not longer than the wait ($lp_wait)"
 else
-  bad "the wait overran RUN_LOCK_WAIT by a whole poll (${poll_s}s)"
+  ok "no sleep outlasts the wait although the poll (${lp_poll}s) is longer than the wait (sleeps: ${poll_sleeps% }; ${poll_s}s in all)"
 fi
 
 # Numbers from the environment. A leading zero would be octal in arithmetic, and
@@ -5739,8 +5763,34 @@ fi
 
 # On Windows, a runner that Git Bash cannot see (another logon session) is still
 # found by its Windows process id, unless that process started after the lock.
-holder_winpid="$(cat "/proc/$holder_pid/winpid" 2>/dev/null)"
-if [ -n "$holder_winpid" ] && command -v powershell.exe >/dev/null 2>&1; then
+# These cases get a holder of their own. The one above lives 600 s, and on a slow
+# host it can be gone by now. Its other users do not need it to last: the ones
+# that plant it with a longest run of 100000 s get a lock never old enough to
+# reclaim, so they pass whether it is alive or not, and the one that needs it
+# alive runs one runner call after it starts. This holder is a subshell that
+# ends in the wait builtin, so it never execs and its Windows process id cannot
+# change after it is read, and the Windows side asks only whether that process
+# is bash or sh and when it began. Killed, it stops its own sleep, so no process
+# outlives the case.
+winholder_pid=""
+holder_winpid=""
+winpid_why=""
+if ! is_windows_host; then
+  winpid_why='not Git Bash on Windows'
+elif ! command -v powershell.exe >/dev/null 2>&1; then
+  winpid_why='no powershell.exe on PATH'
+else
+  ( c=""; trap 'kill "$c" 2>/dev/null; exit 0' TERM; sleep 600 & c=$!; wait "$c" ) >/dev/null 2>&1 &
+  winholder_pid=$!
+  wp_try=0
+  while [ -z "$holder_winpid" ] && [ "$wp_try" -lt 5 ]; do
+    holder_winpid="$(cat "/proc/$winholder_pid/winpid" 2>/dev/null)"
+    [ -n "$holder_winpid" ] || { sleep 1; wp_try=$((wp_try + 1)); }
+  done
+  [ -n "$holder_winpid" ] || winpid_why="the lock holder (pid $winholder_pid) has no readable /proc/$winholder_pid/winpid"
+fi
+if [ -z "$winpid_why" ]; then
+  ran windows-process-id-checks-against-powershell
   new_case_state lock-winpid-alive
   plant_lock dream-pass 999999 "$(date +%s)" 1 planted "$holder_winpid"
   sleep 2
@@ -5754,7 +5804,11 @@ if [ -n "$holder_winpid" ] && command -v powershell.exe >/dev/null 2>&1; then
   plant_lock dream-pass 999999 "$((now_s - 5000))" 1 planted 999999996
   expect_rc "an old lock whose Windows process id no process has -> reclaimed, OK" 0 "$(runner dream-pass.sh journal)"
 else
-  skip windows-process-id-checks-against-powershell 'Windows process id checks against PowerShell: not Git Bash on Windows'
+  skip windows-process-id-checks-against-powershell "Windows process id checks against PowerShell: $winpid_why"
+fi
+if [ -n "$winholder_pid" ]; then
+  kill "$winholder_pid" 2>/dev/null
+  wait "$winholder_pid" 2>/dev/null
 fi
 # The Windows lookup through a stand-in powershell.exe, which runs on every
 # platform. A PowerShell that cannot answer (missing, blocked or failing) must not
@@ -5825,19 +5879,54 @@ if grep -q 'ERROR: could not create the run lock' "$RV/.claude/logs/dream-agent.
 else
   bad "a run lock that cannot be created was not reported"
 fi
-file_start="$(date +%s)"
+# The retries are counted rather than timed, because loading the runner library
+# and asking for the lock took 3-4 s on a slow Windows host. Each retry is one
+# sleep, so a file named run.lock must stop the lock with no sleep at all. The
+# same subshell first shows the count can see a retry: with mkdir failing and
+# nothing at the lock path, the lock sleeps four times and gives up on the fifth
+# miss. A recorded sleep is not slept, and the twentieth ends the subshell, so a
+# retry limit that went missing fails here instead of hanging the suite.
+rm -f "$TMP/lock-retry.sleeps" "$TMP/lock-retry.rc" "$TMP/lock-file.sleeps"
+mkdir -p "$TMP/lock-retry-state"
 ( . "$RV/.claude/scripts/lib/runner-common.sh"
   RUN_LOCK_WAIT=0
+  lock_sleeps="$TMP/lock-retry.sleeps"
+  sleep() {
+    printf '%s\n' "$*" >> "$lock_sleeps"
+    [ "$(awk 'END { print NR }' "$lock_sleeps")" -lt 20 ] || exit 99
+  }
+  mkdir() { for a in "$@"; do case "$a" in */run.lock) return 1 ;; esac; done; command mkdir "$@"; }
+  run_lock_acquire "$TMP/lock-retry-state" "$TMP/no-such-vault" dream-pass "$TMP/lock-retry.log" 100
+  printf '%s\n' "$?" > "$TMP/lock-retry.rc"
+  unset -f mkdir
+  lock_sleeps="$TMP/lock-file.sleeps"
   run_lock_acquire "$CASE_STATE" "$TMP/no-such-vault" dream-pass "$TMP/lock-file.log" 100
   file_rc=$?
   RUN_LOCK_DIR=""
   exit "$file_rc" )
 file_rc=$?
-file_took=$(( $(date +%s) - file_start ))
-if [ "$file_rc" -eq 1 ] && [ "$file_took" -lt 3 ]; then
+retry_n=0
+[ -f "$TMP/lock-retry.sleeps" ] && retry_n="$(awk 'END { print NR + 0 }' "$TMP/lock-retry.sleeps")"
+file_n=0
+[ -f "$TMP/lock-file.sleeps" ] && file_n="$(awk 'END { print NR + 0 }' "$TMP/lock-file.sleeps")"
+retry_rc="$(cat "$TMP/lock-retry.rc" 2>/dev/null)"
+if [ -z "$retry_rc" ]; then
+  if [ "$retry_n" -ge 20 ]; then
+    bad "the retry count did not finish -- the lock retried without a limit and the subshell ended at its twentieth recorded sleep (rc $file_rc)"
+  else
+    bad "the retry count did not finish -- the subshell ended early (rc $file_rc, $retry_n sleep(s))"
+  fi
+elif [ "$retry_rc" = 1 ] && [ "$retry_n" = 4 ]; then
+  ok "a lock that cannot be made is retried four times and then refused, so the count below can see a retry"
+else
+  bad "the retry count is off -- expected rc 1 after exactly 4 retry sleeps (five misses in run_lock_acquire), got rc $retry_rc and $retry_n sleep(s)"
+fi
+if [ -z "$retry_rc" ]; then
+  bad "a file named run.lock was not checked, because the subshell ended before the file case ran"
+elif [ "$file_rc" -eq 1 ] && [ "$file_n" = 0 ]; then
   ok "a file named run.lock stops the lock at once, without the retries"
 else
-  bad "a file named run.lock was retried or not refused (rc $file_rc after ${file_took}s)"
+  bad "a file named run.lock was retried or not refused (rc $file_rc, $file_n retry sleep(s))"
 fi
 # A symlink named run.lock is never read as a lock directory, even one pointing
 # at a folder.
