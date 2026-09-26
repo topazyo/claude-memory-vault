@@ -9188,8 +9188,10 @@ for rp_case in stall gaps; do
   ret_dream_commit "$RF" "dream-${RET_DATE[90]}.md"
   ret_shims "$RET/shim-$rp_case" git
   rm -f "$RF.gaps"
+  # An if rather than a case: bash 3.2 reads the ) of a case pattern inside $( )
+  # as the end of the substitution.
   rp_rc="$( export RET_SH_FLAGS="$RET/shim-$rp_case.flags" RET_SH_GIT_DO=quiet
-    case "$rp_case" in stall) export RUN_STALL_SECONDS=1 ;; gaps) export RUN_GAPS_FILE="$RF.gaps" ;; esac
+    if [ "$rp_case" = stall ]; then export RUN_STALL_SECONDS=1; else export RUN_GAPS_FILE="$RF.gaps"; fi
     RET_PATH="$RET/shim-$rp_case" ret_out "$RF" "$RF.out" --dry-run )"
   [ "$rp_rc" = 0 ] || rp_bad="$rp_bad $rp_case-rc:$rp_rc"
   [ -f "$RET/shim-$rp_case.flags/git" ] || rp_bad="$rp_bad $rp_case-never-quiet"
@@ -9354,8 +9356,12 @@ elif [ -n "$rp_pid" ] && kill -0 "$rp_pid" 2>/dev/null; then
   rp_w=0
   while kill -0 "$rp_pid" 2>/dev/null && [ "$rp_w" -lt 20 ]; do "$RET_SH_SLEEP" 1; rp_w=$((rp_w + 1)); done
   if kill -0 "$rp_pid" 2>/dev/null; then
+    # What the run and anything it started were doing, before they are killed,
+    # so that a failure on a platform nobody here can reproduce says where.
+    rp_ps="$(ps -A -o pid= -o ppid= -o stat= -o command= 2>/dev/null | awk -v p="$rp_pid" '$1 == p || $2 == p' | cut -c1-120 | tr '\n' '|')"
+    rp_found="$(find "$RF.tmp" -mindepth 2 -maxdepth 2 -type f 2>/dev/null | awk 'END { print NR + 0 }')"
     kill -KILL "$rp_pid" 2>/dev/null
-    bad "a run whose reader stopped reading was still running 20s after TERM"
+    bad "a run whose reader stopped reading was still running 20s after TERM -- waited ${rp_w}s for the print file, $rp_found file(s) in the fixture's TMPDIR, processes: [$rp_ps]"
   else
     : > "$RF.go"
     rp_w=0
