@@ -126,6 +126,10 @@ IN_EXIT=0
 COPYING=0
 EXIT_SIG=""
 COPY_SIG=""
+# The child that prints as the run ends, and the stop signal that landed while
+# it did. See on_exit.
+PRINT_PID=""
+STOP_SIG=""
 STATE=""
 ROOT=""
 HOOKS=""
@@ -263,11 +267,12 @@ safe_name() {
 # which safe_name has already spelled out there.
 #
 # The lines are made ready in a file and then printed by the shell itself, not
-# by awk: a reader that stops reading then holds up this process, which TERM
-# ends, and not a child that would go on holding the caller's pipe once the run
-# is gone. When that file cannot be written, the temporary folder being full or
-# something in its place, the lines are made ready in the shell's memory
-# instead, and printed by it all the same.
+# by awk. on_exit runs this in a child shell and kills that child when a stop
+# signal comes, and a child of the child, such as an awk still printing, would
+# go on holding the caller's pipe once the run is gone. When that file cannot
+# be written, the temporary folder being full or something in its place, the
+# lines are made ready in the shell's memory instead, and printed by it all the
+# same.
 print_run() {
   local line lines
   if [ -z "$RUN_LOG" ]; then
@@ -331,10 +336,9 @@ on_exit() {
   # library's lines nor the release of the lock is cut short, and a TERM sent
   # meanwhile is not lost: once the lock is gone it is sent again, and the run
   # ends there without printing, its lines being in the log. A reader that has
-  # gone away costs a write error rather than a signal that replaces the exit
-  # code.
+  # gone away ends the child that prints, never the run's own exit code, since
+  # this shell never writes to the caller.
   IN_EXIT=1
-  trap '' PIPE
   lib_logged
   run_lock_release
   # The working folder goes while a signal is still held, since print_run needs
@@ -349,9 +353,29 @@ on_exit() {
   # The printing may be stopped, so a reader that stops reading cannot keep the
   # run alive after TERM, and nothing waits on this run once its lock is gone.
   # It goes to OUT_FD, the copy main takes of standard output before anything
-  # can redirect it. The folder holding RUN_LOG goes last, and a signal that
-  # stops the printing leaves it behind.
-  print_run "$st" 2>/dev/null >&"$OUT_FD"
+  # can redirect it, from a child this shell waits for. A stop signal then finds
+  # this shell in wait, which a trapped signal cuts short in every bash, and not
+  # in a write a stalled reader holds up, where bash 3.2 never acts on it. The
+  # trap kills the child outright, since all it does is print, and the run ends
+  # with the signal's code. Each moment the signal can land is covered: before
+  # the child starts or its pid is known it is only recorded, and the child is
+  # killed as soon as it is. The folder holding RUN_LOG goes last, and a signal
+  # that stops the printing leaves it behind.
+  PRINT_PID=""
+  STOP_SIG=""
+  trap 'STOP_SIG=130; [ -z "$PRINT_PID" ] || kill -KILL "$PRINT_PID" 2>/dev/null' INT
+  trap 'STOP_SIG=143; [ -z "$PRINT_PID" ] || kill -KILL "$PRINT_PID" 2>/dev/null' TERM
+  trap 'STOP_SIG=129; [ -z "$PRINT_PID" ] || kill -KILL "$PRINT_PID" 2>/dev/null' HUP
+  print_run "$st" 2>/dev/null >&"$OUT_FD" &
+  PRINT_PID=$!
+  [ -z "$STOP_SIG" ] || kill -KILL "$PRINT_PID" 2>/dev/null
+  wait "$PRINT_PID" 2>/dev/null
+  if [ -n "$STOP_SIG" ]; then
+    wait "$PRINT_PID" 2>/dev/null
+    exit "$STOP_SIG"
+  fi
+  # Reaped, so its pid is no longer this run's to kill.
+  PRINT_PID=""
   [ -n "$COPY_DIR" ] && rm -rf "$COPY_DIR"
 }
 

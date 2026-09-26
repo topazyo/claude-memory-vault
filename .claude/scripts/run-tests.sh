@@ -9290,8 +9290,8 @@ else
 fi
 
 # A reader that has gone away before the run prints: a refused lock whose
-# standard output is a pipe nobody reads. The write fails, and the run still
-# ends with its own code, 75, rather than being killed by SIGPIPE.
+# standard output is a pipe nobody reads. SIGPIPE ends the child that prints,
+# and the run still ends with its own code, 75, rather than being killed by it.
 RF="$(ret_copy reader-gone)"
 mkdir -p "$RF.state/run.lock"
 printf "$rp_planted" "$$" "$(date +%s)" > "$RF.state/run.lock/owner"
