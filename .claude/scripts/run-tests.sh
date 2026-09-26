@@ -1303,7 +1303,7 @@ const refusedGlobs = [".env", ".env*", ".ENV*", "*", "{.env,x}", "secret?/**", "
   ".[_-f]nv", ".[^A-Z]nv", "{[,.]env,x}", "{x,[!}]env}", ".[E]nv", ".[e]NV", "20-projects/[S]ECRETS/x.md",
   // A / inside a set, a set that could match a /, and an escaped \/.
   "s[e/]crets/x.md", ".[e/]nv", "s?crets[!a]x.md", "s[e/]crets[!a]x.md", "s?crets[.-0]x.md", "s?crets\\/x.md",
-  // ripgrep reads a backslash as an escape on Windows too, where these are .env and secrets/x.md.
+  // ripgrep reads a backslash as an escape, so these are .env and secrets/x.md.
   ".\\env", "s\\ecrets/x.md",
   // A - after a range moves its end, so [a-b-z] is a to z; and ripgrep drops trailing white
   // space as Rust defines it, which includes U+0085 (NEL) where JavaScript's \s does not.
@@ -1311,7 +1311,9 @@ const refusedGlobs = [".env", ".env*", ".ENV*", "*", "{.env,x}", "secret?/**", "
 // Labels quote the glob and spell out what is not printable ASCII, so a tab, a
 // trailing space or an invisible character shows.
 const shown = (text) => JSON.stringify(text).replace(/[^\x20-\x7e]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`)
-for (const glob of refusedGlobs) cases.push(["grep", { pattern: "KEY", glob }, "refused", `a grep with the glob ${shown(glob)}`])
+// On Windows a glob holding a backslash is not decided at all, whatever it would reach.
+const onWindows = (glob, want) => (win && glob.includes("\\") ? "failed:holds a backslash" : want)
+for (const glob of refusedGlobs) cases.push(["grep", { pattern: "KEY", glob }, onWindows(glob, "refused"), `a grep with the glob ${shown(glob)}`])
 cases.push(["grep", { pattern: "KEY", glob: `${"x".repeat(300)}.md` }, "failed:longer than 256", "a grep with a glob over 256 characters"])
 cases.push(["grep", { pattern: "KEY", glob: "{a,b}".repeat(10) }, "failed:more than 32 alternatives", "a grep with a glob of 1024 brace alternatives"])
 cases.push(["grep", { pattern: "KEY", glob: "{*" }, "failed:with no }", "a grep with the glob {* whose brace never closes"])
@@ -1323,11 +1325,11 @@ cases.push(["grep", { pattern: "KEY", glob: "[!a][!b][!c][!d][!e].md" }, "failed
 for (const glob of ["*.md", "**/*.md", "!*.md", "31-standards/*.md", "{a,b}.md", "*/notes.md", "31-standards/**/*.md", "*.txt",
   "*/x", "[{]*.md", "*.m?", "[!.]*.md", "[a-c]*.md", "{a,{b,c}}.md", "\\*.md", "*.[!t]xt", "20-projects/[!_]*.md",
   "*/[!.]*.md", "a\\/b.md", "[a-b-d]x.md", "*.md ", "a.md\\ ", "[z-a]x.md", "*.md\u{85}"]) {
-  cases.push(["grep", { pattern: "KEY", glob }, "allowed", `a grep with the glob ${shown(glob)}`])
+  cases.push(["grep", { pattern: "KEY", glob }, onWindows(glob, "allowed"), `a grep with the glob ${shown(glob)}`])
 }
 cases.push(["grep", { pattern: "KEY", glob: ["*.md"] }, "no-glob", "a grep whose glob is not text (fails closed)"])
 cases.push(["find", { pattern: "*" }, "allowed", "a find with no path"])
-if (win) cases.push(["grep", { pattern: "KEY", glob: "20-projects\\.[e]nv" }, "refused", "a Windows glob whose backslash, read as a slash, names .env"])
+if (win) cases.push(["grep", { pattern: "KEY", glob: "20-projects\\x.md" }, "failed:holds a backslash", "a Windows glob holding a backslash for a slash"])
 if (win) cases.push(["read", { path: `${vault.slice(0, 2)}.env` }, "refused", "a drive-relative C:.env"])
 for (const [tool, input, want, label] of cases) await expect(pi, tool, input, want, label)
 

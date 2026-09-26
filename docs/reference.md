@@ -387,16 +387,16 @@ a lint that does nothing and a lint that found nothing wrong print the same thin
   inside a set (`s[e/]crets/x.md`), a set that could match a `/` (`s?crets[!a]x.md`), an escaped
   `\/` or a backslash escape (`.\env`), a range continued with another `-` (`.[a-b-z]nv`) or
   trailing white space (`.[e]nv ` and U+0085, which JavaScript alone does not count as white
-  space), a file read from a session started inside `secrets/`, a
-  `../secrets/k` read from a session started in `31-standards/`, an `ls`, `grep` or `find` with no
-  path from a session started inside `secrets/`, and on Windows `C:.env` and a glob whose `\`,
-  read as a slash, names `.env`. Each refusal is checked for its reason, so a call the guard should
-  deny cannot pass by making the guard fail instead: a `file://` URL Pi cannot open and a glob over
-  256 characters, of more than 32 brace alternatives, with more than four sets that could match a
-  `/` or with an unclosed `{` are refused as calls it cannot decide, each for its own named cause,
-  a `read` or `write` with no path as having none, and a glob that is not text as a changed input,
-  each fixed reason compared whole. Two globs built to make a
-  backtracking matcher run for ever, one of which a regex translation took more than 30 s over,
+  space), a file read from a session started inside `secrets/`, a `../secrets/k` read from a
+  session started in `31-standards/`, an `ls`, `grep` or `find` with no path from a session
+  started inside `secrets/`, and on Windows `C:.env`. Each refusal is checked for its reason, so a
+  call the guard should deny cannot pass by making the guard fail instead: a `file://` URL Pi
+  cannot open and a glob over 256 characters, of more than 32 brace alternatives, with more than
+  four sets that could match a `/`, with an unclosed `{` or, on Windows, holding any backslash
+  (the backslash cases above included) are refused as calls it cannot decide, each for its own
+  named cause, a `read` or `write` with no path as having none, and a glob that is not text as a
+  changed input, each fixed reason compared whole. Two globs built to make a backtracking matcher
+  run for ever, one of which a regex translation took more than 30 s over,
   are decided in under 2 s; they are asked in a worker thread that is stopped after 10 s, so such
   a matcher fails the two controls instead of hanging the suite. Links are followed: a linked
   `secrets` folder, a link to a folder or a `.env` that does not exist yet, a relative link inside

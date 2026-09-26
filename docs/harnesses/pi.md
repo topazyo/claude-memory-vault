@@ -54,8 +54,9 @@ as Claude Code's own read deny does.
     are split at each `/` outside a `[...]` set and at an escaped `\/`, and because ripgrep lets
     a set match a `/`, a set that could (one holding `/`, a negated set that does not exclude `/`,
     or a range across `/`) is tried both as a letter and as a `/`: `s[e/]crets/x.md` and
-    `s?crets[!a]x.md` are refused. ripgrep reads a backslash as an escape on every platform, so
-    `.\env` is `.env`; on Windows the glob is tested with its backslashes read as `/` too. A set is
+    `s?crets[!a]x.md` are refused. A backslash is read as the escape ripgrep reads, so `.\env` is
+    `.env`; on Windows a glob holding a backslash is refused as one the guard cannot decide, so
+    write `/` there. A set is
     read as ripgrep reads it, so `[a-b-z]` runs from `a` to `z`, and like ripgrep the guard drops
     a glob's trailing white space, as Rust defines it, unless a backslash escapes its last space.
     ripgrep lets a glob that matches a file override `.gitignore`, which is why the glob is checked
@@ -226,8 +227,8 @@ once against a scratch copy of the vault and diff the tree before you schedule i
   the reason: a path Pi could not open either, such as a `file://` URL with an encoded slash; a
   loop of symbolic links, or a chain too long to follow; and a `grep` glob longer than 256
   characters, of more than 32 brace alternatives, with more than four `[...]` sets that could
-  match a `/`, or with a `{` that never closes. A `grep` glob that is not text is refused as a
-  changed tool input.
+  match a `/`, with a `{` that never closes, or, on Windows, holding a backslash. A `grep` glob
+  that is not text is refused as a changed tool input.
 - `bash` and `powershell` reads and writes bypass the extension.
 - A `grep` glob that reaches a `.env.*` name other than `.env.local` only through a `*` standing
   in for some or all of `.env` is let through, in a git repository too, and so is a `grep` with no

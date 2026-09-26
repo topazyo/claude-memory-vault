@@ -374,35 +374,32 @@ function partsMaySeeSecret(parts) {
   return parts.slice(0, -1).some((part) => part !== "*" && part !== "**" && globMatches(part, "secrets"))
 }
 
-// ripgrep reads a backslash in a glob as an escape on every platform, since
-// its ignore crate builds each glob with backslash_escape, and so does this
-// test. On Windows, where a backslash also separates folders in a path, the
-// glob is tested with its backslashes read as / as well, and refused when
-// either reading reaches a secret. Like a .gitignore line, the glob first loses
-// its trailing white space, unless it ends in an escaped space. ripgrep trims
-// what Rust calls white space, which includes U+0085 where JavaScript's \s does
-// not, so both sets are trimmed.
+// ripgrep's ignore crate builds each glob with backslash_escape, and this test
+// reads a backslash as that escape. On Windows, where a backslash also
+// separates folders in a path, a glob holding one is not decided at all: it is
+// refused, and / works there instead. Like a .gitignore line, the glob first
+// loses its trailing white space, unless it ends in an escaped space. ripgrep
+// trims what Rust calls white space, which includes U+0085 where JavaScript's
+// \s does not, so both sets are trimmed.
 function globMaySeeSecret(raw) {
   if (raw.length > MAX_GLOB) throw new Error(`the glob is longer than ${MAX_GLOB} characters`)
   const line = raw.endsWith("\\ ") ? raw : raw.replace(/[\s\u{85}]+$/u, "")
   if (line.startsWith("!")) return false
-  const readings = WINDOWS && line.includes("\\") ? [line, line.replace(/\\/g, "/")] : [line]
-  return readings.some((reading) => {
-    const glob = reading.replace(/^\/+/, "")
-    const folded = glob.toUpperCase()
-    if (folded.includes(".ENV") || folded.includes("SECRET")) return true
-    const alternatives = braceAlternatives(glob)
-    if (alternatives === null) throw new Error(`the glob spells out more than ${MAX_ALTERNATIVES} alternatives`)
-    return alternatives.some((alt) => {
-      const sets = slashSets(alt)
-      if (sets.length > MAX_SLASH_SETS) throw new Error(`the glob has more than ${MAX_SLASH_SETS} [...] sets that could match a /`)
-      // Every way of reading those sets, each as one character or as a /.
-      for (let mask = 0; mask < 2 ** sets.length; mask++) {
-        const asSlash = new Set(sets.filter((_, k) => (mask >> k) & 1))
-        if (partsMaySeeSecret(globParts(alt, asSlash))) return true
-      }
-      return false
-    })
+  if (WINDOWS && line.includes("\\")) throw new Error("on Windows the glob holds a backslash; write / instead")
+  const glob = line.replace(/^\/+/, "")
+  const folded = glob.toUpperCase()
+  if (folded.includes(".ENV") || folded.includes("SECRET")) return true
+  const alternatives = braceAlternatives(glob)
+  if (alternatives === null) throw new Error(`the glob spells out more than ${MAX_ALTERNATIVES} alternatives`)
+  return alternatives.some((alt) => {
+    const sets = slashSets(alt)
+    if (sets.length > MAX_SLASH_SETS) throw new Error(`the glob has more than ${MAX_SLASH_SETS} [...] sets that could match a /`)
+    // Every way of reading those sets, each as one character or as a /.
+    for (let mask = 0; mask < 2 ** sets.length; mask++) {
+      const asSlash = new Set(sets.filter((_, k) => (mask >> k) & 1))
+      if (partsMaySeeSecret(globParts(alt, asSlash))) return true
+    }
+    return false
   })
 }
 
