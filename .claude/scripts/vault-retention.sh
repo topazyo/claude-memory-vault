@@ -349,6 +349,9 @@ on_exit() {
   if [ -n "$EXIT_SIG" ]; then
     [ -n "$COPY_DIR" ] && rm -rf "$COPY_DIR"
     kill -s "$EXIT_SIG" "$$"
+    # A shell that has not acted on the signal it sent itself by here still
+    # ends as that signal would have it, and without printing.
+    case "$EXIT_SIG" in INT) exit 130 ;; TERM) exit 143 ;; *) exit 129 ;; esac
   fi
   # The printing may be stopped, so a reader that stops reading cannot keep the
   # run alive after TERM, and nothing waits on this run once its lock is gone.
@@ -357,15 +360,19 @@ on_exit() {
   # this shell in wait, which a trapped signal cuts short in every bash, and not
   # in a write a stalled reader holds up, where bash 3.2 never acts on it. The
   # trap kills the child outright, since all it does is print, and the run ends
-  # with the signal's code. Each moment the signal can land is covered: before
-  # the child starts or its pid is known it is only recorded, and the child is
-  # killed as soon as it is. The folder holding RUN_LOG goes last, and a signal
-  # that stops the printing leaves it behind.
+  # with the signal's code. Before the traps a signal takes its default action
+  # and ends the run printing nothing. Once they are set it is recorded: no
+  # child is started after that, and one already started is killed as soon as
+  # its pid is known. After the child is reaped a stop signal changes nothing.
+  # The folder holding RUN_LOG goes last, and a signal that stops the printing
+  # leaves it behind. A run killed outright, or by a signal not trapped here,
+  # while it prints leaves the child to finish printing.
   PRINT_PID=""
   STOP_SIG=""
   trap 'STOP_SIG=130; [ -z "$PRINT_PID" ] || kill -KILL "$PRINT_PID" 2>/dev/null' INT
   trap 'STOP_SIG=143; [ -z "$PRINT_PID" ] || kill -KILL "$PRINT_PID" 2>/dev/null' TERM
   trap 'STOP_SIG=129; [ -z "$PRINT_PID" ] || kill -KILL "$PRINT_PID" 2>/dev/null' HUP
+  [ -z "$STOP_SIG" ] || exit "$STOP_SIG"
   print_run "$st" 2>/dev/null >&"$OUT_FD" &
   PRINT_PID=$!
   [ -z "$STOP_SIG" ] || kill -KILL "$PRINT_PID" 2>/dev/null
@@ -374,8 +381,8 @@ on_exit() {
     wait "$PRINT_PID" 2>/dev/null
     exit "$STOP_SIG"
   fi
-  # Reaped, so its pid is no longer this run's to kill.
   PRINT_PID=""
+  trap '' INT TERM HUP
   [ -n "$COPY_DIR" ] && rm -rf "$COPY_DIR"
 }
 
@@ -3100,14 +3107,18 @@ usage() {
   return 0
 }
 
-# tmp_dir - a new private folder in TMPDIR, or in /tmp when TMPDIR is not set
+# tmp_dir - a new private folder in TMPDIR, or in /tmp
 # Named by a template rather than left to mktemp, because on macOS mktemp -d
 # puts the folder in the per-user folder the system names and not in TMPDIR, so
 # a caller who points TMPDIR somewhere would find the run's folders elsewhere.
-# The plain forms stay as a fallback, for a TMPDIR that cannot be used.
+# TMPDIR counts only when it is an absolute path: the run has already moved
+# into the vault, where a relative one would put the folders. /tmp is the
+# fallback when TMPDIR cannot be used, and the plain form the last resort.
 tmp_dir() {
-  mktemp -d "${TMPDIR:-/tmp}/vaultretention.XXXXXXXX" 2>/dev/null \
-    || mktemp -d 2>/dev/null || mktemp -d -t vaultretention 2>/dev/null
+  local base=/tmp
+  case "${TMPDIR:-}" in /*) base="$TMPDIR" ;; esac
+  mktemp -d "$base/vaultretention.XXXXXXXX" 2>/dev/null \
+    || mktemp -d /tmp/vaultretention.XXXXXXXX 2>/dev/null || mktemp -d 2>/dev/null
 }
 
 main() {

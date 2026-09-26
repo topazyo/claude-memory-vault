@@ -60,12 +60,13 @@ over, and stops reporting a `20-projects/_logs` folder it can enter but not list
   runner can end with, including 127 from `vault-retention.cmd` and the signal codes.
 - The runner copies standard output to the first descriptor from 9 down to 3 that nothing holds
   open, rather than always to 9, so a wrapper that keeps a `flock(1)` lock on 9 keeps it, unless
-  every one of them is held. The printing at the end of a run can be stopped with TERM, so a reader
-  that stops reading no longer keeps the run alive until KILL, and nothing the run started goes on
-  printing after it. A TERM that lands while the run lets its lock go is kept until the lock is
-  released rather than lost. A run lock, or a process id, that the caller's environment names is no
-  longer touched by a run that never took it, and `RUN_NONCE`, `RUN_STALL_SECONDS` or
-  `RUN_GAPS_FILE` in that environment no longer reaches the run's watchdog.
+  every one of them is held. The printing at the end of a run can be stopped with TERM, INT or HUP,
+  under bash 3.2 too, so a reader that stops reading no longer keeps the run alive until KILL, and
+  nothing the run started goes on printing after the signal has ended it. A TERM that lands while
+  the run lets its lock go is kept until the lock is released rather than lost. A run lock, or a
+  process id, that the caller's environment names is no longer touched by a run that never took
+  it, and `RUN_NONCE`, `RUN_STALL_SECONDS` or `RUN_GAPS_FILE` in that environment no longer reaches
+  the run's watchdog.
 - The control suite holds each of these. It lands other runs' lines, a rewritten log and signals at
   chosen moments of a run by construction, and reads what the run printed. CI names the new
   controls, and the existing control for a candidate name holding a line break, as ones that must
