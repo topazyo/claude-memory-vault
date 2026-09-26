@@ -1047,8 +1047,12 @@ Some ends print no `FAILED:` line:
   Git Bash, which the `.cmd` writes to the log itself (exit `127`).
 - A stop signal that arrives while the run is letting its lock go is kept until the lock is
   released, and then ends the run without printing, because its lines are in the log by then.
+- A stop signal (`INT`, `TERM` or `HUP`) that arrives while the run is printing ends the printing
+  where it is and the run with that signal's code, and leaves the run's copy of its lines in its
+  temporary folder. The lines are in the log.
 - A run killed outright, by `kill -9`, Task Scheduler's End or its time limit, or a reboot, prints
-  nothing at all. Its lines are in the log, as described below.
+  nothing more. If it was printing, the child it prints from finishes printing, since the run
+  prints from a child it waits for. Its lines are in the log, as described below.
 
 The last printed line tells the ends of a run apart:
 

@@ -9319,13 +9319,14 @@ fi
 # more than nothing, or TERM never reached the printing and the case says so.
 RF="$(ret_copy stalled-reader)"
 rp_big="$(printf '%030000d' 0 | tr 0 x)"
-rm -f "$RF.pid" "$RF.go" "$RF.count"
+rm -f "$RF.pid" "$RF.go" "$RF.count" "$RF.rc"
 mkdir -p "$RF.tmp"
 ( env VAULT_STATE_DIR="$RF.state" TMPDIR="$RF.tmp" RUN_LOCK_WAIT="$rp_big" RUN_LOCK_POLL="$rp_big" WATCHDOG_POLL=1 WATCHDOG_GRACE=2 \
     RETENTION_DAYS="$rp_big" RETENTION_MAX_MOVES="$rp_big" RUNNER_GIT_TIMEOUT="$rp_big" \
     bash "$RF/.claude/scripts/vault-retention.sh" --dry-run 2>/dev/null &
   echo "$!" > "$RF.pid"
-  wait ) | { rp_i=0
+  wait "$!"
+  echo "$?" > "$RF.rc" ) | { rp_i=0
     while [ ! -e "$RF.go" ] && [ "$rp_i" -lt 400 ]; do "$RET_SH_SLEEP" 1; rp_i=$((rp_i + 1)); done
     wc -c > "$RF.count"; } &
 rp_reader=$!
@@ -9345,6 +9346,7 @@ while [ "$rp_w" -lt 120 ] && kill -0 "$rp_pid" 2>/dev/null; do
   "$RET_SH_SLEEP" 1
   rp_w=$((rp_w + 1))
 done
+rp_pw="$rp_w"
 "$RET_SH_SLEEP" 1
 if ! grep -q 'OK: there is nothing' "$(ret_log "$RF")" 2>/dev/null; then
   ran retention-stalled-reader
@@ -9359,9 +9361,11 @@ elif [ -n "$rp_pid" ] && kill -0 "$rp_pid" 2>/dev/null; then
     # What the run and anything it started were doing, before they are killed,
     # so that a failure on a platform nobody here can reproduce says where.
     rp_ps="$(ps -A -o pid= -o ppid= -o stat= -o command= 2>/dev/null | awk -v p="$rp_pid" '$1 == p || $2 == p' | cut -c1-120 | tr '\n' '|')"
+    # Git Bash's ps has no -o; its -ef puts the pid second and the parent third.
+    [ -n "$rp_ps" ] || rp_ps="$(ps -ef 2>/dev/null | awk -v p="$rp_pid" '$2 == p || $3 == p' | cut -c1-120 | tr '\n' '|')"
     rp_found="$(find "$RF.tmp" -mindepth 2 -maxdepth 2 -type f 2>/dev/null | awk 'END { print NR + 0 }')"
     kill -KILL "$rp_pid" 2>/dev/null
-    bad "a run whose reader stopped reading was still running 20s after TERM -- waited ${rp_w}s for the print file, $rp_found file(s) in the fixture's TMPDIR, processes: [$rp_ps]"
+    bad "a run whose reader stopped reading was still running 20s after TERM -- waited ${rp_pw}s for the print file, $rp_found file(s) in the fixture's TMPDIR, processes: [$rp_ps]"
   else
     : > "$RF.go"
     rp_w=0
@@ -9377,8 +9381,12 @@ elif [ -n "$rp_pid" ] && kill -0 "$rp_pid" 2>/dev/null; then
     [ "$(find "$RF.tmp" -mindepth 1 -maxdepth 1 2>/dev/null | awk 'END { print NR + 0 }')" = 1 ] || rp_bad="$rp_bad more-than-the-copy-left"
     [ "$(find "$RF.tmp" -mindepth 2 -type f ! -name run.log ! -name lib.log ! -name print 2>/dev/null | awk 'END { print NR + 0 }')" = 0 ] \
       || rp_bad="$rp_bad working-files-left"
+    # The run's own status, which says the stop was the signal's: 143 for TERM.
+    rp_w=0
+    while [ ! -s "$RF.rc" ] && [ "$rp_w" -lt 10 ]; do "$RET_SH_SLEEP" 1; rp_w=$((rp_w + 1)); done
+    [ "$(cat "$RF.rc" 2>/dev/null)" = 143 ] || rp_bad="$rp_bad rc:$(cat "$RF.rc" 2>/dev/null)"
     if [ -z "$rp_bad" ]; then
-      ok "a run whose reader stopped reading ends on TERM, leaves no more than its copy of its lines, and nothing it started prints on"
+      ok "a run whose reader stopped reading ends on TERM with 143, leaves no more than its copy of its lines, and nothing it started prints on"
     else
       bad "a run whose reader stopped reading ended on TERM but left something behind --$rp_bad left: [$(cd "$RF.tmp" 2>/dev/null && find . -mindepth 1 | LC_ALL=C sort | tr '\n' ' ')]"
     fi
