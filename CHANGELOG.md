@@ -69,7 +69,9 @@ over, and stops reporting a `20-projects/_logs` folder it can enter but not list
 - The control suite holds each of these. It lands other runs' lines, a rewritten log and signals at
   chosen moments of a run by construction, and reads what the run printed. CI names the new
   controls, and the existing control for a candidate name holding a line break, as ones that must
-  run, the unlistable-folder and stalled-reader controls on every job but Windows.
+  run wherever they can: the unlistable-folder control on every job but Windows, where the job's
+  account can list a folder denied to it, and the POSIX-mode control on the Linux and Windows jobs,
+  whose bash is new enough to parse the runner in that mode.
 - `AGENTS.md`, `docs/reference.md`, `docs/setup.md` and `docs/concepts.md` describe the new output.
 
 ### Adopting this
