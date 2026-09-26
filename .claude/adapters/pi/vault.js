@@ -379,10 +379,12 @@ function partsMaySeeSecret(parts) {
 // test. On Windows, where a backslash also separates folders in a path, the
 // glob is tested with its backslashes read as / as well, and refused when
 // either reading reaches a secret. Like a .gitignore line, the glob first loses
-// its trailing white space, unless it ends in an escaped space.
+// its trailing white space, unless it ends in an escaped space. ripgrep trims
+// what Rust calls white space, which includes U+0085 where JavaScript's \s does
+// not, so both sets are trimmed.
 function globMaySeeSecret(raw) {
   if (raw.length > MAX_GLOB) throw new Error(`the glob is longer than ${MAX_GLOB} characters`)
-  const line = raw.endsWith("\\ ") ? raw : raw.trimEnd()
+  const line = raw.endsWith("\\ ") ? raw : raw.replace(/[\s\u{85}]+$/u, "")
   if (line.startsWith("!")) return false
   const readings = WINDOWS && line.includes("\\") ? [line, line.replace(/\\/g, "/")] : [line]
   return readings.some((reading) => {

@@ -1235,18 +1235,23 @@ const adapterIn = (root) => join(root, ".claude", "adapters", "pi", "vault.mjs")
 
 // A refusal is told apart by its reason, so a call the guard should deny does
 // not pass when the guard instead failed on it or read it as a changed input.
-// Each reason is compared whole, or up to where the guard adds what went wrong.
+// The fixed reasons are compared whole. A call the guard cannot decide is
+// answered "failed (<what went wrong>...", and such a case names the cause it
+// expects as "failed:<part of it>".
+const FAILED = "vault: the secrets guard failed on this call ("
 function classify(result) {
   if (result === undefined || result === null) return "allowed"
   if (result.block !== true || typeof result.reason !== "string") return `returned ${JSON.stringify(result)}`
   const reason = result.reason
   if (reason === "vault: .env, .env.* and secrets/ are off limits (.claude/rules/security.md)") return "refused"
-  if (reason.startsWith("vault: the secrets guard found no path in this call, so it is refused.")) return "no-path"
-  if (reason.startsWith("vault: the secrets guard cannot read this grep's glob, so it is refused.")) return "no-glob"
-  if (reason.startsWith("vault: the secrets guard failed on this call (")) return "failed"
+  if (reason === "vault: the secrets guard found no path in this call, so it is refused. Pi's tool input may have changed shape: see docs/harnesses/pi.md") return "no-path"
+  if (reason === "vault: the secrets guard cannot read this grep's glob, so it is refused. Pi's tool input may have changed shape: see docs/harnesses/pi.md") return "no-glob"
+  if (reason.startsWith(FAILED)) return `failed (${reason.slice(FAILED.length)}`
   return `refused for another reason (${reason})`
 }
-const WANTED = { "no-path": "refused as having no path", "no-glob": "refused as a glob that is not text", failed: "refused as a call the guard cannot decide" }
+const WANTED = { "no-path": "refused as having no path", "no-glob": "refused as a glob that is not text" }
+const wanted = (want) => WANTED[want] ?? (want.startsWith("failed:") ? `refused as a call the guard cannot decide (${want.slice(7)})` : want)
+const answers = (got, want) => (want.startsWith("failed:") ? got.startsWith("failed (") && got.includes(want.slice(7)) : got === want)
 async function call(pi, toolName, input, ctx = pi.ctx) {
   try {
     return classify(await pi.handlers.tool_call({ type: "tool_call", toolCallId: "c1", toolName, input }, ctx))
@@ -1256,7 +1261,7 @@ async function call(pi, toolName, input, ctx = pi.ctx) {
 }
 async function expect(pi, tool, input, want, label, ctx) {
   const got = await call(pi, tool, input, ctx)
-  verdict(got === want, `Pi guard: ${label} is ${WANTED[want] ?? want}`, got)
+  verdict(answers(got, want), `Pi guard: ${label} is ${wanted(want)}`, got)
 }
 
 const pi = await load(adapterIn(vault), vault)
@@ -1276,7 +1281,7 @@ const cases = [
   ["read", { path: "\u{17F}ecrets/x" }, "refused", "U+017F-ecrets/x, which NTFS upper-cases to SECRETS"],
   ["read", { path: `${pathToFileURL(vault).href}/%2Eenv` }, "refused", "a file:// URL spelling .env as %2Eenv"],
   ["read", { path: "~/k.txt" }, "refused", "~/k.txt with the home folder inside secrets/"],
-  ["read", { path: "file:///x%2Fy" }, "failed", "a file:// URL Pi cannot open either (the guard fails closed)"],
+  ["read", { path: "file:///x%2Fy" }, "failed:must not include encoded", "a file:// URL Pi cannot open either (the guard fails closed)"],
   ["write", { path: "notes/.env.local", content: "x" }, "refused", "a write to .env.local"],
   ["edit", { path: "Secrets/k", edits: [] }, "refused", "an edit under Secrets/"],
   ["grep", { pattern: "KEY", path: "secrets" }, "refused", "a grep of secrets/"],
@@ -1300,19 +1305,25 @@ const refusedGlobs = [".env", ".env*", ".ENV*", "*", "{.env,x}", "secret?/**", "
   "s[e/]crets/x.md", ".[e/]nv", "s?crets[!a]x.md", "s[e/]crets[!a]x.md", "s?crets[.-0]x.md", "s?crets\\/x.md",
   // ripgrep reads a backslash as an escape on Windows too, where these are .env and secrets/x.md.
   ".\\env", "s\\ecrets/x.md",
-  // A - after a range moves its end, so [a-b-z] is a to z; and ripgrep drops trailing white space.
-  ".[a-b-z]nv", "s[a-b-z]crets/x.md", "s?crets[#-.-0]x.md", ".[e]nv ", "*/.e?v\t"]
-for (const glob of refusedGlobs) cases.push(["grep", { pattern: "KEY", glob }, "refused", `a grep with the glob ${glob}`])
-cases.push(["grep", { pattern: "KEY", glob: `${"x".repeat(300)}.md` }, "failed", "a grep with a glob over 256 characters"])
-cases.push(["grep", { pattern: "KEY", glob: "{a,b}".repeat(10) }, "failed", "a grep with a glob of 1024 brace alternatives"])
-cases.push(["grep", { pattern: "KEY", glob: "{*" }, "failed", "a grep with the glob {* whose brace never closes"])
-cases.push(["grep", { pattern: "KEY", glob: "[!a][!b][!c][!d][!e].md" }, "failed", "a grep with a glob of five sets that could match a /"])
+  // A - after a range moves its end, so [a-b-z] is a to z; and ripgrep drops trailing white
+  // space as Rust defines it, which includes U+0085 (NEL) where JavaScript's \s does not.
+  ".[a-b-z]nv", "s[a-b-z]crets/x.md", "s?crets[#-.-0]x.md", ".[e]nv ", "*/.e?v\t", ".[e]nv\u{85}"]
+// Labels quote the glob and spell out what is not printable ASCII, so a tab, a
+// trailing space or an invisible character shows.
+const shown = (text) => JSON.stringify(text).replace(/[^\x20-\x7e]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`)
+for (const glob of refusedGlobs) cases.push(["grep", { pattern: "KEY", glob }, "refused", `a grep with the glob ${shown(glob)}`])
+cases.push(["grep", { pattern: "KEY", glob: `${"x".repeat(300)}.md` }, "failed:longer than 256", "a grep with a glob over 256 characters"])
+cases.push(["grep", { pattern: "KEY", glob: "{a,b}".repeat(10) }, "failed:more than 32 alternatives", "a grep with a glob of 1024 brace alternatives"])
+cases.push(["grep", { pattern: "KEY", glob: "{*" }, "failed:with no }", "a grep with the glob {* whose brace never closes"])
+cases.push(["grep", { pattern: "KEY", glob: "[!a][!b][!c][!d][!e].md" }, "failed:sets that could match a /", "a grep with a glob of five sets that could match a /"])
 // Every construct the matcher reads also appears in a glob it lets through, so
-// a construct that started to throw would show as a refusal here.
+// a construct that started to throw would show as a refusal here. a.md\ (an
+// escaped trailing space) only shows that such a glob does not throw: without
+// the exception for it the glob would still be allowed.
 for (const glob of ["*.md", "**/*.md", "!*.md", "31-standards/*.md", "{a,b}.md", "*/notes.md", "31-standards/**/*.md", "*.txt",
   "*/x", "[{]*.md", "*.m?", "[!.]*.md", "[a-c]*.md", "{a,{b,c}}.md", "\\*.md", "*.[!t]xt", "20-projects/[!_]*.md",
-  "*/[!.]*.md", "a\\/b.md", "[a-b-d]x.md", "*.md ", "a.md\\ ", "[z-a]x.md"]) {
-  cases.push(["grep", { pattern: "KEY", glob }, "allowed", `a grep with the glob ${glob}`])
+  "*/[!.]*.md", "a\\/b.md", "[a-b-d]x.md", "*.md ", "a.md\\ ", "[z-a]x.md", "*.md\u{85}"]) {
+  cases.push(["grep", { pattern: "KEY", glob }, "allowed", `a grep with the glob ${shown(glob)}`])
 }
 cases.push(["grep", { pattern: "KEY", glob: ["*.md"] }, "no-glob", "a grep whose glob is not text (fails closed)"])
 cases.push(["find", { pattern: "*" }, "allowed", "a find with no path"])
@@ -1412,7 +1423,7 @@ if (dirLinked) {
   await expect(pi, "write", { path: "notes-gone/x.md", content: "x" }, "refused", "a write through a link to a folder in secrets/ that does not exist yet")
   await expect(pi, "read", { path: "sub/secrets/n.md" }, "refused", "sub/secrets/n.md, where sub/secrets is a link to an ordinary folder")
   await expect(pi, "ls", { path: "sub/secrets" }, "refused", "an ls of sub/secrets itself")
-  await expect(pi, "read", { path: "loop-a/x" }, "failed", "a path through a loop of links (the guard fails closed)")
+  await expect(pi, "read", { path: "loop-a/x" }, "failed:does not end", "a path through a loop of links (the guard fails closed)")
 }
 let fileLinked = false
 try {

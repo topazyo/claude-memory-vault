@@ -42,9 +42,9 @@ as Claude Code's own read deny does.
     Pi's own tools will open it: a leading `@`, `~`, `file://` URLs, Windows drive and Git Bash
     forms, trailing dots and spaces, and NTFS stream names. It follows symbolic links too,
     including one whose target does not exist yet, so `@.env`, `.ENV.` and a note that links to
-    `.env` are refused. A `grep`, `find` or `ls` with no path is tested against the folder Pi was started
-    in, which it searches. A `read`, `write` or `edit` with no path is refused rather than let
-    through unchecked.
+    `.env` are refused. A `grep`, `find` or `ls` with no path is tested against the folder Pi was
+    started in, which it searches. A `read`, `write` or `edit` with no path is refused rather than
+    let through unchecked.
   - A `grep` glob is refused when its text holds `.env` or `secret` in any letter case, such as
     `.env.production` or `secrets/*.txt`; when its last part matches `.env`, `.env.local` or
     `secrets`, such as `*`, `.[e]nv`, `.e{n}v` or `20-projects/.[e]nv`; when its last part spells
@@ -57,8 +57,10 @@ as Claude Code's own read deny does.
     `s?crets[!a]x.md` are refused. ripgrep reads a backslash as an escape on every platform, so
     `.\env` is `.env`; on Windows the glob is tested with its backslashes read as `/` too. A set is
     read as ripgrep reads it, so `[a-b-z]` runs from `a` to `z`, and like ripgrep the guard drops
-    a glob's trailing white space unless a backslash escapes its last space. ripgrep lets a glob
-    that matches a file override `.gitignore`, which is why the glob is checked at all.
+    a glob's trailing white space, as Rust defines it, unless a backslash escapes its last space.
+    ripgrep lets a glob that matches a file override `.gitignore`, which is why the glob is checked
+    at all. A glob that starts with `!` only excludes files from the search, so it widens nothing
+    and is let through whatever it names, such as `!.env`.
     A glob that reaches a `.env.*` name other than `.env.local` only through a `*` standing in for
     some or all of `.env`, such as `*.production` or `.e*.production` for `.env.production`, is let
     through, and so is `*.md`, although it would also match a file called `.env.md`; `*` and

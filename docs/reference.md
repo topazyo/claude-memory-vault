@@ -227,12 +227,12 @@ reads a path the way Pi's file tools will open it (a leading `@`, `~`, `file://`
 drive and Git Bash forms, trailing dots and spaces, NTFS stream names, and symbolic links,
 including one whose target does not exist yet) and compares names as NTFS does. It also refuses a
 grep whose glob names a secret, by its text or by a part that matches one, because ripgrep lets a
-matching glob override `.gitignore`; a glob that reaches a `.env.*` name other than `.env.local`
-only through a `*` standing in for some or all of `.env`, such as `*.production`,
-`.e*.production` or `*.md`, is let through, in a git repository too. It fails closed when a
-`read`, `write` or `edit` call carries no path and when it cannot decide a call
-([`docs/harnesses/pi.md`](harnesses/pi.md) has the exact rules). Like every deny here, it does not
-stop a shell command such as `cat`.
+matching glob override `.gitignore`; a glob that starts with `!` only excludes, and a glob that
+reaches a `.env.*` name other than `.env.local` only through a `*` standing in for some or all of
+`.env`, such as `*.production`, `.e*.production` or `*.md`, is let through, in a git repository
+too. It fails closed when a `read`, `write` or `edit` call carries no path, when a grep's glob is
+not text, and when it cannot decide a call ([`docs/harnesses/pi.md`](harnesses/pi.md) has the
+exact rules). Like every deny here, it does not stop a shell command such as `cat`.
 
 ### 3.3 `instructions-loaded-log.sh` — instruction-load audit
 
@@ -386,14 +386,16 @@ a lint that does nothing and a lint that found nothing wrong print the same thin
   `.[!E]nv`, `.[_-f]nv`, `{[,.]env,x}`, `.[E]nv`, `.[e]NV` and others), including through a `/`
   inside a set (`s[e/]crets/x.md`), a set that could match a `/` (`s?crets[!a]x.md`), an escaped
   `\/` or a backslash escape (`.\env`), a range continued with another `-` (`.[a-b-z]nv`) or
-  trailing white space (`.[e]nv `), a file read from a session started inside `secrets/`, a
+  trailing white space (`.[e]nv ` and U+0085, which JavaScript alone does not count as white
+  space), a file read from a session started inside `secrets/`, a
   `../secrets/k` read from a session started in `31-standards/`, an `ls`, `grep` or `find` with no
   path from a session started inside `secrets/`, and on Windows `C:.env` and a glob whose `\`,
   read as a slash, names `.env`. Each refusal is checked for its reason, so a call the guard should
   deny cannot pass by making the guard fail instead: a `file://` URL Pi cannot open and a glob over
   256 characters, of more than 32 brace alternatives, with more than four sets that could match a
-  `/` or with an unclosed `{` are refused as calls it cannot decide, a `read` or `write` with no
-  path as having none, and a glob that is not text as a changed input. Two globs built to make a
+  `/` or with an unclosed `{` are refused as calls it cannot decide, each for its own named cause,
+  a `read` or `write` with no path as having none, and a glob that is not text as a changed input,
+  each fixed reason compared whole. Two globs built to make a
   backtracking matcher run for ever, one of which a regex translation took more than 30 s over,
   are decided in under 2 s; they are asked in a worker thread that is stopped after 10 s, so such
   a matcher fails the two controls instead of hanging the suite. Links are followed: a linked
@@ -404,16 +406,15 @@ a lint that does nothing and a lint that found nothing wrong print the same thin
   for its root. Folder links are junctions on Windows, so those cases run there too, and the file
   links need a host that can make them. `.envrc`, `notes/env.md`, a note called `secrets.md`,
   globs such as `*.md`, `{a,b}.md`, `*/x`, `[{]*.md`, `*.m?`, `[!.]*.md`, `[a-c]*.md`,
-  `[a-b-d]x.md`, `{a,{b,c}}.md`, `\*.md` and `*.md ` with a trailing space, so that every
-  construct the matcher reads also appears in a glob it lets through, a `find` with no path at the
-  vault root, and the notes of a vault kept inside a
-  folder named `secrets` are let through, including by a Git Bash `/c/...` path on Windows. A
-  successful `write` or `edit` runs the lint with the vault-relative path, even from a subfolder or
-  through a link to the vault, with `CLAUDE_PROJECT_DIR` naming the vault rather than an inherited
-  decoy, and with a name holding `'` and `[ ]` intact, and one holding `"` too except on Windows,
-  where it is not handed to Git Bash and the extension says so; what the lint reports is added to
-  the tool's result, cut at 4000 characters with a note saying so; a failed write and a `read` are
-  not linted. A
+  `[a-b-d]x.md`, `{a,{b,c}}.md`, `\*.md`, `!*.md` and `*.md ` with a trailing space, so that
+  every construct the matcher reads also appears in a glob it lets through, a `find` with no path
+  at the vault root, and the notes of a vault kept inside a folder named `secrets` are let
+  through, including by a Git Bash `/c/...` path on Windows. A successful `write` or `edit` runs
+  the lint with the vault-relative path, even from a subfolder or through a link to the vault,
+  with `CLAUDE_PROJECT_DIR` naming the vault rather than an inherited decoy, and with a name
+  holding `'` and `[ ]` intact, and one holding `"` too except on Windows, where it is not handed
+  to Git Bash and the extension says so; what the lint reports is added to the tool's result, cut
+  at 4000 characters with a note saying so; a failed write and a `read` are not linted. A
   compaction sends the session id, trigger and session file to the stub. A lint that exits
   non-zero is reported once, a lint that hangs is stopped at the time limit and reported without
   waiting for what it left running, and a script that exits 0 while a child holds its stderr is
