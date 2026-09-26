@@ -72,6 +72,14 @@ WORK="$TMP/some one/my vault"
 # dependency. And cd out first, or the removal fails with "Device or resource busy".
 cleanup() {
   cd / 2>/dev/null || true
+  # A folder the unlistable-folder control has taken the account's rights to is
+  # given them back first, or the removal fails on it and leaves it behind.
+  if [ -n "${RET_LOCKED_DIR:-}" ]; then
+    if [ -n "${RET_LOCKED_ACL:-}" ]; then
+      MSYS_NO_PATHCONV=1 icacls "$RET_LOCKED_ACL" /remove:d "${USERNAME:-$USER}" >/dev/null 2>&1
+    fi
+    chmod 755 "$RET_LOCKED_DIR" 2>/dev/null
+  fi
   [ -n "${TMP:-}" ] && rm -rf "$TMP" 2>/dev/null
 }
 trap cleanup EXIT
@@ -5133,7 +5141,7 @@ if [ "$RV_GIT" -eq 1 ]; then
   # A line break in a file name must not become a second snapshot line. That line
   # could name .git, and containment would move the repository out of the vault.
   if is_windows_host; then
-    skip line-break-name 'a file name with a line break: NTFS does not allow one'
+    skip line-break-name 'a file name with a line break: not attempted on Windows, where Git Bash can make one (cntrl-name-log does) but this case has never been run'
   else
     LBV="$TMP/line-break-vault"
     make_lb_vault() {
@@ -6789,12 +6797,30 @@ ret_human_commit() {  # ret_human_commit <vault> <message> <relative path>... - 
 ret_run() {  # ret_run <vault> [args...] - runs the retention mover and prints its exit code
   local v="$1"
   shift
-  env VAULT_STATE_DIR="${RET_STATE:-$v.state}" RUN_LOCK_WAIT="${RET_LOCK_WAIT:-0}" RUN_LOCK_POLL=1 \
+  env VAULT_STATE_DIR="${RET_STATE:-$v.state}" RUN_LOCK_WAIT="${RET_LOCK_WAIT:-0}" RUN_LOCK_POLL="${RET_LOCK_POLL:-1}" \
     WATCHDOG_POLL=1 WATCHDOG_GRACE=2 RETENTION_DAYS="${RET_DAYS:-}" RETENTION_MAX_MOVES="${RET_MAX:-}" \
     RUNNER_GIT_TIMEOUT="${RET_GIT_TIMEOUT:-}" PATH="${RET_PATH:+$RET_PATH:}$PATH" \
     ${RET_LC:+LC_ALL=$RET_LC LANG=$RET_LC} \
-    bash "$v/.claude/scripts/vault-retention.sh" "$@" >/dev/null 2>&1
+    bash "$v/.claude/scripts/vault-retention.sh" "$@" >"${RET_OUT:-/dev/null}" 2>/dev/null
   echo "$?"
+}
+# What a run printed. ret_run throws the runner's standard output away, because
+# its own output is the exit code, so no call to it can see what a run printed
+# and every one of them stays green whether the runner prints or not. ret_out
+# keeps it in a file. The two readers after it read that file and never the
+# log: a printed line carries the vault-retention: prefix and no timestamp, a
+# logged one the timestamp and no prefix, so pointed at the log they find
+# nothing, which the first control that uses them checks.
+ret_out() {  # ret_out <vault> <file> [args...] - ret_run with the runner's standard output kept in <file>
+  local v="$1" RET_OUT="$2"
+  shift 2
+  ret_run "$v" "$@"
+}
+ret_printed_evaluated() {  # ret_printed_evaluated <file> - the count in the printed summary, nothing without one
+  LC_ALL=C sed -n 's/^vault-retention: evaluated \([0-9][0-9]*\) candidate(s): .*/\1/p' "$1" 2>/dev/null | head -n 1
+}
+ret_printed() {  # ret_printed <file> <extended regex> - how many printed lines match
+  LC_ALL=C RET_RE="$2" awk 'BEGIN { re = ENVIRON["RET_RE"] } $0 ~ re { n++ } END { print n + 0 }' "$1" 2>/dev/null
 }
 ret_log() {  # ret_log <vault> - the retention log
   printf '%s\n' "$1/.claude/logs/vault-retention.log"
@@ -6892,6 +6918,9 @@ ret_journal "$RA" "dream-${RET_DATE[98]}-c.md" "tier: long # promoted"
 ret_journal "$RA" "dream-${RET_DATE[98]}-d.md" "tier: medium" "tier: long"
 ret_journal "$RA" "dream-${RET_DATE[98]}-e.md" "tier: medium" 'contradicts: "[[other]]"'
 ret_journal "$RA" "dream-${RET_DATE[98]}-f.md" "tier: medium" 'superseded_by: ""'
+# Both keys, superseded_by first in the file, so a reason taken from whichever
+# key comes first cannot pass for the precedence the runner is meant to apply.
+ret_journal "$RA" "dream-${RET_DATE[98]}-g.md" "tier: medium" 'superseded_by: "[[dream-x]]"' 'contradicts: "[[other]]"'
 ret_journal "$RA" "dream-${RET_DATE[99]}-PM.md" "tier: medium"
 ret_journal "$RA" "dream-2026-02-30.md" "tier: medium"
 ret_journal "$RA" "dream-${RET_DATE[102]}.md" "tier: medium"
@@ -6902,7 +6931,7 @@ ret_journal "$RA" "dream-${RET_LATER[30]}.md" "tier: medium"
 ret_dream_commit "$RA" $ra_batch "dream-${RET_DATE[90]}.md" "dream-${RET_DATE[90]}-pm.md" "dream-${RET_DATE[20]}.md" \
   "dream-${RET_DATE[91]}.md" "dream-${RET_DATE[92]}.md" \
   "dream-${RET_DATE[98]}-a.md" "dream-${RET_DATE[98]}-b.md" "dream-${RET_DATE[98]}-c.md" "dream-${RET_DATE[98]}-d.md" \
-  "dream-${RET_DATE[98]}-e.md" "dream-${RET_DATE[98]}-f.md" "dream-${RET_DATE[99]}-PM.md" "dream-2026-02-30.md" \
+  "dream-${RET_DATE[98]}-e.md" "dream-${RET_DATE[98]}-f.md" "dream-${RET_DATE[98]}-g.md" "dream-${RET_DATE[99]}-PM.md" "dream-2026-02-30.md" \
   "dream-${RET_DATE[102]}.md" "dream-${RET_DATE[103]}.md" "dream-${RET_DATE[104]}.md" "dream-${RET_LATER[30]}.md"
 # A person edits a journal the pass wrote.
 printf 'my note\n' >> "$RA/20-projects/_logs/dream-${RET_DATE[91]}.md"
@@ -6981,7 +7010,7 @@ fi
 
 # A dry run judges every candidate and changes nothing.
 ra_head="$(git -C "$RA" rev-parse HEAD)"
-expect_rc "vault-retention --dry-run on a vault with every kind of candidate -> OK" 0 "$(ret_run "$RA" --dry-run)"
+expect_rc "vault-retention --dry-run on a vault with every kind of candidate -> OK" 0 "$(RET_GIT_TIMEOUT=abc ret_out "$RA" "$RA.dry.out" --dry-run)"
 if [ "$(git -C "$RA" rev-parse HEAD)" = "$ra_head" ] && ret_stayed "$RA" "dream-${RET_DATE[90]}.md" \
    && ret_says "$RA" "ELIGIBLE: 20-projects/_logs/dream-${RET_DATE[90]}.md" \
    && [ -z "$(ls -A "$RA.state" 2>/dev/null | grep -E '^retention-')" ]; then
@@ -6989,8 +7018,45 @@ if [ "$(git -C "$RA" rev-parse HEAD)" = "$ra_head" ] && ret_stayed "$RA" "dream-
 else
   bad "a dry run moved something, wrote state, or did not list the eligible journal -- state: [$(ls -A "$RA.state" 2>/dev/null | tr '\n' ' ')]"
 fi
+# --- what a run prints ---
+# The log used to be the only account a run left. Cron, launchd and whoever ran
+# the command by hand saw nothing of it on standard output, so a run that
+# refused to start read the same as one that found nothing to move and the same
+# as one that never ran.
+# A run now prints what it wrote to the log, each line once and in order, after
+# a vault-retention: prefix and without the timestamp. Everything here reads the
+# captured file, because ret_run discards standard output and the log alone
+# would pass whether anything was printed or not.
+ran "retention-stdout"
+ro_bad=''
+ro_out="$RA.dry.out"
+ro_n="$(ret_printed_evaluated "$ro_out")"
+[ "${ro_n:-0}" -gt 0 ] 2>/dev/null || ro_bad="$ro_bad evaluated-none(${ro_n:-no-line})"
+[ "$(ret_printed "$ro_out" '^vault-retention: evaluated [0-9]')" = 1 ] || ro_bad="$ro_bad summary-lines"
+ro_refused="$(ret_printed "$ro_out" '^vault-retention: REFUSED: 20-projects/_logs/')"
+ro_logged="$(LC_ALL=C awk '/REFUSED: 20-projects\/_logs\//{n++} END{print n+0}' "$(ret_log "$RA")" 2>/dev/null)"
+[ "${ro_refused:-0}" -gt 0 ] || ro_bad="$ro_bad no-refused-line"
+[ "$ro_refused" = "$ro_logged" ] || ro_bad="$ro_bad refused-tally($ro_refused vs $ro_logged)"
+# All of it, and not only the lines counted above: what was printed is what was
+# logged, with the timestamp taken off and the prefix put on. The two are
+# different files, the run's own copy printed and the shared log read here, and
+# one line is the runner library's, which reaches both through a file of its
+# own, so the comparison covers that route too.
+LC_ALL=C sed -e 's/^\[[^ ]*] //' -e 's/^/vault-retention: /' "$(ret_log "$RA")" > "$RA.dry.logged" 2>/dev/null
+cmp -s "$RA.dry.logged" "$ro_out" || ro_bad="$ro_bad not-what-was-logged"
+[ "$(ret_printed "$ro_out" '^vault-retention: WARNING: RUNNER_GIT_TIMEOUT "abc" ')" = 1 ] || ro_bad="$ro_bad no-library-line"
+[ "$(tail -n 1 "$ro_out" 2>/dev/null)" = "vault-retention: OK: this was a dry run, so nothing was moved and nothing was written." ] \
+  || ro_bad="$ro_bad last-line"
+# The reader takes the printed form only. Pointed at the log it must find no
+# summary, or every count above could have come from the log instead.
+[ -z "$(ret_printed_evaluated "$(ret_log "$RA")")" ] || ro_bad="$ro_bad reader-reads-the-log"
+if [ -z "$ro_bad" ]; then
+  ok "a dry run prints every line it logged, its summary once with a non-zero count and each refusal, and says last that it was a dry run"
+else
+  bad "a dry run did not print what it logged --$ro_bad printed: [$(tr '\n' '|' < "$ro_out" 2>/dev/null | cut -c1-600)]"
+fi
 rm -f "$(ret_log "$RA")"
-expect_rc "vault-retention on a vault with every kind of candidate -> OK" 0 "$(ret_run "$RA")"
+expect_rc "vault-retention on a vault with every kind of candidate -> OK" 0 "$(ret_out "$RA" "$RA.out")"
 ra_bad=''
 for ra_n in "dream-${RET_DATE[90]}.md" "dream-${RET_DATE[90]}-pm.md" "dream-${RET_DATE[95]}.md"; do
   ret_moved "$RA" "$ra_n" || ra_bad="$ra_bad not-moved:$ra_n"
@@ -7005,7 +7071,9 @@ for ra_case in \
     "96:a merge changed it" \
     "97:added after the runners began writing trailers but carrying none" \
     "98-a:tier is not medium" "98-b:tier is not medium" "98-c:tier is not medium" "98-d:tier is not medium" \
-    "98-e:contradicts or superseded_by" "98-f:contradicts or superseded_by" \
+    "98-e:contradicts: is set, so it is still being argued over" \
+    "98-f:superseded_by: is set, so a human has recorded that something replaces it, and this pass does not decide what that means" \
+    "98-g:contradicts: is set, so it is still being argued over" \
     "99-PM:not a journal name" \
     "101:not tracked by git" "102:uncommitted changes" "103:index flag" "104:destination exists"; do
   ra_key="${ra_case%%:*}"
@@ -7020,6 +7088,21 @@ for ra_case in \
     *) ret_says "$RA" "REFUSED: 20-projects/_logs/$ra_n ($ra_why" || ra_bad="$ra_bad reason:$ra_n" ;;
   esac
 done
+# The journal carrying both keys gets exactly one reason, the contradicts one.
+# An unadjudicated contradiction is the stronger statement, and reporting it as
+# retired by hand would be the worse error. The whole line is compared, closing
+# parenthesis and all, and no reason may stand on a line of its own, because a
+# split that dropped an exit would print the second reason as a line nobody
+# timestamped and leave the first one unclosed.
+ra_g="REFUSED: 20-projects/_logs/dream-${RET_DATE[98]}-g.md (contradicts: is set, so it is still being argued over)"
+[ "$(LC_ALL=C RA_G="$ra_g" awk 'BEGIN { g = ENVIRON["RA_G"] } { sub(/^\[[^ ]*] /, "") } $0 == g { n++ } END { print n + 0 }' "$(ret_log "$RA")" 2>/dev/null)" = 1 ] \
+  || ra_bad="$ra_bad both-keys"
+[ "$(LC_ALL=C awk '/is set, so / && !/^\[/ { n++ } END { print n + 0 }' "$(ret_log "$RA")" 2>/dev/null)" = 0 ] \
+  || ra_bad="$ra_bad reason-on-its-own-line"
+# And that is its only refusal, whatever the reason: a second REFUSED line
+# carrying the other key's reason would pass both checks above.
+[ "$(LC_ALL=C RA_G="dream-${RET_DATE[98]}-g.md (" awk 'BEGIN { g = ENVIRON["RA_G"] } index($0, "REFUSED: ") && index($0, g) { n++ } END { print n + 0 }' "$(ret_log "$RA")" 2>/dev/null)" = 1 ] \
+  || ra_bad="$ra_bad both-keys-refused-more-than-once"
 ret_stayed "$RA" "dream-2026-02-30.md" && ret_says "$RA" "REFUSED: 20-projects/_logs/dream-2026-02-30.md (not a journal name" \
   || ra_bad="$ra_bad impossible-date"
 ret_stayed "$RA" "dream-${RET_LATER[30]}.md" && ret_says "$RA" "REFUSED: 20-projects/_logs/dream-${RET_LATER[30]}.md (date in the future" \
@@ -7073,6 +7156,27 @@ if printf '%s\n' "$ra_msg" | grep -qx 'Vault-Pass: retention' \
   ok "the moves are one commit with the retention trailers, the tree matches it, and no recovery file is left"
 else
   bad "the retention commit or the tree after it is wrong -- message: [$(printf '%s' "$ra_msg" | tr '\n' '|')] status: [$(git -C "$RA" status --porcelain -- 20-projects 99-archive | tr '\n' '|')]"
+fi
+# The run that moved says so on standard output, with how many files and the
+# commit that holds them, which is what the caller of an unattended pass most
+# needs and what it used to receive nowhere but the log.
+ro_bad=''
+ro_head="$(git -C "$RA" rev-parse HEAD)"
+grep -qxF "vault-retention: OK: 3 file(s) moved to 99-archive/20-projects/_logs and committed as $ro_head." "$RA.out" 2>/dev/null \
+  || ro_bad="$ro_bad no-ok-line"
+[ "$(ret_printed "$RA.out" '^vault-retention: evaluated [0-9]+ candidate\(s\): .*, 3 moved$')" = 1 ] || ro_bad="$ro_bad summary"
+[ "$(ret_printed "$RA.out" '^vault-retention: FAILED')" = 0 ] || ro_bad="$ro_bad failed-line"
+# The order, which is the reverse of a dry run's: the moves are committed and
+# said to be before the judgement is logged, so the summary is the last line.
+# What the docs say about a run's last printed line rests on this.
+ro_okat="$(LC_ALL=C awk '/^vault-retention: OK: [0-9]+ file\(s\) moved /{ print NR; exit }' "$RA.out" 2>/dev/null)"
+ro_sumat="$(LC_ALL=C awk '/^vault-retention: evaluated [0-9]/{ print NR; exit }' "$RA.out" 2>/dev/null)"
+[ -n "$ro_okat" ] && [ -n "$ro_sumat" ] && [ "$ro_okat" -lt "$ro_sumat" ] || ro_bad="$ro_bad order"
+tail -n 1 "$RA.out" 2>/dev/null | grep -q '^vault-retention: evaluated [0-9]' || ro_bad="$ro_bad summary-not-last"
+if [ -z "$ro_bad" ]; then
+  ok "a run that moved prints how many files moved, the commit that holds them, and last a summary that counts them"
+else
+  bad "a run that moved did not say so on standard output --$ro_bad printed: [$(tr '\n' '|' < "$RA.out" 2>/dev/null | cut -c1-600)]"
 fi
 ra_report="$(ls "$RA.state"/retention-legacy-*.txt 2>/dev/null | head -n 1)"
 # The runner resolves its state directory to the physical path before it writes
@@ -7359,7 +7463,7 @@ expect_rc "vault-retention --adopt-legacy with no report file -> usage error" 64
 if [ -n "$rc_report" ]; then
   cp "$rc_report" "$RC.state/tampered.txt"
   printf '20-projects/_logs/dream-%s.md\t%s\n' "${RET_DATE[2]}" "$(git -C "$RC" rev-parse "HEAD:20-projects/_logs/dream-${RET_DATE[2]}.md")" >> "$RC.state/tampered.txt"
-  expect_rc "vault-retention --adopt-legacy with a report whose list was changed -> REPORT-REFUSED" 2 "$(ret_run "$RC" --adopt-legacy "$RC.state/tampered.txt")"
+  expect_rc "vault-retention --adopt-legacy with a report whose list was changed -> REPORT-REFUSED" 2 "$(ret_out "$RC" "$RC.tampered.out" --adopt-legacy "$RC.state/tampered.txt")"
   ret_stayed "$RC" "dream-${RET_DATE[80]}.md" || rc_bad="$rc_bad tampered-moved"
   # One listed journal is edited after the report was written.
   printf 'edited later\n' >> "$RC/20-projects/_logs/dream-${RET_DATE[81]}.md"
@@ -7398,6 +7502,23 @@ if [ -z "$rc_bad" ]; then
   ok "legacy journals move only with --adopt-legacy and the report the runner wrote, and one edited since is refused"
 else
   bad "legacy adoption is wrong --$rc_bad log: [$(tr '\n' '|' < "$(ret_log "$RC")" 2>/dev/null | cut -c1-900)]"
+fi
+# A refused adoption names the refusal on standard output, and its last line
+# says the run failed. main logs the summary after the refusal, so without that
+# closing line the last thing printed would be an ordinary-looking count, and a
+# summary is a claim: under cron it is all the reader gets, with no exit code.
+if [ -n "$rc_report" ]; then
+  ro_bad=''
+  [ "$(ret_printed "$RC.tampered.out" '^vault-retention: REPORT-REFUSED: ')" = 1 ] || ro_bad="$ro_bad no-refusal"
+  [ "$(tail -n 1 "$RC.tampered.out" 2>/dev/null)" = "vault-retention: FAILED: this run ended with exit 2. The lines above are what it logged, and the header of vault-retention.sh says what the number means." ] \
+    || ro_bad="$ro_bad last-line"
+  if [ -z "$ro_bad" ]; then
+    ok "a refused adoption prints the refusal, and its last line says the run failed rather than showing the summary"
+  else
+    bad "a refused adoption did not say so on standard output --$ro_bad printed: [$(tr '\n' '|' < "$RC.tampered.out" 2>/dev/null | cut -c1-600)]"
+  fi
+else
+  bad "a refused adoption's output could not be checked, because the first run wrote no legacy report"
 fi
 
 # --- compaction stubs, written by the real hook on chosen days ---
@@ -8264,7 +8385,7 @@ rm -rf "$re_v" "$re_v.state" "$RET/moves-term.count".* "$RET/moves-term.mark"
 cp -R "$RE0" "$re_v"
 env RET_GIT_MODE=mv-slow RET_GIT_COUNT="$RET/moves-term.count" RET_GIT_MARK="$RET/moves-term.mark" RET_REAL_GIT="$RET_REAL_GIT" \
   VAULT_STATE_DIR="$re_v.state" RUN_LOCK_WAIT=0 RUN_LOCK_POLL=1 WATCHDOG_POLL=1 WATCHDOG_GRACE=2 PATH="$RET/fake-git:$PATH" \
-  bash "$re_v/.claude/scripts/vault-retention.sh" >/dev/null 2>&1 &
+  bash "$re_v/.claude/scripts/vault-retention.sh" >"$re_v.out" 2>/dev/null &
 re_pid=$!
 re_wait=0
 while [ ! -f "$RET/moves-term.mark" ] && [ "$re_wait" -lt 120 ]; do sleep 1; re_wait=$((re_wait + 1)); done
@@ -8276,6 +8397,17 @@ if [ "$re_rc" = 143 ] && [ "$re_rc2" = 0 ] && ret_moved "$re_v" "$RE_J1"; then
   ok "TERM during the moves puts them back, and the next run is not refused and moves them"
 else
   bad "TERM during the moves left the vault held back or half moved -- rc $re_rc then $re_rc2"
+fi
+# What the interrupted run printed. The signal lands while git mv runs, where
+# nothing has pointed the run's standard output anywhere else, so this holds
+# the report of an interrupted move. A signal inside a block that writes a
+# temporary file through standard output is the legacy report case, among the
+# printing controls in the block of paths that stop the run.
+if grep -qxF "vault-retention: INTERRUPTED by a signal while moving." "$re_v.out" 2>/dev/null \
+   && [ "$(tail -n 1 "$re_v.out" 2>/dev/null)" = "vault-retention: FAILED: this run ended with exit 143. The lines above are what it logged, and the header of vault-retention.sh says what the number means." ]; then
+  ok "a run stopped by TERM while moving prints that it was interrupted, and last that it ended with exit 143"
+else
+  bad "a run stopped by TERM did not say so on standard output -- printed: [$(tr '\n' '|' < "$re_v.out" 2>/dev/null | cut -c1-600)]"
 fi
 
 # --- the history walk refuses a marker byte rather than guessing at a boundary ---
@@ -8370,55 +8502,173 @@ rf_bad=''
 RF="$(ret_copy blocked-file)"
 mkdir -p "$RF/99-archive"
 printf 'planted\n' > "$RF/99-archive/20-projects"
-[ "$(ret_run "$RF")" = 6 ] && ret_says "$RF" "99-archive/20-projects" || rf_bad="$rf_bad planted-file"
+[ "$(ret_out "$RF" "$RF.out")" = 6 ] && ret_says "$RF" "99-archive/20-projects" || rf_bad="$rf_bad planted-file"
 RF="$(ret_copy blocked-case)"
 rm -rf "$RF/99-archive"
 mkdir -p "$RF/99-Archive"
 : > "$RF/99-Archive/.gitkeep"
 ret_git "$RF" add -A >/dev/null 2>&1
 ret_git "$RF" commit -q -m "rename archive" >/dev/null 2>&1
-[ "$(ret_run "$RF")" = 6 ] || rf_bad="$rf_bad case-variant"
+[ "$(ret_out "$RF" "$RF.out")" = 6 ] || rf_bad="$rf_bad case-variant"
 RF="$(ret_copy shallow)"
 git -C "$RF" rev-parse HEAD > "$RF/.git/shallow"
-[ "$(ret_run "$RF")" = 1 ] || rf_bad="$rf_bad shallow"
+[ "$(ret_out "$RF" "$RF.out")" = 1 ] || rf_bad="$rf_bad shallow"
 RF="$RET/nested"
 rm -rf "$RF" "$RF.state"
 mkdir -p "$RF"
 cp -R "$RETB" "$RF/vault"
 rm -rf "$RF/vault/.git"
 git init -q "$RF" >/dev/null 2>&1
-[ "$(ret_run "$RF/vault")" = 1 ] || rf_bad="$rf_bad nested"
+[ "$(ret_out "$RF/vault" "$RF/vault.out")" = 1 ] || rf_bad="$rf_bad nested"
 RF="$(ret_copy tripwire)"
 mkdir -p "$RF.state"
 printf 'TRIPWIRE\n' > "$RF.state/runner-tripwire"
-[ "$(ret_run "$RF")" = 78 ] || rf_bad="$rf_bad tripwire"
+[ "$(ret_out "$RF" "$RF.out")" = 78 ] || rf_bad="$rf_bad tripwire"
 RF="$(ret_copy missing-logs)"
 rm -rf "$RF/20-projects"
-[ "$(ret_run "$RF")" = 0 ] && ret_says "$RF" "20-projects/_logs" || rf_bad="$rf_bad missing-logs"
+[ "$(ret_out "$RF" "$RF.out")" = 0 ] && ret_says "$RF" "20-projects/_logs" || rf_bad="$rf_bad missing-logs"
 if [ -z "$rf_bad" ]; then
   ok "a planted file or a case variant on the archive path exits 6, a shallow or nested repository exits 1, a tripwire 78, and a missing _logs is logged"
 else
   bad "a path or repository problem was not refused as it should be --$rf_bad"
 fi
+# What each state prints, told apart by its text. Under cron what a run prints
+# is all anyone receives, and the exit code does not reach the mail, so a run
+# that could not judge, a run with nothing to judge and a run that judged must
+# each read differently. The run that judged and moved is the classification
+# vault's, checked above.
+ro_bad=''
+ro_failed="vault-retention: FAILED: this run ended with exit %s. The lines above are what it logged, and the header of vault-retention.sh says what the number means."
+# Could not run: a tripwire, found after the lock is taken.
+ro_f="$RET/tripwire.out"
+[ "$(ret_printed "$ro_f" '^vault-retention: TRIPWIRE: ')" = 1 ] || ro_bad="$ro_bad tripwire-line"
+[ "$(tail -n 1 "$ro_f" 2>/dev/null)" = "$(printf "$ro_failed" 78)" ] || ro_bad="$ro_bad tripwire-last"
+[ "$(ret_printed "$ro_f" '^vault-retention: (evaluated|OK:)')" = 0 ] || ro_bad="$ro_bad tripwire-claims"
+# Could not run: a path that blocks the move, and a history the run cannot trust
+# whole. Each prints its one refusal, no judgement, and last its exit code.
+for ro_case in blocked-file:6:PATH-BLOCKED blocked-case:6:PATH-BLOCKED shallow:1:ERROR nested/vault:1:ERROR; do
+  ro_f="$RET/${ro_case%%:*}.out"
+  ro_code="${ro_case#*:}"
+  ro_word="${ro_code#*:}"
+  ro_code="${ro_code%%:*}"
+  [ "$(ret_printed "$ro_f" "^vault-retention: $ro_word: ")" = 1 ] || ro_bad="$ro_bad ${ro_case%%:*}-line"
+  [ "$(tail -n 1 "$ro_f" 2>/dev/null)" = "$(printf "$ro_failed" "$ro_code")" ] || ro_bad="$ro_bad ${ro_case%%:*}-last"
+  [ "$(ret_printed "$ro_f" '^vault-retention: (evaluated|OK:)')" = 0 ] || ro_bad="$ro_bad ${ro_case%%:*}-claims"
+done
+# Could not run: the lock is held, and waiting is not allowed. This run's own
+# lines, which here are only the lock's refusal, then the closing line.
+RF="$(ret_copy lock-held)"
+mkdir -p "$RF.state/run.lock"
+printf 'runner=vault-retention\npid=%s\nwinpid=\nstarted=%s\nlongest=100000\nnonce=planted\n' "$$" "$(date +%s)" > "$RF.state/run.lock/owner"
+[ "$(ret_out "$RF" "$RF.out")" = 75 ] || ro_bad="$ro_bad lock-rc"
+[ "$(sed -n 1p "$RF.out" 2>/dev/null)" = "vault-retention: LOCKED: the run lock is held by vault-retention (pid $$) after waiting 0s. Not starting." ] \
+  || ro_bad="$ro_bad lock-line"
+[ "$(sed -n 2p "$RF.out" 2>/dev/null)" = "$(printf "$ro_failed" 75)" ] || ro_bad="$ro_bad lock-last"
+[ "$(awk 'END { print NR }' "$RF.out" 2>/dev/null)" = 2 ] || ro_bad="$ro_bad lock-extra-lines"
+# Nothing to judge: no folder, and an empty one. Each says so in its own words,
+# and neither says anything moved or failed.
+[ "$(cat "$RET/missing-logs.out" 2>/dev/null)" = "vault-retention: There is no 20-projects/_logs folder, so there is nothing to evaluate." ] \
+  || ro_bad="$ro_bad no-folder"
+RF="$(ret_copy empty-logs)"
+[ "$(ret_out "$RF" "$RF.out")" = 0 ] || ro_bad="$ro_bad empty-rc"
+printf '%s\n' "vault-retention: evaluated 0 candidate(s): 0 eligible, 0 legacy, 0 kept, 0 left alone, 0 refused, 0 moved" \
+  "vault-retention: OK: there is nothing in 20-projects/_logs to evaluate." > "$RF.want"
+cmp -s "$RF.want" "$RF.out" || ro_bad="$ro_bad empty-folder"
+if [ -z "$ro_bad" ]; then
+  ok "a run that could not start, one with no folder and one with an empty folder each print what they are, and only a failure ends with FAILED"
+else
+  bad "a run's printed output does not tell its state apart --$ro_bad tripwire: [$(tr '\n' '|' < "$RET/tripwire.out" 2>/dev/null | cut -c1-300)] lock: [$(tr '\n' '|' < "$RET/lock-held.out" 2>/dev/null | cut -c1-300)] empty: [$(tr '\n' '|' < "$RET/empty-logs.out" 2>/dev/null | cut -c1-300)]"
+fi
+# Another retention run's lines, written into the shared log while this run
+# waits for the lock. A run prints its own copy of what it logged and never
+# reads the log back, so none of them is printed, nothing is said about them,
+# and the log keeps both runs' lines. A sleep on PATH marks the moment the
+# waiting run starts to poll, so the other run's lines land inside the wait by
+# construction rather than by timing, and then the lock is let go.
+RF="$(ret_copy lock-wait)"
+mkdir -p "$RET/sleep-shim" "$RF.state/run.lock" "$RF/.claude/logs"
+RET_REAL_SLEEP="$(command -v sleep)"
+RET_SLEEP_MARK="$RET/lock-wait.mark"
+export RET_REAL_SLEEP RET_SLEEP_MARK
+rm -f "$RET_SLEEP_MARK"
+printf '#!/usr/bin/env bash\n: > "$RET_SLEEP_MARK"\nexec "$RET_REAL_SLEEP" "$@"\n' > "$RET/sleep-shim/sleep"
+chmod +x "$RET/sleep-shim/sleep"
+printf 'runner=vault-retention\npid=%s\nwinpid=\nstarted=%s\nlongest=100000\nnonce=planted\n' "$$" "$(date +%s)" > "$RF.state/run.lock/owner"
+(
+  w=0
+  while [ ! -f "$RET_SLEEP_MARK" ] && [ "$w" -lt 120 ]; do "$RET_REAL_SLEEP" 1; w=$((w + 1)); done
+  printf '[2000-01-01T00:00:00+00:00] ELIGIBLE: 20-projects/_logs/dream-from-another-run.md\n' >> "$(ret_log "$RF")"
+  printf '[2000-01-01T00:00:00+00:00] evaluated 9 candidate(s): 9 eligible, 0 legacy, 0 kept, 0 left alone, 0 refused, 9 moved\n' >> "$(ret_log "$RF")"
+  rm -rf "$RF.state/run.lock"
+) &
+ro_bg=$!
+ro_rc="$(RET_LOCK_WAIT=60 RET_PATH="$RET/sleep-shim" ret_out "$RF" "$RF.out")"
+wait "$ro_bg"
+unset RET_REAL_SLEEP RET_SLEEP_MARK
+ro_bad=''
+[ -f "$RET/lock-wait.mark" ] || ro_bad="$ro_bad never-waited"
+[ "$ro_rc" = 0 ] || ro_bad="$ro_bad rc:$ro_rc"
+[ "$(ret_printed "$RF.out" 'from-another-run')" = 0 ] || ro_bad="$ro_bad printed-the-other-run"
+[ "$(ret_printed "$RF.out" '^vault-retention: evaluated [0-9]')" = 1 ] || ro_bad="$ro_bad summary-lines"
+[ "$(ret_printed_evaluated "$RF.out")" = 0 ] || ro_bad="$ro_bad wrong-summary"
+[ "$(ret_printed "$RF.out" '^vault-retention: NOTE:')" = 0 ] || ro_bad="$ro_bad note"
+grep -qF 'dream-from-another-run.md' "$(ret_log "$RF")" 2>/dev/null \
+  && grep -qF 'evaluated 0 candidate(s)' "$(ret_log "$RF")" 2>/dev/null || ro_bad="$ro_bad log-lost-a-run"
+if [ -z "$ro_bad" ]; then
+  ok "a run that waited for the lock prints only its own lines, and the log keeps both runs' lines"
+else
+  bad "a run that waited for the lock printed lines that were not its own --$ro_bad printed: [$(tr '\n' '|' < "$RF.out" 2>/dev/null | cut -c1-600)]"
+fi
+# Every byte outside printable ASCII is spelled out on standard output. A
+# failure line can carry text the runner did not write, git's own error output,
+# a commit message, an environment value, and a terminal acts on an escape
+# sequence or a carriage return in what it is shown. The value goes in through
+# RETENTION_DAYS, whose warning quotes it as given, and the carriage return is
+# mid-line, because Git Bash cannot see a trailing one at all.
+ran "retention-stdout-escape"
+RF="$(ret_copy stdout-escape)"
+ro_raw="$(printf '6\033[31mX\rY')"
+ro_bad=''
+[ "$(RET_DAYS="$ro_raw" ret_out "$RF" "$RF.out")" = 0 ] || ro_bad="$ro_bad rc"
+# The fixture is proven built first: the log must hold both raw bytes, or the
+# absence below would prove nothing. od, because grep and awk in Git Bash can
+# miss a carriage return.
+[ "$(od -An -c "$(ret_log "$RF")" 2>/dev/null | awk '/033/{n++} END{print n+0}')" -gt 0 ] || ro_bad="$ro_bad no-escape-in-log"
+[ "$(od -An -c "$(ret_log "$RF")" 2>/dev/null | awk '/\\r/{n++} END{print n+0}')" -gt 0 ] || ro_bad="$ro_bad no-cr-in-log"
+grep -qF 'RETENTION_DAYS "6<1B>[31mX<CR>Y"' "$RF.out" 2>/dev/null || ro_bad="$ro_bad not-spelled-out"
+[ "$(od -An -c "$RF.out" 2>/dev/null | awk '/033/{n++} END{print n+0}')" = 0 ] || ro_bad="$ro_bad escape-printed"
+[ "$(od -An -c "$RF.out" 2>/dev/null | awk '/\\r/{n++} END{print n+0}')" = 0 ] || ro_bad="$ro_bad cr-printed"
+if [ -z "$ro_bad" ]; then
+  ok "an escape sequence and a carriage return that reach the log are spelled out on standard output, never printed raw"
+else
+  bad "a control byte reached standard output raw --$ro_bad printed: [$(od -An -c "$RF.out" 2>/dev/null | tr -s ' \n' ' ' | cut -c1-600)]"
+fi
 # A candidate name holding a newline. The refusal for a control character IS the
 # log write, so the name reaches the log before any name rule has looked at it,
 # and an unescaped one writes whole lines of the author's choosing into the only
-# account an unattended scheduled pass leaves of what it did. NTFS forbids such
-# a name while ext4 and APFS allow it, so the fixture is attempted and the case
-# says plainly when the filesystem refused to make it, rather than passing over
-# a file that was never there. This is also the first control of any kind over
-# the control-character refusal.
+# account an unattended scheduled pass leaves of what it did. ext4 and APFS
+# allow such a name, and so does Git Bash on NTFS, which forbids the byte itself
+# but is given a stand-in character for it and reads it back as the byte, as the
+# Windows CI job shows by running this case. So the fixture is attempted
+# everywhere, and the case says plainly when the filesystem refused to make it,
+# rather than passing over a file that was never there. This is also the first
+# control of any kind over the control-character refusal.
 rf_bad=''
 RF="$(ret_copy cntrl-name)"
 rf_inj="$(printf 'dream-2020-01-01.md\nINJECTEDLINE')"
 if : > "$RF/20-projects/_logs/$rf_inj" 2>/dev/null && [ -e "$RF/20-projects/_logs/$rf_inj" ]; then
   ran "cntrl-name-log"
-  [ "$(ret_run "$RF")" = 0 ] || rf_bad="$rf_bad rc"
+  [ "$(ret_out "$RF" "$RF.out")" = 0 ] || rf_bad="$rf_bad rc"
   ret_says "$RF" 'dream-2020-01-01.md<LF>INJECTEDLINE' || rf_bad="$rf_bad not-escaped"
   ret_says "$RF" "the name holds a control character" || rf_bad="$rf_bad no-reason"
   grep -q '^INJECTEDLINE' "$(ret_log "$RF")" 2>/dev/null && rf_bad="$rf_bad line-injected"
+  # The same refusal on standard output, where the summary counts it, so a
+  # printed "1 refused" always has the line that says which.
+  grep -qxF 'vault-retention: REFUSED: 20-projects/_logs/dream-2020-01-01.md<LF>INJECTEDLINE (the name holds a control character, so it is neither a journal name nor a stub name)' "$RF.out" 2>/dev/null \
+    || rf_bad="$rf_bad not-printed"
+  grep -q '^INJECTEDLINE' "$RF.out" 2>/dev/null && rf_bad="$rf_bad printed-line-injected"
   if [ -z "$rf_bad" ]; then
-    ok "a candidate name holding a newline is refused with its invisible bytes spelled out, and writes no line of its own into the log"
+    ok "a candidate name holding a newline is refused with its invisible bytes spelled out, and writes no line of its own into the log or onto standard output"
   else
     bad "a name holding a newline reached the log unescaped --$rf_bad log: [$(tr '\n' '|' < "$(ret_log "$RF")" 2>/dev/null | cut -c1-500)]"
   fi
@@ -8449,6 +8699,846 @@ if : > "$RF/20-projects/_logs/$rf_nel" 2>/dev/null && [ -e "$RF/20-projects/_log
   fi
 else
   skip "c1-name-log" "a candidate name holding a C1 control: this filesystem would not create one"
+fi
+# What a run prints, against other runs' lines, signals and a log that changes
+# under it. The log is shared and nothing in it says which run wrote a line, so
+# a run prints its own copy of what it logged and never reads the log back.
+# Every control below lands another run's line, or a signal, at a moment chosen
+# by construction rather than by timing: a stand-in, copied under the name of
+# the command it replaces into a folder of its own for each control, does its
+# one thing the first time its trigger is met and otherwise runs the real
+# command. A flag file says it fired, so a control that never reached its
+# moment fails rather than passing.
+RET_SH_DATE="$(command -v date)"
+RET_SH_RM="$(command -v rm)"
+RET_SH_MKDIR="$(command -v mkdir)"
+RET_SH_LN="$(command -v ln)"
+RET_SH_CAT="$(command -v cat)"
+RET_SH_FIND="$(command -v find)"
+RET_SH_SLEEP="$(command -v sleep)"
+cat > "$RET/print-shim" <<'SHIM_EOF'
+#!/usr/bin/env bash
+me="${0##*/}"
+case "$me" in
+  date) real="$RET_SH_DATE" mode="${RET_SH_DATE_DO:-}" ;;
+  git) real="$RET_REAL_GIT" mode="${RET_SH_GIT_DO:-}" ;;
+  rm) real="$RET_SH_RM" mode="${RET_SH_RM_DO:-}" ;;
+  mkdir) real="$RET_SH_MKDIR" mode="${RET_SH_MKDIR_DO:-}" ;;
+  ln) real="$RET_SH_LN" mode="${RET_SH_LN_DO:-}" ;;
+  cat) real="$RET_SH_CAT" mode="${RET_SH_CAT_DO:-}" ;;
+  find) real="$RET_SH_FIND" mode="${RET_SH_FIND_DO:-}" ;;
+  sleep) real="$RET_SH_SLEEP" mode="${RET_SH_SLEEP_DO:-}" ;;
+  *) exit 127 ;;
+esac
+first() {  # first <name> - true the first time only
+  [ -e "$RET_SH_FLAGS/$1" ] && return 1
+  : > "$RET_SH_FLAGS/$1"
+}
+args=" $* "
+case "$me:$mode" in
+  date:line) first date && printf '%s\n' "$RET_SH_LINE" >> "$RET_SH_LOG" ;;
+  git:line|git:forge|git:fd9)
+    case "$args" in
+      *" --show-toplevel "*)
+        if first git; then
+          case "$mode" in
+            line) printf '%s\n' "$RET_SH_LINE2" >> "$RET_SH_LOG" ;;
+            forge) printf '%s\n' "$RET_SH_FORGED" > "$RET_SH_LOG" ;;
+            fd9) { printf 'fd9-probe\n' >&9; } 2>/dev/null ;;
+          esac
+        fi ;;
+    esac ;;
+  git:fdcheck)
+    # A watched call only: whether the runner's copy of standard output is closed.
+    if [ -n "${RETENTION_GIT_OUT:-}" ] && first git; then
+      if [ -n "${RETENTION_OUT_FD:-}" ] && { true >&"$RETENTION_OUT_FD"; } 2>/dev/null; then echo open; else echo closed; fi > "$RET_SH_FLAGS/fd-state"
+    fi ;;
+  git:quiet)
+    # A watched call only: silent for RET_SH_QUIET seconds, then a line on
+    # standard error, which is where the watchdog looks for progress, and two
+    # seconds more so that a poll sees the line arrive.
+    if [ -n "${RETENTION_GIT_OUT:-}" ] && first git; then
+      "$RET_SH_SLEEP" "${RET_SH_QUIET:-3}"
+      printf 'quiet-probe\n' >&2
+      "$RET_SH_SLEEP" 2
+    fi ;;
+  rm:line|rm:term)
+    "$real" "$@"
+    rc=$?
+    case "$args" in
+      *"/run.lock "*)
+        if first rm; then
+          if [ "$mode" = line ]; then printf '%s\n' "$RET_SH_LINE3" >> "$RET_SH_LOG"; else kill -TERM "$PPID"; fi
+        fi ;;
+    esac
+    exit "$rc" ;;
+  rm:print)
+    # As the run removes its working folder, just before it prints: a folder
+    # named print in each copy folder in RET_SH_TMP, so the lines cannot be
+    # made ready there.
+    "$real" "$@"
+    rc=$?
+    case "$args" in
+      *" -rf $RET_SH_TMP/"*)
+        if first rm; then
+          for d in "$RET_SH_TMP"/*/; do
+            [ -f "${d}run.log" ] && "$RET_SH_MKDIR" "${d}print" && : > "$RET_SH_FLAGS/planted"
+          done
+        fi ;;
+    esac
+    exit "$rc" ;;
+  mkdir:term)
+    "$real" "$@"
+    rc=$?
+    case "$args" in *"/nohooks "*) first mkdir && kill -TERM "$PPID" ;; esac
+    exit "$rc" ;;
+  mkdir:line)
+    case "$args" in
+      *" -p "*) ;;
+      *"/run.lock "*) first mkdir && printf '%s\n' "$RET_SH_LINE" >> "$RET_SH_LOG" ;;
+    esac ;;
+  ln:term)
+    "$real" "$@"
+    rc=$?
+    case "$args" in *"/run.lock/owner "*) first ln && kill -TERM "$PPID" ;; esac
+    exit "$rc" ;;
+  cat:term) case "$args" in *"/legacy.body "*) first cat && kill -TERM "$PPID" ;; esac ;;
+  cat:libterm) case "$args" in *"/lib.log "*) first cat && kill -TERM "$PPID" ;; esac ;;
+  cat:release)
+    # The owner file read while the lock is let go, once the run has logged
+    # RET_SH_AFTER. That cat runs inside a command substitution, so the run's
+    # pid comes from the owner file itself, which is this run's own lock.
+    case "$args" in
+      *"/run.lock/owner "*)
+        if grep -qF -- "$RET_SH_AFTER" "$RET_SH_LOG" 2>/dev/null && first cat; then
+          for f; do :; done
+          kill -TERM "$(sed -n 's/^pid=//p' "$f")"
+        fi ;;
+    esac ;;
+  find:fail)
+    case "$args" in
+      *"/20-projects/_logs/ "*)
+        first find
+        printf 'find: %s: Permission denied\n' "$RET_SH_FIND_PATH" >&2
+        exit 1 ;;
+    esac ;;
+  sleep:TERM|sleep:USR1) if first sleep; then kill -"$mode" "$PPID"; exit 0; fi ;;
+  sleep:rewrite) first sleep && { : > "$RET_SH_LOG"; "$RET_SH_RM" -rf "$RET_SH_LOCK"; } ;;
+  sleep:plant)
+    # While the run waits for the lock: a hook that leaves a mark, in a nohooks
+    # folder inside every folder the run has in RET_SH_TMP by then, and then the
+    # holder's lock let go.
+    if first sleep; then
+      for d in "$RET_SH_TMP"/*/; do
+        [ -d "$d" ] || continue
+        "$RET_SH_MKDIR" -p "${d}nohooks"
+        for h in pre-commit commit-msg post-commit post-index-change reference-transaction; do
+          printf '#!/bin/sh\n: > "%s"\n' "$RET_SH_MARK" > "${d}nohooks/$h"
+          chmod +x "${d}nohooks/$h"
+        done
+        : > "$RET_SH_FLAGS/planted"
+      done
+      "$RET_SH_RM" -rf "$RET_SH_LOCK"
+    fi ;;
+esac
+exec "$real" "$@"
+SHIM_EOF
+ret_shims() {  # ret_shims <folder> <command>... - a PATH folder holding the stand-in under each name
+  local d="$1" c
+  shift
+  rm -rf "$d" "$d.flags"
+  mkdir -p "$d" "$d.flags"
+  for c in "$@"; do
+    cp "$RET/print-shim" "$d/$c" && chmod +x "$d/$c"
+  done
+}
+export RET_SH_DATE RET_SH_RM RET_SH_MKDIR RET_SH_LN RET_SH_CAT RET_SH_FIND RET_SH_SLEEP RET_REAL_GIT
+rp_planted='runner=dream-pass\npid=%s\nwinpid=\nstarted=%s\nlongest=100000\nnonce=planted\n'
+
+# Another run's lines in every span of this one. date lands one before this run
+# asks for the lock, because the first date it calls is the timestamp of the
+# warning RETENTION_DAYS forces; git lands one while it holds the lock; rm lands
+# a moved run's OK line and summary as it lets the lock go and before it
+# prints. RUN_LOCK_POLL gives the lock step a warning of this run's own, which
+# must be printed as its own. The log keeps every line of both runs.
+# RETENTION_MAX_MOVES above 50 makes the runner say a warning of its own while
+# the library's RETENTION_DAYS warning is still waiting to be passed on, and the
+# two must reach both files in the order they happened.
+RF="$(ret_copy foreign-lines)"
+ret_shims "$RET/shim-foreign" date git rm
+rp_bad=''
+rp_rc="$( export RET_SH_FLAGS="$RET/shim-foreign.flags" RET_SH_LOG="$(ret_log "$RF")" \
+    RET_SH_DATE_DO=line RET_SH_GIT_DO=line RET_SH_RM_DO=line \
+    RET_SH_LINE='[2000-01-01T00:00:00+00:00] ELIGIBLE: 20-projects/_logs/dream-foreign-before.md' \
+    RET_SH_LINE2='[2000-01-01T00:00:00+00:00] LOCKED: the run lock is held by vault-retention (pid 1) after waiting 0s. Not starting. foreign-held' \
+    RET_SH_LINE3="$(printf '%s\n%s' '[2000-01-01T00:00:00+00:00] OK: 9 file(s) moved to 99-archive/20-projects/_logs and committed as deadbeef. foreign-after' \
+      '[2000-01-01T00:00:00+00:00] evaluated 9 candidate(s): 9 eligible, 0 legacy, 0 kept, 0 left alone, 0 refused, 9 moved')"
+  RET_DAYS=abc RET_MAX=51 RET_LOCK_POLL=abc RET_PATH="$RET/shim-foreign" ret_out "$RF" "$RF.out" --dry-run )"
+[ "$rp_rc" = 0 ] || rp_bad="$rp_bad rc:$rp_rc"
+for rp_c in date git rm; do [ -f "$RET/shim-foreign.flags/$rp_c" ] || rp_bad="$rp_bad never-landed:$rp_c"; done
+for rp_f in "$RF.out" "$(ret_log "$RF")"; do
+  rp_days="$(LC_ALL=C awk '/WARNING: RETENTION_DAYS "abc"/ { print NR; exit }' "$rp_f" 2>/dev/null)"
+  rp_max="$(LC_ALL=C awk '/WARNING: RETENTION_MAX_MOVES 51 /{ print NR; exit }' "$rp_f" 2>/dev/null)"
+  [ -n "$rp_days" ] && [ -n "$rp_max" ] && [ "$rp_days" -lt "$rp_max" ] || rp_bad="$rp_bad order-in:${rp_f##*/}"
+done
+[ "$(ret_printed "$RF.out" 'foreign|deadbeef')" = 0 ] || rp_bad="$rp_bad printed-another-run"
+[ "$(ret_printed "$RF.out" '^vault-retention: evaluated [0-9]')" = 1 ] || rp_bad="$rp_bad summary-lines"
+[ "$(ret_printed_evaluated "$RF.out")" = 0 ] || rp_bad="$rp_bad wrong-summary"
+[ "$(ret_printed "$RF.out" '^vault-retention: WARNING: RETENTION_DAYS "abc" ')" = 1 ] || rp_bad="$rp_bad own-warning"
+[ "$(ret_printed "$RF.out" '^vault-retention: WARNING: RUN_LOCK_POLL "abc" ')" = 1 ] || rp_bad="$rp_bad own-lock-line"
+[ "$(ret_printed "$RF.out" 'NOTE:|another run')" = 0 ] || rp_bad="$rp_bad blamed-another-run"
+for rp_want in foreign-before foreign-held foreign-after 'RUN_LOCK_POLL "abc"' 'evaluated 0 candidate(s)'; do
+  grep -qF -- "$rp_want" "$(ret_log "$RF")" 2>/dev/null || rp_bad="$rp_bad log-lost:$rp_want"
+done
+if [ -z "$rp_bad" ]; then
+  ok "another run's lines before, during and after this run's hold on the lock are never printed as its own, its own lock-step line is, and the log keeps both"
+else
+  bad "a run printed another run's lines or lost its own --$rp_bad printed: [$(tr '\n' '|' < "$RF.out" 2>/dev/null | cut -c1-600)]"
+fi
+
+# A stale lock this run reclaims, with descriptor 9 held by the caller. The
+# reclaim is this run's own line, written while it asks for the lock. 9 is
+# where a wrapper keeps a flock(1) lock, so the run copies standard output to
+# another descriptor: a git stand-in writes to 9, and the line must reach the
+# caller's file and not what the run prints.
+RF="$(ret_copy reclaimed)"
+mkdir -p "$RF.state/run.lock"
+( : ) &
+rp_dead=$!
+wait "$rp_dead"
+printf 'runner=dream-pass\npid=%s\nwinpid=\nstarted=%s\nlongest=60\nnonce=stale-1\n' "$rp_dead" "$(( $(date +%s) - 100000 ))" > "$RF.state/run.lock/owner"
+ret_shims "$RET/shim-fd9" git
+rm -f "$RF.fd9"
+rp_bad=''
+rp_rc="$( export RET_SH_FLAGS="$RET/shim-fd9.flags" RET_SH_GIT_DO=fd9
+  exec 9>"$RF.fd9"
+  RET_LOCK_WAIT=30 RET_PATH="$RET/shim-fd9" ret_out "$RF" "$RF.out" --dry-run )"
+[ "$rp_rc" = 0 ] || rp_bad="$rp_bad rc:$rp_rc"
+[ "$(ret_printed "$RF.out" "^vault-retention: reclaimed a stale run lock \\(runner dream-pass, pid $rp_dead\\)\$")" = 1 ] || rp_bad="$rp_bad reclaim-not-printed"
+[ "$(ret_printed "$RF.out" 'NOTE:|another run')" = 0 ] || rp_bad="$rp_bad blamed-another-run"
+[ -f "$RET/shim-fd9.flags/git" ] || rp_bad="$rp_bad never-probed"
+grep -qx 'fd9-probe' "$RF.fd9" 2>/dev/null || rp_bad="$rp_bad caller-lost-9"
+[ "$(ret_printed "$RF.out" 'fd9-probe')" = 0 ] || rp_bad="$rp_bad took-over-9"
+if [ -z "$rp_bad" ]; then
+  ok "a reclaimed stale lock is printed as this run's own line, and descriptor 9 stays the caller's"
+else
+  bad "a run hid its own lock-step line or took over descriptor 9 --$rp_bad printed: [$(tr '\n' '|' < "$RF.out" 2>/dev/null | cut -c1-600)]"
+fi
+
+# A refused lock, with two lines of this run's own in the lock step, the
+# RUN_LOCK_POLL warning and the refusal, and a line the holder writes between
+# them. All of this run's lines are printed, and the holder's is not.
+RF="$(ret_copy refused-own)"
+mkdir -p "$RF.state/run.lock"
+printf "$rp_planted" "$$" "$(date +%s)" > "$RF.state/run.lock/owner"
+ret_shims "$RET/shim-holder" mkdir
+rp_bad=''
+rp_rc="$( export RET_SH_FLAGS="$RET/shim-holder.flags" RET_SH_LOG="$(ret_log "$RF")" RET_SH_MKDIR_DO=line \
+    RET_SH_LINE='[2000-01-01T00:00:00+00:00] OK: a line the holder wrote, holder-line'
+  RET_LOCK_POLL=abc RET_PATH="$RET/shim-holder" ret_out "$RF" "$RF.out" )"
+[ "$rp_rc" = 75 ] || rp_bad="$rp_bad rc:$rp_rc"
+[ -f "$RET/shim-holder.flags/mkdir" ] || rp_bad="$rp_bad never-landed"
+LC_ALL=C sed -n 1p "$RF.out" 2>/dev/null | grep -q '^vault-retention: WARNING: RUN_LOCK_POLL "abc" ' || rp_bad="$rp_bad own-warning"
+[ "$(sed -n 2p "$RF.out" 2>/dev/null)" = "vault-retention: LOCKED: the run lock is held by dream-pass (pid $$) after waiting 0s. Not starting." ] || rp_bad="$rp_bad lock-line"
+[ "$(sed -n 3p "$RF.out" 2>/dev/null)" = "$(printf "$ro_failed" 75)" ] || rp_bad="$rp_bad last"
+[ "$(awk 'END { print NR }' "$RF.out" 2>/dev/null)" = 3 ] || rp_bad="$rp_bad line-count"
+[ -f "$RF.state/run.lock/owner" ] || rp_bad="$rp_bad took-the-holders-lock"
+grep -qF 'holder-line' "$(ret_log "$RF")" 2>/dev/null || rp_bad="$rp_bad holder-line-never-logged"
+if [ -z "$rp_bad" ]; then
+  ok "a refused lock prints both of this run's lines from the lock step, and none of the holder's"
+else
+  bad "a refused lock printed the wrong lines --$rp_bad printed: [$(tr '\n' '|' < "$RF.out" 2>/dev/null | cut -c1-600)]"
+fi
+
+# A signal while the run waits for the lock, sent by a sleep stand-in the
+# moment the run starts to poll. TERM: what this run wrote, its lock-step
+# warning, then FAILED 143. The same TERM on a first run that has written
+# nothing yet: that it wrote nothing, and never that a log could not be read
+# back, because there is no log at all. USR1, which no trap here catches: a
+# closing line all the same, and one that gives no number, because the wait's
+# poll there is longer than the wait itself, so the command before the sleep
+# returned 1 and bash hands that to the EXIT trap. The holder's lock is left
+# alone every time. The TERM case also runs with RUN_PID in its environment,
+# naming a process that is not the run's, which must still be running after.
+# While the run waits it has no working folder, so on_signal stops nothing then
+# anyway; the control that holds the reset of RUN_PID is inherited-pid.
+rp_bad=''
+for rp_case in sig-term:TERM:abc:60 sig-first:TERM:1:60 sig-usr1:USR1:30:5; do
+  rp_name="${rp_case%%:*}"
+  rp_sig="${rp_case#*:}"
+  rp_wait="${rp_sig##*:}"
+  rp_sig="${rp_sig%:*}"
+  rp_poll="${rp_sig#*:}"
+  rp_sig="${rp_sig%%:*}"
+  RF="$(ret_copy "$rp_name")"
+  mkdir -p "$RF.state/run.lock"
+  printf "$rp_planted" "$$" "$(date +%s)" > "$RF.state/run.lock/owner"
+  ret_shims "$RET/shim-$rp_name" sleep
+  rp_victim=""
+  if [ "$rp_name" = sig-term ]; then
+    "$RET_SH_SLEEP" 120 &
+    rp_victim=$!
+  fi
+  rp_rc="$( export RET_SH_FLAGS="$RET/shim-$rp_name.flags" RET_SH_SLEEP_DO="$rp_sig"
+    [ -z "$rp_victim" ] || export RUN_PID="$rp_victim"
+    RET_LOCK_WAIT="$rp_wait" RET_LOCK_POLL="$rp_poll" RET_PATH="$RET/shim-$rp_name" ret_out "$RF" "$RF.out" )"
+  [ -f "$RET/shim-$rp_name.flags/sleep" ] || rp_bad="$rp_bad $rp_name-never-waited"
+  grep -qx 'nonce=planted' "$RF.state/run.lock/owner" 2>/dev/null || rp_bad="$rp_bad $rp_name-took-the-holders-lock"
+  case "$rp_name" in
+    sig-term)
+      kill -0 "$rp_victim" 2>/dev/null || rp_bad="$rp_bad $rp_name-stopped-a-process-not-its-own"
+      kill "$rp_victim" 2>/dev/null
+      wait "$rp_victim" 2>/dev/null
+      [ "$rp_rc" = 143 ] || rp_bad="$rp_bad $rp_name-rc:$rp_rc"
+      LC_ALL=C sed -n 1p "$RF.out" 2>/dev/null | grep -q '^vault-retention: WARNING: RUN_LOCK_POLL "abc" ' || rp_bad="$rp_bad $rp_name-own-warning"
+      [ "$(sed -n 2p "$RF.out" 2>/dev/null)" = "$(printf "$ro_failed" 143)" ] || rp_bad="$rp_bad $rp_name-last"
+      [ "$(awk 'END { print NR }' "$RF.out" 2>/dev/null)" = 2 ] || rp_bad="$rp_bad $rp_name-line-count" ;;
+    sig-first)
+      [ "$rp_rc" = 143 ] || rp_bad="$rp_bad $rp_name-rc:$rp_rc"
+      [ ! -e "$(ret_log "$RF")" ] || rp_bad="$rp_bad $rp_name-a-log-exists"
+      [ "$(sed -n 1p "$RF.out" 2>/dev/null)" = "vault-retention: this run wrote nothing to its log before it stopped." ] || rp_bad="$rp_bad $rp_name-wrote-nothing"
+      [ "$(sed -n 2p "$RF.out" 2>/dev/null)" = "$(printf "$ro_failed" 143)" ] || rp_bad="$rp_bad $rp_name-last"
+      [ "$(awk 'END { print NR }' "$RF.out" 2>/dev/null)" = 2 ] || rp_bad="$rp_bad $rp_name-line-count" ;;
+    sig-usr1)
+      case "$rp_rc" in 129|130|143|0|75) rp_bad="$rp_bad $rp_name-rc:$rp_rc" ;; esac
+      [ "$rp_rc" -gt 128 ] 2>/dev/null || rp_bad="$rp_bad $rp_name-rc:$rp_rc"
+      [ "$(tail -n 1 "$RF.out" 2>/dev/null)" = "vault-retention: FAILED: this run stopped before it finished, on an error in the script itself or a signal it does not catch. The lines above are what it logged, and the header of vault-retention.sh says what its exit code means." ] \
+        || rp_bad="$rp_bad $rp_name-last" ;;
+  esac
+done
+if [ -z "$rp_bad" ]; then
+  ok "a signal during the wait for the lock prints what the run wrote and a closing line, says so when it wrote nothing, and a signal nothing catches still ends on FAILED"
+else
+  bad "a signal during the wait for the lock was not reported as it should be --$rp_bad printed: [$(tr '\n' '|' < "$RET/sig-term.out" 2>/dev/null | cut -c1-300)] [$(tr '\n' '|' < "$RET/sig-first.out" 2>/dev/null | cut -c1-300)] [$(tr '\n' '|' < "$RET/sig-usr1.out" 2>/dev/null | cut -c1-300)]"
+fi
+
+# TERM once the lock is this run's and before the lock step has returned. An ln
+# stand-in sends it as it places the lock's owner file. The run's lock-step
+# warning was written into the library's file and not yet passed on, so it is
+# the exit that must pass it on, print it, and let the lock go.
+RF="$(ret_copy sig-acquired)"
+ret_shims "$RET/shim-acquired" ln
+rp_bad=''
+rp_rc="$( export RET_SH_FLAGS="$RET/shim-acquired.flags" RET_SH_LN_DO=term
+  RET_LOCK_POLL=abc RET_PATH="$RET/shim-acquired" ret_out "$RF" "$RF.out" )"
+[ "$rp_rc" = 143 ] || rp_bad="$rp_bad rc:$rp_rc"
+[ -f "$RET/shim-acquired.flags/ln" ] || rp_bad="$rp_bad never-landed"
+LC_ALL=C sed -n 1p "$RF.out" 2>/dev/null | grep -q '^vault-retention: WARNING: RUN_LOCK_POLL "abc" ' || rp_bad="$rp_bad own-warning"
+[ "$(sed -n 2p "$RF.out" 2>/dev/null)" = "$(printf "$ro_failed" 143)" ] || rp_bad="$rp_bad last"
+[ "$(awk 'END { print NR }' "$RF.out" 2>/dev/null)" = 2 ] || rp_bad="$rp_bad line-count"
+grep -qF 'RUN_LOCK_POLL "abc"' "$(ret_log "$RF")" 2>/dev/null || rp_bad="$rp_bad log-lost-it"
+[ ! -e "$RF.state/run.lock" ] || rp_bad="$rp_bad lock-left"
+if [ -z "$rp_bad" ]; then
+  ok "TERM just after the lock is taken prints the run's lock-step line and FAILED 143, logs it, and lets the lock go"
+else
+  bad "TERM just after the lock is taken was not reported as it should be --$rp_bad printed: [$(tr '\n' '|' < "$RF.out" 2>/dev/null | cut -c1-600)]"
+fi
+
+# The shared log rewritten under the run: emptied by the lock's holder while
+# this run waits, then replaced with a forged line while this run holds the
+# lock. What the run prints is its own copy, so it is exactly what an empty
+# folder prints on an untouched log.
+RF="$(ret_copy rewritten)"
+mkdir -p "$RF/.claude/logs" "$RF.state/run.lock"
+printf '%s\n' '[2000-01-01T00:00:00+00:00] evaluated 4 candidate(s): 4 eligible, 0 legacy, 0 kept, 0 left alone, 0 refused, 0 moved' \
+  '[2000-01-01T00:00:00+00:00] OK: an earlier run.' > "$(ret_log "$RF")"
+printf "$rp_planted" "$$" "$(date +%s)" > "$RF.state/run.lock/owner"
+ret_shims "$RET/shim-rewrite" sleep git
+rp_bad=''
+rp_rc="$( export RET_SH_FLAGS="$RET/shim-rewrite.flags" RET_SH_LOG="$(ret_log "$RF")" RET_SH_LOCK="$RF.state/run.lock" \
+    RET_SH_SLEEP_DO=rewrite RET_SH_GIT_DO=forge \
+    RET_SH_FORGED='[2000-01-01T00:00:00+00:00] OK: 7 file(s) moved to 99-archive/20-projects/_logs and committed as 0badc0de.'
+  RET_LOCK_WAIT=60 RET_PATH="$RET/shim-rewrite" ret_out "$RF" "$RF.out" --dry-run )"
+printf '%s\n' "vault-retention: evaluated 0 candidate(s): 0 eligible, 0 legacy, 0 kept, 0 left alone, 0 refused, 0 moved" \
+  "vault-retention: OK: there is nothing in 20-projects/_logs to evaluate." > "$RF.want"
+[ "$rp_rc" = 0 ] || rp_bad="$rp_bad rc:$rp_rc"
+for rp_c in sleep git; do [ -f "$RET/shim-rewrite.flags/$rp_c" ] || rp_bad="$rp_bad never-landed:$rp_c"; done
+cmp -s "$RF.want" "$RF.out" || rp_bad="$rp_bad printed-changed"
+grep -qF '0badc0de' "$(ret_log "$RF")" 2>/dev/null || rp_bad="$rp_bad never-forged"
+grep -qF 'an earlier run' "$(ret_log "$RF")" 2>/dev/null && rp_bad="$rp_bad never-emptied"
+if [ -z "$rp_bad" ]; then
+  ok "a log emptied and then forged while the run goes on changes nothing the run prints"
+else
+  bad "a log rewritten under the run changed what it printed --$rp_bad printed: [$(tr '\n' '|' < "$RF.out" 2>/dev/null | cut -c1-600)]"
+fi
+
+# A signal inside a block that points standard output at a temporary file. The
+# legacy report is written that way, with cat inside the block, and a cat
+# stand-in sends TERM from there. A trap runs inside the redirection its signal
+# landed in, so without the copy main takes of standard output the lines would
+# go into the report's temporary file and be deleted with it.
+RF="$(ret_copy sig-in-block)"
+ret_journal "$RF" "dream-${RET_DATE[100]}.md" "tier: medium"
+ret_human_commit "$RF" "notes from before the runners" "20-projects/_logs/dream-${RET_DATE[100]}.md" >/dev/null 2>&1
+rp_batch=""
+for rp_i in 1 2 3 4 5 6 7 8; do
+  ret_journal "$RF" "dream-${RET_DATE[$rp_i]}.md" "tier: medium"
+  rp_batch="$rp_batch dream-${RET_DATE[$rp_i]}.md"
+done
+# shellcheck disable=SC2086
+ret_dream_commit "$RF" $rp_batch
+# A git stand-in in the same run records, on the first git the watchdog runs,
+# whether that copy of standard output is open in git, which it must not be:
+# a git the watchdog could not stop would otherwise hold cron's pipe open.
+ret_shims "$RET/shim-block" cat git
+rp_bad=''
+rp_rc="$( export RET_SH_FLAGS="$RET/shim-block.flags" RET_SH_CAT_DO=term RET_SH_GIT_DO=fdcheck
+  RET_DAYS=abc RET_PATH="$RET/shim-block" ret_out "$RF" "$RF.out" )"
+[ "$rp_rc" = 143 ] || rp_bad="$rp_bad rc:$rp_rc"
+[ -f "$RET/shim-block.flags/cat" ] || rp_bad="$rp_bad never-landed"
+[ "$(ret_printed "$RF.out" '^vault-retention: WARNING: RETENTION_DAYS "abc" ')" = 1 ] || rp_bad="$rp_bad own-warning"
+[ "$(tail -n 1 "$RF.out" 2>/dev/null)" = "$(printf "$ro_failed" 143)" ] || rp_bad="$rp_bad last"
+[ "$(cat "$RET/shim-block.flags/fd-state" 2>/dev/null)" = closed ] || rp_bad="$rp_bad git-holds-the-copy:$(cat "$RET/shim-block.flags/fd-state" 2>/dev/null)"
+if [ -z "$rp_bad" ]; then
+  ok "TERM inside a block that writes a temporary file through standard output still prints the run's lines to the caller, and git never holds that copy"
+else
+  bad "TERM inside a block that writes a temporary file lost what the run printed --$rp_bad printed: [$(tr '\n' '|' < "$RF.out" 2>/dev/null | cut -c1-600)]"
+fi
+
+# A lock the caller's environment names, with its nonce. The run refuses early,
+# at a state directory that is a regular file, and must leave alone a lock it
+# never took.
+RF="$(ret_copy inherited-lock)"
+rm -rf "$RET/inherited-victim"
+mkdir -p "$RET/inherited-victim"
+printf 'runner=dream-pass\npid=1\nwinpid=\nstarted=1\nlongest=1\nnonce=inherited-1\n' > "$RET/inherited-victim/owner"
+: > "$RET/inherited-victim/canary"
+: > "$RET/inherited-state-file"
+rp_bad=''
+rp_rc="$( export RUN_LOCK_DIR="$RET/inherited-victim" RUN_LOCK_NONCE=inherited-1
+  RET_STATE="$RET/inherited-state-file" ret_out "$RF" "$RF.out" )"
+[ "$rp_rc" = 1 ] || rp_bad="$rp_bad rc:$rp_rc"
+[ -f "$RET/inherited-victim/canary" ] || rp_bad="$rp_bad removed-a-lock-it-never-took"
+[ "$(ret_printed "$RF.out" '^vault-retention: ERROR: the state directory ')" = 1 ] || rp_bad="$rp_bad no-reason"
+[ "$(tail -n 1 "$RF.out" 2>/dev/null)" = "$(printf "$ro_failed" 1)" ] || rp_bad="$rp_bad last"
+if [ -z "$rp_bad" ]; then
+  ok "a run lock named by the caller's environment is left alone by a run that refuses before taking its own"
+else
+  bad "a run removed a lock its environment named, or did not say why it refused --$rp_bad printed: [$(tr '\n' '|' < "$RF.out" 2>/dev/null | cut -c1-600)]"
+fi
+
+# A process id the caller's environment names as RUN_PID, and a TERM sent by a
+# mkdir stand-in as the run makes its working folder: the first moment a signal
+# has on_signal stop a watched git's processes, and before any watched git has
+# run. The process is not the run's, and must still be running afterwards.
+RF="$(ret_copy inherited-pid)"
+ret_shims "$RET/shim-pid" mkdir
+"$RET_SH_SLEEP" 120 &
+rp_victim=$!
+rp_bad=''
+rp_rc="$( export RET_SH_FLAGS="$RET/shim-pid.flags" RET_SH_MKDIR_DO=term RUN_PID="$rp_victim"
+  RET_PATH="$RET/shim-pid" ret_out "$RF" "$RF.out" --dry-run )"
+[ "$rp_rc" = 143 ] || rp_bad="$rp_bad rc:$rp_rc"
+[ -f "$RET/shim-pid.flags/mkdir" ] || rp_bad="$rp_bad never-landed"
+kill -0 "$rp_victim" 2>/dev/null || rp_bad="$rp_bad stopped-a-process-not-its-own"
+kill "$rp_victim" 2>/dev/null
+wait "$rp_victim" 2>/dev/null
+[ "$(tail -n 1 "$RF.out" 2>/dev/null)" = "$(printf "$ro_failed" 143)" ] || rp_bad="$rp_bad last"
+if [ -z "$rp_bad" ]; then
+  ok "a process id named by the caller's environment is left alone by a signal that arrives before any git of the run's own"
+else
+  bad "a run's signal handling stopped a process its environment named --$rp_bad printed: [$(tr '\n' '|' < "$RF.out" 2>/dev/null | cut -c1-600)]"
+fi
+
+# A hook planted while the run waits for the lock. The pass holding the lock is
+# running then, and a folder of this run's that exists by then is one that pass
+# could find. A sleep stand-in writes a hook that leaves a mark into a nohooks
+# folder in each, then lets the lock go. The folder whose nohooks every git call
+# takes its hooks from is made only after that, so the run moves and commits a
+# journal and no planted hook runs. Nine dates, so that the oldest is not one of
+# the newest eight, which are always kept.
+RF="$(ret_copy planted-hooks)"
+rp_batch=""
+for rp_i in 90 91 92 93 94 95 96 97 98; do
+  ret_journal "$RF" "dream-${RET_DATE[$rp_i]}.md" "tier: medium"
+  rp_batch="$rp_batch dream-${RET_DATE[$rp_i]}.md"
+done
+# shellcheck disable=SC2086
+ret_dream_commit "$RF" $rp_batch
+mkdir -p "$RF.state/run.lock" "$RF.tmp"
+printf "$rp_planted" "$$" "$(date +%s)" > "$RF.state/run.lock/owner"
+ret_shims "$RET/shim-plant" sleep
+rm -f "$RF.mark"
+rp_bad=''
+rp_rc="$( export RET_SH_FLAGS="$RET/shim-plant.flags" RET_SH_SLEEP_DO=plant RET_SH_TMP="$RF.tmp" RET_SH_MARK="$RF.mark" \
+    RET_SH_LOCK="$RF.state/run.lock" TMPDIR="$RF.tmp"
+  RET_LOCK_WAIT=60 RET_PATH="$RET/shim-plant" ret_out "$RF" "$RF.out" )"
+[ "$rp_rc" = 0 ] || rp_bad="$rp_bad rc:$rp_rc"
+[ -f "$RET/shim-plant.flags/sleep" ] || rp_bad="$rp_bad never-waited"
+[ -f "$RET/shim-plant.flags/planted" ] || rp_bad="$rp_bad no-folder-to-plant-in"
+[ ! -e "$RF.mark" ] || rp_bad="$rp_bad a-planted-hook-ran"
+[ "$(ret_printed "$RF.out" '^vault-retention: OK: 1 file\(s\) moved to 99-archive/20-projects/_logs and committed as ')" = 1 ] || rp_bad="$rp_bad no-commit"
+if [ -z "$rp_bad" ]; then
+  ok "a hook written into the run's temporary folders while it waits for the lock never runs, and the run moves and commits"
+else
+  bad "a hook planted while the run waited for the lock ran, or the run did not commit --$rp_bad printed: [$(tr '\n' '|' < "$RF.out" 2>/dev/null | cut -c1-600)]"
+fi
+
+# The watchdog's inputs named by the caller's environment. A git stand-in stays
+# silent for three seconds on the first watched call and then writes a line.
+# With RUN_STALL_SECONDS inherited that call would be stopped as stalled, and
+# with RUN_GAPS_FILE inherited the silence would be written into the file it
+# names. On Windows a git that runs past RUNNER_GIT_TIMEOUT is stopped with a
+# sweep for processes whose command line holds RUN_NONCE, so there an inherited
+# one must leave a process that is not the run's running.
+rp_bad=''
+for rp_case in stall gaps; do
+  RF="$(ret_copy "inherited-$rp_case")"
+  ret_journal "$RF" "dream-${RET_DATE[90]}.md" "tier: medium"
+  ret_dream_commit "$RF" "dream-${RET_DATE[90]}.md"
+  ret_shims "$RET/shim-$rp_case" git
+  rm -f "$RF.gaps"
+  # An if rather than a case: bash 3.2 reads the ) of a case pattern inside $( )
+  # as the end of the substitution.
+  rp_rc="$( export RET_SH_FLAGS="$RET/shim-$rp_case.flags" RET_SH_GIT_DO=quiet
+    if [ "$rp_case" = stall ]; then export RUN_STALL_SECONDS=1; else export RUN_GAPS_FILE="$RF.gaps"; fi
+    RET_PATH="$RET/shim-$rp_case" ret_out "$RF" "$RF.out" --dry-run )"
+  [ "$rp_rc" = 0 ] || rp_bad="$rp_bad $rp_case-rc:$rp_rc"
+  [ -f "$RET/shim-$rp_case.flags/git" ] || rp_bad="$rp_bad $rp_case-never-quiet"
+  [ ! -e "$RF.gaps" ] || rp_bad="$rp_bad $rp_case-wrote-the-named-file"
+done
+if [ -z "$rp_bad" ]; then
+  ok "a stall limit or a gaps file named by the caller's environment changes nothing a run does"
+else
+  bad "a run used watchdog settings its environment named --$rp_bad printed: [$(tr '\n' '|' < "$RET/inherited-stall.out" 2>/dev/null | cut -c1-300)] [$(tr '\n' '|' < "$RET/inherited-gaps.out" 2>/dev/null | cut -c1-300)]"
+fi
+if is_windows_host; then
+  RF="$(ret_copy inherited-nonce)"
+  ret_journal "$RF" "dream-${RET_DATE[90]}.md" "tier: medium"
+  ret_dream_commit "$RF" "dream-${RET_DATE[90]}.md"
+  ret_shims "$RET/shim-nonce" git
+  rp_token="retention-victim-$$-$RANDOM"
+  # Far longer than a run takes, so that a victim gone afterwards was stopped.
+  bash -c "trap 'kill \$! 2>/dev/null; exit 0' TERM; \"$RET_SH_SLEEP\" 600 & wait; : $rp_token" &
+  rp_victim=$!
+  rp_bad=''
+  rp_t0="$(date +%s)"
+  rp_rc="$( export RET_SH_FLAGS="$RET/shim-nonce.flags" RET_SH_GIT_DO=quiet RET_SH_QUIET=10 RUN_NONCE="$rp_token"
+    RET_GIT_TIMEOUT=1 RET_PATH="$RET/shim-nonce" ret_out "$RF" "$RF.out" --dry-run )"
+  rp_took=$(( $(date +%s) - rp_t0 ))
+  ran retention-inherited-nonce
+  [ "$rp_rc" = 75 ] || rp_bad="$rp_bad rc:$rp_rc"
+  [ -f "$RET/shim-nonce.flags/git" ] || rp_bad="$rp_bad never-quiet"
+  kill -0 "$rp_victim" 2>/dev/null || rp_bad="$rp_bad stopped-a-process-not-its-own(the run took ${rp_took}s)"
+  kill "$rp_victim" 2>/dev/null
+  wait "$rp_victim" 2>/dev/null
+  if [ -z "$rp_bad" ]; then
+    ok "a RUN_NONCE named by the caller's environment points the Windows stop sweep at nothing"
+  else
+    bad "a run's stop sweep used a RUN_NONCE its environment named --$rp_bad printed: [$(tr '\n' '|' < "$RF.out" 2>/dev/null | cut -c1-600)]"
+  fi
+else
+  skip retention-inherited-nonce "a RUN_NONCE named by the caller's environment: only the Windows stop sweep reads it"
+fi
+
+# TERM while the run lets its lock go, sent by an rm stand-in as it removes the
+# lock. The release is not cut short, and the TERM is not lost either: once the
+# lock is gone the run ends on it, printing nothing, with its lines in the log.
+RF="$(ret_copy sig-releasing)"
+ret_shims "$RET/shim-releasing" rm
+rp_bad=''
+rp_rc="$( export RET_SH_FLAGS="$RET/shim-releasing.flags" RET_SH_RM_DO=term
+  RET_PATH="$RET/shim-releasing" ret_out "$RF" "$RF.out" --dry-run )"
+[ "$rp_rc" = 143 ] || rp_bad="$rp_bad rc:$rp_rc"
+[ -f "$RET/shim-releasing.flags/rm" ] || rp_bad="$rp_bad never-landed"
+[ ! -e "$RF.state/run.lock" ] || rp_bad="$rp_bad lock-left"
+[ ! -s "$RF.out" ] || rp_bad="$rp_bad printed-after-the-signal"
+grep -q 'OK: there is nothing in 20-projects/_logs to evaluate' "$(ret_log "$RF")" 2>/dev/null || rp_bad="$rp_bad log-lost"
+if [ -z "$rp_bad" ]; then
+  ok "TERM while the lock is let go does not cut the release short, and ends the run once it is done"
+else
+  bad "TERM while the lock is let go was lost or cut the release short --$rp_bad printed: [$(tr '\n' '|' < "$RF.out" 2>/dev/null | cut -c1-600)]"
+fi
+
+# The same TERM in the middle of the release, before the lock is removed: a cat
+# stand-in sends it as the release reads the lock's owner file, once the run has
+# logged its last line. The release must still finish, so no lock is left for
+# later runs to wait out.
+RF="$(ret_copy sig-mid-release)"
+ret_shims "$RET/shim-mid-release" cat
+rp_bad=''
+rp_rc="$( export RET_SH_FLAGS="$RET/shim-mid-release.flags" RET_SH_CAT_DO=release RET_SH_LOG="$(ret_log "$RF")" \
+    RET_SH_AFTER='OK: there is nothing in 20-projects/_logs to evaluate.'
+  RET_PATH="$RET/shim-mid-release" ret_out "$RF" "$RF.out" --dry-run )"
+[ "$rp_rc" = 143 ] || rp_bad="$rp_bad rc:$rp_rc"
+[ -f "$RET/shim-mid-release.flags/cat" ] || rp_bad="$rp_bad never-landed"
+[ ! -e "$RF.state/run.lock" ] || rp_bad="$rp_bad lock-left"
+[ ! -s "$RF.out" ] || rp_bad="$rp_bad printed-after-the-signal"
+if [ -z "$rp_bad" ]; then
+  ok "TERM in the middle of letting the lock go still lets it go, and ends the run after"
+else
+  bad "TERM in the middle of letting the lock go cut the release short --$rp_bad printed: [$(tr '\n' '|' < "$RF.out" 2>/dev/null | cut -c1-600)]"
+fi
+
+# TERM while lib_logged copies the library's lines: a cat stand-in sends it on
+# the first copy. It is held until both copies are done, so the line is in the
+# log once and printed once, and then it ends the run.
+RF="$(ret_copy sig-copying)"
+ret_shims "$RET/shim-copying" cat
+rp_bad=''
+rp_rc="$( export RET_SH_FLAGS="$RET/shim-copying.flags" RET_SH_CAT_DO=libterm
+  RET_DAYS=abc RET_PATH="$RET/shim-copying" ret_out "$RF" "$RF.out" --dry-run )"
+[ "$rp_rc" = 143 ] || rp_bad="$rp_bad rc:$rp_rc"
+[ -f "$RET/shim-copying.flags/cat" ] || rp_bad="$rp_bad never-landed"
+[ "$(LC_ALL=C awk '/WARNING: RETENTION_DAYS "abc"/ { n++ } END { print n + 0 }' "$(ret_log "$RF")" 2>/dev/null)" = 1 ] || rp_bad="$rp_bad logged-twice-or-never"
+[ "$(ret_printed "$RF.out" '^vault-retention: WARNING: RETENTION_DAYS "abc" ')" = 1 ] || rp_bad="$rp_bad printed-twice-or-never"
+[ "$(tail -n 1 "$RF.out" 2>/dev/null)" = "$(printf "$ro_failed" 143)" ] || rp_bad="$rp_bad last"
+if [ -z "$rp_bad" ]; then
+  ok "TERM while the library's lines are copied is held until the copies are done, so each line is logged and printed once"
+else
+  bad "TERM while the library's lines are copied repeated or lost them --$rp_bad printed: [$(tr '\n' '|' < "$RF.out" 2>/dev/null | cut -c1-600)]"
+fi
+
+# A reader that has gone away before the run prints: a refused lock whose
+# standard output is a pipe nobody reads. SIGPIPE ends the child that prints,
+# and the run still ends with its own code, 75, rather than being killed by it.
+RF="$(ret_copy reader-gone)"
+mkdir -p "$RF.state/run.lock"
+printf "$rp_planted" "$$" "$(date +%s)" > "$RF.state/run.lock/owner"
+rm -f "$RF.rc"
+( env VAULT_STATE_DIR="$RF.state" RUN_LOCK_WAIT=0 RUN_LOCK_POLL=1 WATCHDOG_POLL=1 WATCHDOG_GRACE=2 \
+    bash "$RF/.claude/scripts/vault-retention.sh" 2>/dev/null
+  echo "$?" > "$RF.rc" ) | true
+if [ "$(cat "$RF.rc" 2>/dev/null)" = 75 ]; then
+  ok "a run whose reader has gone away still ends with its own exit code"
+else
+  bad "a run whose reader has gone away ended with $(cat "$RF.rc" 2>/dev/null) instead of 75"
+fi
+
+# A reader that stops reading. The printing comes after the lock is let go and
+# can be stopped, so TERM ends a run whose output a stalled pipe holds up. Five
+# settings of 30000 bytes each make warnings far larger than a pipe holds. When
+# the whole output fits the pipe anyway the run never stalls, and the case says
+# so rather than passing, while a run that ends before it has logged its
+# judgement fails. A run stopped mid-print leaves its copy of its lines behind
+# by design, so this one keeps its temporary folders inside the fixture, and
+# that copy must be all that is left: the working folder, with its nohooks, goes
+# before the printing starts. The reader reads nothing until the run is gone
+# and then everything, and it must get less than the whole output, because
+# nothing the run started may go on printing for it once TERM has ended it, and
+# more than nothing, or TERM never reached the printing and the case says so.
+RF="$(ret_copy stalled-reader)"
+rp_big="$(printf '%030000d' 0 | tr 0 x)"
+rm -f "$RF.pid" "$RF.go" "$RF.count" "$RF.rc"
+mkdir -p "$RF.tmp"
+( env VAULT_STATE_DIR="$RF.state" TMPDIR="$RF.tmp" RUN_LOCK_WAIT="$rp_big" RUN_LOCK_POLL="$rp_big" WATCHDOG_POLL=1 WATCHDOG_GRACE=2 \
+    RETENTION_DAYS="$rp_big" RETENTION_MAX_MOVES="$rp_big" RUNNER_GIT_TIMEOUT="$rp_big" \
+    bash "$RF/.claude/scripts/vault-retention.sh" --dry-run 2>/dev/null &
+  echo "$!" > "$RF.pid"
+  wait "$!"
+  echo "$?" > "$RF.rc" ) | { rp_i=0
+    while [ ! -e "$RF.go" ] && [ "$rp_i" -lt 400 ]; do "$RET_SH_SLEEP" 1; rp_i=$((rp_i + 1)); done
+    wc -c > "$RF.count"; } &
+rp_reader=$!
+rp_w=0
+while [ ! -s "$RF.pid" ] && [ "$rp_w" -lt 30 ]; do "$RET_SH_SLEEP" 1; rp_w=$((rp_w + 1)); done
+rp_pid="$(cat "$RF.pid" 2>/dev/null)"
+rp_w=0
+while ! grep -q 'OK: there is nothing' "$(ret_log "$RF")" 2>/dev/null && kill -0 "$rp_pid" 2>/dev/null && [ "$rp_w" -lt 300 ]; do "$RET_SH_SLEEP" 1; rp_w=$((rp_w + 1)); done
+# The printing starts once the lines are made ready, which on a slow awk takes a
+# while at this size: a print file in the copy folder that ends on the run's own
+# last line, which awk writes last. TERM goes a moment after that, so that it
+# lands in the printing and not while awk is still making the lines ready.
+rp_w=0
+while [ "$rp_w" -lt 120 ] && kill -0 "$rp_pid" 2>/dev/null; do
+  rp_print="$(find "$RF.tmp" -mindepth 2 -maxdepth 2 -type f -name print 2>/dev/null | head -n 1)"
+  [ -n "$rp_print" ] && [ "$(tail -n 1 "$rp_print" 2>/dev/null)" = "vault-retention: OK: there is nothing in 20-projects/_logs to evaluate." ] && break
+  "$RET_SH_SLEEP" 1
+  rp_w=$((rp_w + 1))
+done
+rp_pw="$rp_w"
+"$RET_SH_SLEEP" 1
+if ! grep -q 'OK: there is nothing' "$(ret_log "$RF")" 2>/dev/null; then
+  ran retention-stalled-reader
+  kill -KILL "$rp_pid" 2>/dev/null
+  bad "a run with a reader that stops reading ended, or hung, before it logged its judgement"
+elif [ -n "$rp_pid" ] && kill -0 "$rp_pid" 2>/dev/null; then
+  ran retention-stalled-reader
+  kill -TERM "$rp_pid" 2>/dev/null
+  rp_w=0
+  while kill -0 "$rp_pid" 2>/dev/null && [ "$rp_w" -lt 20 ]; do "$RET_SH_SLEEP" 1; rp_w=$((rp_w + 1)); done
+  if kill -0 "$rp_pid" 2>/dev/null; then
+    # What the run and anything it started were doing, before they are killed,
+    # so that a failure on a platform nobody here can reproduce says where.
+    rp_ps="$(ps -A -o pid= -o ppid= -o stat= -o command= 2>/dev/null | awk -v p="$rp_pid" '$1 == p || $2 == p' | cut -c1-120 | tr '\n' '|')"
+    # Git Bash's ps has no -o; its -ef puts the pid second and the parent third.
+    [ -n "$rp_ps" ] || rp_ps="$(ps -ef 2>/dev/null | awk -v p="$rp_pid" '$2 == p || $3 == p' | cut -c1-120 | tr '\n' '|')"
+    rp_found="$(find "$RF.tmp" -mindepth 2 -maxdepth 2 -type f 2>/dev/null | awk 'END { print NR + 0 }')"
+    kill -KILL "$rp_pid" 2>/dev/null
+    bad "a run whose reader stopped reading was still running 20s after TERM -- waited ${rp_pw}s for the print file, $rp_found file(s) in the fixture's TMPDIR, processes: [$rp_ps]"
+  else
+    : > "$RF.go"
+    rp_w=0
+    while [ ! -s "$RF.count" ] && [ "$rp_w" -lt 30 ]; do "$RET_SH_SLEEP" 1; rp_w=$((rp_w + 1)); done
+    rp_bad=''
+    rp_got="$(tr -d ' ' < "$RF.count" 2>/dev/null)"
+    rp_whole="$(find "$RF.tmp" -mindepth 2 -type f -name print -exec wc -c {} + 2>/dev/null | awk 'NR == 1 { print $1 + 0 }')"
+    [ -n "$rp_got" ] || rp_bad="$rp_bad the-pipe-was-still-held"
+    [ -z "$rp_got" ] || [ "$rp_got" -gt 0 ] 2>/dev/null || rp_bad="$rp_bad never-reached-the-printing"
+    [ -n "$rp_whole" ] || rp_bad="$rp_bad no-copy-left"
+    [ -n "$rp_got" ] && [ -n "$rp_whole" ] && [ "$rp_got" -ge "$rp_whole" ] && rp_bad="$rp_bad printed-on-after-the-run($rp_got of $rp_whole)"
+    [ "$(find "$RF.tmp" -mindepth 2 -type d 2>/dev/null | awk 'END { print NR + 0 }')" = 0 ] || rp_bad="$rp_bad a-folder-left-in-the-copy"
+    [ "$(find "$RF.tmp" -mindepth 1 -maxdepth 1 2>/dev/null | awk 'END { print NR + 0 }')" = 1 ] || rp_bad="$rp_bad more-than-the-copy-left"
+    [ "$(find "$RF.tmp" -mindepth 2 -type f ! -name run.log ! -name lib.log ! -name print 2>/dev/null | awk 'END { print NR + 0 }')" = 0 ] \
+      || rp_bad="$rp_bad working-files-left"
+    # The run's own status, which says the stop was the signal's: 143 for TERM.
+    rp_w=0
+    while [ ! -s "$RF.rc" ] && [ "$rp_w" -lt 10 ]; do "$RET_SH_SLEEP" 1; rp_w=$((rp_w + 1)); done
+    [ "$(cat "$RF.rc" 2>/dev/null)" = 143 ] || rp_bad="$rp_bad rc:$(cat "$RF.rc" 2>/dev/null)"
+    if [ -z "$rp_bad" ]; then
+      ok "a run whose reader stopped reading ends on TERM with 143, leaves no more than its copy of its lines, and nothing it started prints on"
+    else
+      bad "a run whose reader stopped reading ended on TERM but left something behind --$rp_bad left: [$(cd "$RF.tmp" 2>/dev/null && find . -mindepth 1 | LC_ALL=C sort | tr '\n' ' ')]"
+    fi
+  fi
+else
+  skip retention-stalled-reader "a reader that stops reading: the run logged its judgement and finished, so this pipe held all it printed and it never stalled"
+fi
+: > "$RF.go"
+kill "$rp_reader" 2>/dev/null
+wait "$rp_reader" 2>/dev/null
+
+# The lines cannot be made ready in the copy folder: an rm stand-in puts a
+# folder named print there as the run removes its working folder, just before
+# it prints. The run prints its own lines all the same, straight from awk.
+RF="$(ret_copy print-fallback)"
+mkdir -p "$RF.tmp"
+ret_shims "$RET/shim-print" rm
+rp_bad=''
+rp_rc="$( export RET_SH_FLAGS="$RET/shim-print.flags" RET_SH_RM_DO=print RET_SH_TMP="$RF.tmp" TMPDIR="$RF.tmp"
+  RET_PATH="$RET/shim-print" ret_out "$RF" "$RF.out" --dry-run )"
+printf '%s\n' "vault-retention: evaluated 0 candidate(s): 0 eligible, 0 legacy, 0 kept, 0 left alone, 0 refused, 0 moved" \
+  "vault-retention: OK: there is nothing in 20-projects/_logs to evaluate." > "$RF.want"
+[ "$rp_rc" = 0 ] || rp_bad="$rp_bad rc:$rp_rc"
+[ -f "$RET/shim-print.flags/rm" ] || rp_bad="$rp_bad never-landed"
+[ -f "$RET/shim-print.flags/planted" ] || rp_bad="$rp_bad nothing-in-the-way"
+cmp -s "$RF.want" "$RF.out" || rp_bad="$rp_bad printed-changed"
+if [ -z "$rp_bad" ]; then
+  ok "a run whose lines cannot be made ready in its copy folder still prints them"
+else
+  bad "a run whose lines could not be made ready printed something else --$rp_bad printed: [$(tr '\n' '|' < "$RF.out" 2>/dev/null | cut -c1-600)]"
+fi
+
+# A _logs folder this account cannot list, or can list and not enter. Neither
+# may read as an empty folder, which is a clean result: each prints its own
+# line and ends on exit 1. On Windows the folder gets a deny entry for listing,
+# with traverse kept; elsewhere chmod 000, and chmod 600 for the folder that
+# can be listed and not entered, which Windows has no plain way to make. An
+# account that can use the folder anyway, such as root, makes the fixture
+# impossible, and so does an icacls that refuses the entry; the case says which
+# rather than passing.
+rp_unread="vault-retention: ERROR: 20-projects/_logs could not be listed or entered, so nothing in it was judged. Refusing to run."
+rp_bad=''
+rp_cases=0
+rp_why=""
+for rp_mode in deny-list no-enter; do
+  RF="$(ret_copy "unreadable-$rp_mode")"
+  ret_journal "$RF" "dream-${RET_DATE[90]}.md" "tier: medium"
+  rp_dir="$RF/20-projects/_logs"
+  rp_set=1
+  RET_LOCKED_DIR="$rp_dir"
+  RET_LOCKED_ACL=""
+  case "$rp_mode" in
+    deny-list)
+      if is_windows_host; then
+        RET_LOCKED_ACL="$(cygpath -w "$rp_dir")"
+        MSYS_NO_PATHCONV=1 icacls "$RET_LOCKED_ACL" /deny "${USERNAME:-$USER}:(RD)" >/dev/null 2>&1 \
+          || { rp_set=0; rp_why="$rp_why icacls-refused-the-entry"; }
+      else
+        chmod 000 "$rp_dir" 2>/dev/null
+      fi ;;
+    no-enter)
+      if is_windows_host; then rp_set=0; else chmod 600 "$rp_dir" 2>/dev/null; fi ;;
+  esac
+  rp_made=0
+  if [ "$rp_set" -eq 1 ]; then
+    case "$rp_mode" in
+      deny-list) ls "$rp_dir" >/dev/null 2>&1 || rp_made=1 ;;
+      no-enter) ( cd "$rp_dir" ) 2>/dev/null || rp_made=1 ;;
+    esac
+    [ "$rp_made" -eq 1 ] || rp_why="$rp_why $rp_mode-usable-anyway"
+  fi
+  [ "$rp_made" -eq 1 ] && rp_rc="$(ret_out "$RF" "$RF.out")"
+  if is_windows_host; then
+    [ "$rp_mode" = deny-list ] && MSYS_NO_PATHCONV=1 icacls "$(cygpath -w "$rp_dir")" /remove:d "${USERNAME:-$USER}" >/dev/null 2>&1
+  else
+    chmod 755 "$rp_dir" 2>/dev/null
+  fi
+  RET_LOCKED_DIR=""
+  RET_LOCKED_ACL=""
+  if [ "$rp_made" -eq 1 ]; then
+    rp_cases=$((rp_cases + 1))
+    [ "$rp_rc" = 1 ] || rp_bad="$rp_bad $rp_mode-rc:$rp_rc"
+    [ "$(sed -n 1p "$RF.out" 2>/dev/null)" = "$rp_unread" ] || rp_bad="$rp_bad $rp_mode-no-reason"
+    [ "$(sed -n 2p "$RF.out" 2>/dev/null)" = "$(printf "$ro_failed" 1)" ] || rp_bad="$rp_bad $rp_mode-last"
+    [ "$(awk 'END { print NR }' "$RF.out" 2>/dev/null)" = 2 ] || rp_bad="$rp_bad $rp_mode-line-count"
+    ls "$rp_dir" >/dev/null 2>&1 || rp_bad="$rp_bad $rp_mode-fixture-not-restored"
+  fi
+done
+if [ "$rp_cases" -gt 0 ]; then
+  ran retention-unlistable
+  if [ -z "$rp_bad" ]; then
+    ok "a _logs folder that cannot be listed, or cannot be entered, is refused with exit 1 and never reads as an empty one ($rp_cases case(s))"
+  else
+    bad "a _logs folder that cannot be listed or entered read as something else --$rp_bad printed: [$(tr '\n' '|' < "$RET/unreadable-deny-list.out" 2>/dev/null | cut -c1-300)] [$(tr '\n' '|' < "$RET/unreadable-no-enter.out" 2>/dev/null | cut -c1-300)]"
+  fi
+else
+  skip retention-unlistable "a _logs folder that cannot be listed or entered: none could be made here ($rp_why)"
+fi
+# The listing failing after the folder looked usable, by a find stand-in: the
+# same refusal, with find's own words below it. It needs no permissions, so it
+# runs everywhere, whatever the case above could make. find names an entry as
+# it is, and an entry's name can hold any byte, so the name here carries an
+# escape sequence, which must reach the log spelled out and never raw.
+RF="$(ret_copy find-failed)"
+ret_shims "$RET/shim-find" find
+rp_bad=''
+rp_rc="$( export RET_SH_FLAGS="$RET/shim-find.flags" RET_SH_FIND_DO=fail RET_SH_FIND_PATH="$(printf '20-projects/_logs/x\033[31m')"
+  RET_PATH="$RET/shim-find" ret_out "$RF" "$RF.out" )"
+[ "$rp_rc" = 1 ] || rp_bad="$rp_bad rc:$rp_rc"
+[ -f "$RET/shim-find.flags/find" ] || rp_bad="$rp_bad never-failed"
+[ "$(sed -n 1p "$RF.out" 2>/dev/null)" = "$rp_unread" ] || rp_bad="$rp_bad no-reason"
+[ "$(sed -n 2p "$RF.out" 2>/dev/null)" = "vault-retention:     find: 20-projects/_logs/x<1B>[31m: Permission denied" ] || rp_bad="$rp_bad find-words"
+[ "$(tail -n 1 "$RF.out" 2>/dev/null)" = "$(printf "$ro_failed" 1)" ] || rp_bad="$rp_bad last"
+[ "$(ret_printed "$RF.out" '^vault-retention: (evaluated|OK:)')" = 0 ] || rp_bad="$rp_bad claims"
+grep -qF 'x<1B>[31m: Permission denied' "$(ret_log "$RF")" 2>/dev/null || rp_bad="$rp_bad not-spelled-out-in-the-log"
+[ "$(od -An -c "$(ret_log "$RF")" 2>/dev/null | awk '/033/{n++} END{print n+0}')" = 0 ] || rp_bad="$rp_bad raw-escape-in-the-log"
+if [ -z "$rp_bad" ]; then
+  ok "a listing of _logs that fails is refused with exit 1 and find's own words, spelled out in the log, and never reads as an empty folder"
+else
+  bad "a listing of _logs that fails read as something else --$rp_bad printed: [$(tr '\n' '|' < "$RF.out" 2>/dev/null | cut -c1-300)]"
+fi
+
+# POSIX mode, which POSIXLY_CORRECT in the environment turns on. The runner has
+# to get as far as its first line there too: a failed redirection on a special
+# builtin such as ":" ends a POSIX shell, and finding a free descriptor means
+# redirecting to ones that are not open. Bash before 5.1 has no process
+# substitution in POSIX mode and so cannot parse the runner there, which leaves
+# nothing to hold. From 5.1 a runner that does not parse in POSIX mode fails
+# here, because that is one of the regressions this control is for.
+RF="$(ret_copy posix-mode)"
+rp_bv="$(bash -c 'echo "${BASH_VERSINFO[0]} ${BASH_VERSINFO[1]}"' 2>/dev/null)"
+rp_major="${rp_bv%% *}"
+rp_minor="${rp_bv#* }"
+if [ "$rp_major" -lt 5 ] 2>/dev/null || { [ "$rp_major" -eq 5 ] 2>/dev/null && [ "$rp_minor" -lt 1 ] 2>/dev/null; }; then
+  skip retention-posix-mode "a run in POSIX mode: bash $rp_major.$rp_minor is older than 5.1, which cannot parse the runner in POSIX mode"
+else
+  ran retention-posix-mode
+  if ! env POSIXLY_CORRECT=1 bash -n "$RF/.claude/scripts/vault-retention.sh" 2>/dev/null; then
+    bad "the runner does not parse in POSIX mode under bash ${rp_bv:-of unknown version}"
+  else
+    # Through env to the runner alone: set here, it would put this suite's own
+    # shell into POSIX mode.
+    rp_rc="$(env VAULT_STATE_DIR="$RF.state" RUN_LOCK_WAIT=0 RUN_LOCK_POLL=1 WATCHDOG_POLL=1 WATCHDOG_GRACE=2 POSIXLY_CORRECT=1 \
+      bash "$RF/.claude/scripts/vault-retention.sh" --dry-run > "$RF.out" 2>/dev/null; echo "$?")"
+    printf '%s\n' "vault-retention: evaluated 0 candidate(s): 0 eligible, 0 legacy, 0 kept, 0 left alone, 0 refused, 0 moved" \
+      "vault-retention: OK: there is nothing in 20-projects/_logs to evaluate." > "$RF.want"
+    if [ "$rp_rc" = 0 ] && cmp -s "$RF.want" "$RF.out"; then
+      ok "a run in POSIX mode gets past its start and prints what it judged"
+    else
+      bad "a run in POSIX mode stopped at its start -- rc $rp_rc printed: [$(tr '\n' '|' < "$RF.out" 2>/dev/null | cut -c1-300)]"
+    fi
+  fi
 fi
 RF="$(ret_copy linked-logs)"
 ret_journal "$RF" "dream-${RET_DATE[70]}.md" "tier: medium"

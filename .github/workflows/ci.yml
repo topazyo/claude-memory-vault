@@ -111,10 +111,14 @@ jobs:
           # two that need such a name skip there, only this ubuntu job has
           # strace for the process budget, and only its filesystem keeps two
           # names that differ in case apart, which promo-create-only-twinguards
-          # needs. Naming a control that legitimately
+          # needs. retention-unlistable is left off Windows because the job's
+          # account can list a folder whose listing is denied to it, so the
+          # case skips there, and retention-posix-mode is left off both macOS
+          # lists because their bash is 3.2, which cannot parse the runner in
+          # POSIX mode. Naming a control that legitimately
           # skips would fail the job for the wrong reason, and naming none of
           # them is how they came to skip everywhere unnoticed.
-          RUN_TESTS_REQUIRED: ${{ matrix.os == 'windows-latest' && 'win-native-tree windows-process-id-checks-against-powershell noncesweep win-sweep-report win-orphan-stop win-fork-stop signal-scope runlog-tmp-case retention-junction crlf-blob-preserved fence-cksum-unescape logger-not-registered logger-optin-snippet commit-window-not-reverted settings-hooks-present logger-records-session-start vtab-fence-agrees jq-crlf-output logger-crlf scan-upper-case scan-case-not-widened collating-range-probe collating-range-scan stub-nul-refused verify-diff-watchdog steering-locale-fold legacy-asks-the-adding-commit destination-staged-only tripwire-says-rename-outcome trailer-path-set head-holds-unknown tmpl-unclassified-fails tmpl-manifest-stale tmpl-generate-guarded tmpl-binary-refused tmpl-three-answers tmpl-status-unknown tmpl-vacuous tmpl-hostile-manifest-narrows tmpl-path-escape tmpl-collision-not-safe tmpl-user-note-untouched tmpl-source-older tmpl-same-version-disagrees tmpl-crlf-agrees tmpl-lone-cr-modified tmpl-tripwire-refused tmpl-pass-in-flight tmpl-no-hash-tool tmpl-no-execution-from-source tmpl-class-table tmpl-changelog-adopting tmpl-version-agrees tmpl-merge-not-safe tmpl-tripwire-state-copy tmpl-shipped-rules-have-no-catchall tmpl-vault-check-line tmpl-narrowing-vectors tmpl-exempt-set-matches-the-tree tmpl-source-vacuous tmpl-source-disagrees tmpl-adopt-writes-one-file tmpl-version-filtered tmpl-generate-under-tripwire tmpl-exempt-set-is-behavioural tmpl-converged-not-a-merge tmpl-already-adopted tmpl-offered-is-a-plan tmpl-unknown-algorithm tmpl-source-not-a-template tmpl-adopt-rebuilds-manifest tmpl-adopt-names-what-is-absent tmpl-claims-your-folder tmpl-rules-character tmpl-generate-needs-a-version tmpl-retired-listed tmpl-seed-verdicts-counted tmpl-same-version-equivalent tmpl-plan-quoting tmpl-verify-manifest-guarded tmpl-fixtures-built tmpl-release-owed tmpl-release-in-preparation tmpl-release-tag-spelling tmpl-release-cut tmpl-missing-tracked tmpl-unwritable-name tmpl-case-collision tmpl-rules-refused tmpl-hash-tool-named tmpl-hash-tool-misbehaves tmpl-no-diff-tool tmpl-no-source tmpl-in-flight-state-copy tmpl-plan-digests tmpl-release-version-spelling tmpl-release-comparators-agree tmpl-release-cannot-look tmpl-release-ignores-git-dir tmpl-release-vacuous tmpl-release-tag-without-manifest tmpl-release-reclassified tmpl-release-tag-failed tmpl-release-scratch-survivor tmpl-release-shipped-unknown-sides tmpl-release-unwritten-not-empty promo-create-only-edit promo-create-only-supersede promo-create-only-stamp promo-create-only-reverse promo-create-only-wiki promo-create-only-ignored promo-create-only-failpath promo-create-only-timeout promo-create-only-leftover promo-create-only-syncnew promo-create-only-arms promo-create-only-passnote promo-create-only-globnew promo-create-only-casetwin promo-create-only-outside promo-create-only-contained promo-create-only-hangoutside' || (matrix.os == 'ubuntu-latest' && 'groupkill symlink run-log-link run-log-dirlink reaped-group line-break-name signal-scope runlog-tmp-case keep-output-dirlink tripwire-name keep-output-fifo retention-symlink crlf-blob-preserved fence-cksum-unescape fence-backslash-name fence-wiring-escaped logger-not-registered logger-optin-snippet commit-window-not-reverted settings-hooks-present logger-records-session-start vtab-fence-agrees jq-crlf-output logger-crlf scan-trailing-dot scan-upper-case scan-case-not-widened collating-range-probe collating-range-scan lint-spawn-budget stub-nul-refused verify-diff-watchdog legacy-asks-the-adding-commit destination-staged-only tripwire-says-rename-outcome trailer-path-set head-holds-unknown tmpl-unclassified-fails tmpl-manifest-stale tmpl-generate-guarded tmpl-binary-refused tmpl-three-answers tmpl-status-unknown tmpl-vacuous tmpl-hostile-manifest-narrows tmpl-path-escape tmpl-collision-not-safe tmpl-user-note-untouched tmpl-source-older tmpl-same-version-disagrees tmpl-crlf-agrees tmpl-lone-cr-modified tmpl-tripwire-refused tmpl-pass-in-flight tmpl-no-hash-tool tmpl-no-execution-from-source tmpl-class-table tmpl-changelog-adopting tmpl-version-agrees tmpl-merge-not-safe tmpl-tripwire-state-copy tmpl-shipped-rules-have-no-catchall tmpl-vault-check-line tmpl-narrowing-vectors tmpl-exempt-set-matches-the-tree tmpl-source-vacuous tmpl-source-disagrees tmpl-adopt-writes-one-file tmpl-version-filtered tmpl-generate-under-tripwire tmpl-exempt-set-is-behavioural tmpl-converged-not-a-merge tmpl-already-adopted tmpl-offered-is-a-plan tmpl-unknown-algorithm tmpl-source-not-a-template tmpl-adopt-rebuilds-manifest tmpl-adopt-names-what-is-absent tmpl-claims-your-folder tmpl-rules-character tmpl-generate-needs-a-version tmpl-retired-listed tmpl-seed-verdicts-counted tmpl-same-version-equivalent tmpl-plan-quoting tmpl-verify-manifest-guarded tmpl-unreadable-not-deleted tmpl-source-symlink tmpl-fixtures-built tmpl-release-owed tmpl-release-in-preparation tmpl-release-tag-spelling tmpl-release-cut tmpl-missing-tracked tmpl-unwritable-name tmpl-case-collision tmpl-rules-refused tmpl-hash-tool-named tmpl-hash-tool-misbehaves tmpl-no-diff-tool tmpl-no-source tmpl-in-flight-state-copy tmpl-plan-digests tmpl-release-version-spelling tmpl-release-comparators-agree tmpl-release-cannot-look tmpl-release-ignores-git-dir tmpl-release-vacuous tmpl-release-tag-without-manifest tmpl-release-reclassified tmpl-release-tag-failed tmpl-release-scratch-survivor tmpl-release-shipped-unknown-sides tmpl-release-unwritten-not-empty tmpl-hash-count tmpl-source-unreadable tmpl-source-dir-symlink promo-create-only-edit promo-create-only-supersede promo-create-only-stamp promo-create-only-reverse promo-create-only-wiki promo-create-only-ignored promo-create-only-failpath promo-create-only-timeout promo-create-only-leftover promo-create-only-syncnew promo-create-only-arms promo-create-only-passnote promo-create-only-globnew promo-create-only-casetwin promo-create-only-outside promo-create-only-contained promo-create-only-hangoutside promo-create-only-twinguards' || 'groupkill symlink run-log-link run-log-dirlink reaped-group line-break-name signal-scope runlog-tmp-case keep-output-dirlink tripwire-name keep-output-fifo retention-symlink crlf-blob-preserved fence-cksum-unescape fence-backslash-name logger-not-registered logger-optin-snippet commit-window-not-reverted settings-hooks-present logger-records-session-start vtab-fence-agrees jq-crlf-output logger-crlf scan-trailing-dot scan-upper-case scan-case-not-widened collating-range-probe collating-range-scan locale-collation-verdicts stub-nul-refused verify-diff-watchdog legacy-asks-the-adding-commit destination-staged-only tripwire-says-rename-outcome trailer-path-set head-holds-unknown tmpl-unclassified-fails tmpl-manifest-stale tmpl-generate-guarded tmpl-binary-refused tmpl-three-answers tmpl-status-unknown tmpl-vacuous tmpl-hostile-manifest-narrows tmpl-path-escape tmpl-collision-not-safe tmpl-user-note-untouched tmpl-source-older tmpl-same-version-disagrees tmpl-crlf-agrees tmpl-lone-cr-modified tmpl-tripwire-refused tmpl-pass-in-flight tmpl-no-hash-tool tmpl-no-execution-from-source tmpl-class-table tmpl-changelog-adopting tmpl-version-agrees tmpl-merge-not-safe tmpl-tripwire-state-copy tmpl-shipped-rules-have-no-catchall tmpl-vault-check-line tmpl-narrowing-vectors tmpl-exempt-set-matches-the-tree tmpl-source-vacuous tmpl-source-disagrees tmpl-adopt-writes-one-file tmpl-version-filtered tmpl-generate-under-tripwire tmpl-exempt-set-is-behavioural tmpl-converged-not-a-merge tmpl-already-adopted tmpl-offered-is-a-plan tmpl-unknown-algorithm tmpl-source-not-a-template tmpl-adopt-rebuilds-manifest tmpl-adopt-names-what-is-absent tmpl-claims-your-folder tmpl-rules-character tmpl-generate-needs-a-version tmpl-retired-listed tmpl-seed-verdicts-counted tmpl-same-version-equivalent tmpl-plan-quoting tmpl-verify-manifest-guarded tmpl-unreadable-not-deleted tmpl-source-symlink tmpl-fixtures-built tmpl-release-owed tmpl-release-in-preparation tmpl-release-tag-spelling tmpl-release-cut tmpl-missing-tracked tmpl-unwritable-name tmpl-case-collision tmpl-rules-refused tmpl-hash-tool-named tmpl-hash-tool-misbehaves tmpl-no-diff-tool tmpl-no-source tmpl-in-flight-state-copy tmpl-plan-digests tmpl-release-version-spelling tmpl-release-comparators-agree tmpl-release-cannot-look tmpl-release-ignores-git-dir tmpl-release-vacuous tmpl-release-tag-without-manifest tmpl-release-reclassified tmpl-release-tag-failed tmpl-release-scratch-survivor tmpl-release-shipped-unknown-sides tmpl-release-unwritten-not-empty tmpl-hash-count tmpl-source-unreadable tmpl-source-dir-symlink promo-create-only-edit promo-create-only-supersede promo-create-only-stamp promo-create-only-reverse promo-create-only-wiki promo-create-only-ignored promo-create-only-failpath promo-create-only-timeout promo-create-only-leftover promo-create-only-syncnew promo-create-only-arms promo-create-only-passnote promo-create-only-globnew promo-create-only-casetwin promo-create-only-outside promo-create-only-contained promo-create-only-hangoutside') }}
+          RUN_TESTS_REQUIRED: ${{ matrix.os == 'windows-latest' && 'win-native-tree windows-process-id-checks-against-powershell noncesweep win-sweep-report win-orphan-stop win-fork-stop signal-scope runlog-tmp-case retention-junction retention-stdout retention-stdout-escape cntrl-name-log retention-stalled-reader retention-inherited-nonce retention-posix-mode crlf-blob-preserved fence-cksum-unescape logger-not-registered logger-optin-snippet commit-window-not-reverted settings-hooks-present logger-records-session-start vtab-fence-agrees jq-crlf-output logger-crlf scan-upper-case scan-case-not-widened collating-range-probe collating-range-scan stub-nul-refused verify-diff-watchdog steering-locale-fold legacy-asks-the-adding-commit destination-staged-only tripwire-says-rename-outcome trailer-path-set head-holds-unknown tmpl-unclassified-fails tmpl-manifest-stale tmpl-generate-guarded tmpl-binary-refused tmpl-three-answers tmpl-status-unknown tmpl-vacuous tmpl-hostile-manifest-narrows tmpl-path-escape tmpl-collision-not-safe tmpl-user-note-untouched tmpl-source-older tmpl-same-version-disagrees tmpl-crlf-agrees tmpl-lone-cr-modified tmpl-tripwire-refused tmpl-pass-in-flight tmpl-no-hash-tool tmpl-no-execution-from-source tmpl-class-table tmpl-changelog-adopting tmpl-version-agrees tmpl-merge-not-safe tmpl-tripwire-state-copy tmpl-shipped-rules-have-no-catchall tmpl-vault-check-line tmpl-narrowing-vectors tmpl-exempt-set-matches-the-tree tmpl-source-vacuous tmpl-source-disagrees tmpl-adopt-writes-one-file tmpl-version-filtered tmpl-generate-under-tripwire tmpl-exempt-set-is-behavioural tmpl-converged-not-a-merge tmpl-already-adopted tmpl-offered-is-a-plan tmpl-unknown-algorithm tmpl-source-not-a-template tmpl-adopt-rebuilds-manifest tmpl-adopt-names-what-is-absent tmpl-claims-your-folder tmpl-rules-character tmpl-generate-needs-a-version tmpl-retired-listed tmpl-seed-verdicts-counted tmpl-same-version-equivalent tmpl-plan-quoting tmpl-verify-manifest-guarded tmpl-fixtures-built tmpl-release-owed tmpl-release-in-preparation tmpl-release-tag-spelling tmpl-release-cut tmpl-missing-tracked tmpl-unwritable-name tmpl-case-collision tmpl-rules-refused tmpl-hash-tool-named tmpl-hash-tool-misbehaves tmpl-no-diff-tool tmpl-no-source tmpl-in-flight-state-copy tmpl-plan-digests tmpl-release-version-spelling tmpl-release-comparators-agree tmpl-release-cannot-look tmpl-release-ignores-git-dir tmpl-release-vacuous tmpl-release-tag-without-manifest tmpl-release-reclassified tmpl-release-tag-failed tmpl-release-scratch-survivor tmpl-release-shipped-unknown-sides tmpl-release-unwritten-not-empty promo-create-only-edit promo-create-only-supersede promo-create-only-stamp promo-create-only-reverse promo-create-only-wiki promo-create-only-ignored promo-create-only-failpath promo-create-only-timeout promo-create-only-leftover promo-create-only-syncnew promo-create-only-arms promo-create-only-passnote promo-create-only-globnew promo-create-only-casetwin promo-create-only-outside promo-create-only-contained promo-create-only-hangoutside' || (matrix.os == 'ubuntu-latest' && 'groupkill symlink run-log-link run-log-dirlink reaped-group line-break-name signal-scope runlog-tmp-case keep-output-dirlink tripwire-name keep-output-fifo retention-symlink retention-stdout retention-stdout-escape cntrl-name-log retention-unlistable retention-stalled-reader retention-posix-mode crlf-blob-preserved fence-cksum-unescape fence-backslash-name fence-wiring-escaped logger-not-registered logger-optin-snippet commit-window-not-reverted settings-hooks-present logger-records-session-start vtab-fence-agrees jq-crlf-output logger-crlf scan-trailing-dot scan-upper-case scan-case-not-widened collating-range-probe collating-range-scan lint-spawn-budget stub-nul-refused verify-diff-watchdog legacy-asks-the-adding-commit destination-staged-only tripwire-says-rename-outcome trailer-path-set head-holds-unknown tmpl-unclassified-fails tmpl-manifest-stale tmpl-generate-guarded tmpl-binary-refused tmpl-three-answers tmpl-status-unknown tmpl-vacuous tmpl-hostile-manifest-narrows tmpl-path-escape tmpl-collision-not-safe tmpl-user-note-untouched tmpl-source-older tmpl-same-version-disagrees tmpl-crlf-agrees tmpl-lone-cr-modified tmpl-tripwire-refused tmpl-pass-in-flight tmpl-no-hash-tool tmpl-no-execution-from-source tmpl-class-table tmpl-changelog-adopting tmpl-version-agrees tmpl-merge-not-safe tmpl-tripwire-state-copy tmpl-shipped-rules-have-no-catchall tmpl-vault-check-line tmpl-narrowing-vectors tmpl-exempt-set-matches-the-tree tmpl-source-vacuous tmpl-source-disagrees tmpl-adopt-writes-one-file tmpl-version-filtered tmpl-generate-under-tripwire tmpl-exempt-set-is-behavioural tmpl-converged-not-a-merge tmpl-already-adopted tmpl-offered-is-a-plan tmpl-unknown-algorithm tmpl-source-not-a-template tmpl-adopt-rebuilds-manifest tmpl-adopt-names-what-is-absent tmpl-claims-your-folder tmpl-rules-character tmpl-generate-needs-a-version tmpl-retired-listed tmpl-seed-verdicts-counted tmpl-same-version-equivalent tmpl-plan-quoting tmpl-verify-manifest-guarded tmpl-unreadable-not-deleted tmpl-source-symlink tmpl-fixtures-built tmpl-release-owed tmpl-release-in-preparation tmpl-release-tag-spelling tmpl-release-cut tmpl-missing-tracked tmpl-unwritable-name tmpl-case-collision tmpl-rules-refused tmpl-hash-tool-named tmpl-hash-tool-misbehaves tmpl-no-diff-tool tmpl-no-source tmpl-in-flight-state-copy tmpl-plan-digests tmpl-release-version-spelling tmpl-release-comparators-agree tmpl-release-cannot-look tmpl-release-ignores-git-dir tmpl-release-vacuous tmpl-release-tag-without-manifest tmpl-release-reclassified tmpl-release-tag-failed tmpl-release-scratch-survivor tmpl-release-shipped-unknown-sides tmpl-release-unwritten-not-empty tmpl-hash-count tmpl-source-unreadable tmpl-source-dir-symlink promo-create-only-edit promo-create-only-supersede promo-create-only-stamp promo-create-only-reverse promo-create-only-wiki promo-create-only-ignored promo-create-only-failpath promo-create-only-timeout promo-create-only-leftover promo-create-only-syncnew promo-create-only-arms promo-create-only-passnote promo-create-only-globnew promo-create-only-casetwin promo-create-only-outside promo-create-only-contained promo-create-only-hangoutside promo-create-only-twinguards' || 'groupkill symlink run-log-link run-log-dirlink reaped-group line-break-name signal-scope runlog-tmp-case keep-output-dirlink tripwire-name keep-output-fifo retention-symlink retention-stdout retention-stdout-escape cntrl-name-log retention-unlistable retention-stalled-reader crlf-blob-preserved fence-cksum-unescape fence-backslash-name logger-not-registered logger-optin-snippet commit-window-not-reverted settings-hooks-present logger-records-session-start vtab-fence-agrees jq-crlf-output logger-crlf scan-trailing-dot scan-upper-case scan-case-not-widened collating-range-probe collating-range-scan locale-collation-verdicts stub-nul-refused verify-diff-watchdog legacy-asks-the-adding-commit destination-staged-only tripwire-says-rename-outcome trailer-path-set head-holds-unknown tmpl-unclassified-fails tmpl-manifest-stale tmpl-generate-guarded tmpl-binary-refused tmpl-three-answers tmpl-status-unknown tmpl-vacuous tmpl-hostile-manifest-narrows tmpl-path-escape tmpl-collision-not-safe tmpl-user-note-untouched tmpl-source-older tmpl-same-version-disagrees tmpl-crlf-agrees tmpl-lone-cr-modified tmpl-tripwire-refused tmpl-pass-in-flight tmpl-no-hash-tool tmpl-no-execution-from-source tmpl-class-table tmpl-changelog-adopting tmpl-version-agrees tmpl-merge-not-safe tmpl-tripwire-state-copy tmpl-shipped-rules-have-no-catchall tmpl-vault-check-line tmpl-narrowing-vectors tmpl-exempt-set-matches-the-tree tmpl-source-vacuous tmpl-source-disagrees tmpl-adopt-writes-one-file tmpl-version-filtered tmpl-generate-under-tripwire tmpl-exempt-set-is-behavioural tmpl-converged-not-a-merge tmpl-already-adopted tmpl-offered-is-a-plan tmpl-unknown-algorithm tmpl-source-not-a-template tmpl-adopt-rebuilds-manifest tmpl-adopt-names-what-is-absent tmpl-claims-your-folder tmpl-rules-character tmpl-generate-needs-a-version tmpl-retired-listed tmpl-seed-verdicts-counted tmpl-same-version-equivalent tmpl-plan-quoting tmpl-verify-manifest-guarded tmpl-unreadable-not-deleted tmpl-source-symlink tmpl-fixtures-built tmpl-release-owed tmpl-release-in-preparation tmpl-release-tag-spelling tmpl-release-cut tmpl-missing-tracked tmpl-unwritable-name tmpl-case-collision tmpl-rules-refused tmpl-hash-tool-named tmpl-hash-tool-misbehaves tmpl-no-diff-tool tmpl-no-source tmpl-in-flight-state-copy tmpl-plan-digests tmpl-release-version-spelling tmpl-release-comparators-agree tmpl-release-cannot-look tmpl-release-ignores-git-dir tmpl-release-vacuous tmpl-release-tag-without-manifest tmpl-release-reclassified tmpl-release-tag-failed tmpl-release-scratch-survivor tmpl-release-shipped-unknown-sides tmpl-release-unwritten-not-empty tmpl-hash-count tmpl-source-unreadable tmpl-source-dir-symlink promo-create-only-edit promo-create-only-supersede promo-create-only-stamp promo-create-only-reverse promo-create-only-wiki promo-create-only-ignored promo-create-only-failpath promo-create-only-timeout promo-create-only-leftover promo-create-only-syncnew promo-create-only-arms promo-create-only-passnote promo-create-only-globnew promo-create-only-casetwin promo-create-only-outside promo-create-only-contained promo-create-only-hangoutside') }}
         run: bash .claude/scripts/run-tests.sh
 
       # vault-check.sh exits 2 when it scans zero notes, so a path-resolution
@@ -146,7 +150,7 @@ jobs:
           # No strace on macOS, so the process budget is not named here. The
           # rest reach this job and the bash 3.2 reading of them is the whole
           # reason this job exists.
-          RUN_TESTS_REQUIRED: groupkill symlink run-log-link run-log-dirlink reaped-group line-break-name signal-scope runlog-tmp-case keep-output-dirlink tripwire-name keep-output-fifo retention-symlink crlf-blob-preserved fence-cksum-unescape fence-backslash-name logger-not-registered logger-optin-snippet commit-window-not-reverted settings-hooks-present logger-records-session-start vtab-fence-agrees jq-crlf-output logger-crlf scan-trailing-dot scan-upper-case scan-case-not-widened collating-range-probe collating-range-scan locale-collation-verdicts stub-nul-refused verify-diff-watchdog legacy-asks-the-adding-commit destination-staged-only tripwire-says-rename-outcome trailer-path-set head-holds-unknown tmpl-unclassified-fails tmpl-manifest-stale tmpl-generate-guarded tmpl-binary-refused tmpl-three-answers tmpl-status-unknown tmpl-vacuous tmpl-hostile-manifest-narrows tmpl-path-escape tmpl-collision-not-safe tmpl-user-note-untouched tmpl-source-older tmpl-same-version-disagrees tmpl-crlf-agrees tmpl-lone-cr-modified tmpl-tripwire-refused tmpl-pass-in-flight tmpl-no-hash-tool tmpl-no-execution-from-source tmpl-class-table tmpl-changelog-adopting tmpl-version-agrees tmpl-merge-not-safe tmpl-tripwire-state-copy tmpl-shipped-rules-have-no-catchall tmpl-vault-check-line tmpl-narrowing-vectors tmpl-exempt-set-matches-the-tree tmpl-source-vacuous tmpl-source-disagrees tmpl-adopt-writes-one-file tmpl-version-filtered tmpl-generate-under-tripwire tmpl-exempt-set-is-behavioural tmpl-converged-not-a-merge tmpl-already-adopted tmpl-offered-is-a-plan tmpl-unknown-algorithm tmpl-source-not-a-template tmpl-adopt-rebuilds-manifest tmpl-adopt-names-what-is-absent tmpl-claims-your-folder tmpl-rules-character tmpl-generate-needs-a-version tmpl-retired-listed tmpl-seed-verdicts-counted tmpl-same-version-equivalent tmpl-plan-quoting tmpl-verify-manifest-guarded tmpl-unreadable-not-deleted tmpl-source-symlink tmpl-fixtures-built tmpl-release-owed tmpl-release-in-preparation tmpl-release-tag-spelling tmpl-release-cut tmpl-missing-tracked tmpl-unwritable-name tmpl-case-collision tmpl-rules-refused tmpl-hash-tool-named tmpl-hash-tool-misbehaves tmpl-no-diff-tool tmpl-no-source tmpl-in-flight-state-copy tmpl-plan-digests tmpl-release-version-spelling tmpl-release-comparators-agree tmpl-release-cannot-look tmpl-release-ignores-git-dir tmpl-release-vacuous tmpl-release-tag-without-manifest tmpl-release-reclassified tmpl-release-tag-failed tmpl-release-scratch-survivor tmpl-release-shipped-unknown-sides tmpl-release-unwritten-not-empty tmpl-hash-count tmpl-source-unreadable tmpl-source-dir-symlink promo-create-only-edit promo-create-only-supersede promo-create-only-stamp promo-create-only-reverse promo-create-only-wiki promo-create-only-ignored promo-create-only-failpath promo-create-only-timeout promo-create-only-leftover promo-create-only-syncnew promo-create-only-arms promo-create-only-passnote promo-create-only-globnew promo-create-only-casetwin promo-create-only-outside promo-create-only-contained promo-create-only-hangoutside
+          RUN_TESTS_REQUIRED: groupkill symlink run-log-link run-log-dirlink reaped-group line-break-name signal-scope runlog-tmp-case keep-output-dirlink tripwire-name keep-output-fifo retention-symlink retention-stdout retention-stdout-escape cntrl-name-log retention-unlistable retention-stalled-reader crlf-blob-preserved fence-cksum-unescape fence-backslash-name logger-not-registered logger-optin-snippet commit-window-not-reverted settings-hooks-present logger-records-session-start vtab-fence-agrees jq-crlf-output logger-crlf scan-trailing-dot scan-upper-case scan-case-not-widened collating-range-probe collating-range-scan locale-collation-verdicts stub-nul-refused verify-diff-watchdog legacy-asks-the-adding-commit destination-staged-only tripwire-says-rename-outcome trailer-path-set head-holds-unknown tmpl-unclassified-fails tmpl-manifest-stale tmpl-generate-guarded tmpl-binary-refused tmpl-three-answers tmpl-status-unknown tmpl-vacuous tmpl-hostile-manifest-narrows tmpl-path-escape tmpl-collision-not-safe tmpl-user-note-untouched tmpl-source-older tmpl-same-version-disagrees tmpl-crlf-agrees tmpl-lone-cr-modified tmpl-tripwire-refused tmpl-pass-in-flight tmpl-no-hash-tool tmpl-no-execution-from-source tmpl-class-table tmpl-changelog-adopting tmpl-version-agrees tmpl-merge-not-safe tmpl-tripwire-state-copy tmpl-shipped-rules-have-no-catchall tmpl-vault-check-line tmpl-narrowing-vectors tmpl-exempt-set-matches-the-tree tmpl-source-vacuous tmpl-source-disagrees tmpl-adopt-writes-one-file tmpl-version-filtered tmpl-generate-under-tripwire tmpl-exempt-set-is-behavioural tmpl-converged-not-a-merge tmpl-already-adopted tmpl-offered-is-a-plan tmpl-unknown-algorithm tmpl-source-not-a-template tmpl-adopt-rebuilds-manifest tmpl-adopt-names-what-is-absent tmpl-claims-your-folder tmpl-rules-character tmpl-generate-needs-a-version tmpl-retired-listed tmpl-seed-verdicts-counted tmpl-same-version-equivalent tmpl-plan-quoting tmpl-verify-manifest-guarded tmpl-unreadable-not-deleted tmpl-source-symlink tmpl-fixtures-built tmpl-release-owed tmpl-release-in-preparation tmpl-release-tag-spelling tmpl-release-cut tmpl-missing-tracked tmpl-unwritable-name tmpl-case-collision tmpl-rules-refused tmpl-hash-tool-named tmpl-hash-tool-misbehaves tmpl-no-diff-tool tmpl-no-source tmpl-in-flight-state-copy tmpl-plan-digests tmpl-release-version-spelling tmpl-release-comparators-agree tmpl-release-cannot-look tmpl-release-ignores-git-dir tmpl-release-vacuous tmpl-release-tag-without-manifest tmpl-release-reclassified tmpl-release-tag-failed tmpl-release-scratch-survivor tmpl-release-shipped-unknown-sides tmpl-release-unwritten-not-empty tmpl-hash-count tmpl-source-unreadable tmpl-source-dir-symlink promo-create-only-edit promo-create-only-supersede promo-create-only-stamp promo-create-only-reverse promo-create-only-wiki promo-create-only-ignored promo-create-only-failpath promo-create-only-timeout promo-create-only-leftover promo-create-only-syncnew promo-create-only-arms promo-create-only-passnote promo-create-only-globnew promo-create-only-casetwin promo-create-only-outside promo-create-only-contained promo-create-only-hangoutside
         run: /bin/bash .claude/scripts/run-tests.sh
 
       - name: Frontmatter invariants under bash 3.2
@@ -157,15 +161,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      # fetch-depth 0, for the release check below and for nothing else in this
-      # job. The default shallow checkout carries no tags, and a checkout with
-      # no tags looks exactly like a project that has never released one, so
-      # the check would report "could not determine" on every run and a reader
-      # would learn to expect that from a healthy repository.
+      # fetch-depth 0, for the release check at the end of this job and the two
+      # steps below that read the tags and the commit a change lands on, and
+      # for nothing else. The default shallow checkout carries no tags, and a
+      # checkout with no tags looks exactly like a project that has never
+      # released one, so the check would report "could not determine" on every
+      # run and a reader would learn to expect that from a healthy repository.
       # persist-credentials false because nothing in this job needs network
       # git. Every step here is local, and the default leaves this job's token
       # in .git/config as an http extraheader, inside the very directory the
-      # release check below has just started writing scratch files into. It
+      # release check writes scratch files into. It
       # costs nothing to take it out, and it matters more now that fetch-depth
       # is 0, which materialises the whole history and every tag on a runner
       # that also executes shell a fork's pull request supplied.
@@ -174,67 +179,112 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      # The release has to advance with the repository, and until this step
-      # existed nothing made it. `vault-update.sh` tells a vault what moved by
-      # comparing manifests, and `docs/updating.md` tells the reader to hear
-      # about a newer copy by watching this repository's releases. A merge that
-      # edited a shipped file, left VERSION alone and was never tagged produced
-      # a template whose newest content no vault could discover, while the
-      # manifest still verified and this workflow still went green.
-      #
-      # THIS STEP IS NOT PATH FILTERED, and that is deliberate rather than
-      # incidental. A path filtered step shows as skipped on a pull request
-      # that touches nothing matching the filter, and a reviewer reading the
-      # checks list cannot tell a skip from a pass. This runs on every pull
-      # request and every push to main, and it reports counts either way.
-      #
-      # The one guard is by repository, which is the same guard the manifest
-      # verification step carries and it is there for the same reason. "Use
-      # this template" copies this workflow into somebody's own repository,
-      # where their notes are shipped files by class and their releases are
-      # their own business, and this step would go red for ever on a vault that
-      # is working perfectly. On a pull request from a fork, github.repository
-      # is still this repository, so a contributor's change is checked here.
-      #
-      # --release-branch only on a push to main, because a version that names
-      # no tag is a release in preparation on a pull request and a debt on the
-      # branch releases are cut from. Tagging does not re-trigger this workflow,
-      # so the way to clear that red is to cut the tag and re-run this job.
-      # The guard has the same skip-invisibility the comment above objects to in
-      # a path filter, and saying so is better than pretending otherwise. Rename
-      # or transfer this repository and this step skips for ever while the job
-      # stays green. It is still the right guard, because the alternative is a
-      # step that goes red for ever in somebody's vault, and the manifest step
-      # below carries the same one. What makes it tolerable is that it names a
-      # repository rather than a set of paths, so it changes only when somebody
-      # moves the repository, and that is a thing a person does deliberately.
-      #
-      # THE TWO FAILING EXITS ARE SEPARATED. The script spends real effort
-      # keeping 1, a release is owed, apart from 2, this check could not run and
-      # is saying nothing, and a bare `run:` collapses both into "process
-      # completed with exit code N". That matters most in the case that is
-      # easiest to get wrong: drop fetch-depth and the answer becomes NO-TAGS on
-      # 2, which looks like an ordinary red, and the usual response to a red
-      # release check is to weaken it.
-      - name: The release keeps up with what this template ships
+      # A published release's CHANGELOG entry stays as it was tagged. Two
+      # branches that both wrote the same release heading merged cleanly with
+      # one side's text under the other's published heading, and every other
+      # check passed, because the version checks read only the newest heading.
+      # Each tag's own entry is compared with the same entry here, byte for
+      # byte, and a comparison of nothing fails rather than passing. Guarded by
+      # repository, as the release step at the end of this job is and for the
+      # same reason.
+      - name: Published CHANGELOG entries are as they were tagged
         if: github.repository == 'topazyo/claude-memory-vault'
         run: |
-          # The status is captured with `|| rc=$?` rather than read from $? on
-          # the next line, because a workflow run block is bash -e and a bare
-          # non-zero exit inside the if-body would end the step before anything
-          # could look at it. A command on the left of || is exempt from that.
-          rc=0
-          if [ "$GITHUB_REF" = "refs/heads/main" ]; then
-            bash .github/release-check.sh --release-branch || rc=$?
-          else
-            bash .github/release-check.sh || rc=$?
-          fi
-          case "$rc" in
-            0) exit 0 ;;
-            1) echo "::error title=A release is owed::The tree ships something no published release carries. Read the output above, then cut the release as CONTRIBUTING.md describes."; exit 1 ;;
-            2) echo "::error title=The release check could not run::This is NOT saying a release is owed and it is NOT saying one is not. Something stopped the check from answering, most often a checkout carrying no tags. Read the output above before changing anything."; exit 1 ;;
-            *) echo "::error title=The release check failed unexpectedly::It left on $rc, which it does not document. Read the output above."; exit 1 ;;
+          # Both read headings outside code fences only, so an entry that quotes
+          # an older heading in a code block neither opens nor ends one.
+          entry() {  # entry <version> - that release's entry, heading to the next release heading
+            ENTRY_H="## $1 — " awk 'BEGIN { h = ENVIRON["ENTRY_H"] }
+              /^```/ { f = 1 - f; if (on) print; next }
+              !f && index($0, h) == 1 { on = 1; print; next }
+              on && !f && /^## [0-9]/ { exit }
+              on { print }'
+          }
+          headings() {  # headings <version> - how many lines of standard input, outside code fences, are that release's heading
+            ENTRY_H="## $1 — " awk 'BEGIN { h = ENVIRON["ENTRY_H"] } /^```/ { f = 1 - f; next } !f && index($0, h) == 1 { c++ } END { print c + 0 }'
+          }
+          n=0; bad=0
+          for t in $(git tag --list '[0-9]*.[0-9]*.[0-9]*'); do
+            case "$t" in *[!0-9.]*) echo "$t: not a release version, so not compared"; continue ;; esac
+            git cat-file -e "$t:CHANGELOG.md" 2>/dev/null \
+              || { echo "$t: the tag holds no CHANGELOG.md, so there is nothing to compare"; continue; }
+            git show "$t:CHANGELOG.md" | entry "$t" > /tmp/cl.tag
+            [ -s /tmp/cl.tag ] || { echo "::warning title=A tag's CHANGELOG has no entry for it::$t has a CHANGELOG.md with no $t heading, so there is nothing to compare."; continue; }
+            entry "$t" < CHANGELOG.md > /tmp/cl.now
+            n=$((n + 1))
+            c="$(headings "$t" < CHANGELOG.md)"
+            if [ "$c" -eq 0 ]; then
+              bad=$((bad + 1))
+              echo "::error title=A published CHANGELOG entry is missing::The $t heading is not here, and a published release keeps its entry."
+            elif [ "$c" -ne 1 ]; then
+              bad=$((bad + 1))
+              echo "::error title=A published CHANGELOG heading is not unique::The $t heading is on $c lines here, and a published release has exactly one."
+            elif cmp -s /tmp/cl.tag /tmp/cl.now; then
+              echo "$t: the entry is as it was tagged"
+            else
+              bad=$((bad + 1))
+              echo "::error title=A published CHANGELOG entry changed::The $t entry differs from the one tagged $t. Put new text under a new release heading."
+              diff /tmp/cl.tag /tmp/cl.now | head -n 40 || true
+            fi
+          done
+          echo "compared $n published entries, $bad changed"
+          [ "$n" -gt 0 ] || { echo "::error title=No published entry was compared::No tag named a release with an entry of its own, so this said nothing. A checkout with no tags looks like this."; exit 1; }
+          [ "$bad" -eq 0 ]
+
+      # Every control main requires to run must still be required here, on the
+      # same platform. RUN_TESTS_REQUIRED fails a listed control that did not
+      # run and says nothing about one missing from the list, so resolving a
+      # conflict on one of these long lines by taking one side dropped the
+      # other side's ids with no signal at all. RETIRED names, space-separated,
+      # an id this change stops requiring on purpose, so the diff says so.
+      #
+      # The side compared against is what this change lands on: on a pull
+      # request the checkout is the merge commit, whose first parent is the
+      # branch it merges into, as it was when the run began, so a re-run and a
+      # pull request based on another one are each held to their own base. On
+      # a push to main it is the main the push replaced, however many commits
+      # the push carries, and the parent commit when that one is not here.
+      - name: Required controls are not dropped against main
+        if: github.repository == 'topazyo/claude-memory-vault'
+        env:
+          RETIRED: ''
+          BEFORE: ${{ github.event.before }}
+        run: |
+          case "$GITHUB_EVENT_NAME" in
+            pull_request) base=HEAD^1 ;;
+            push)
+              base="$BEFORE"
+              git cat-file -e "$base^{commit}" 2>/dev/null || base=HEAD^1 ;;
+            *) base=origin/main ;;
           esac
+          echo "comparing with $base ($(git rev-parse --short "$base" 2>/dev/null || echo unknown)${GITHUB_BASE_REF:+, $GITHUB_BASE_REF})"
+          git show "$base:.github/workflows/ci.yml" > /tmp/ci.base.yml \
+            || { echo "::error title=No base to compare::ci.yml could not be read at $base."; exit 1; }
+          arms() {  # arms <file> - one line per RUN_TESTS_REQUIRED list: its position, then its ids
+            awk '/^[ \t]*RUN_TESTS_REQUIRED:/ {
+              if (index($0, "matrix.os")) {
+                n = split($0, q, "\047")
+                for (i = 2; i <= n; i += 2) if (q[i] != "windows-latest" && q[i] != "ubuntu-latest") print "list" (++k), q[i]
+              } else { sub(/^[^:]*RUN_TESTS_REQUIRED:[ \t]*/, ""); print "list" (++k), $0 }
+            }' "$1"
+          }
+          arms /tmp/ci.base.yml > /tmp/arms.base
+          arms .github/workflows/ci.yml > /tmp/arms.head
+          [ "$(wc -l < /tmp/arms.base)" -eq 4 ] && [ "$(wc -l < /tmp/arms.head)" -eq 4 ] \
+            || { echo "::error title=The lists could not be read::Expected four RUN_TESTS_REQUIRED lists on each side, found $(wc -l < /tmp/arms.base) at $base and $(wc -l < /tmp/arms.head) here."; exit 1; }
+          total=0; lost=0
+          while read -r arm ids; do
+            here=" $(awk -v a="$arm" '$1 == a { $1 = ""; print }' /tmp/arms.head) "
+            for id in $ids; do
+              total=$((total + 1))
+              case "$here" in *" $id "*) continue ;; esac
+              case " $RETIRED " in *" $id "*) echo "$arm: $id retired on purpose"; continue ;; esac
+              lost=$((lost + 1))
+              echo "::error title=A required control was dropped::$id is required by $base in $arm and is missing here. Put it back, or name it in RETIRED if the change retires it."
+            done
+          done < /tmp/arms.base
+          echo "checked $total id(s) $base requires across 4 lists, $lost missing"
+          [ "$total" -gt 0 ] || { echo "::error title=Nothing was compared::$base requires no id at all, which this repository never does."; exit 1; }
+          [ "$lost" -eq 0 ]
 
       - name: Every shell script parses
         run: |
@@ -415,3 +465,69 @@ jobs:
             rc=1
           fi
           exit $rc
+
+      # The release has to advance with the repository, and until this step
+      # existed nothing made it. `vault-update.sh` tells a vault what moved by
+      # comparing manifests, and `docs/updating.md` tells the reader to hear
+      # about a newer copy by watching this repository's releases. A merge that
+      # edited a shipped file, left VERSION alone and was never tagged produced
+      # a template whose newest content no vault could discover, while the
+      # manifest still verified and this workflow still went green.
+      #
+      # THIS STEP IS NOT PATH FILTERED, and that is deliberate rather than
+      # incidental. A path filtered step shows as skipped on a pull request
+      # that touches nothing matching the filter, and a reviewer reading the
+      # checks list cannot tell a skip from a pass. This runs on every pull
+      # request and every push to main, and it reports counts either way.
+      #
+      # The one guard is by repository, which is the same guard the manifest
+      # verification step carries and it is there for the same reason. "Use
+      # this template" copies this workflow into somebody's own repository,
+      # where their notes are shipped files by class and their releases are
+      # their own business, and this step would go red for ever on a vault that
+      # is working perfectly. On a pull request from a fork, github.repository
+      # is still this repository, so a contributor's change is checked here.
+      #
+      # --release-branch only on a push to main, because a version that names
+      # no tag is a release in preparation on a pull request and a debt on the
+      # branch releases are cut from. Tagging does not re-trigger this workflow,
+      # so the way to clear that red is to cut the tag and re-run this job.
+      # The guard has the same skip-invisibility the comment above objects to in
+      # a path filter, and saying so is better than pretending otherwise. Rename
+      # or transfer this repository and this step skips for ever while the job
+      # stays green. It is still the right guard, because the alternative is a
+      # step that goes red for ever in somebody's vault, and the manifest step
+      # above carries the same one. What makes it tolerable is that it names a
+      # repository rather than a set of paths, so it changes only when somebody
+      # moves the repository, and that is a thing a person does deliberately.
+      #
+      # LAST IN THE JOB, because its red is expected: every merge of a release
+      # to main fails it until the tag is cut, and a failed step hides every
+      # step after it. Nothing else here depends on its answer.
+      #
+      # THE TWO FAILING EXITS ARE SEPARATED. The script spends real effort
+      # keeping 1, a release is owed, apart from 2, this check could not run and
+      # is saying nothing, and a bare `run:` collapses both into "process
+      # completed with exit code N". That matters most in the case that is
+      # easiest to get wrong: drop fetch-depth and the answer becomes NO-TAGS on
+      # 2, which looks like an ordinary red, and the usual response to a red
+      # release check is to weaken it.
+      - name: The release keeps up with what this template ships
+        if: github.repository == 'topazyo/claude-memory-vault'
+        run: |
+          # The status is captured with `|| rc=$?` rather than read from $? on
+          # the next line, because a workflow run block is bash -e and a bare
+          # non-zero exit inside the if-body would end the step before anything
+          # could look at it. A command on the left of || is exempt from that.
+          rc=0
+          if [ "$GITHUB_REF" = "refs/heads/main" ]; then
+            bash .github/release-check.sh --release-branch || rc=$?
+          else
+            bash .github/release-check.sh || rc=$?
+          fi
+          case "$rc" in
+            0) exit 0 ;;
+            1) echo "::error title=A release is owed::The tree ships something no published release carries. Read the output above, then cut the release as CONTRIBUTING.md describes."; exit 1 ;;
+            2) echo "::error title=The release check could not run::This is NOT saying a release is owed and it is NOT saying one is not. Something stopped the check from answering, most often a checkout carrying no tags. Read the output above before changing anything."; exit 1 ;;
+            *) echo "::error title=The release check failed unexpectedly::It left on $rc, which it does not document. Read the output above."; exit 1 ;;
+          esac

@@ -184,7 +184,7 @@ rather than matching its wording. A check that greps for the prefix `evaluated `
 | `bash .claude/scripts/run-tests.sh` | Control suite for the hooks and runners — known-bad inputs that must be flagged, known-good inputs that must stay silent — in a temp dir | `=== N passed, 0 failed ===`; exit 0 |
 | `bash .claude/scripts/dream-pass.sh` | Nightly consolidation pass (`.cmd` wrapper for Task Scheduler) | One dated journal in `20-projects/_logs/`, committed with a `Vault-Pass: dream` trailer in a git vault; exit 0 |
 | `bash .claude/scripts/promotion-pass.sh` | Weekly medium → long promotion (`.cmd` wrapper) | A `PROMOTION-SUMMARY:` line or long-tier notes, committed with a `Vault-Pass: promotion` trailer in a git vault; exit 0 |
-| `bash .claude/scripts/vault-retention.sh` | Weekly archiving of aged dream journals and compaction stubs from `20-projects/_logs/` to `99-archive/20-projects/_logs/`, `--dry-run` to see the judgement first (`.cmd` wrapper) | The moved files committed with a `Vault-Pass: retention` trailer in a git vault, or a log line saying nothing was eligible, exit 0 |
+| `bash .claude/scripts/vault-retention.sh` | Weekly archiving of aged dream journals and compaction stubs from `20-projects/_logs/` to `99-archive/20-projects/_logs/`, `--dry-run` to see the judgement first (`.cmd` wrapper) | A `vault-retention: evaluated N candidate(s): …` summary on stdout, or a line saying there is no `20-projects/_logs` folder, the same lines in `.claude/logs/vault-retention.log`, and any moved files committed with a `Vault-Pass: retention` trailer in a git vault; exit 0. The last printed line says which kind of run it was, and a run that fails ends on a `vault-retention: FAILED:` line, apart from the few ends `docs/reference.md` §4.3.1 lists |
 | `bash .claude/scripts/vault-update.sh --status` | Which template version this vault records, and which template files have changed here. Offline, with no git and no network | A recorded version and a count line; exit 0 when nothing has drifted, 10 when something has |
 | `bash .claude/scripts/vault-update.sh --check --from <dir>` | What moved in a newer template copy the owner fetched themselves, split into safe to take, needs a merge, a collision, and retired | A counts line and a copy plan; exit 0 when nothing moved, 10 when something did, 2 when it could not look |
 | `bash .claude/hooks/vault-lint.sh <file>...` | Advisory lint of the named notes: frontmatter and invisible characters | Silence for a clean note; always exit 0 |
@@ -209,7 +209,8 @@ its allowed folders (exit 2) and kill one that hangs (exit 124) or stops streami
 The retention pass is the third scheduled thing and it is not an agent, so `VAULT_AGENT` does not
 reach it and it has no stall detection. Its own refusals are 2 REPORT-REFUSED, 3 PARTIAL,
 4 COMMIT-FAILED, 6 PATH-BLOCKED and 71 RECOVERY-NEEDED, which means 2 and 3 do not mean there what
-they mean for the other two runners. It reads the same tripwire and the same run lock, and when one
+they mean for the other two runners. Its setup refusals, a `_logs` folder it cannot list or enter
+among them, are 1, as for the others. It reads the same tripwire and the same run lock, and when one
 of its own git steps could not be stopped it marks that lock so no later pass starts. See
 `docs/reference.md` §4.3. When a pass changes a steering or execution surface (Obsidian plugins,
 `.claude/`, harness configs, instruction files, memory, git config or hooks), the runner restores
