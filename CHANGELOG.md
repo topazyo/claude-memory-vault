@@ -49,10 +49,13 @@ planted under `.pi/`, and the lint's invisible-character scan reaches Pi's instr
     does not exist yet. A `grep`, `find` or `ls` with no path is tested against the folder it
     searches;
   - refuses a `grep` whose glob names one of them: by its text, by a last part that matches `.env`,
-    `.env.local` or `secrets` or spells `.env.` with single-character wildcards, or by a folder
-    part that matches `secrets`, comparing letters without regard to case. ripgrep lets a matching
-    glob override `.gitignore`. A glob that reaches a secret only through a `*` standing in for
-    `.env`, such as `*.production`, is let through, and the guide says so;
+    `.env.local` or `secrets` or spells `.env.` with `?`, `[...]` or `{...}` standing in for letters
+    of `.env`, or by a folder part that matches `secrets`, comparing letters without regard to
+    case. A `[...]` set that could match a `/` is tried as one too, since ripgrep lets it, and a
+    backslash is read as the escape it is to ripgrep on every platform (on Windows also as a `/`).
+    ripgrep lets a matching glob override `.gitignore`. A glob that reaches a secret only
+    through a `*` standing in for some or all of `.env`, such as `*.production` or
+    `.e*.production`, is let through, and the guide says so;
   - refuses a `read`, `write` or `edit` call that carries no path, and a call it cannot decide,
     such as a glob longer than 256 characters, rather than letting it through unchecked;
   - runs `vault-lint.sh` after each successful `write` and `edit` and adds what it reports to the
@@ -61,13 +64,14 @@ planted under `.pi/`, and the lint's invisible-character scan reaches Pi's instr
     vault, are stopped at 15 s and answered by 16 s, and the extension says once when either could
     not run.
 
-  Pi's `bash` tool runs without asking and can read any of these files, so the guard keeps the
-  file tools from reading a secret by accident and is not a boundary.
+  Pi's `bash` tool, and `powershell` where you enable it, run without asking and can read any of
+  these files, so the guard keeps the file tools from reading a secret by accident and is not a
+  boundary.
 - **Controls for the extension**, driven through Node 18 or later: each spelling of a secret path
-  Pi would open, the globs and links that reach one, the names it must let through, the lint and
-  stub calls, and the warning when a script fails. Without Node they skip with a reason, and the
-  file-link cases skip on a Windows machine that may not make file links. CI requires all three on
-  every job.
+  Pi would open, the globs and links that reach one, the names it must let through, the reason
+  each refusal gives, the lint and stub calls, and the warning when a script fails. Without Node
+  they skip with a reason, and the file-link cases skip on a Windows machine that may not make
+  file links. CI requires the behaviour, folder-link and file-link controls on every job.
 
 ### Changed
 
@@ -87,11 +91,12 @@ planted under `.pi/`, and the lint's invisible-character scan reaches Pi's instr
   `docs/setup.md` and `docs/customizing.md` point to it instead of repeating a list that had fallen
   behind, since none of them named `.agents/skills/` or `.hermes.md`.
 - `AGENTS.md` §8, `docs/harnesses/README.md`, `README.md` and `docs/setup.md` name Pi alongside
-  the other harnesses, and the §8 skills row now says Hermes, like Pi, reads `.agents/skills/` only
-  once the project is trusted. `docs/reference.md` describes Pi's guard and the new controls, lists Node as
-  an optional dependency of the suite, names `.opencode/` and `.pi/` among the containment
-  surfaces, and says that the lists of required controls it shows are excerpts of the ones in
-  `.github/workflows/ci.yml`. The comments in `postcompact-wrap-up.sh` name Pi's event.
+  the other harnesses, and the skills row of `AGENTS.md` §8 now says Hermes, like Pi, reads
+  `.agents/skills/` only once the project is trusted. `docs/reference.md` describes Pi's guard and
+  the new controls, lists Node as an optional dependency of the suite, names `.opencode/` and
+  `.pi/` among the containment surfaces, and says that the lists of required controls it shows
+  are excerpts of the ones in `.github/workflows/ci.yml`. The comments in
+  `postcompact-wrap-up.sh` name Pi's event.
 
 ### Adopting this
 
@@ -102,9 +107,9 @@ use does not stop the schedule, because only what a pass changes counts, though 
 backs it up with the other steering files before every run, which a large `.pi/npm` makes slower.
 If you run the passes under Pi, use the wrapper in `docs/harnesses/pi.md`: its `--no-approve`
 stops Pi installing project packages into `.pi/npm` during a pass, which would now stop the
-schedule. `.claude/hooks/vault-lint.sh` scans six
-more kinds of steering file and still always exits 0. `AGENTS.md` is a standing instruction every
-harness loads, and its §8 table names Pi in five rows.
+schedule. `.claude/hooks/vault-lint.sh` scans six more kinds of steering file and still always
+exits 0. `AGENTS.md` is a standing instruction every harness loads, and its §8 table names Pi in
+five rows.
 
 `.claude/adapters/pi/vault.js` is new code, and nothing runs it until you load it, so to use Pi
 with this vault, follow `docs/harnesses/pi.md`. `docs/harnesses/pi.md` is new too, and

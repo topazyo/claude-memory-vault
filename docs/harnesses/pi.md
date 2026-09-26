@@ -37,8 +37,8 @@ as Claude Code's own read deny does.
   trusted, the skills, but it runs every tool without asking, and nothing stops a read of `.env`.
 - **Enforced once the extension is loaded:**
   - A file-tool call is refused when its path names `.env` or `.env.*`, or passes through or ends
-    at a part named `secrets` at any depth, in any letter case. Inside the vault only the part below the
-    vault is tested, and outside it the whole path. The extension reads the path the way Pi's own
+    at a part named `secrets` at any depth, in any letter case. Inside the vault only the part
+    below the vault is tested, and outside it the whole path. The extension reads the path the way Pi's own
     tools will open it: a leading `@`, `~`, `file://` URLs, Windows drive and Git Bash forms,
     trailing dots and spaces, and NTFS stream names. It follows symbolic links too, including one
     whose target does not exist yet, so `@.env`, `.ENV.` and a note that links to `.env` are
@@ -50,11 +50,16 @@ as Claude Code's own read deny does.
     `secrets`, such as `*`, `.[e]nv`, `.e{n}v` or `20-projects/.[e]nv`; when its last part spells
     a name starting `.env.` with `?`, `[...]` or `{...}` standing in for letters of `.env`, such as
     `.[e]nv.production`; and when a folder part other than `*` or `**` matches `secrets`, such as
-    `31-standards/s?crets/*.md`. Letters and sets are compared without regard to case. ripgrep
-    lets a glob that matches a file override `.gitignore`, which is why the glob is checked at
-    all. A glob that reaches a secret only through a `*` standing in for `.env`, such as
-    `*.production` for `.env.production`, is let through, and so is `*.md`, although it would also
-    match a file called `.env.md`.
+    `31-standards/s?crets/*.md`. Letters and sets are compared without regard to case. The parts
+    are split at each `/` outside a `[...]` set and at an escaped `\/`, and because ripgrep lets
+    a set match a `/`, a set that could (one holding `/`, a negated set, or a range across `/`) is
+    tried both as a letter and as a `/`: `s[e/]crets/x.md` and `s?crets[!a]x.md` are refused.
+    ripgrep reads a backslash as an escape on every platform, so `.\env` is `.env`; on Windows the
+    glob is tested with its backslashes read as `/` too. ripgrep lets a glob that matches a file
+    override `.gitignore`, which is why the glob is checked at all. A glob that reaches a secret
+    only through a `*` standing in for some or all of `.env`,
+    such as `*.production` or `.e*.production` for `.env.production`, is let through, and so is
+    `*.md`, although it would also match a file called `.env.md`.
   - After each successful `write` and `edit` the lint runs, and what it reports on stderr, a
     missing `tier:` or a hidden character or a scan that could not run, is added to the end of the
     tool's result, cut at 4000 characters with a line saying so. Pi's `tool_result` handlers may
@@ -64,11 +69,13 @@ as Claude Code's own read deny does.
 - **Not covered:**
   - The `bash` tool, and `powershell` where you enable it, can still read a secret, and a file
     written from either is not linted.
-  - A `grep` with no glob, or with one of the globs above that is let through, searches what
-    ripgrep does not skip. Pi's grep searches hidden files, so what keeps `.env` and `secrets/` out
-    of it is ripgrep skipping what `.gitignore` lists, which it does only in a git repository. The
-    template's `.gitignore` lists `.env`, `.env.*` and `secrets/`, but in a vault that is not a git
-    repository such a grep reads `.env` as well.
+  - A `grep` with no glob searches what ripgrep does not skip. Pi's grep searches hidden files, so
+    what keeps `.env` and `secrets/` out of it is ripgrep skipping what `.gitignore` lists, which it
+    does only in a git repository. The template's `.gitignore` lists `.env`, `.env.*` and
+    `secrets/`, but in a vault that is not a git repository such a grep reads them as well.
+  - A glob that is let through overrides `.gitignore` for every file it matches, in a git
+    repository too, so `*.production` reads `.env.production` and `*.md` reads a file called
+    `.env.md` wherever they exist.
   - Pi runs its `find` so that it honours `.gitignore` in a vault that is not a git repository
     too, so a `find` lists secret names only where `.gitignore` does not list them, and never their
     contents. An `ls` of a folder lists the names in it.
@@ -183,8 +190,9 @@ exec pi --print --no-session --no-approve --no-extensions --no-skills --offline 
   extensions and skills out as well, and `--offline` stops Pi's own automatic network requests.
 - **No extension loads, this vault's included, so nothing refuses a read of `.env` or `secrets/`
   during a pass.** Keep them out of the container: leave every `.env` and `.env.*` out of what you
-  mount, at any depth, and mount an empty folder over every `secrets/` folder. Adding `-e .claude/adapters/pi/vault.js` would load the guard,
-  since Pi loads an extension named with `-e` even with `--no-extensions`, but it would also lint
+  mount, at any depth, and mount an empty folder over every `secrets/` folder. Adding
+  `-e .claude/adapters/pi/vault.js` would load the guard, since Pi loads an extension named with
+  `-e` even with `--no-extensions`, but it would also lint
   every write and could record a compaction into `20-projects/_logs/` during the pass.
 - Pi still loads its global `~/.pi/agent/AGENTS.md` and any `AGENTS.override.md`, `AGENTS.md` or
   `CLAUDE.md` in the folders above the vault. Those steer the pass, and the fence cannot see them.
@@ -206,15 +214,19 @@ once against a scratch copy of the vault and diff the tree before you schedule i
   commit `8930b9e`: the `tool_call`, `tool_result` and `session_compact` events and the `path` and
   `glob` fields of the file tools. If a later Pi renames the path field, the guard refuses every
   `read`, `write` and `edit` and names this guide, so the O4 probe is refused too, while a
-  `grep`, `find` or `ls` would be tested against the folder Pi was started in.
+  `grep`, `find` or `ls` is tested against the folder Pi was started in rather than the one it
+  searches. If it renames the `glob` field, a grep's glob is not checked at all, and nothing says
+  so.
 - The guard refuses a call it cannot decide, saying `the secrets guard failed on this call` with
   the reason: a path Pi could not open either, such as a `file://` URL with an encoded slash; a
-  loop of symbolic links, or a chain of more than 40; and a `grep` glob longer than 256
-  characters, of more than 32 brace alternatives, or with a `{` that never closes. A `grep` glob
-  that is not text is refused as a changed tool input.
+  loop of symbolic links, or a chain too long to follow; and a `grep` glob longer than 256
+  characters, of more than 32 brace alternatives, with more than four `[...]` sets that could
+  match a `/`, or with a `{` that never closes. A `grep` glob that is not text is refused as a
+  changed tool input.
 - `bash` and `powershell` reads and writes bypass the extension.
-- A `grep` glob that reaches a secret only through a `*` standing in for `.env` is let through,
-  and so is a `grep` with no glob in a vault that is not a git repository, which reads `.env`.
+- A `grep` glob that reaches a secret only through a `*` standing in for some or all of `.env` is
+  let through, in a git repository too, and so is a `grep` with no glob in a vault that is not a
+  git repository, which reads `.env` and `secrets/`.
 - A write to one of Pi's own execution surfaces, such as `.pi/extensions/` or `.pi/settings.json`,
   is neither refused nor linted, and takes effect the next time Pi loads it. The scheduled passes
   contain such a write, and an interactive session does not.
@@ -238,4 +250,5 @@ once against a scratch copy of the vault and diff the tree before you schedule i
 - Windows shell: <https://github.com/earendil-works/pi/blob/v0.87.1/packages/coding-agent/docs/windows.md>
 - Containers: <https://github.com/earendil-works/pi/blob/v0.87.1/packages/coding-agent/docs/containerization.md>
 - ripgrep's `--glob` overriding ignore files: the `-g/--glob` entry of `rg --help`, which says the glob "always overrides any other ignore logic"
+- ripgrep's glob syntax, read in the source on 2026-09-26: `crates/ignore/src/gitignore.rs` in <https://github.com/BurntSushi/ripgrep> builds every glob with `literal_separator(true)` and `backslash_escape(true)`, and `crates/globset/src/glob.rs` keeps only `?` and `*` off a `/`, not a `[...]` set (its test `matchslash4`)
 - What the documentation leaves to the source, read at commit `8930b9e`, one commit after v0.87.1: event, result and context shapes in `packages/coding-agent/src/core/extensions/types.ts` and `runner.ts`; tool inputs in `src/core/tools/{read,write,edit,grep,find,ls}.ts`; path handling in `src/core/tools/path-utils.ts` and `src/utils/paths.ts`; the Windows shell in `src/utils/shell.ts`; context files in `src/core/resource-loader.ts`; skills and packages in `src/core/package-manager.ts`; trust in `src/core/project-trust.ts` and `src/core/trust-manager.ts`

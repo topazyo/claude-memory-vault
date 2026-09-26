@@ -20,7 +20,7 @@ your own knowledge.
 Markdown and bash, and `AGENTS.md` is the entry point every agent reads. Claude Code gets the
 most automation, because the template ships hooks, subagents and a Read deny for it in `.claude/`.
 The template also ships working config for Codex CLI, Gemini CLI, Cursor, GitHub Copilot, OpenCode,
-Windsurf / Devin Desktop and Aider, an opt-in extension for Pi, plus a setup snippet for Hermes
+Windsurf / Devin Desktop and Aider, plus an opt-in extension for Pi and a setup snippet for Hermes
 Agent. Each gets hooks, a plugin or an extension for the lint where the harness supports one, and
 every harness gets an opt-in git
 pre-commit gate. [`docs/harnesses/`](docs/harnesses/README.md) has a guide for each, with a prompt

@@ -8,9 +8,10 @@
 // `pi -e .claude/adapters/pi/vault.js`, or copy it to .pi/extensions/vault.js,
 // once you have read it. Not both, or it runs twice.
 //
-//   - Refuses a read, write, edit, grep, find or ls call that names .env,
-//     .env.* or anything under secrets/, the three paths .claude/rules/security.md
-//     has Claude Code deny, and a grep whose glob names one. Pi's bash tool can
+//   - Refuses a read, write, edit, grep, find or ls call whose path names .env
+//     or .env.*, or passes through or ends at a part named secrets, the three
+//     paths .claude/rules/security.md has Claude Code deny, and a grep whose
+//     glob names one. Pi's bash tool, and powershell where it is enabled, can
 //     still read them, so this keeps the file tools from doing it by accident.
 //   - Runs .claude/hooks/vault-lint.sh on every file a write or edit changes,
 //     and adds what it reports to the tool's result.
@@ -190,15 +191,21 @@ function isSecret(raw, cwd, vault) {
 //   - its last part matches .env, .env.local or secrets, or spells a name
 //     starting .env. with ?, [...] or {...} standing in for letters of .env;
 //   - or a folder part other than * or ** matches secrets.
+// The parts are split at each / outside a [...] set, and at an escaped \/ as
+// well, which ripgrep reads as a /. A set that could match a /
+// (one holding /, a negated one, or a range across /) is tried both as one
+// character and as a /, so no set can hide where one folder ends; a glob with
+// more than MAX_SLASH_SETS such sets is not decided.
 // Letters are compared without regard to case, and a [...] set is tried with
 // both cases of a letter, because ripgrep compares case as written while the
 // file on disk may be spelled either way. A glob that reaches a secret only
-// through a * standing in for .env, such as *.production for .env.production,
-// is let through: refusing it would refuse *.md too. A glob that only excludes
-// (!...) widens nothing.
+// through a * standing in for some or all of .env, such as *.production for
+// .env.production, is let through: refusing it would refuse *.md too. A glob
+// that only excludes (!...) widens nothing.
 const SECRET_NAMES = [".env", ".env.local", "secrets"]
 const MAX_GLOB = 256
 const MAX_ALTERNATIVES = 32
+const MAX_SLASH_SETS = 4
 
 // The alternatives a glob's {a,b} sets spell out, or null past MAX_ALTERNATIVES.
 // A [...] set is one character, so a { , or } inside one is not a brace.
@@ -315,21 +322,76 @@ function globMatches(glob, text, prefix = false, starFrom = 0) {
   return at(0, 0)
 }
 
-// Windows ripgrep reads a backslash in a glob as a folder separator.
+// Where a glob's [...] sets that could match a / start.
+function slashSets(glob) {
+  const starts = []
+  for (let i = 0; i < glob.length; i++) {
+    const set = glob[i] === "[" ? classAt(glob, i) : null
+    if (glob[i] === "\\") {
+      i++
+    } else if (set !== null) {
+      if (set.test("/")) starts.push(i)
+      i = set.end - 1
+    }
+  }
+  return starts
+}
+
+// A glob's parts, split at each / that ends a folder: never one inside a
+// [...] set, but an escaped \/, and each set whose start is in asSlash.
+function globParts(glob, asSlash) {
+  const parts = [""]
+  for (let i = 0; i < glob.length; i++) {
+    const set = glob[i] === "[" ? classAt(glob, i) : null
+    if (glob[i] === "\\" && i + 1 < glob.length) {
+      if (glob[i + 1] === "/") parts.push("")
+      else parts[parts.length - 1] += glob.slice(i, i + 2)
+      i++
+    } else if (set !== null) {
+      if (asSlash.has(i)) parts.push("")
+      else parts[parts.length - 1] += glob.slice(i, set.end)
+      i = set.end - 1
+    } else if (glob[i] === "/") {
+      parts.push("")
+    } else {
+      parts[parts.length - 1] += glob[i]
+    }
+  }
+  return parts
+}
+
+function partsMaySeeSecret(parts) {
+  const name = parts[parts.length - 1]
+  if (SECRET_NAMES.some((probe) => globMatches(name, probe))) return true
+  if (globMatches(name, ".env.", true, 4)) return true
+  return parts.slice(0, -1).some((part) => part !== "*" && part !== "**" && globMatches(part, "secrets"))
+}
+
+// ripgrep reads a backslash in a glob as an escape on every platform, since
+// its ignore crate builds each glob with backslash_escape, and so does this
+// test. On Windows, where a backslash also separates folders in a path, the
+// glob is tested with its backslashes read as / as well, and refused when
+// either reading reaches a secret.
 function globMaySeeSecret(raw) {
   if (raw.length > MAX_GLOB) throw new Error(`the glob is longer than ${MAX_GLOB} characters`)
   if (raw.startsWith("!")) return false
-  const glob = (WINDOWS ? raw.replace(/\\/g, "/") : raw).replace(/^\/+/, "")
-  const folded = glob.toUpperCase()
-  if (folded.includes(".ENV") || folded.includes("SECRET")) return true
-  const alternatives = braceAlternatives(glob)
-  if (alternatives === null) throw new Error(`the glob spells out more than ${MAX_ALTERNATIVES} alternatives`)
-  return alternatives.some((alt) => {
-    const parts = alt.split("/")
-    const name = parts[parts.length - 1]
-    if (SECRET_NAMES.some((probe) => globMatches(name, probe))) return true
-    if (globMatches(name, ".env.", true, 4)) return true
-    return parts.slice(0, -1).some((part) => part !== "*" && part !== "**" && globMatches(part, "secrets"))
+  const readings = WINDOWS && raw.includes("\\") ? [raw, raw.replace(/\\/g, "/")] : [raw]
+  return readings.some((reading) => {
+    const glob = reading.replace(/^\/+/, "")
+    const folded = glob.toUpperCase()
+    if (folded.includes(".ENV") || folded.includes("SECRET")) return true
+    const alternatives = braceAlternatives(glob)
+    if (alternatives === null) throw new Error(`the glob spells out more than ${MAX_ALTERNATIVES} alternatives`)
+    return alternatives.some((alt) => {
+      const sets = slashSets(alt)
+      if (sets.length > MAX_SLASH_SETS) throw new Error(`the glob has more than ${MAX_SLASH_SETS} [...] sets that could match a /`)
+      // Every way of reading those sets, each as one character or as a /.
+      for (let mask = 0; mask < 2 ** sets.length; mask++) {
+        const asSlash = new Set(sets.filter((_, k) => (mask >> k) & 1))
+        if (partsMaySeeSecret(globParts(alt, asSlash))) return true
+      }
+      return false
+    })
   })
 }
 
@@ -440,8 +502,9 @@ function runHook(bash, vault, script, args, input) {
     }
     // First, before anything touches its pipes: Node reports some start
     // failures, such as running out of file handles, as a later error event on
-    // a child that has no pipes at all.
-    child.once("error", (error) => settle(`could not start ${bash} (${error.code ?? error.message})`))
+    // a child that has no pipes at all. The listener stays for good, because an
+    // error event nobody listens for would be thrown inside Pi.
+    child.on("error", (error) => settle(`could not start ${bash} (${error.code ?? error.message})`))
     if (!child.stdin || !child.stderr) {
       settle(`could not start ${bash} (no pipes to it)`)
       return
@@ -468,7 +531,7 @@ function runHook(bash, vault, script, args, input) {
       }
       settle(`did not finish within ${HOOK_TIMEOUT_MS / 1000} s`)
     }, HOOK_TIMEOUT_MS + 1000))
-    child.stdin.once("error", () => {})
+    child.stdin.on("error", () => {})
     child.stdin.end(input)
   })
 }

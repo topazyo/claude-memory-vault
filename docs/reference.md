@@ -228,7 +228,8 @@ drive and Git Bash forms, trailing dots and spaces, NTFS stream names, and symbo
 including one whose target does not exist yet) and compares names as NTFS does. It also refuses a
 grep whose glob names a secret, by its text or by a part that matches one, because ripgrep lets a
 matching glob override `.gitignore`; a glob that reaches a secret only through a `*` standing in
-for `.env`, such as `*.production` or `*.md`, is let through. It fails closed when a `read`,
+for some or all of `.env`, such as `*.production`, `.e*.production` or `*.md`, is let through, in
+a git repository too. It fails closed when a `read`,
 `write` or `edit` call carries no path and when it cannot decide a call
 ([`docs/harnesses/pi.md`](harnesses/pi.md) has the exact rules). Like every deny here, it does not
 stop a shell command such as `cat`.
@@ -379,27 +380,36 @@ a lint that does nothing and a lint that found nothing wrong print the same thin
   stand-in for Pi's extension API and fake vaults whose hook scripts record what they get. Each of
   these is refused: `@.env`, `.ENV`, `.env.`, `.env ` and a trailing no-break space, an NTFS
   stream name, `secrets./x`, `ſecrets/`, a `file://` URL with `%2Eenv`, `~/` with the home folder
-  inside `secrets/`, a `file://` URL Pi cannot open, a grep glob whose text names a secret
-  (`.env.production`, `.env.p*`, `20-projects/.env`, `20-projects/secrets{,/**}` and others) or
-  whose parts match one (`*`, `.[e]nv`, `.e{n}v`, `20-projects/.[e]nv`, `.[e]nv.production`,
-  `31-standards/s?crets/*.md`, `.[!E]nv`, `.[_-f]nv`, `{[,.]env,x}` and others), a glob over 256
-  characters, of more than 32 brace alternatives, with an unclosed `{`, or that is not text, a
-  `read` or `write` with no path, a file read from a session started inside `secrets/`, a
+  inside `secrets/`, a grep glob whose text names a secret (`.env.production`, `.env.p*`,
+  `20-projects/.env`, `20-projects/secrets{,/**}` and others) or whose parts match one (`*`,
+  `.[e]nv`, `.e{n}v`, `20-projects/.[e]nv`, `.[e]nv.production`, `31-standards/s?crets/*.md`,
+  `.[!E]nv`, `.[_-f]nv`, `{[,.]env,x}`, `.[E]nv`, `.[e]NV` and others), including through a `/`
+  inside a set (`s[e/]crets/x.md`), a set that could match a `/` (`s?crets[!a]x.md`), an escaped
+  `\/` or a backslash escape (`.\env`), a file read from a session started inside `secrets/`, a
   `../secrets/k` read from a session started in `31-standards/`, an `ls`, `grep` or `find` with no
-  path from a session started inside `secrets/`, and on Windows `C:.env` and a glob using `\` for
-  a slash. Two globs built to make a backtracking matcher run for ever, one of which a regex
-  translation took more than 30 s over, are decided in under 2 s. Links are followed: a linked `secrets` folder, a link to a folder or a
-  `.env` that does not exist yet, a relative link inside a linked folder, a loop of links, and
-  `sub/secrets` even when it links to an ordinary folder are refused, a link to an ordinary note is
-  not, and a session started through a link deeper into the vault does not take the vault's parent
+  path from a session started inside `secrets/`, and on Windows `C:.env` and a glob whose `\`,
+  read as a slash, names `.env`. Each refusal is checked for its reason, so a call the guard should
+  deny cannot pass by making the guard fail instead: a `file://` URL Pi cannot open and a glob over
+  256 characters, of more than 32 brace alternatives, with more than four sets that could match a
+  `/` or with an unclosed `{` are refused as calls it cannot decide, a `read` or `write` with no
+  path as having none, and a glob that is not text as a changed input. Two globs built to make a
+  backtracking matcher run for ever, one of which a regex translation took more than 30 s over,
+  are decided in under 2 s; they are asked in a worker thread that is stopped after 10 s, so such
+  a matcher fails the two controls instead of hanging the suite. Links are followed: a linked
+  `secrets` folder, a link to a folder or a `.env` that does not exist yet, a relative link inside
+  a linked folder, and `sub/secrets` even when it links to an ordinary folder are refused, as is a
+  loop of links, as a call the guard cannot decide; a link to an ordinary note is not, and a
+  session started through a link deeper into the vault does not take the vault's parent
   for its root. Folder links are junctions on Windows, so those cases run there too, and the file
   links need a host that can make them. `.envrc`, `notes/env.md`, a note called `secrets.md`,
-  globs such as `*.md`, `{a,b}.md`, `*/x` and `[{]*.md`, a `find` with no path at the vault root,
-  and the notes of a vault kept inside a folder named
-  `secrets` are let through, including by a Git Bash `/c/...` path on Windows. A successful
-  `write` or `edit` runs the lint with the vault-relative path, even from a subfolder or through a
-  link to the vault, with `CLAUDE_PROJECT_DIR` naming the vault rather than an inherited decoy, and
-  with a name holding `'` and `[ ]` intact; what the lint reports is added to the tool's result,
+  globs such as `*.md`, `{a,b}.md`, `*/x`, `[{]*.md`, `*.m?`, `[!.]*.md`, `[a-c]*.md`,
+  `{a,{b,c}}.md` and `\*.md`, so that every construct the matcher reads also appears in a glob it
+  lets through, a `find` with no path at the vault root, and the notes of a vault kept inside a
+  folder named `secrets` are let through, including by a Git Bash `/c/...` path on Windows. A
+  successful `write` or `edit` runs the lint with the vault-relative path, even from a subfolder or
+  through a link to the vault, with `CLAUDE_PROJECT_DIR` naming the vault rather than an inherited
+  decoy, and with a name holding `'` and `[ ]` intact, and one holding `"` too except on Windows,
+  where it is not handed to Git Bash and the extension says so; what the lint reports is added to the tool's result,
   cut at 4000 characters with a note saying so; a failed write and a `read` are not linted. A
   compaction sends the session id, trigger and session file to the stub. A lint that exits
   non-zero is reported once, a lint that hangs is stopped at the time limit and reported without
@@ -461,11 +471,10 @@ runlog-tmp-case keep-output-dirlink tripwire-name keep-output-fifo retention-sym
 ```
 
 The complete lists, one line each, are in `.github/workflows/ci.yml`, and that file is the one to
-read.
-Adding a platform-gated control means adding its id there as well, because a control nobody
-requires can quietly stop running on the platform it was written for. A fake pass whose stop is reported as `KILL_FAILED` fails the suite at
-the end, and its marked lock and the tripwire its stop set are moved aside after that run, so the
-cases after it still run.
+read. Adding a platform-gated control means adding its id there as well, because a control nobody
+requires can quietly stop running on the platform it was written for. A fake pass whose stop is
+reported as `KILL_FAILED` fails the suite at the end, and its marked lock and the tripwire its
+stop set are moved aside after that run, so the cases after it still run.
 
 The fixture vault is created at a path containing spaces (`.../some one/my vault/`) on purpose:
 that is the case word-splitting bugs break on, while still printing a reassuring "0 violations".

@@ -1206,6 +1206,7 @@ PI_LINT_EOF
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
+import { Worker } from "node:worker_threads"
 
 const [vault, innerVault, loose, slowVault] = process.argv.slice(2)
 const say = (line) => process.stdout.write(`${line}\n`)
@@ -1232,18 +1233,28 @@ async function load(file, cwd) {
 }
 const adapterIn = (root) => join(root, ".claude", "adapters", "pi", "vault.mjs")
 
+// A refusal is told apart by its reason, so a call the guard should deny does
+// not pass when the guard instead failed on it or read it as a changed input.
+function classify(result) {
+  if (result === undefined || result === null) return "allowed"
+  if (result.block !== true || typeof result.reason !== "string") return `returned ${JSON.stringify(result)}`
+  if (result.reason.includes("are off limits")) return "refused"
+  if (result.reason.includes("found no path")) return "no-path"
+  if (result.reason.includes("cannot read this grep's glob")) return "no-glob"
+  if (result.reason.includes("the secrets guard failed")) return "failed"
+  return `refused for another reason (${result.reason})`
+}
+const WANTED = { "no-path": "refused as having no path", "no-glob": "refused as a glob that is not text", failed: "refused as a call the guard cannot decide" }
 async function call(pi, toolName, input, ctx = pi.ctx) {
   try {
-    const result = await pi.handlers.tool_call({ type: "tool_call", toolCallId: "c1", toolName, input }, ctx)
-    if (result === undefined) return "allowed"
-    return result.block === true && typeof result.reason === "string" ? "refused" : `returned ${JSON.stringify(result)}`
+    return classify(await pi.handlers.tool_call({ type: "tool_call", toolCallId: "c1", toolName, input }, ctx))
   } catch (error) {
     return `threw ${error.message}`
   }
 }
 async function expect(pi, tool, input, want, label, ctx) {
   const got = await call(pi, tool, input, ctx)
-  verdict(got === want, `Pi guard: ${label} is ${want}`, got)
+  verdict(got === want, `Pi guard: ${label} is ${WANTED[want] ?? want}`, got)
 }
 
 const pi = await load(adapterIn(vault), vault)
@@ -1263,14 +1274,14 @@ const cases = [
   ["read", { path: "\u{17F}ecrets/x" }, "refused", "U+017F-ecrets/x, which NTFS upper-cases to SECRETS"],
   ["read", { path: `${pathToFileURL(vault).href}/%2Eenv` }, "refused", "a file:// URL spelling .env as %2Eenv"],
   ["read", { path: "~/k.txt" }, "refused", "~/k.txt with the home folder inside secrets/"],
-  ["read", { path: "file:///x%2Fy" }, "refused", "a file:// URL Pi cannot open either (the guard fails closed)"],
+  ["read", { path: "file:///x%2Fy" }, "failed", "a file:// URL Pi cannot open either (the guard fails closed)"],
   ["write", { path: "notes/.env.local", content: "x" }, "refused", "a write to .env.local"],
   ["edit", { path: "Secrets/k", edits: [] }, "refused", "an edit under Secrets/"],
   ["grep", { pattern: "KEY", path: "secrets" }, "refused", "a grep of secrets/"],
   ["find", { pattern: "*", path: "secrets" }, "refused", "a find in secrets/"],
   ["ls", { path: "SECRETS" }, "refused", "an ls of SECRETS"],
-  ["read", {}, "refused", "a read with no path (fails closed)"],
-  ["write", { content: "x" }, "refused", "a write with no path (fails closed)"],
+  ["read", {}, "no-path", "a read with no path (fails closed)"],
+  ["write", { content: "x" }, "no-path", "a write with no path (fails closed)"],
   ["read", { path: "31-standards/secrets.md" }, "allowed", "a note named secrets.md"],
   ["read", { path: ".envrc" }, "allowed", ".envrc"],
   ["read", { path: "notes/env.md" }, "allowed", "notes/env.md"],
@@ -1282,29 +1293,74 @@ const refusedGlobs = [".env", ".env*", ".ENV*", "*", "{.env,x}", "secret?/**", "
   ".env.production", ".env.p*", "20-projects/.env", "*/*/.env", "20-projects/secrets{,/**}", ".e{n}v", "*/*/*",
   "[.]env", ".e?v.*", "20-projects/.[e]nv", "20-projects/**/.[e]nv", "20-projects/*", "20-projects/[s]ecrets/x.md",
   "31-standards/s?crets/*.md", ".[e]nv.production", ".e?v.p*", "?env.x", "31-standards/**", ".[!E]nv", ".[!E]*",
-  ".[_-f]nv", ".[^A-Z]nv", "{[,.]env,x}", "{x,[!}]env}", "{*"]
+  ".[_-f]nv", ".[^A-Z]nv", "{[,.]env,x}", "{x,[!}]env}", ".[E]nv", ".[e]NV", "20-projects/[S]ECRETS/x.md",
+  // A / inside a set, a set that could match a /, and an escaped \/.
+  "s[e/]crets/x.md", ".[e/]nv", "s?crets[!a]x.md", "s[e/]crets[!a]x.md", "s?crets[.-0]x.md", "s?crets\\/x.md",
+  // ripgrep reads a backslash as an escape on Windows too, where these are .env and secrets/x.md.
+  ".\\env", "s\\ecrets/x.md"]
 for (const glob of refusedGlobs) cases.push(["grep", { pattern: "KEY", glob }, "refused", `a grep with the glob ${glob}`])
-cases.push(["grep", { pattern: "KEY", glob: `${"x".repeat(300)}.md` }, "refused", "a grep with a glob over 256 characters"])
-cases.push(["grep", { pattern: "KEY", glob: "{a,b}".repeat(10) }, "refused", "a grep with a glob of 1024 brace alternatives"])
+cases.push(["grep", { pattern: "KEY", glob: `${"x".repeat(300)}.md` }, "failed", "a grep with a glob over 256 characters"])
+cases.push(["grep", { pattern: "KEY", glob: "{a,b}".repeat(10) }, "failed", "a grep with a glob of 1024 brace alternatives"])
+cases.push(["grep", { pattern: "KEY", glob: "{*" }, "failed", "a grep with the glob {* whose brace never closes"])
+cases.push(["grep", { pattern: "KEY", glob: "[!a][!b][!c][!d][!e].md" }, "failed", "a grep with a glob of five sets that could match a /"])
+// Every construct the matcher reads also appears in a glob it lets through, so
+// a construct that started to throw would show as a refusal here.
 for (const glob of ["*.md", "**/*.md", "!*.md", "31-standards/*.md", "{a,b}.md", "*/notes.md", "31-standards/**/*.md", "*.txt",
-  "*/x", "[{]*.md"]) {
+  "*/x", "[{]*.md", "*.m?", "[!.]*.md", "[a-c]*.md", "{a,{b,c}}.md", "\\*.md", "*.[!t]xt", "20-projects/[!_]*.md",
+  "*/[!.]*.md", "a\\/b.md"]) {
   cases.push(["grep", { pattern: "KEY", glob }, "allowed", `a grep with the glob ${glob}`])
 }
-cases.push(["grep", { pattern: "KEY", glob: ["*.md"] }, "refused", "a grep whose glob is not text (fails closed)"])
+cases.push(["grep", { pattern: "KEY", glob: ["*.md"] }, "no-glob", "a grep whose glob is not text (fails closed)"])
 cases.push(["find", { pattern: "*" }, "allowed", "a find with no path"])
-if (win) cases.push(["grep", { pattern: "KEY", glob: "20-projects\\.[e]nv" }, "refused", "a Windows glob with a backslash for a slash"])
+if (win) cases.push(["grep", { pattern: "KEY", glob: "20-projects\\.[e]nv" }, "refused", "a Windows glob whose backslash, read as a slash, names .env"])
 if (win) cases.push(["read", { path: `${vault.slice(0, 2)}.env` }, "refused", "a drive-relative C:.env"])
 for (const [tool, input, want, label] of cases) await expect(pi, tool, input, want, label)
 
 // Globs made to make a backtracking matcher take for ever are answered at once.
 // Fifty ** that may each match nothing, before a zz that never matches, took a
 // regex translation of the glob more than 30 s; a hundred *? pairs exercise the
-// .env. prefix test the same way.
-for (const [slowGlob, want, label] of [[`${"**".repeat(50)}zz`, "allowed", "fifty ** and zz"], [`${"*?".repeat(100)}`, "refused", "a hundred *? pairs"]]) {
-  const started = performance.now()
-  const slowAnswer = await call(pi, "grep", { pattern: "KEY", glob: slowGlob })
-  const took = performance.now() - started
-  verdict(slowAnswer === want && took < 2000, `Pi guard: a glob of ${label} is ${want} in under 2 s`, `${slowAnswer} in ${Math.round(took)} ms`)
+// .env. prefix test the same way. Such a matcher never gives this thread back,
+// so the globs are asked in a worker, which is stopped after 10 s: a slow
+// matcher then fails these two controls instead of hanging the suite.
+const slowGlobs = [[`${"**".repeat(50)}zz`, "allowed", "fifty ** and zz"], [`${"*?".repeat(100)}`, "refused", "a hundred *? pairs"]]
+const slowWorker = new Worker(`
+const { parentPort, workerData } = require("node:worker_threads")
+;(async () => {
+  const handlers = {}
+  const mod = await import(workerData.url)
+  mod.default({ on: (name, handler) => { handlers[name] = handler } })
+  const ctx = { cwd: workerData.cwd, hasUI: false, mode: "print", ui: { notify: () => {} } }
+  for (const glob of workerData.globs) {
+    const started = performance.now()
+    try {
+      const result = await handlers.tool_call({ type: "tool_call", toolCallId: "c1", toolName: "grep", input: { pattern: "KEY", glob } }, ctx)
+      parentPort.postMessage({ glob, result: result ?? null, took: performance.now() - started })
+    } catch (error) {
+      parentPort.postMessage({ glob, error: String(error?.message ?? error), took: performance.now() - started })
+    }
+  }
+})()
+`, { eval: true, workerData: { url: pathToFileURL(adapterIn(vault)).href, cwd: vault, globs: slowGlobs.map(([glob]) => glob) } })
+const slowAnswers = new Map()
+let slowTimer
+const slowOutcome = await Promise.race([
+  new Promise((settle) => {
+    slowWorker.on("message", (answer) => {
+      slowAnswers.set(answer.glob, answer)
+      if (slowAnswers.size === slowGlobs.length) settle("answered")
+    })
+    slowWorker.on("error", (error) => settle(`the worker failed (${error.message})`))
+    slowWorker.on("exit", () => settle("the worker exited without answering"))
+  }),
+  new Promise((settle) => { slowTimer = setTimeout(() => settle("no answer within 10 s, so the worker was stopped"), 10000) }),
+])
+clearTimeout(slowTimer)
+await slowWorker.terminate()
+for (const [slowGlob, want, label] of slowGlobs) {
+  const answer = slowAnswers.get(slowGlob)
+  const got = answer === undefined ? slowOutcome : answer.error !== undefined ? `threw ${answer.error}` : classify(answer.result)
+  const took = answer?.took ?? Infinity
+  verdict(got === want && took < 2000, `Pi guard: a glob of ${label} is ${want} in under 2 s`, answer === undefined ? got : `${got} in ${Math.round(took)} ms`)
 }
 
 // Where Pi was started does not change what the guard sees.
@@ -1352,7 +1408,7 @@ if (dirLinked) {
   await expect(pi, "write", { path: "notes-gone/x.md", content: "x" }, "refused", "a write through a link to a folder in secrets/ that does not exist yet")
   await expect(pi, "read", { path: "sub/secrets/n.md" }, "refused", "sub/secrets/n.md, where sub/secrets is a link to an ordinary folder")
   await expect(pi, "ls", { path: "sub/secrets" }, "refused", "an ls of sub/secrets itself")
-  await expect(pi, "read", { path: "loop-a/x" }, "refused", "a path through a loop of links (the guard fails closed)")
+  await expect(pi, "read", { path: "loop-a/x" }, "failed", "a path through a loop of links (the guard fails closed)")
 }
 let fileLinked = false
 try {
@@ -1410,6 +1466,18 @@ rmSync(lintArgs, { force: true })
 await result(pi, "edit", { path: "@31-standards/q.md", edits: [] }, false)
 verdict(same(lintRecord(), ["--", "31-standards/q.md"]), "Pi lint: an edit of @31-standards/q.md lints 31-standards/q.md", JSON.stringify(lintRecord()))
 await lintCase(pi, { path: "31-standards/O'Brien[1].md", content: "x" }, ["--", "31-standards/O'Brien[1].md"], "a name holding ' and [ ] reaches the lint as written")
+// Git Bash's runtime would read a double quote as the end of an argument, and no
+// Windows path can hold one, so there the lint is not run for such a name. A
+// separate instance keeps its warning out of the no-warning check below.
+if (win) {
+  const dq = await load(adapterIn(vault), vault)
+  rmSync(lintArgs, { force: true })
+  await result(dq, "write", { path: '31-standards/a"b.md', content: "x" }, false)
+  verdict(lintRecord() === null && dq.notes.some((note) => note.includes("double quote")),
+    "Pi lint: on Windows a name holding a double quote is not handed to Git Bash, and the extension says so", `${JSON.stringify(lintRecord())} ${JSON.stringify(dq.notes)}`)
+} else {
+  await lintCase(pi, { path: '31-standards/a"b.md', content: "x" }, ["--", '31-standards/a"b.md'], "a name holding a double quote reaches the lint as written")
+}
 const loud = await result(pi, "write", { path: "31-standards/loud.md", content: "x" }, false)
 const loudText = loud?.content?.at(-1)?.text ?? ""
 verdict(loudText.endsWith("(cut off at 4000 characters)") && loudText.length < 4200,
