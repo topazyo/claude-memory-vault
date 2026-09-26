@@ -50,12 +50,14 @@ planted under `.pi/`, and the lint's invisible-character scan reaches Pi's instr
     searches;
   - refuses a `grep` whose glob names one of them: by its text, by a last part that matches `.env`,
     `.env.local` or `secrets` or spells `.env.` with `?`, `[...]` or `{...}` standing in for letters
-    of `.env`, or by a folder part that matches `secrets`, comparing letters without regard to
-    case. A `[...]` set that could match a `/` is tried as one too, since ripgrep lets it, and a
-    backslash is read as the escape it is to ripgrep on every platform (on Windows also as a `/`).
-    ripgrep lets a matching glob override `.gitignore`. A glob that reaches a secret only
-    through a `*` standing in for some or all of `.env`, such as `*.production` or
-    `.e*.production`, is let through, and the guide says so;
+    of `.env`, or by a folder part other than `*` or `**` that matches `secrets`, comparing
+    letters without regard to case. A `[...]` set that could match a `/` is tried as one too,
+    since ripgrep lets it, and a backslash is read as the escape it is to ripgrep on every
+    platform; on Windows the guard also tries it as a `/`. Sets, such as the range `[a-b-z]`, and
+    a glob's trailing white space are read as ripgrep reads them. ripgrep lets a matching glob
+    override `.gitignore`. A glob that reaches a `.env.*` name other than `.env.local` only through a `*`
+    standing in for some or all of `.env`, such as `*.production` or `.e*.production`, is let
+    through, and the guide says so;
   - refuses a `read`, `write` or `edit` call that carries no path, and a call it cannot decide,
     such as a glob longer than 256 characters, rather than letting it through unchecked;
   - runs `vault-lint.sh` after each successful `write` and `edit` and adds what it reports to the

@@ -38,11 +38,11 @@ as Claude Code's own read deny does.
 - **Enforced once the extension is loaded:**
   - A file-tool call is refused when its path names `.env` or `.env.*`, or passes through or ends
     at a part named `secrets` at any depth, in any letter case. Inside the vault only the part
-    below the vault is tested, and outside it the whole path. The extension reads the path the way Pi's own
-    tools will open it: a leading `@`, `~`, `file://` URLs, Windows drive and Git Bash forms,
-    trailing dots and spaces, and NTFS stream names. It follows symbolic links too, including one
-    whose target does not exist yet, so `@.env`, `.ENV.` and a note that links to `.env` are
-    refused. A `grep`, `find` or `ls` with no path is tested against the folder Pi was started
+    below the vault is tested, and outside it the whole path. The extension reads the path the way
+    Pi's own tools will open it: a leading `@`, `~`, `file://` URLs, Windows drive and Git Bash
+    forms, trailing dots and spaces, and NTFS stream names. It follows symbolic links too,
+    including one whose target does not exist yet, so `@.env`, `.ENV.` and a note that links to
+    `.env` are refused. A `grep`, `find` or `ls` with no path is tested against the folder Pi was started
     in, which it searches. A `read`, `write` or `edit` with no path is refused rather than let
     through unchecked.
   - A `grep` glob is refused when its text holds `.env` or `secret` in any letter case, such as
@@ -52,14 +52,17 @@ as Claude Code's own read deny does.
     `.[e]nv.production`; and when a folder part other than `*` or `**` matches `secrets`, such as
     `31-standards/s?crets/*.md`. Letters and sets are compared without regard to case. The parts
     are split at each `/` outside a `[...]` set and at an escaped `\/`, and because ripgrep lets
-    a set match a `/`, a set that could (one holding `/`, a negated set, or a range across `/`) is
-    tried both as a letter and as a `/`: `s[e/]crets/x.md` and `s?crets[!a]x.md` are refused.
-    ripgrep reads a backslash as an escape on every platform, so `.\env` is `.env`; on Windows the
-    glob is tested with its backslashes read as `/` too. ripgrep lets a glob that matches a file
-    override `.gitignore`, which is why the glob is checked at all. A glob that reaches a secret
-    only through a `*` standing in for some or all of `.env`,
-    such as `*.production` or `.e*.production` for `.env.production`, is let through, and so is
-    `*.md`, although it would also match a file called `.env.md`.
+    a set match a `/`, a set that could (one holding `/`, a negated set that does not exclude `/`,
+    or a range across `/`) is tried both as a letter and as a `/`: `s[e/]crets/x.md` and
+    `s?crets[!a]x.md` are refused. ripgrep reads a backslash as an escape on every platform, so
+    `.\env` is `.env`; on Windows the glob is tested with its backslashes read as `/` too. A set is
+    read as ripgrep reads it, so `[a-b-z]` runs from `a` to `z`, and like ripgrep the guard drops
+    a glob's trailing white space unless a backslash escapes its last space. ripgrep lets a glob
+    that matches a file override `.gitignore`, which is why the glob is checked at all.
+    A glob that reaches a `.env.*` name other than `.env.local` only through a `*` standing in for
+    some or all of `.env`, such as `*.production` or `.e*.production` for `.env.production`, is let
+    through, and so is `*.md`, although it would also match a file called `.env.md`; `*` and
+    `*.local` are refused, because they match `.env` and `.env.local` themselves.
   - After each successful `write` and `edit` the lint runs, and what it reports on stderr, a
     missing `tier:` or a hidden character or a scan that could not run, is added to the end of the
     tool's result, cut at 4000 characters with a line saying so. Pi's `tool_result` handlers may
@@ -75,7 +78,7 @@ as Claude Code's own read deny does.
     `secrets/`, but in a vault that is not a git repository such a grep reads them as well.
   - A glob that is let through overrides `.gitignore` for every file it matches, in a git
     repository too, so `*.production` reads `.env.production` and `*.md` reads a file called
-    `.env.md` wherever they exist.
+    `.env.md` in every folder ripgrep searches.
   - Pi runs its `find` so that it honours `.gitignore` in a vault that is not a git repository
     too, so a `find` lists secret names only where `.gitignore` does not list them, and never their
     contents. An `ls` of a folder lists the names in it.
@@ -192,8 +195,8 @@ exec pi --print --no-session --no-approve --no-extensions --no-skills --offline 
   during a pass.** Keep them out of the container: leave every `.env` and `.env.*` out of what you
   mount, at any depth, and mount an empty folder over every `secrets/` folder. Adding
   `-e .claude/adapters/pi/vault.js` would load the guard, since Pi loads an extension named with
-  `-e` even with `--no-extensions`, but it would also lint
-  every write and could record a compaction into `20-projects/_logs/` during the pass.
+  `-e` even with `--no-extensions`, but it would also lint every write and could record a
+  compaction into `20-projects/_logs/` during the pass.
 - Pi still loads its global `~/.pi/agent/AGENTS.md` and any `AGENTS.override.md`, `AGENTS.md` or
   `CLAUDE.md` in the folders above the vault. Those steer the pass, and the fence cannot see them.
   `--no-context-files` would drop them, but it drops the vault's own `AGENTS.md` as well, so the
@@ -224,9 +227,9 @@ once against a scratch copy of the vault and diff the tree before you schedule i
   match a `/`, or with a `{` that never closes. A `grep` glob that is not text is refused as a
   changed tool input.
 - `bash` and `powershell` reads and writes bypass the extension.
-- A `grep` glob that reaches a secret only through a `*` standing in for some or all of `.env` is
-  let through, in a git repository too, and so is a `grep` with no glob in a vault that is not a
-  git repository, which reads `.env` and `secrets/`.
+- A `grep` glob that reaches a `.env.*` name other than `.env.local` only through a `*` standing
+  in for some or all of `.env` is let through, in a git repository too, and so is a `grep` with no
+  glob in a vault that is not a git repository, which reads `.env` and `secrets/`.
 - A write to one of Pi's own execution surfaces, such as `.pi/extensions/` or `.pi/settings.json`,
   is neither refused nor linted, and takes effect the next time Pi loads it. The scheduled passes
   contain such a write, and an interactive session does not.

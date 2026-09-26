@@ -304,7 +304,7 @@ jobs:
         if: github.repository == 'topazyo/claude-memory-vault'
         run: |
           specs=(':(icase,glob).pi' ':(icase,glob).pi/**' ':(icase,glob)**/.pi' ':(icase,glob)**/.pi/**')
-          scratch="$RUNNER_TEMP/pi-pathspec-probe"
+          scratch="${RUNNER_TEMP:?}/pi-pathspec-probe"
           rm -rf "$scratch"
           mkdir -p "$scratch/.PI" "$scratch/a/.Pi/extensions" "$scratch/b" "$scratch/a/pi" "$scratch/.pilot" "$scratch/c"
           for f in .PI/x a/.Pi/extensions/x.js b/.pi a/pi/x.js .pilot/x c/x.pi pi.md; do printf 'x\n' > "$scratch/$f"; done

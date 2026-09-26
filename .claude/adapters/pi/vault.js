@@ -192,16 +192,17 @@ function isSecret(raw, cwd, vault) {
 //     starting .env. with ?, [...] or {...} standing in for letters of .env;
 //   - or a folder part other than * or ** matches secrets.
 // The parts are split at each / outside a [...] set, and at an escaped \/ as
-// well, which ripgrep reads as a /. A set that could match a /
-// (one holding /, a negated one, or a range across /) is tried both as one
-// character and as a /, so no set can hide where one folder ends; a glob with
-// more than MAX_SLASH_SETS such sets is not decided.
+// well, which ripgrep reads as a /. A set that could match a / (one holding
+// /, a negated one that does not exclude /, or a range across /) is tried both
+// as one character and as a /, so no set can hide where one folder ends; a
+// glob with more than MAX_SLASH_SETS such sets is not decided.
 // Letters are compared without regard to case, and a [...] set is tried with
 // both cases of a letter, because ripgrep compares case as written while the
-// file on disk may be spelled either way. A glob that reaches a secret only
-// through a * standing in for some or all of .env, such as *.production for
-// .env.production, is let through: refusing it would refuse *.md too. A glob
-// that only excludes (!...) widens nothing.
+// file on disk may be spelled either way. A glob that reaches a .env.* name
+// other than .env.local only through a * standing in for some or all of .env,
+// such as *.production for .env.production, is let through: refusing it would
+// refuse *.md too. * and *.local still match .env and .env.local themselves.
+// A glob that only excludes (!...) widens nothing.
 const SECRET_NAMES = [".env", ".env.local", "secrets"]
 const MAX_GLOB = 256
 const MAX_ALTERNATIVES = 32
@@ -245,28 +246,34 @@ function braceAlternatives(glob) {
   throw new Error("the glob has a { with no }")
 }
 
-// A [...] set at glob[p]: its test and where it ends, or null with no ].
+// A [...] set at glob[p]: its test and where it ends, or null with no ]. It is
+// read as ripgrep's globset reads it: a ] or - that comes first is itself, and
+// a - with a character after it, following a range, moves that range's end, so
+// [a-b-z] is a to z. A range that runs backwards is an error to ripgrep, which
+// then reads nothing, and here it matches nothing.
 function classAt(glob, p) {
   let i = p + 1
   const negated = glob[i] === "!" || glob[i] === "^"
   if (negated) i++
-  const first = i
-  if (glob[i] === "]") i++
-  while (i < glob.length && glob[i] !== "]") i++
-  if (i >= glob.length) return null
-  const body = glob.slice(first, i)
-  const one = (c) => {
-    let inside = false
-    for (let k = 0; k < body.length; k++) {
-      if (body[k + 1] === "-" && k + 2 < body.length) {
-        if (c >= body[k] && c <= body[k + 2]) inside = true
-        k += 2
-      } else if (body[k] === c) {
-        inside = true
-      }
+  const ranges = []
+  let first = true
+  let inRange = false
+  for (; i < glob.length; i++) {
+    const c = glob[i]
+    if (c === "]" && !first) break
+    if (inRange) {
+      ranges[ranges.length - 1][1] = c
+      inRange = false
+    } else if (c === "-" && !first) {
+      inRange = true
+    } else {
+      ranges.push([c, c])
     }
-    return inside !== negated
+    first = false
   }
+  if (i >= glob.length) return null
+  if (inRange) ranges.push(["-", "-"])
+  const one = (c) => ranges.some(([low, high]) => c >= low && c <= high) !== negated
   // Either case of the letter will do, since the name on disk may be either.
   const test = (c) => one(c) || one(c.toLowerCase()) || one(c.toUpperCase())
   return { test, end: i + 1 }
@@ -371,11 +378,13 @@ function partsMaySeeSecret(parts) {
 // its ignore crate builds each glob with backslash_escape, and so does this
 // test. On Windows, where a backslash also separates folders in a path, the
 // glob is tested with its backslashes read as / as well, and refused when
-// either reading reaches a secret.
+// either reading reaches a secret. Like a .gitignore line, the glob first loses
+// its trailing white space, unless it ends in an escaped space.
 function globMaySeeSecret(raw) {
   if (raw.length > MAX_GLOB) throw new Error(`the glob is longer than ${MAX_GLOB} characters`)
-  if (raw.startsWith("!")) return false
-  const readings = WINDOWS && raw.includes("\\") ? [raw, raw.replace(/\\/g, "/")] : [raw]
+  const line = raw.endsWith("\\ ") ? raw : raw.trimEnd()
+  if (line.startsWith("!")) return false
+  const readings = WINDOWS && line.includes("\\") ? [line, line.replace(/\\/g, "/")] : [line]
   return readings.some((reading) => {
     const glob = reading.replace(/^\/+/, "")
     const folded = glob.toUpperCase()

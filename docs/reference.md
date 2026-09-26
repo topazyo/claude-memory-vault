@@ -227,10 +227,10 @@ reads a path the way Pi's file tools will open it (a leading `@`, `~`, `file://`
 drive and Git Bash forms, trailing dots and spaces, NTFS stream names, and symbolic links,
 including one whose target does not exist yet) and compares names as NTFS does. It also refuses a
 grep whose glob names a secret, by its text or by a part that matches one, because ripgrep lets a
-matching glob override `.gitignore`; a glob that reaches a secret only through a `*` standing in
-for some or all of `.env`, such as `*.production`, `.e*.production` or `*.md`, is let through, in
-a git repository too. It fails closed when a `read`,
-`write` or `edit` call carries no path and when it cannot decide a call
+matching glob override `.gitignore`; a glob that reaches a `.env.*` name other than `.env.local`
+only through a `*` standing in for some or all of `.env`, such as `*.production`,
+`.e*.production` or `*.md`, is let through, in a git repository too. It fails closed when a
+`read`, `write` or `edit` call carries no path and when it cannot decide a call
 ([`docs/harnesses/pi.md`](harnesses/pi.md) has the exact rules). Like every deny here, it does not
 stop a shell command such as `cat`.
 
@@ -385,7 +385,8 @@ a lint that does nothing and a lint that found nothing wrong print the same thin
   `.[e]nv`, `.e{n}v`, `20-projects/.[e]nv`, `.[e]nv.production`, `31-standards/s?crets/*.md`,
   `.[!E]nv`, `.[_-f]nv`, `{[,.]env,x}`, `.[E]nv`, `.[e]NV` and others), including through a `/`
   inside a set (`s[e/]crets/x.md`), a set that could match a `/` (`s?crets[!a]x.md`), an escaped
-  `\/` or a backslash escape (`.\env`), a file read from a session started inside `secrets/`, a
+  `\/` or a backslash escape (`.\env`), a range continued with another `-` (`.[a-b-z]nv`) or
+  trailing white space (`.[e]nv `), a file read from a session started inside `secrets/`, a
   `../secrets/k` read from a session started in `31-standards/`, an `ls`, `grep` or `find` with no
   path from a session started inside `secrets/`, and on Windows `C:.env` and a glob whose `\`,
   read as a slash, names `.env`. Each refusal is checked for its reason, so a call the guard should
@@ -403,14 +404,16 @@ a lint that does nothing and a lint that found nothing wrong print the same thin
   for its root. Folder links are junctions on Windows, so those cases run there too, and the file
   links need a host that can make them. `.envrc`, `notes/env.md`, a note called `secrets.md`,
   globs such as `*.md`, `{a,b}.md`, `*/x`, `[{]*.md`, `*.m?`, `[!.]*.md`, `[a-c]*.md`,
-  `{a,{b,c}}.md` and `\*.md`, so that every construct the matcher reads also appears in a glob it
-  lets through, a `find` with no path at the vault root, and the notes of a vault kept inside a
+  `[a-b-d]x.md`, `{a,{b,c}}.md`, `\*.md` and `*.md ` with a trailing space, so that every
+  construct the matcher reads also appears in a glob it lets through, a `find` with no path at the
+  vault root, and the notes of a vault kept inside a
   folder named `secrets` are let through, including by a Git Bash `/c/...` path on Windows. A
   successful `write` or `edit` runs the lint with the vault-relative path, even from a subfolder or
   through a link to the vault, with `CLAUDE_PROJECT_DIR` naming the vault rather than an inherited
   decoy, and with a name holding `'` and `[ ]` intact, and one holding `"` too except on Windows,
-  where it is not handed to Git Bash and the extension says so; what the lint reports is added to the tool's result,
-  cut at 4000 characters with a note saying so; a failed write and a `read` are not linted. A
+  where it is not handed to Git Bash and the extension says so; what the lint reports is added to
+  the tool's result, cut at 4000 characters with a note saying so; a failed write and a `read` are
+  not linted. A
   compaction sends the session id, trigger and session file to the stub. A lint that exits
   non-zero is reported once, a lint that hangs is stopped at the time limit and reported without
   waiting for what it left running, and a script that exits 0 while a child holds its stderr is
