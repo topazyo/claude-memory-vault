@@ -3076,6 +3076,16 @@ usage() {
   return 0
 }
 
+# tmp_dir - a new private folder in TMPDIR, or in /tmp when TMPDIR is not set
+# Named by a template rather than left to mktemp, because on macOS mktemp -d
+# puts the folder in the per-user folder the system names and not in TMPDIR, so
+# a caller who points TMPDIR somewhere would find the run's folders elsewhere.
+# The plain forms stay as a fallback, for a TMPDIR that cannot be used.
+tmp_dir() {
+  mktemp -d "${TMPDIR:-/tmp}/vaultretention.XXXXXXXX" 2>/dev/null \
+    || mktemp -d 2>/dev/null || mktemp -d -t vaultretention 2>/dev/null
+}
+
 main() {
   local rc=0 lock_rc=0 state_rc=0 folder_rc=0 fd=""
   # The run lock's own variables, and the pid of a watched git, emptied before
@@ -3148,7 +3158,7 @@ main() {
   # its hooks from: that one is made only once this run holds the lock, because
   # while it waits a pass that holds the lock is running, and a folder of this
   # run's that exists then is one that pass could find and write a hook into.
-  COPY_DIR="$(mktemp -d 2>/dev/null || mktemp -d -t vaultretention 2>/dev/null)" || COPY_DIR=""
+  COPY_DIR="$(tmp_dir)" || COPY_DIR=""
   if [ -n "$COPY_DIR" ] && { : > "$COPY_DIR/run.log" && : > "$COPY_DIR/lib.log"; } 2>/dev/null; then
     RUN_LOG="$COPY_DIR/run.log"
     LIB_LOG="$COPY_DIR/lib.log"
@@ -3196,7 +3206,7 @@ main() {
 
   # Made here, after the lock and the tripwire have had their say, for the reason
   # given where COPY_DIR is made.
-  SNAP_DIR="$(mktemp -d 2>/dev/null || mktemp -d -t vaultretention)" || {
+  SNAP_DIR="$(tmp_dir)" || {
     SNAP_DIR=""
     say "ERROR: could not create a temporary directory"
     return 1
