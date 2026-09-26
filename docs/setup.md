@@ -214,7 +214,7 @@ after this one turns it on.
 
 | Hook | Fires on | What it does | Can it block you? |
 | --- | --- | --- | --- |
-| `vault-lint.sh` | `PostToolUse`, matcher `Write` or `Edit` | Checks the just-written note for the mandatory `tier:` and `type:` frontmatter, and scans it for zero-width / bidi codepoints. The character scan is widened to `.claude/rules/`, `.claude/agents/`, `.claude/skills/`, and any `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` or `.github/copilot-instructions.md`, which are exactly what a rules-file backdoor targets. Logs to `.claude/logs/vault-lint.log`. | No — advisory, **always exits 0** |
+| `vault-lint.sh` | `PostToolUse`, matcher `Write` or `Edit` | Checks the just-written note for the mandatory `tier:` and `type:` frontmatter, and scans it for zero-width / bidi codepoints. The character scan is widened to the files that steer an agent, such as `.claude/rules/`, the skills and any `AGENTS.md` or `CLAUDE.md` (the full list is in [`reference.md`](reference.md) §3.1), which are exactly what a rules-file backdoor targets. Logs to `.claude/logs/vault-lint.log`. | No — advisory, **always exits 0** |
 | `postcompact-wrap-up.sh` | `PostCompact` | Writes one idempotent, size-capped stub per session into `20-projects/_logs/compaction-<session>.md`, so the material in a compacted context is still recoverable afterwards. Caps at 50 entries, and sanitizes the session id before building a path. | No |
 | `instructions-loaded-log.sh` | `InstructionsLoaded`, session start only | Appends which instruction files loaded, to `.claude/logs/instructions-loaded.log`. This is how you answer "was that rule actually in context?" instead of guessing. **Opt-in: the shipped `settings.json` does not register it.** | No |
 
@@ -267,9 +267,9 @@ and `Read(./secrets/**)`. They apply immediately, without a trust prompt.
 
 **Start with your harness's guide in [`docs/harnesses/`](harnesses/README.md).** The template ships
 config for Codex CLI, Gemini CLI, Cursor, GitHub Copilot, OpenCode, Windsurf / Devin Desktop and
-Aider, and a snippet for Hermes Agent. Each guide gives the one-time setup and an onboarding prompt
-whose checks prove the hooks fire. The steps below are the harness-independent version, for a
-harness without a guide.
+Aider, plus an opt-in extension for Pi and a snippet for Hermes Agent. Each guide gives the
+one-time setup and an onboarding prompt whose checks prove the hooks fire. The steps below are the
+harness-independent version, for a harness without a guide.
 
 Everything the vault asks of an agent is in `AGENTS.md`, and every checker is a bash script that
 does not care which harness wrote the note. What a non-Claude harness does not get for free is the

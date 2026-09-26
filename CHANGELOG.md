@@ -25,6 +25,107 @@ bash .claude/scripts/vault-update.sh --check --from ../template-new
 
 ---
 
+## 1.3.2 — 2026-09-26
+
+Pi, the terminal coding agent from Earendil Works, becomes the tenth harness with a guide. It gets
+an opt-in extension that guards the secret paths, lints written notes and records compactions, and
+an onboarding prompt whose checks prove the extension runs. The scheduled passes now contain a file
+planted under `.pi/`, and the lint's invisible-character scan reaches Pi's instruction files,
+`AGENTS.override.md` and `CLAUDE.local.md`.
+
+### Added
+
+- **`docs/harnesses/pi.md`**, the guide: what ships, what is enforced and what stays guidance, the
+  one-time setup, the onboarding prompt and its checks, a wrapper for the scheduled passes, and its
+  sources, checked against Pi v0.87.1 on 2026-09-25.
+- **`.claude/adapters/pi/vault.js`, the extension, which is opt-in.** Pi runs `.pi/extensions/`
+  once a project is trusted, and it treats a trust decision saved for a folder as covering every
+  folder below it, so a vault cloned into a trusted folder would run a shipped extension without
+  asking. The extension therefore ships where Pi does not look, and you load it with `pi -e` or
+  copy it into `.pi/extensions/`. Once loaded it:
+  - refuses a `read`, `write`, `edit`, `grep`, `find` or `ls` call whose path names `.env` or
+    `.env.*`, or passes through or ends at a part named `secrets` at any depth, reading the path
+    the way Pi's own tools will open it and following symbolic links, including one whose target
+    does not exist yet. A `grep`, `find` or `ls` with no path is tested against the folder it
+    searches;
+  - refuses a `grep` whose glob names one of them: by its text, by a last part that matches `.env`,
+    `.env.local` or `secrets` or spells `.env.` with `?`, `[...]` or `{...}` standing in for letters
+    of `.env`, or by a folder part other than `*` or `**` that matches `secrets`, comparing
+    letters without regard to case. A `[...]` set that could match a `/` is tried as one too,
+    since ripgrep lets it, and a backslash is read as the escape it is to ripgrep; on Windows a
+    glob holding a backslash is refused as one the guard cannot decide. Sets, such as
+    `[a-b-z]`, which runs from `a` to `z`, and a glob's trailing white space are read as ripgrep
+    reads them. ripgrep lets a matching glob override `.gitignore`. A glob that starts with `!`
+    only excludes files, so it is let through. A glob that reaches a `.env.*` name other than
+    `.env.local` only
+    through a `*` standing in for some or all of `.env`, such as `*.production` or
+    `.e*.production`, is let through, and the guide says so;
+  - refuses a `read`, `write` or `edit` call that carries no path, and a call it cannot decide,
+    such as a glob longer than 256 characters, rather than letting it through unchecked;
+  - runs `vault-lint.sh` after each successful `write` and `edit` and adds what it reports to the
+    tool's result, cut at 4000 characters with a line saying so, and runs
+    `postcompact-wrap-up.sh` after each compaction. Both run with `CLAUDE_PROJECT_DIR` naming the
+    vault, are stopped at 15 s and answered by 16 s, and the extension says once when either could
+    not run.
+
+  Pi's `bash` tool, and `powershell` where you enable it, run without asking and can read any of
+  these files, so the guard keeps the file tools from reading a secret by accident and is not a
+  boundary.
+- **Controls for the extension**, driven through Node 18 or later: each spelling of a secret path
+  Pi would open, the globs and links that reach one, the names it must let through, the reason
+  each refusal gives, the lint and stub calls, and the warning when a script fails. Without Node
+  they skip with a reason, and the file-link cases skip on a Windows machine that may not make
+  file links. CI requires the behaviour, folder-link and file-link controls on every job.
+
+### Changed
+
+- **A scheduled pass that writes under a `.pi/` folder is now contained.** `.pi` joins the harness
+  folders the runners treat as a steering or execution surface, in any letter case and at any
+  depth, because Pi runs code from `.pi/extensions/`, installs what `.pi/settings.json` declares
+  into `.pi/npm` and replaces its system prompt from `.pi/SYSTEM.md`. Until now such a write was
+  treated like any other file the pass wrote, and nothing put it aside. Now the runner puts it
+  aside and sets `.claude/logs/runner-tripwire`, so later runs exit 78 until you have looked.
+- **The lint's invisible-character scan reaches Pi's instruction files**: `.pi/SYSTEM.md`,
+  `.pi/APPEND_SYSTEM.md`, `.pi/skills/` and `.pi/prompts/`.
+- **It also reaches `AGENTS.override.md` and `CLAUDE.local.md`.** Codex and Pi load
+  `AGENTS.override.md` in place of `AGENTS.md` in the folder that holds it, and Claude Code loads
+  `CLAUDE.local.md` beside `CLAUDE.md`. Both gaps predate Pi: the runners already contained the
+  two files, and the lint did not scan them.
+- **`docs/reference.md` §3.1 is now the one complete list of what the scan covers.** `README.md`,
+  `docs/setup.md` and `docs/customizing.md` point to it instead of repeating a list that had fallen
+  behind, since none of them named `.agents/skills/` or `.hermes.md`.
+- `AGENTS.md` §8, `docs/harnesses/README.md`, `README.md` and `docs/setup.md` name Pi alongside
+  the other harnesses, and the skills row of `AGENTS.md` §8 now says Hermes, like Pi, reads
+  `.agents/skills/` only once the project is trusted. `docs/reference.md` describes Pi's guard and
+  the new controls, lists Node as an optional dependency of the suite, names `.opencode/` and
+  `.pi/` among the containment surfaces, and says that the lists of required controls it shows
+  are excerpts of the ones in `.github/workflows/ci.yml`. The comments in
+  `postcompact-wrap-up.sh` name Pi's event.
+
+### Adopting this
+
+Take the changed owned files. The one that changes what your scheduled passes do is
+`.claude/scripts/lib/runner-common.sh`: once you have it, a pass that writes under `.pi/` sets the
+tripwire, and later runs exit 78 until you have looked. A `.pi/` folder you keep for interactive
+use does not stop the schedule, because only what a pass changes counts, though the runner now
+backs it up with the other steering files before every run, which a large `.pi/npm` makes slower.
+If you run the passes under Pi, use the wrapper in `docs/harnesses/pi.md`: its `--no-approve`
+stops Pi installing project packages into `.pi/npm` during a pass, which would now stop the
+schedule. `.claude/hooks/vault-lint.sh` scans six more kinds of steering file and still always
+exits 0. `AGENTS.md` is a standing instruction every harness loads, and its §8 table names Pi in
+five rows.
+
+`.claude/adapters/pi/vault.js` is new code, and nothing runs it until you load it, so to use Pi
+with this vault, follow `docs/harnesses/pi.md`. `docs/harnesses/pi.md` is new too, and
+`docs/harnesses/README.md`, `docs/reference.md`, `docs/setup.md`, `docs/customizing.md`,
+`.claude/hooks/postcompact-wrap-up.sh` and `.claude/scripts/run-tests.sh` changed. `VERSION` and
+`CHANGELOG.md` move as on every release. No rule, note, frontmatter key or `vault-check.sh`
+invariant changed.
+
+`README.md` changed too, and it is seed, so your copy stays as you wrote it.
+
+---
+
 ## 1.3.1 — 2026-09-25
 
 Of the files a vault is offered, this release changes only the control suite. Some of its run-lock

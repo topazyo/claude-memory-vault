@@ -161,8 +161,11 @@ What it does, in order:
    and the block must contain `tier:` and `type:`. The closing fence is found with the same
    anchored pattern `vault-check.sh` uses, so the two cannot disagree about where frontmatter ends.
 4. **Invisible-character scan** (content tiers **plus** `.claude/rules/`, `.claude/agents/`,
-   `.claude/skills/`, and any `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` or
-   `.github/copilot-instructions.md`): flags zero-width `U+200B`–`U+200D`,
+   `.claude/skills/`, `.agents/skills/`, Pi's `.pi/skills/` and `.pi/prompts/`, and any
+   `AGENTS.md`, `AGENTS.override.md`, `CLAUDE.md`, `CLAUDE.local.md`, `GEMINI.md`,
+   `.github/copilot-instructions.md`, `.hermes.md`, `.pi/SYSTEM.md` or `.pi/APPEND_SYSTEM.md`, in
+   any letter case; this is the one
+   complete list, which the other documents point to): flags zero-width `U+200B`–`U+200D`,
    `U+FEFF`, and bidi controls `U+202A`–`U+202E`, `U+2066`–`U+2069`. This is the "Rules File
    Backdoor" class (steering files carrying instructions no reviewer can see), which is why the
    scan reaches the files that steer the agent, including the always-loaded ones the frontmatter
@@ -219,8 +222,17 @@ output.
 | Logs | `.claude/logs/read-guard.log` |
 
 Claude Code does not use it: `.claude/settings.json` denies the same paths natively. OpenCode's
-plugin applies the same test in JavaScript. Like every deny here, it does not stop a shell command
-such as `cat`.
+plugin applies the same test in JavaScript. Pi's opt-in extension applies its own, which first
+reads a path the way Pi's file tools will open it (a leading `@`, `~`, `file://` URLs, Windows
+drive and Git Bash forms, trailing dots and spaces, NTFS stream names, and symbolic links,
+including one whose target does not exist yet) and compares names as NTFS does. It also refuses a
+grep whose glob names a secret, by its text or by a part that matches one, because ripgrep lets a
+matching glob override `.gitignore`; a glob that starts with `!` only excludes, and a glob that
+reaches a `.env.*` name other than `.env.local` only through a `*` standing in for some or all of
+`.env`, such as `*.production`, `.e*.production` or `*.md`, is let through, in a git repository
+too. It fails closed when a `read`, `write` or `edit` call carries no path, when a grep's glob is
+not text, and when it cannot decide a call ([`docs/harnesses/pi.md`](harnesses/pi.md) has the
+exact rules). Like every deny here, it does not stop a shell command such as `cat`.
 
 ### 3.3 `instructions-loaded-log.sh` — instruction-load audit
 
@@ -360,6 +372,57 @@ a lint that does nothing and a lint that found nothing wrong print the same thin
 - **No-jq fallback** — with `VAULT_FORCE_NO_JQ=1`, `vault-lint.sh` still parses an escaped Windows
   path and lints it; the invisible-character scan covers `AGENTS.md`, `GEMINI.md` and
   `.github/copilot-instructions.md`.
+- **Pi's steering files** — the invisible-character scan covers `.pi/SYSTEM.md`,
+  `.pi/APPEND_SYSTEM.md`, `.pi/skills/`, `.pi/prompts/`, `AGENTS.override.md` and
+  `CLAUDE.local.md`, each by a relative name from the vault root and by an absolute path, and
+  leaves `.pi/other.md` and `pi/SYSTEM.md` alone by either.
+- **Pi extension** — with Node 18 or later, `.claude/adapters/pi/vault.js` is loaded with a
+  stand-in for Pi's extension API and fake vaults whose hook scripts record what they get. Each of
+  these is refused: `@.env`, `.ENV`, `.env.`, `.env ` and a trailing no-break space, an NTFS
+  stream name, `secrets./x`, `ſecrets/`, a `file://` URL with `%2Eenv`, `~/` with the home folder
+  inside `secrets/`, a grep glob whose text names a secret (`.env.production`, `.env.p*`,
+  `20-projects/.env`, `20-projects/secrets{,/**}` and others) or whose parts match one (`*`,
+  `.[e]nv`, `.e{n}v`, `20-projects/.[e]nv`, `.[e]nv.production`, `31-standards/s?crets/*.md`,
+  `.[!E]nv`, `.[_-f]nv`, `{[,.]env,x}`, `.[E]nv`, `.[e]NV` and others), including through a `/`
+  inside a set (`s[e/]crets/x.md`), a set that could match a `/` (`s?crets[!a]x.md`), an escaped
+  `\/` or a backslash escape (`.\env`), a range continued with another `-` (`.[a-b-z]nv`) or
+  trailing white space (`.[e]nv ` and U+0085, which JavaScript alone does not count as white
+  space), a file read from a session started inside `secrets/`, a `../secrets/k` read from a
+  session started in `31-standards/`, an `ls`, `grep` or `find` with no path from a session
+  started inside `secrets/`, and on Windows `C:.env`. Each refusal is checked for its reason, so a
+  call the guard should deny cannot pass by making the guard fail instead: a `file://` URL Pi
+  cannot open and a glob over 256 characters, of more than 32 brace alternatives, with more than
+  four sets that could match a `/`, with an unclosed `{` or, on Windows, holding any backslash
+  (the backslash cases above included) are refused as calls it cannot decide, each for its own
+  named cause, a `read` or `write` with no path as having none, and a glob that is not text as a
+  changed input, each fixed reason compared whole. Two globs built to make a backtracking matcher
+  run for ever, one of which a regex translation took more than 30 s over,
+  are decided in under 2 s; they are asked in a worker thread that is stopped after 10 s, so such
+  a matcher fails the two controls instead of hanging the suite. Links are followed: a linked
+  `secrets` folder, a link to a folder or a `.env` that does not exist yet, a relative link inside
+  a linked folder, and `sub/secrets` even when it links to an ordinary folder are refused, as is a
+  loop of links, as a call the guard cannot decide; a link to an ordinary note is not, and a
+  session started through a link deeper into the vault does not take the vault's parent
+  for its root. Folder links are junctions on Windows, so those cases run there too, and the file
+  links need a host that can make them. `.envrc`, `notes/env.md`, a note called `secrets.md`,
+  globs such as `*.md`, `{a,b}.md`, `*/x`, `[{]*.md`, `*.m?`, `[!.]*.md`, `[a-c]*.md`,
+  `[a-b-d]x.md`, `{a,{b,c}}.md`, `\*.md`, `!*.md` and `*.md ` with a trailing space, so that
+  every construct the matcher reads also appears in a glob it lets through, a `find` with no path
+  at the vault root, and the notes of a vault kept inside a folder named `secrets` are let
+  through, including by a Git Bash `/c/...` path on Windows. A successful `write` or `edit` runs
+  the lint with the vault-relative path, even from a subfolder or through a link to the vault,
+  with `CLAUDE_PROJECT_DIR` naming the vault rather than an inherited decoy, and with a name
+  holding `'` and `[ ]` intact, and one holding `"` too except on Windows, where it is not handed
+  to Git Bash and the extension says so; what the lint reports is added to the tool's result, cut
+  at 4000 characters with a note saying so; a failed write and a `read` are not linted. A
+  compaction sends the session id, trigger and session file to the stub. A lint that exits
+  non-zero is reported once, a lint that hangs is stopped at the time limit and reported without
+  waiting for what it left running, and a script that exits 0 while a child holds its stderr is
+  answered a second later as a success (on Windows, where Git Bash's launcher waits for the child,
+  within the time limit). A copy of the adapter kept in no vault runs no script and says so once.
+  The ids are `pi-extension-behaviour`, `pi-extension-dirlink` and `pi-extension-symlink`. A copy
+  in `.pi/extensions/` must match the adapter, the adapter must never answer Pi's `project_trust`
+  event (with a positive control), and every script it names must exist.
 - **postcompact-wrap-up.sh** — two compactions of one session append to one stub, with and without
   `jq`; a `../` session id stays inside `20-projects/_logs/`; the 50-entry cap writes
   `CAP REACHED` exactly once.
@@ -392,30 +455,30 @@ a lint that does nothing and a lint that found nothing wrong print the same thin
   stopped with 125 together with a grandchild whose parent already exited, a timeout reaches that
   grandchild too, a failed stop marks and keeps the run lock, and in claude mode the summary line
   counts only inside the stream's result event.
-- **Dependency report** (informational, never fails the run) — whether `jq`, `perl`, or `grep -P`
-  are present, and what degrades without each.
+- **Dependency report** (informational, never fails the run) — whether `jq`, `perl`, `grep -P`
+  and `node` 18 or later are present, and what degrades without each.
 
 A control that cannot run on the platform in hand prints `SKIP [<id>] <reason> (not counted)`.
 Set `RUN_TESTS_REQUIRED` to a space-separated list of those ids and the suite fails any of them
-that did not run. The CI jobs set it per operating system, on Windows to
+that did not run. The CI jobs set it per operating system. On Windows the list includes
 
 ```
 win-native-tree noncesweep win-sweep-report win-orphan-stop win-fork-stop signal-scope
 runlog-tmp-case retention-junction
 ```
 
-and on Linux, macOS and bash 3.2 to
+and on Linux, macOS and bash 3.2 it includes
 
 ```
 groupkill symlink run-log-link run-log-dirlink reaped-group line-break-name signal-scope
 runlog-tmp-case keep-output-dirlink tripwire-name keep-output-fifo retention-symlink
 ```
 
-Both lists are one line each in `.github/workflows/ci.yml`, wrapped here only to fit the page.
-Adding a platform-gated control means adding its id there as well, because a control nobody
-requires can quietly stop running on the platform it was written for. A fake pass whose stop is reported as `KILL_FAILED` fails the suite at
-the end, and its marked lock and the tripwire its stop set are moved aside after that run, so the
-cases after it still run.
+The complete lists, one line each, are in `.github/workflows/ci.yml`, and that file is the one to
+read. Adding a platform-gated control means adding its id there as well, because a control nobody
+requires can quietly stop running on the platform it was written for. A fake pass whose stop is
+reported as `KILL_FAILED` fails the suite at the end, and its marked lock and the tripwire its
+stop set are moved aside after that run, so the cases after it still run.
 
 The fixture vault is created at a path containing spaces (`.../some one/my vault/`) on purpose:
 that is the case word-splitting bugs break on, while still printing a reassuring "0 violations".
@@ -666,8 +729,9 @@ Around that call, each runner does several things an exit code cannot:
   time something opens the vault. So when the changed paths include a *steering or execution
   surface*, the runner contains it before anything else, including before it looks at the agent's
   exit code. Steering surfaces are the fenced Obsidian and git files above, memory, `.claude/`
-  except `logs/`, `.agents/`, each shipped harness's configuration folder or file, `.github/`,
-  `.vscode/`, and, **at any depth**, `CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md`,
+  except `logs/`, `.agents/`, each shipped harness's configuration folder or file, OpenCode's
+  `.opencode/` and Pi's `.pi/` (which the template does not ship but both harnesses run code from),
+  `.github/`, `.vscode/`, and, **at any depth**, `CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md`,
   `AGENTS.override.md`, `GEMINI.md`, `.mcp.json`, `.gitattributes`, `.gitignore` and any `.claude/`
   or other harness folder, including one that is the last part of the path, such as a symlink named
   `.claude`. Matching ignores case. A nested file counts because Claude Code loads
@@ -1507,6 +1571,7 @@ while a note under `40-llm-wiki/wiki/` is covered by the six-tier rules only.
 | `jq` | reliable hook-input parsing | The lint falls back to a `sed` path parse and warns loudly; the compaction stub degrades to placeholders. **Not bundled with Git for Windows.** |
 | `perl` | the invisible-character scan | Falls back to `grep -P`; if that is absent too, the hook says the scan did not run. Present on macOS, most Linux distributions, and Git for Windows. |
 | `grep -P` | fallback for the same scan | A GNU extension — **absent on macOS BSD grep**, which is why `perl` is preferred rather than the other way round. |
+| `node` 18 or later | the control suite's Pi extension checks | The suite skips those checks with a reason, as `pi-extension-behaviour`, `pi-extension-dirlink` and `pi-extension-symlink`, and nothing else changes. |
 | Obsidian + Dataview | the 13 dashboard queries | `VAULT-INDEX.md` renders as inert code fences. |
 
 ---
