@@ -25,7 +25,7 @@ bash .claude/scripts/vault-update.sh --check --from ../template-new
 
 ---
 
-## 1.4.0 — 2026-09-25
+## 1.4.0 — 2026-09-27
 
 The retention pass now tells whoever ran it what it did. Its judgement used to go only to its log,
 so cron, launchd and a person at a terminal saw nothing of it on standard output, and a run that
