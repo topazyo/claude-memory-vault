@@ -8922,6 +8922,12 @@ else
   bad "an unreadable index was taken for an index holding nothing --$re_bad rc $re_rc log: [$(tr '\n' '|' < "$(ret_log "$re_v")" 2>/dev/null | cut -c1-500)]"
 fi
 # TERM while the moves run puts them back, and the next run is not refused.
+# The TERM waits for the mark the git stand-in writes as git mv starts, however
+# long a slow host takes to get there: on one, a run took three minutes to log
+# its first line, and a TERM sent after a fixed two minutes ended it before it
+# had done anything, which the next run's clean move then made look like a
+# put-back. A run that never reached git mv is not a run stopped while moving,
+# so both cases below require the mark.
 re_v="$RET/moves-term"
 rm -rf "$re_v" "$re_v.state" "$RET/moves-term.count".* "$RET/moves-term.mark"
 cp -R "$RE0" "$re_v"
@@ -8930,22 +8936,24 @@ env RET_GIT_MODE=mv-slow RET_GIT_COUNT="$RET/moves-term.count" RET_GIT_MARK="$RE
   bash "$re_v/.claude/scripts/vault-retention.sh" >"$re_v.out" 2>/dev/null &
 re_pid=$!
 re_wait=0
-while [ ! -f "$RET/moves-term.mark" ] && [ "$re_wait" -lt 120 ]; do sleep 1; re_wait=$((re_wait + 1)); done
+while [ ! -f "$RET/moves-term.mark" ] && [ "$re_wait" -lt 900 ] && kill -0 "$re_pid" 2>/dev/null; do sleep 1; re_wait=$((re_wait + 1)); done
+re_marked=0
+[ -f "$RET/moves-term.mark" ] && re_marked=1
 kill -TERM "$re_pid" 2>/dev/null
 wait "$re_pid"
 re_rc=$?
 re_rc2="$(ret_run "$re_v")"
-if [ "$re_rc" = 143 ] && [ "$re_rc2" = 0 ] && ret_moved "$re_v" "$RE_J1"; then
+if [ "$re_marked" -eq 1 ] && [ "$re_rc" = 143 ] && [ "$re_rc2" = 0 ] && ret_moved "$re_v" "$RE_J1"; then
   ok "TERM during the moves puts them back, and the next run is not refused and moves them"
 else
-  bad "TERM during the moves left the vault held back or half moved -- rc $re_rc then $re_rc2"
+  bad "TERM during the moves left the vault held back or half moved, or the run never reached git mv -- rc $re_rc then $re_rc2, git mv reached: $re_marked after ${re_wait}s"
 fi
 # What the interrupted run printed. The signal lands while git mv runs, where
 # nothing has pointed the run's standard output anywhere else, so this holds
 # the report of an interrupted move. A signal inside a block that writes a
 # temporary file through standard output is the legacy report case, among the
 # printing controls in the block of paths that stop the run.
-if grep -qxF "vault-retention: INTERRUPTED by a signal while moving." "$re_v.out" 2>/dev/null \
+if [ "$re_marked" -eq 1 ] && grep -qxF "vault-retention: INTERRUPTED by a signal while moving." "$re_v.out" 2>/dev/null \
    && [ "$(tail -n 1 "$re_v.out" 2>/dev/null)" = "vault-retention: FAILED: this run ended with exit 143. The lines above are what it logged, and the header of vault-retention.sh says what the number means." ]; then
   ok "a run stopped by TERM while moving prints that it was interrupted, and last that it ended with exit 143"
 else
