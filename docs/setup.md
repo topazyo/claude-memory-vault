@@ -448,9 +448,8 @@ fence or another refusal (`docs/reference.md` § 4.3), `3` refused (see below), 
 `claude` or wrapper. `docs/reference.md` § 4.3 has the full table.
 
 `vault-retention.sh` uses some of the same numbers for different things, so read its codes against
-its own table in `docs/reference.md` § 4.3.1 rather than the list above. They are `0` OK, `2`
-REPORT-REFUSED, `3` PARTIAL, `4` COMMIT-FAILED, `6` PATH-BLOCKED, `64` usage and `71`
-RECOVERY-NEEDED, and it has no `124` or `125` because it runs no agent.
+its own table in `docs/reference.md` § 4.3.1 rather than the list above. It has no `124` or `125`,
+because it runs no agent.
 
 ```cron
 # dream pass, nightly at 02:30
@@ -460,6 +459,14 @@ RECOVERY-NEEDED, and it has no `124` or `125` because it runs no agent.
 # retention pass, Sundays at 04:30, after the promotion pass
 30 4 * * 0  /path/to/your-vault/.claude/scripts/vault-retention.sh
 ```
+
+The retention line has no redirect on purpose. The retention runner prints what it logged as it ends
+(`docs/reference.md` § 4.3.1), so on a machine where cron can send mail it mails you its judgement
+every week, and a run that could not start mails its reason rather than nothing (§ 4.3.1 has the
+exceptions). That mail carries note names, paths and refusal reasons from your vault, git's own
+error text, any commit-message text git reports, and the value of any setting it warns about. If your cron mail leaves the machine and
+you do not want that, end the line with `>/dev/null` and read `.claude/logs/vault-retention.log`
+instead. § 4.3.1 says where else the output may go, and why never into that log.
 
 Give the retention pass a slot after the other two rather than beside them. All three take the same
 run lock, so an overlap costs one of them a wait of up to `RUN_LOCK_WAIT` and then exit 75.
@@ -649,6 +656,10 @@ starts no agent:
   <string>/Users/YOU/Vaults/my-vault/.claude/logs/vault-retention.launchd.err</string>
 ```
 
+What the retention runner prints as it ends goes to `vault-retention.launchd.out`, one block per
+run, in the form `docs/reference.md` § 4.3.1 describes. The blocks carry no date, so the log is
+where to see when each ran.
+
 `Weekday` 0 is Sunday; omit the key entirely for a daily job.
 
 Load them:
@@ -702,7 +713,8 @@ schtasks /create /tn "Vault-Retention" /tr "\"C:\path\to\your-vault\.claude\scri
 
 Arguments pass through the retention wrapper, so a task that runs
 `vault-retention.cmd --dry-run` is a good way to watch its judgement for a few weeks before you
-let it move anything.
+let it move anything. Task Scheduler discards what the runner prints, so read that judgement in
+`.claude/logs/vault-retention.log`.
 
 Those two files already encode the traps below. They are documented here anyway, because if you
 ever write your own wrapper you will meet all three.
@@ -766,9 +778,9 @@ commit. The expensive case is a move that fails and has to be put back, which wa
 one at a time, up to `RETENTION_MAX_MOVES` steps of `RUNNER_GIT_TIMEOUT`. At the defaults that
 worst case is 30 + 12 + 100 minutes, so `PT2H30M` covers it with margin. Lowering
 `RETENTION_MAX_MOVES` lowers the worst case directly, and is the right move on a vault where you
-would rather archive in small batches anyway. A limit shorter than the run leaves the lock and the
-`retention-inflight` recovery file behind, and the next run then refuses with exit 78 until the
-vault matches what that file describes.
+would rather archive in small batches anyway. A limit shorter than the run leaves the lock behind,
+and, when it stops the run while files are moving, the `retention-inflight` recovery file too. The
+next run then refuses with exit 78 until the vault matches what that file describes.
 
 **Trap 3 — judging health by `State`.** Task health is `LastTaskResult` **plus a log file on
 disk**, never `State`. A task can sit at `Ready` for weeks while every run dies on startup.
@@ -841,9 +853,10 @@ removes `.claude/logs/`. Your notes are plain Markdown and are untouched.
 | Runner exits 4, or 130 or 143 after a signal, the log says `KILL_FAILED`, and every later run exits 75 | A commit step, or the stop a signal started, left a process running or could not check. A signal before containment also sets the tripwire, and the log says `INTERRUPTED`. After containment only the run lock is marked | End the process the log lists, as above, and check `git status` for a half-made commit. Then delete the `run.lock` folder the log names, and the tripwire too if one is set |
 | The log says the output of the pass is kept in the state directory | The pass was stopped by a signal before its output reached the `.run.log` in the vault, where writing is safe only after containment, a stop left a process that may still be running (`KILL_FAILED`), or a `WARNING` just before says the run log could not be written, for example because a folder or an unreadable file is in its place | Read `<runner>.interrupted.run` in the state directory the log names to see where the pass was. For a `WARNING`, fix what it names at the run-log path. A `WARNING` that names what is at that path (a folder, a link, or a path the output could not be renamed to) gives the new name the output was kept under instead. Read that file, then remove what is in the way. A `WARNING` that the output may be inside what took the path means something replaced it during the run, so look inside it. A `WARNING` that the output is lost means this run's output is gone. It says whether what is still at that path is an earlier run's output or something else, which you remove |
 | Retention runner exits 2 and the log says `REPORT-REFUSED` | The file given to `--adopt-legacy` is not a report this runner wrote, or its list of paths has been changed since it was written. Nothing moved | Use the report path the runner logged, in the state directory. Never hand-edit a report to add a path. Run the pass with no arguments to have it write a fresh report, read that one, and adopt it |
-| Retention runner exits 3 and the log says `PARTIAL` | A `git mv` failed while HEAD was still unchanged, so every file was put back where it was and nothing was committed | The log names what failed, usually a file that another program had open or a permission problem. Fix it and run again. The vault is already back at HEAD, so nothing is half moved |
+| Retention runner exits 3 and the log says `PARTIAL`, or that an archive folder could not be made or is a link | For `PARTIAL`, a `git mv` failed while HEAD was still unchanged, so every file was put back where it was and nothing was committed. For the other two, nothing had moved yet | The log names what failed, usually a file that another program had open or a permission problem. Fix it and run again. The vault is already back at HEAD, so nothing is half moved. For a folder, make `99-archive/20-projects/_logs` a real folder the account can create files in, then run again |
 | Retention runner exits 6 and the log says `PATH-BLOCKED` | `20-projects`, `20-projects/_logs` or one of the `99-archive/...` folders is a symlink, an NTFS junction, a plain file, or another entry exists whose name differs only in case. Checked before anything is judged, so nothing moved | Make the path named in the log a real folder in the vault, or remove the case-variant entry. The runner refuses rather than following a link because a link is how an archived note would be written somewhere you cannot see |
 | Retention runner exits 71 and the log says `RECOVERY-NEEDED`, and later runs exit 78 | A put-back failed, or a commit was made and what it did could not be determined. The runner never puts back a commit that may have landed | Read `retention-inflight` in the state directory. It names HEAD before the run and every file with where it should be. Put each file where the record says, with `git mv` if it is in the index, then run the pass again. It clears the record itself once the vault matches either the before or the after state |
+| Retention runner exits 1 and the log says `20-projects/_logs could not be listed or entered` | The account the pass runs as cannot list that folder or cannot enter it, so nothing in it could be judged. The lines after it are what the listing itself reported | Give the account the right to list and enter the folder (on Windows, remove a deny entry on it), then run again |
 | Retention runner exits 1 and the log names a shallow clone, grafts or a sparse checkout | Its whole judgement rests on complete history, and none of those can provide it | Run the pass in a full clone of the vault. `git fetch --unshallow` fixes a shallow one. Do not work around it, because an incomplete history is exactly what makes a human-edited journal look machine-written |
 | A journal never becomes eligible and the log says it was committed without a dream trailer | A sync plugin committed the journal before the runner could, so it carries no `Vault-Pass: dream` trailer and there is no way to prove a machine wrote it | Turn off the plugin's auto-commit, or schedule it after the dream pass. Existing journals in that state have to be archived by hand. Obsidian Git's "auto commit-and-sync" interval is the usual cause, and setting it longer than the passes take is enough |
 
