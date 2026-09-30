@@ -2227,34 +2227,47 @@ fi
 #
 # Claude Code grants the agent's Write and Edit tools its memory folder: the one
 # a settings file names as autoMemoryDirectory, or by default one under
-# ~/.claude/projects. Both lie outside the vault, so a write there is outside the
-# fence, and CLAUDE_CODE_DISABLE_AUTO_MEMORY does not withdraw the grant. In
-# claude mode each runner passes a settings file of its own with --settings,
-# pointing the memory folder at 90-auto-memory/.pass-agent/ inside the vault. A
-# pass refuses to start when that folder already holds something, which would
-# load into the pass, when it or 90-auto-memory is a link, which the fence sees
-# only as a link, and when the vault's path cannot be written into the file.
+# ~/.claude/projects. The default folder, and usually a named one, lies outside
+# the vault, so a write there is outside the fence, and
+# CLAUDE_CODE_DISABLE_AUTO_MEMORY does not withdraw the grant. In claude mode
+# each runner passes a settings file of its own with --settings, pointing the
+# memory folder at 90-auto-memory/.pass-agent/ inside the vault. A pass refuses
+# to start when that folder already holds something, which could be read into
+# the pass as memory, when it or 90-auto-memory is a link, which the fence sees
+# only as a link, or not a folder, and when the vault's path cannot be written
+# into the file.
 MO_SINK='the memory override folder already held a file'
 MO_LINK='the memory override folder is a link, so writes through it would leave the fence'
+MO_NOTDIR='is not a folder, so the memory override folder cannot be made there'
+MO_WRITE='could not write the memory override'
 MO_PATH="the vault's path holds a character the settings file cannot carry"
 MO_LOG="$RV/.claude/logs/dream-agent.log"
 MO_DIR="$RV/90-auto-memory/.pass-agent"
-mo_lines() {  # mo_lines - how many lines the dream log holds now
-  if [ -f "$MO_LOG" ]; then wc -l < "$MO_LOG" | tr -d ' '; else echo 0; fi
+mo_lines() {  # mo_lines <log> - how many lines the log holds now
+  if [ -f "$1" ]; then wc -l < "$1" | tr -d ' '; else echo 0; fi
 }
-mo_refused() {  # mo_refused <label> <reason> - a claude-mode dream pass exits 1, this run's log lines give <reason>, and the agent never starts
-  local before rc said started
-  before="$(mo_lines)"
+# mo_refused <label> <reason> [<runner> <mode> <log> [NAME=value...]] - a
+# claude-mode pass (a dream pass by default) exits 1, this run's log lines give
+# <reason>, the agent never starts, and no in-flight marker is left: the refusal
+# comes before the marker is written, so it cannot hold back the next pass
+mo_refused() {
+  local label="$1" reason="$2" script="${3:-dream-pass.sh}" mode="${4:-journal}" log="${5:-$MO_LOG}" before rc said started left
+  shift 2
+  [ "$#" -ge 3 ] && shift 3 || set --
+  before="$(mo_lines "$log")"
   rm -f "$REC.argv"
-  rc="$(runner dream-pass.sh journal FAKE_RECORD="$REC")"
+  rc="$(runner "$script" "$mode" FAKE_RECORD="$REC" "$@")"
   said=absent
-  tail -n +"$((before + 1))" "$MO_LOG" 2>/dev/null | grep -qF -- "$2" && said=present
+  tail -n +"$((before + 1))" "$log" 2>/dev/null | grep -qF -- "$reason" && said=present
   started=no
   [ -e "$REC.argv" ] && started=yes
-  if [ "$rc" -eq 1 ] && [ "$said" = present ] && [ "$started" = no ]; then
-    ok "$1 -> refused (exit 1), the log says why, and the agent never started"
+  left=no
+  [ -e "$RV/.claude/logs/runner-inflight" ] || [ -e "${CASE_STATE:-$TMP/state}/runner-inflight" ] && left=yes
+  if [ "$rc" -eq 1 ] && [ "$said" = present ] && [ "$started" = no ] && [ "$left" = no ]; then
+    ok "$label -> refused (exit 1), the log says why, the agent never started, and no in-flight marker is left"
   else
-    bad "$1 -- expected exit 1, the reason in this run's log and no agent start; got exit $rc, reason $said, agent started: $started"
+    bad "$label -- expected exit 1, the reason in this run's log, no agent start and no in-flight marker; got exit $rc, reason $said, agent started: $started, marker left: $left"
+    tripwire_clear
   fi
 }
 mo_link() {  # mo_link <folder> <link> - links <link> to <folder>, a junction on Windows; true when the link is there
@@ -2307,35 +2320,101 @@ else
     else
       bad "the settings file does not hold exactly the vault's override folder -- want $MO_WANT, got: $(cat "$mo_fu" 2>/dev/null)"
     fi
-    rm -f "$REC.argv"
+    # Claude Code is a Windows program there, so the argument must already be a
+    # drive path with forward slashes, not one that only MSYS's argument
+    # conversion would turn into one.
+    if is_windows_host; then
+      case "$mo_f" in
+        *\\*) mo_winform=no ;;
+        [A-Za-z]:/*) mo_winform=yes ;;
+        *) mo_winform=no ;;
+      esac
+      if [ "$mo_winform" = yes ]; then
+        ok "on Windows the settings file is passed as a drive path with forward slashes"
+      else
+        bad "on Windows the settings file is not passed as a drive path with forward slashes -- got: ${mo_f:-nothing}"
+      fi
+    fi
+    # The promotion runner writes the file itself, so the dream run's is removed first.
+    rm -f "$REC.argv" "$mo_fu"
     runner promotion-pass.sh summary FAKE_RECORD="$REC" >/dev/null
     if [ -n "$mo_f" ] && [ "$(awk 'prev == "--settings" { print; exit } { prev = $0 }' "$REC.argv" 2>/dev/null)" = "$mo_f" ] \
-       && [ "$(tail -n 6 "$REC.argv" 2>/dev/null | head -n 1)" = --settings ]; then
-      ok "the promotion agent is started with the same settings file, just before the tool denials"
+       && [ "$(awk '$0 == "--settings" { n++ } END { print n + 0 }' "$REC.argv" 2>/dev/null)" = 1 ] \
+       && [ "$(tail -n 6 "$REC.argv" 2>/dev/null | head -n 1)" = --settings ] \
+       && [ "$(cat "$mo_fu" 2>/dev/null)" = "{\"autoMemoryDirectory\":\"$MO_WANT\"}" ]; then
+      ok "the promotion agent is started with one settings file it wrote itself, just before the tool denials"
     else
-      bad "the promotion agent argv lacks the settings file -- got: $(tr '\n' ' ' < "$REC.argv" 2>/dev/null)"
+      bad "the promotion agent argv or settings file is wrong -- got: $(tr '\n' ' ' < "$REC.argv" 2>/dev/null), file: $(cat "$mo_fu" 2>/dev/null)"
     fi
   else
     bad "mem-override-flag: the pass did not record how the agent was started"
   fi
 fi
+# A settings file that cannot be written refuses the pass: a folder stands where
+# it goes.
+rm -f "$MO_STATE/pass-settings.json"
+mkdir -p "$MO_STATE/pass-settings.json"
+if [ -d "$MO_STATE/pass-settings.json" ]; then
+  mo_refused "claude mode: the settings file cannot be written (a folder is in its place)" "$MO_WRITE"
+else
+  bad "mem-override-flag: the folder in the settings file's place could not be made"
+fi
+rm -rf "$MO_STATE/pass-settings.json"
 
-# Whatever the override folder holds would load into the pass as memory, so the
-# pass refuses to start. The listing sees hidden names and folders, and a folder
-# that cannot be listed refuses too. A regular .DS_Store file, which macOS leaves
-# in a folder it has shown, is the one thing allowed.
+# cygpath failing on either path the override needs refuses the pass, rather
+# than passing an empty value. Only memory_override calls cygpath -m with
+# exactly two arguments, so a stand-in can fail those calls alone.
+if is_windows_host; then
+  MO_SHIM="$TMP/memovr-shim"
+  rm -rf "$MO_SHIM"
+  mkdir -p "$MO_SHIM"
+  printf '#!/usr/bin/env bash\nif [ "$#" -eq 2 ] && [ "$1" = -m ]; then\n  case "$MO_SHIM_FAIL:$2" in\n    settings:*/pass-settings.json|vault:*/runnervault) exit 1 ;;\n  esac\nfi\nexec /usr/bin/cygpath "$@"\n' > "$MO_SHIM/cygpath"
+  chmod +x "$MO_SHIM/cygpath"
+  if [ "$(PATH="$MO_SHIM:$PATH" MO_SHIM_FAIL=settings cygpath -m "$TMP/x/pass-settings.json" >/dev/null 2>&1; echo "rc=$?")" = rc=1 ] \
+     && [ "$(PATH="$MO_SHIM:$PATH" MO_SHIM_FAIL=vault cygpath -m "$RV" >/dev/null 2>&1; echo "rc=$?")" = rc=1 ] \
+     && [ -n "$(PATH="$MO_SHIM:$PATH" MO_SHIM_FAIL=vault cygpath -m "$TMP" 2>/dev/null)" ]; then
+    ran mem-override-cygpath-refused
+    mo_refused "claude mode: cygpath fails on the settings file's path" "cygpath could not convert a path for the memory override" \
+      dream-pass.sh journal "$MO_LOG" PATH="$MO_SHIM:$PATH" MO_SHIM_FAIL=settings
+    mo_refused "claude mode: cygpath fails on the vault's path" "cygpath could not convert a path for the memory override" \
+      dream-pass.sh journal "$MO_LOG" PATH="$MO_SHIM:$PATH" MO_SHIM_FAIL=vault
+  else
+    bad "mem-override-cygpath-refused: the cygpath stand-in does not fail exactly where it should"
+  fi
+  rm -rf "$MO_SHIM"
+else
+  skip mem-override-cygpath-refused 'cygpath failing for the memory override: only Git Bash has cygpath'
+fi
+
+# Whatever the override folder holds could be read into the pass as memory, so
+# the pass refuses to start. The listing sees hidden names and folders, and a
+# folder that cannot be listed refuses too. A regular .DS_Store file, which macOS
+# leaves in a folder it has shown, is the one thing allowed, and only alone.
 rm -rf "$RV/90-auto-memory"
 mkdir -p "$MO_DIR"
 printf 'planted\n' > "$MO_DIR/x.md"
 if [ -f "$MO_DIR/x.md" ]; then
   ran mem-override-sink-refused
   mo_refused "claude mode: a file already in 90-auto-memory/.pass-agent" "$MO_SINK"
+  mo_refused "promotion pass, claude mode: a file already in 90-auto-memory/.pass-agent" "$MO_SINK" \
+    promotion-pass.sh summary "$RV/.claude/logs/promotion-agent.log"
+  # Command mode never reads the override, so the same folder does not stop it.
+  rm -f "$MO_STATE/pass-settings.json"
+  mo_before="$(mo_lines "$MO_LOG")"
+  mo_rc="$(runner dream-pass.sh journal VAULT_AGENT=command VAULT_AGENT_CMD="$FAKE" VAULT_ALLOW_UNENFORCED_TOOLS=1)"
+  if [ "$mo_rc" -eq 0 ] && ! tail -n +"$((mo_before + 1))" "$MO_LOG" 2>/dev/null | grep -qF -- "$MO_SINK" \
+     && [ ! -e "$MO_STATE/pass-settings.json" ]; then
+    ok "command mode: a file in 90-auto-memory/.pass-agent does not stop the pass, and no settings file is written (exit 0)"
+  else
+    bad "command mode reached the memory override -- got exit $mo_rc, settings file $([ -e "$MO_STATE/pass-settings.json" ] && echo written || echo absent)"
+  fi
 else
   bad "mem-override-sink-refused: the planted file could not be made"
 fi
 rm -f "$MO_DIR/x.md"
 printf 'planted\n' > "$MO_DIR/.x.md"
-if [ -f "$MO_DIR/.x.md" ] && [ -z "$(ls "$MO_DIR")" ]; then
+for mo_g in "$MO_DIR"/*; do break; done
+if [ -f "$MO_DIR/.x.md" ] && [ ! -e "$mo_g" ]; then
   mo_refused "claude mode: a hidden file already in 90-auto-memory/.pass-agent" "$MO_SINK"
 else
   bad "mem-override-sink-refused: the hidden file could not be made, or a plain listing shows it"
@@ -2349,13 +2428,22 @@ else
 fi
 rmdir "$MO_DIR/sub"
 printf 'x' > "$MO_DIR/.DS_Store"
+printf 'planted\n' > "$MO_DIR/MEMORY.md"
+if [ -f "$MO_DIR/.DS_Store" ] && [ -f "$MO_DIR/MEMORY.md" ]; then
+  mo_refused "claude mode: a .DS_Store file beside a MEMORY.md in 90-auto-memory/.pass-agent" "$MO_SINK"
+else
+  bad "mem-override-sink-refused: .DS_Store and MEMORY.md could not be made together"
+fi
+rm -f "$MO_DIR/MEMORY.md"
 if [ "$(ls -A "$MO_DIR")" = .DS_Store ] && [ -f "$MO_DIR/.DS_Store" ] && [ ! -L "$MO_DIR/.DS_Store" ]; then
-  rm -f "$REC.argv"
+  rm -f "$REC.argv" "$MO_STATE/pass-settings.json"
   mo_rc="$(runner dream-pass.sh journal FAKE_RECORD="$REC")"
-  if [ "$mo_rc" -eq 0 ] && [ -f "$REC.argv" ]; then
-    ok "claude mode: a .DS_Store file alone in 90-auto-memory/.pass-agent -> the pass runs (exit 0)"
+  if [ "$mo_rc" -eq 0 ] && [ -f "$REC.argv" ] \
+     && [ "$(awk 'prev == "--settings" { print; exit } { prev = $0 }' "$REC.argv")" = "${mo_f:-unset}" ] \
+     && [ "$(cat "$MO_STATE/pass-settings.json" 2>/dev/null)" = "{\"autoMemoryDirectory\":\"$MO_WANT\"}" ]; then
+    ok "claude mode: a .DS_Store file alone in 90-auto-memory/.pass-agent -> the pass runs with the override (exit 0)"
   else
-    bad "claude mode: a .DS_Store file alone in 90-auto-memory/.pass-agent stopped the pass -- got exit $mo_rc"
+    bad "claude mode: a .DS_Store file alone in 90-auto-memory/.pass-agent stopped the pass or lost the override -- got exit $mo_rc"
   fi
 else
   bad "mem-override-sink-refused: the .DS_Store file could not be made alone"
@@ -2366,6 +2454,8 @@ if is_windows_host; then
 elif [ "$(id -u 2>/dev/null)" = 0 ]; then
   skip mem-override-sink-unreadable 'a memory override folder that cannot be listed: root can list any folder'
 else
+  # cleanup() gives the folder its rights back if the suite is stopped meanwhile.
+  RET_LOCKED_DIR="$MO_DIR"
   chmod 000 "$MO_DIR"
   if ! ls -A "$MO_DIR" >/dev/null 2>&1; then
     ran mem-override-sink-unreadable
@@ -2374,6 +2464,24 @@ else
     skip mem-override-sink-unreadable 'a memory override folder that cannot be listed: chmod 000 did not stop the listing here'
   fi
   chmod 755 "$MO_DIR"
+  RET_LOCKED_DIR=
+fi
+# A .pass-agent, or a 90-auto-memory, that is a file cannot hold the pass's
+# memory, so the pass refuses to start rather than leave Claude Code to decide.
+rm -rf "$RV/90-auto-memory"
+mkdir -p "$RV/90-auto-memory"
+printf 'x\n' > "$MO_DIR"
+if [ -f "$MO_DIR" ]; then
+  mo_refused "claude mode: 90-auto-memory/.pass-agent is a file" "$MO_NOTDIR"
+else
+  bad "mem-override-sink-refused: .pass-agent could not be made a file"
+fi
+rm -rf "$RV/90-auto-memory"
+printf 'x\n' > "$RV/90-auto-memory"
+if [ -f "$RV/90-auto-memory" ]; then
+  mo_refused "claude mode: 90-auto-memory is a file" "$MO_NOTDIR"
+else
+  bad "mem-override-sink-refused: 90-auto-memory could not be made a file"
 fi
 rm -rf "$RV/90-auto-memory"
 tripwire_clear
@@ -2410,15 +2518,55 @@ fi
 rm -rf "$RV/90-auto-memory" "$MO_OUT"
 tripwire_clear
 
-# 1.4.1 took Skill out of the dream agent's tools; every Skill call was refused
-# under -p anyway. The tools must first be read and name Read and Write, so a
-# parse that finds nothing cannot pass for a list without Skill.
+# A .DS_Store that is a link to a regular file outside the vault passes for a
+# file, but a Write to it would land outside, so it refuses like any other entry.
+# Windows makes a file link only with a privilege, so this may skip there.
+rm -rf "$MO_OUT" "$RV/90-auto-memory"
+mkdir -p "$MO_OUT" "$MO_DIR"
+printf 'outside\n' > "$MO_OUT/f"
+ln -s "$MO_OUT/f" "$MO_DIR/.DS_Store" 2>/dev/null
+if [ -L "$MO_DIR/.DS_Store" ] && [ -f "$MO_DIR/.DS_Store" ]; then
+  ran mem-override-sink-filelink
+  mo_refused "claude mode: 90-auto-memory/.pass-agent/.DS_Store is a link to a file outside the vault" "$MO_SINK"
+else
+  skip mem-override-sink-filelink 'a .DS_Store that is a link to a file: ln -s does not create file symlinks here'
+fi
+rm -f "$MO_DIR/.DS_Store"
+rm -rf "$RV/90-auto-memory" "$MO_OUT"
+tripwire_clear
+
+# A memory write the agent makes during a pass lands in .pass-agent, inside the
+# fence, which contains it and sets the tripwire. The fake's FAKE_SEE copy is the
+# write: it copies a note to FAKE_SEEN as the agent starts.
+rm -rf "$RV/90-auto-memory"
+mkdir -p "$MO_DIR"
+MO_CS="$TMP/state-memovr-contained"
+rm -rf "$MO_CS"
+if [ -d "$MO_DIR" ] && [ -z "$(ls -A "$MO_DIR")" ] && [ ! -e "$MO_CS" ] && [ -f "$RV/31-standards/existing.md" ]; then
+  ran mem-override-sink-contained
+  mo_rc="$(CASE_STATE="$MO_CS" runner dream-pass.sh journal FAKE_SEE="$RV/31-standards/existing.md" FAKE_SEEN="$MO_DIR/MEMORY.md")"
+  mo_q="$(find "$MO_CS/quarantine" -name MEMORY.md -path '*.pass-agent*' 2>/dev/null | head -n 1)"
+  if [ "$mo_rc" -eq 2 ] && [ ! -e "$MO_DIR/MEMORY.md" ] && [ -n "$mo_q" ] && [ -f "$RV/.claude/logs/runner-tripwire" ]; then
+    ok "claude mode: a memory file the agent writes into 90-auto-memory/.pass-agent is contained, and the tripwire is set (exit 2)"
+  else
+    bad "claude mode: a memory write into .pass-agent was not contained -- got exit $mo_rc, file $([ -e "$MO_DIR/MEMORY.md" ] && echo 'still in the vault' || echo gone), quarantine ${mo_q:-empty}"
+  fi
+else
+  bad "mem-override-sink-contained: an empty .pass-agent, a fresh state folder or the note to copy could not be made"
+fi
+rm -rf "$RV/90-auto-memory"
+tripwire_clear
+
+# 1.4.1 took Skill out of the dream agent's tools. Every Skill call was refused
+# under -p anyway (measured on Claude Code 2.1.284). The tools must first be read
+# and name Read and Write, so a parse that finds nothing cannot pass for a list
+# without Skill. A trailing comment and a Skill(name) entry are read too.
 mo_tools="$(awk '{ sub(/\r$/, "") } NR == 1 { if ($0 != "---") exit; next } $0 == "---" { exit }
-  /^tools:/ { sub(/^tools:[ \t]*/, ""); print; exit }' "$ROOT/.claude/agents/dream-agent.md" 2>/dev/null \
+  /^tools:/ { sub(/^tools:[ \t]*/, ""); sub(/[ \t]+#.*$/, ""); print; exit }' "$ROOT/.claude/agents/dream-agent.md" 2>/dev/null \
   | tr ',' '\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
 if printf '%s\n' "$mo_tools" | grep -qx Read && printf '%s\n' "$mo_tools" | grep -qx Write; then
   ran dream-agent-tools
-  if printf '%s\n' "$mo_tools" | grep -qix skill; then
+  if printf '%s\n' "$mo_tools" | grep -Eqi '^skill($|\()'; then
     bad "the dream agent's tools still name Skill -- got: $(printf '%s' "$mo_tools" | tr '\n' ',')"
   else
     ok "the dream agent's tools name Read and Write, and no Skill"
