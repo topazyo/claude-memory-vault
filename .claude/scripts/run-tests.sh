@@ -2360,6 +2360,47 @@ else
   bad "mem-override-flag: the folder in the settings file's place could not be made"
 fi
 rm -rf "$MO_STATE/pass-settings.json"
+# The write itself failing refuses too: a stand-in mv fails only the move that
+# puts pass-settings.json in place, so the check above passes and the write runs.
+MO_MV="$TMP/memovr-mv"
+mo_real_mv="$(command -v mv)"
+rm -rf "$MO_MV"
+mkdir -p "$MO_MV"
+printf '#!/usr/bin/env bash\neval "last=\\${$#}"\ncase "$last" in */pass-settings.json) exit 1 ;; esac\nexec %s "$@"\n' "$mo_real_mv" > "$MO_MV/mv"
+chmod +x "$MO_MV/mv"
+rm -rf "$TMP/memovr-mv-dest"
+mkdir -p "$TMP/memovr-mv-dest"
+printf 'x\n' > "$TMP/memovr-mv-probe"
+if [ "$(PATH="$MO_MV:$PATH" mv -f "$TMP/memovr-mv-probe" "$TMP/memovr-mv-dest/pass-settings.json" >/dev/null 2>&1; echo "rc=$?")" = rc=1 ] \
+   && [ -f "$TMP/memovr-mv-probe" ] && [ ! -e "$TMP/memovr-mv-dest/pass-settings.json" ] \
+   && PATH="$MO_MV:$PATH" mv -f "$TMP/memovr-mv-probe" "$TMP/memovr-mv-dest/other" && [ -f "$TMP/memovr-mv-dest/other" ]; then
+  mo_refused "claude mode: moving the settings file into place fails" "$MO_WRITE" dream-pass.sh journal "$MO_LOG" PATH="$MO_MV:$PATH"
+else
+  bad "mem-override-flag: the mv stand-in does not fail exactly where it should"
+fi
+rm -rf "$MO_MV" "$TMP/memovr-mv-probe" "$TMP/memovr-mv-dest"
+# An earlier pass's file that can be neither removed nor replaced, one another
+# program holds open for instance, must not stand in for this pass's. Stand-ins
+# for rm and mv fail on it, so only the check before the write can refuse.
+MO_RM="$TMP/memovr-rm"
+mo_real_rm="$(command -v rm)"
+rm -rf "$MO_RM"
+mkdir -p "$MO_RM"
+for mo_c in rm mv; do
+  if [ "$mo_c" = rm ]; then mo_real="$mo_real_rm"; else mo_real="$mo_real_mv"; fi
+  printf '#!/usr/bin/env bash\neval "last=\\${$#}"\ncase "$last" in */pass-settings.json) exit 1 ;; esac\nexec %s "$@"\n' "$mo_real" > "$MO_RM/$mo_c"
+  chmod +x "$MO_RM/$mo_c"
+done
+printf '{"autoMemoryDirectory":"/stale/elsewhere"}\n' > "$MO_STATE/pass-settings.json"
+if [ -f "$MO_STATE/pass-settings.json" ] && ! PATH="$MO_RM:$PATH" rm -f "$MO_STATE/pass-settings.json" 2>/dev/null \
+   && [ -f "$MO_STATE/pass-settings.json" ]; then
+  mo_refused "claude mode: an earlier pass's settings file that can be neither removed nor replaced" "$MO_WRITE" \
+    dream-pass.sh journal "$MO_LOG" PATH="$MO_RM:$PATH"
+else
+  bad "mem-override-flag: the stale settings file or the rm stand-in could not be made"
+fi
+rm -rf "$MO_RM"
+rm -f "$MO_STATE/pass-settings.json"
 
 # cygpath failing on either path the override needs refuses the pass, rather
 # than passing an empty value. Only memory_override calls cygpath -m with
@@ -2368,16 +2409,19 @@ if is_windows_host; then
   MO_SHIM="$TMP/memovr-shim"
   rm -rf "$MO_SHIM"
   mkdir -p "$MO_SHIM"
-  printf '#!/usr/bin/env bash\nif [ "$#" -eq 2 ] && [ "$1" = -m ]; then\n  case "$MO_SHIM_FAIL:$2" in\n    settings:*/pass-settings.json|vault:*/runnervault) exit 1 ;;\n  esac\nfi\nexec /usr/bin/cygpath "$@"\n' > "$MO_SHIM/cygpath"
+  printf '#!/usr/bin/env bash\nif [ "$#" -eq 2 ] && [ "$1" = -m ]; then\n  case "$MO_SHIM_FAIL:$2" in\n    settings:*/pass-settings.json|vault:*/runnervault) exit 1 ;;\n    empty:*/pass-settings.json) exit 0 ;;\n  esac\nfi\nexec /usr/bin/cygpath "$@"\n' > "$MO_SHIM/cygpath"
   chmod +x "$MO_SHIM/cygpath"
   if [ "$(PATH="$MO_SHIM:$PATH" MO_SHIM_FAIL=settings cygpath -m "$TMP/x/pass-settings.json" >/dev/null 2>&1; echo "rc=$?")" = rc=1 ] \
      && [ "$(PATH="$MO_SHIM:$PATH" MO_SHIM_FAIL=vault cygpath -m "$RV" >/dev/null 2>&1; echo "rc=$?")" = rc=1 ] \
+     && [ "$(PATH="$MO_SHIM:$PATH" MO_SHIM_FAIL=empty cygpath -m "$TMP/x/pass-settings.json" 2>/dev/null; echo "rc=$?")" = rc=0 ] \
      && [ -n "$(PATH="$MO_SHIM:$PATH" MO_SHIM_FAIL=vault cygpath -m "$TMP" 2>/dev/null)" ]; then
     ran mem-override-cygpath-refused
     mo_refused "claude mode: cygpath fails on the settings file's path" "cygpath could not convert a path for the memory override" \
       dream-pass.sh journal "$MO_LOG" PATH="$MO_SHIM:$PATH" MO_SHIM_FAIL=settings
     mo_refused "claude mode: cygpath fails on the vault's path" "cygpath could not convert a path for the memory override" \
       dream-pass.sh journal "$MO_LOG" PATH="$MO_SHIM:$PATH" MO_SHIM_FAIL=vault
+    mo_refused "claude mode: cygpath succeeds on the settings file's path but prints nothing" "cygpath could not convert a path for the memory override" \
+      dream-pass.sh journal "$MO_LOG" PATH="$MO_SHIM:$PATH" MO_SHIM_FAIL=empty
   else
     bad "mem-override-cygpath-refused: the cygpath stand-in does not fail exactly where it should"
   fi
@@ -2449,6 +2493,17 @@ else
   bad "mem-override-sink-refused: the .DS_Store file could not be made alone"
 fi
 rm -f "$MO_DIR/.DS_Store"
+# A .DS_Store with a second hard link is the same file as that other name, which
+# may lie outside the vault, so a write to it could leave the vault too.
+printf 'outside\n' > "$TMP/memovr-hard"
+if ln "$TMP/memovr-hard" "$MO_DIR/.DS_Store" 2>/dev/null && [ -f "$MO_DIR/.DS_Store" ] && [ ! -L "$MO_DIR/.DS_Store" ] \
+   && [ -z "$(find "$MO_DIR/.DS_Store" -links 1 2>/dev/null)" ] && [ "$(ls -A "$MO_DIR")" = .DS_Store ]; then
+  ran mem-override-sink-hardlink
+  mo_refused "claude mode: 90-auto-memory/.pass-agent/.DS_Store has a second hard link" "$MO_SINK"
+else
+  skip mem-override-sink-hardlink 'a .DS_Store with a second hard link: ln cannot make one here, or find does not count it'
+fi
+rm -f "$MO_DIR/.DS_Store" "$TMP/memovr-hard"
 if is_windows_host; then
   skip mem-override-sink-unreadable 'a memory override folder that cannot be listed: chmod 000 does not stop a listing on Windows'
 elif [ "$(id -u 2>/dev/null)" = 0 ]; then
@@ -2564,9 +2619,14 @@ tripwire_clear
 mo_tools="$(awk '{ sub(/\r$/, "") } NR == 1 { if ($0 != "---") exit; next } $0 == "---" { exit }
   /^tools:/ { sub(/^tools:[ \t]*/, ""); sub(/[ \t]+#.*$/, ""); print; exit }' "$ROOT/.claude/agents/dream-agent.md" 2>/dev/null \
   | tr ',' '\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
-if printf '%s\n' "$mo_tools" | grep -qx Read && printf '%s\n' "$mo_tools" | grep -qx Write; then
+mo_names_skill() {  # mo_names_skill <tools, one per line> - true when one is Skill or Skill(...), any case
+  printf '%s\n' "$1" | grep -qix skill || printf '%s\n' "$1" | grep -qi '^skill('
+}
+if ! mo_names_skill Skill || ! mo_names_skill 'Skill(x)' || mo_names_skill Skills; then
+  bad "dream-agent-tools: the Skill matcher does not match Skill and Skill(x) alone on this host, so a miss would prove nothing"
+elif printf '%s\n' "$mo_tools" | grep -qx Read && printf '%s\n' "$mo_tools" | grep -qx Write; then
   ran dream-agent-tools
-  if printf '%s\n' "$mo_tools" | grep -Eqi '^skill($|\()'; then
+  if mo_names_skill "$mo_tools"; then
     bad "the dream agent's tools still name Skill -- got: $(printf '%s' "$mo_tools" | tr '\n' ',')"
   else
     ok "the dream agent's tools name Read and Write, and no Skill"
