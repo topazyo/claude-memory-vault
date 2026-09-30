@@ -25,6 +25,94 @@ bash .claude/scripts/vault-update.sh --check --from ../template-new
 
 ---
 
+## 1.4.1 — 2026-09-30
+
+A security fix for the dream and promotion passes in claude mode. Claude Code's memory for a pass
+now stays inside the vault, where the write fence sees it.
+
+### Security
+
+In 1.4.0 a claude-mode pass could write memory **outside the fence**. Claude Code grants the
+agent's Write and Edit tools its memory folder, and that folder lies outside the vault. It is
+either the folder a settings file names as `autoMemoryDirectory`, or by default one under
+`~/.claude/projects/` for the vault's path. Memory there loads into later sessions: the default
+folder loads into interactive sessions started in the vault whenever auto memory is on for them.
+The runner's `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` does not withdraw the grant, although
+`docs/reference.md` and the runner's comments said the pass wrote no memory.
+
+Each claude-mode pass now gets a settings file of the runner's own, passed with `--settings`. It
+points the memory folder at `90-auto-memory/.pass-agent/`, inside the vault and inside the fence.
+What that covers, and what it does not:
+
+- **A folder a settings file names is no longer granted.** Measured on Windows: a write the agent
+  made there without the file was refused with it.
+- **The default memory folder is no longer granted.** Measured refused on Windows, the same way.
+- **Linux and macOS are unverified.** The code runs there, and the suite's controls for it pass
+  there, but no Claude Code run has measured the grant on either.
+- **It holds unless managed settings pin memory or hooks.**
+- **A memory folder named in your user settings is unmeasured.** Measuring it would have meant
+  editing someone's user settings. The fix rests on Claude Code's settings precedence there: a
+  `--settings` file outranks user settings.
+- **An agent definition's own `memory:` key is outside this fix and unmeasured.** The template's
+  agents set none.
+- **Measured on Claude Code 2.1.284 and 2.1.285.** Older versions are unmeasured.
+- **Memory only.** A folder a settings file grants through `additionalDirectories` stays outside
+  the fence, as in 1.4.0.
+
+### Changed
+
+- **Both runners write `pass-settings.json` into the state directory before a claude-mode pass**,
+  and start the agent with `--settings <that file>` just before `--disallowedTools`. The file holds
+  one key, `autoMemoryDirectory`. The runner never creates `.pass-agent/` itself. Command mode is
+  unchanged.
+- **A memory write the agent makes during a pass now lands inside the vault**, in
+  `90-auto-memory/.pass-agent/`. `90-auto-memory/` is a steering surface, so the fence contains
+  that write and sets the tripwire, as for any other write there. In 1.4.0 the same write landed
+  outside the vault, unseen.
+- **A claude-mode pass refuses to start, with exit 1 and an `ERROR:` line, in four cases**:
+  - `90-auto-memory/.pass-agent/` holds anything but a regular `.DS_Store` file, a hidden file or
+    an empty folder included, or cannot be listed. What it holds would load into the pass as its
+    memory.
+  - `90-auto-memory` or `.pass-agent` is a symlink or junction, or `.pass-agent` is not a folder.
+    The fence sees a folder link that was there before the pass only as a link, so writes through
+    it would leave the vault unseen.
+  - The vault's path holds a `"`, a `\` or a control character, which the settings file cannot
+    carry. Windows allows none of them in a name.
+  - The settings file could not be written.
+- **`Skill` is no longer among the dream agent's tools.** Every `Skill` call was already refused
+  under `-p`.
+- `docs/reference.md` states what the memory override covers, the new exit-1 reasons,
+  `pass-settings.json`, the agent's argv and its tools. The runner's comments no longer credit
+  `CLAUDE_CODE_DISABLE_AUTO_MEMORY` with keeping memory in.
+- The control suite holds each of these, and each control was seen failing against 1.4.0 first.
+  `mem-override-flag`, `mem-override-sink-refused`, `mem-override-sink-link` and
+  `dream-agent-tools` run on every CI job. `mem-override-path-refused` runs on the Linux and macOS
+  jobs, and skips on Windows.
+
+### Adopting this
+
+1. **Nothing to configure.** The override is on in claude mode for every pass.
+2. **A pass refuses to start while `90-auto-memory/.pass-agent/` holds anything but a `.DS_Store`
+   file.** The log says `the memory override folder already held a file`. Look at what is there,
+   keep it elsewhere if you want it, and remove it from that folder.
+3. **A pass refuses to start while the vault's path holds a `"` or a `\`** (or a control
+   character). The log says `the vault's path holds a character the settings file cannot carry`.
+   Rename the folder.
+4. **A pass refuses to start while `90-auto-memory` or `90-auto-memory/.pass-agent` is a symlink or
+   junction.** The log says `the memory override folder is a link`. Replace the link with a plain
+   folder.
+5. **If your `dream-agent.md` still names `Skill`, it keeps working**, because the call was already
+   refused under `-p`. In that vault `run-tests.sh`'s `dream-agent-tools` control fails until you
+   remove `Skill` from its `tools:` line.
+
+`--check` will list `.claude/scripts/lib/runner-common.sh`, `.claude/scripts/dream-pass.sh`,
+`.claude/scripts/promotion-pass.sh`, `.claude/scripts/run-tests.sh`, `.claude/agents/dream-agent.md`
+and `docs/reference.md` as safe to take, alongside `VERSION` and `CHANGELOG.md`. If you customized
+`dream-agent.md`, take it as a merge rather than a copy. No note, rule, hook, frontmatter key or
+checker behaviour a vault relies on has moved.
+
+---
+
 ## 1.4.0 — 2026-09-27
 
 The retention pass now tells whoever ran it what it did. Its judgement used to go only to its log,

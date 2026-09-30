@@ -333,6 +333,10 @@ main() {
     printf '[%s] LOCKED: another runner replaced or removed this one'"'"'s owner file in the run lock before the pass started. Not starting.\n' "$(ts)" >> "$LOG"
     exit 75
   fi
+  # In claude mode, Claude Code's memory for this pass goes inside the fence.
+  if [ "$AGENT_KIND" = claude ] && ! memory_override "$ROOT" "$STATE" "$SNAP_DIR" "$LOG"; then
+    exit 1
+  fi
   cp "$SNAP_DIR/steering.tar" "$STATE/inflight-backup.tar" 2>/dev/null
   # Without the marker outside the vault, a pass killed mid-run would leave no
   # trace the next run can trust. Refuse rather than start the agent.
