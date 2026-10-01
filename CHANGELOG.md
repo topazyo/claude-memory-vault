@@ -108,8 +108,9 @@ What that covers, and what it does not:
 ### Adopting this
 
 1. **Nothing to configure.** The override is on in claude mode for every pass.
-2. **A pass refuses to start while `90-auto-memory/.pass-agent/` holds anything but a `.DS_Store`
-   file, or cannot be listed.** The log says `the memory override folder already held a file`.
+2. **A pass refuses to start while `90-auto-memory/.pass-agent/` holds anything but a plain
+   `.DS_Store` file (not a link, no other hard link), or cannot be listed.** The log says
+   `the memory override folder already held a file`.
    Look at what is there, keep it elsewhere if you want it, and remove it from that folder.
 3. **A pass refuses to start while the vault's path holds a `"` or a `\`** (or a control
    character). The log says `the vault's path holds a character the settings file cannot carry`.
@@ -128,8 +129,8 @@ What that covers, and what it does not:
 7. **A pass refuses to start when it cannot write its settings file.** The log says
    `could not write the memory override`, or on Windows
    `cygpath could not convert a path for the memory override`. Check that the state directory is
-   writable and that nothing but a file stands at `pass-settings.json` in it; for the `cygpath`
-   line, check Git Bash's `cygpath`.
+   writable, that nothing but a file stands at `pass-settings.json` in it, and that no other program
+   holds that file open; for the `cygpath` line, check Git Bash's `cygpath`.
 8. **If your `dream-agent.md` still names `Skill`, it keeps working**, because the call was already
    refused under `-p` (measured on Claude Code 2.1.284). In that vault `run-tests.sh`'s
    `dream-agent-tools` control fails until you remove `Skill` from its `tools:` line.

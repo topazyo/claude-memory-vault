@@ -3164,9 +3164,10 @@ note_tripwire() {
 # fence sees a folder link that was there before the pass only as a link, so
 # writes through it would not be seen) or is not a folder; and a .pass-agent
 # holding anything but a regular .DS_Store file with no other hard link, since
-# anything else could be read into the pass as memory or let a write through. They write nothing. They must run after the pass's "before"
-# snapshot, so that anything planted after them is still a change the fence
-# sees. Then the file replaces any earlier <state-dir>/pass-settings.json, and
+# anything else could be read into the pass as memory or let a write leave the
+# vault. They write nothing. They must run after the pass's "before" snapshot,
+# so that anything planted after them is still a change the fence sees. Then
+# the file replaces any earlier <state-dir>/pass-settings.json, and
 # AGENT_SETTINGS_FILE names it as Claude Code reads a path. .pass-agent itself
 # is never created here. Returns 1, with the reason in <log>, when the pass must
 # not start.
@@ -3199,7 +3200,7 @@ memory_override() {
     if ! list="$(ls -A "$dir" 2>/dev/null)" \
        || { [ -n "$list" ] && { [ "$list" != .DS_Store ] || [ ! -f "$dir/.DS_Store" ] || [ -L "$dir/.DS_Store" ] \
             || [ -z "$(find "$dir/.DS_Store" -links 1 2>/dev/null)" ]; }; }; then
-      printf '[%s] ERROR: the memory override folder already held a file, or could not be listed. 90-auto-memory/.pass-agent/ must be empty (a .DS_Store file aside), because what it holds could be read into the pass as memory. Remove it. Refusing to run.\n' "$(ts)" >> "$log"
+      printf '[%s] ERROR: the memory override folder already held a file, or could not be listed. 90-auto-memory/.pass-agent/ must be empty, apart from a plain .DS_Store file (not a link, no other hard link), because what it holds could be read into the pass as memory. Remove it. Refusing to run.\n' "$(ts)" >> "$log"
       return 1
     fi
   fi

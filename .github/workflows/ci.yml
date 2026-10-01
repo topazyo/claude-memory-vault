@@ -318,12 +318,12 @@ jobs:
       # `# shellcheck disable=` comment and a reason, then make this gating.
       #
       # run-tests.sh is skipped, and says so. shellcheck 0.9.0 needs more than
-      # 12.5 GB to check it: on 2026-09-30 it exhausted 13 GB on 1.4.0's copy,
-      # while a 421-line piece of it took 80 MB, so it is the file's size and
-      # not one construct. On this runner 1.4.0's copy only just fitted, and
-      # 1.4.1's added tests pushed it over, so the machine killed its own runner
-      # and every step after this one never ran. continue-on-error cannot catch
-      # that.
+      # 13 GB to check it: on 2026-09-30 it exhausted 13 GB on 1.4.0's copy,
+      # while a 421-line piece of it took 80 MB, which points to the file's
+      # size and not one construct. On this runner 1.4.0's copy fitted, and
+      # 1.4.1's added tests pushed it over, so the runner ran out of memory and
+      # was stopped, and every step after this one never ran. continue-on-error
+      # cannot catch that.
       - name: shellcheck (advisory)
         continue-on-error: true
         run: |

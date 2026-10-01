@@ -2351,7 +2351,8 @@ else
   fi
 fi
 # A settings file that cannot be written refuses the pass: a folder stands where
-# it goes.
+# it goes. The check before the write and the write itself each refuse this, so
+# it holds only the two together; the two twins below hold each one alone.
 rm -f "$MO_STATE/pass-settings.json"
 mkdir -p "$MO_STATE/pass-settings.json"
 if [ -d "$MO_STATE/pass-settings.json" ]; then
@@ -2366,12 +2367,13 @@ MO_MV="$TMP/memovr-mv"
 mo_real_mv="$(command -v mv)"
 rm -rf "$MO_MV"
 mkdir -p "$MO_MV"
-printf '#!/usr/bin/env bash\neval "last=\\${$#}"\ncase "$last" in */pass-settings.json) exit 1 ;; esac\nexec %s "$@"\n' "$mo_real_mv" > "$MO_MV/mv"
+printf '#!/usr/bin/env bash\neval "last=\\${$#}"\ncase "$last" in */pass-settings.json) exit 1 ;; esac\nexec %q "$@"\n' "$mo_real_mv" > "$MO_MV/mv"
 chmod +x "$MO_MV/mv"
 rm -rf "$TMP/memovr-mv-dest"
 mkdir -p "$TMP/memovr-mv-dest"
 printf 'x\n' > "$TMP/memovr-mv-probe"
-if [ "$(PATH="$MO_MV:$PATH" mv -f "$TMP/memovr-mv-probe" "$TMP/memovr-mv-dest/pass-settings.json" >/dev/null 2>&1; echo "rc=$?")" = rc=1 ] \
+if [ ! -e "$MO_STATE/pass-settings.json" ] && [ ! -L "$MO_STATE/pass-settings.json" ] \
+   && [ "$(PATH="$MO_MV:$PATH" mv -f "$TMP/memovr-mv-probe" "$TMP/memovr-mv-dest/pass-settings.json" >/dev/null 2>&1; echo "rc=$?")" = rc=1 ] \
    && [ -f "$TMP/memovr-mv-probe" ] && [ ! -e "$TMP/memovr-mv-dest/pass-settings.json" ] \
    && PATH="$MO_MV:$PATH" mv -f "$TMP/memovr-mv-probe" "$TMP/memovr-mv-dest/other" && [ -f "$TMP/memovr-mv-dest/other" ]; then
   mo_refused "claude mode: moving the settings file into place fails" "$MO_WRITE" dream-pass.sh journal "$MO_LOG" PATH="$MO_MV:$PATH"
@@ -2388,18 +2390,25 @@ rm -rf "$MO_RM"
 mkdir -p "$MO_RM"
 for mo_c in rm mv; do
   if [ "$mo_c" = rm ]; then mo_real="$mo_real_rm"; else mo_real="$mo_real_mv"; fi
-  printf '#!/usr/bin/env bash\neval "last=\\${$#}"\ncase "$last" in */pass-settings.json) exit 1 ;; esac\nexec %s "$@"\n' "$mo_real" > "$MO_RM/$mo_c"
+  printf '#!/usr/bin/env bash\neval "last=\\${$#}"\ncase "$last" in */pass-settings.json) exit 1 ;; esac\nexec %q "$@"\n' "$mo_real" > "$MO_RM/$mo_c"
   chmod +x "$MO_RM/$mo_c"
 done
-printf '{"autoMemoryDirectory":"/stale/elsewhere"}\n' > "$MO_STATE/pass-settings.json"
-if [ -f "$MO_STATE/pass-settings.json" ] && ! PATH="$MO_RM:$PATH" rm -f "$MO_STATE/pass-settings.json" 2>/dev/null \
-   && [ -f "$MO_STATE/pass-settings.json" ]; then
+mo_stale='{"autoMemoryDirectory":"/stale/elsewhere"}'
+printf '%s\n' "$mo_stale" > "$MO_STATE/pass-settings.json"
+printf 'x\n' > "$TMP/memovr-rm-probe"
+rm -f "$TMP/memovr-rm-other"
+if [ "$(cat "$MO_STATE/pass-settings.json" 2>/dev/null)" = "$mo_stale" ] \
+   && ! PATH="$MO_RM:$PATH" rm -f "$MO_STATE/pass-settings.json" 2>/dev/null \
+   && [ "$(PATH="$MO_RM:$PATH" mv -f "$TMP/memovr-rm-probe" "$MO_STATE/pass-settings.json" >/dev/null 2>&1; echo "rc=$?")" = rc=1 ] \
+   && [ -f "$TMP/memovr-rm-probe" ] && [ "$(cat "$MO_STATE/pass-settings.json" 2>/dev/null)" = "$mo_stale" ] \
+   && PATH="$MO_RM:$PATH" mv -f "$TMP/memovr-rm-probe" "$TMP/memovr-rm-other" && [ -f "$TMP/memovr-rm-other" ] \
+   && PATH="$MO_RM:$PATH" rm -f "$TMP/memovr-rm-other" && [ ! -e "$TMP/memovr-rm-other" ]; then
   mo_refused "claude mode: an earlier pass's settings file that can be neither removed nor replaced" "$MO_WRITE" \
     dream-pass.sh journal "$MO_LOG" PATH="$MO_RM:$PATH"
 else
-  bad "mem-override-flag: the stale settings file or the rm stand-in could not be made"
+  bad "mem-override-flag: the stale settings file or the rm and mv stand-ins do not fail exactly where they should"
 fi
-rm -rf "$MO_RM"
+rm -rf "$MO_RM" "$TMP/memovr-rm-probe" "$TMP/memovr-rm-other"
 rm -f "$MO_STATE/pass-settings.json"
 
 # cygpath failing on either path the override needs refuses the pass, rather
@@ -2409,11 +2418,13 @@ if is_windows_host; then
   MO_SHIM="$TMP/memovr-shim"
   rm -rf "$MO_SHIM"
   mkdir -p "$MO_SHIM"
-  printf '#!/usr/bin/env bash\nif [ "$#" -eq 2 ] && [ "$1" = -m ]; then\n  case "$MO_SHIM_FAIL:$2" in\n    settings:*/pass-settings.json|vault:*/runnervault) exit 1 ;;\n    empty:*/pass-settings.json) exit 0 ;;\n  esac\nfi\nexec /usr/bin/cygpath "$@"\n' > "$MO_SHIM/cygpath"
+  printf '#!/usr/bin/env bash\nif [ "$#" -eq 2 ] && [ "$1" = -m ]; then\n  case "$MO_SHIM_FAIL:$2" in\n    settings:*/pass-settings.json|vault:*/runnervault) exit 1 ;;\n    empty:*/pass-settings.json|emptyvault:*/runnervault) exit 0 ;;\n  esac\nfi\nexec /usr/bin/cygpath "$@"\n' > "$MO_SHIM/cygpath"
   chmod +x "$MO_SHIM/cygpath"
   if [ "$(PATH="$MO_SHIM:$PATH" MO_SHIM_FAIL=settings cygpath -m "$TMP/x/pass-settings.json" >/dev/null 2>&1; echo "rc=$?")" = rc=1 ] \
      && [ "$(PATH="$MO_SHIM:$PATH" MO_SHIM_FAIL=vault cygpath -m "$RV" >/dev/null 2>&1; echo "rc=$?")" = rc=1 ] \
      && [ "$(PATH="$MO_SHIM:$PATH" MO_SHIM_FAIL=empty cygpath -m "$TMP/x/pass-settings.json" 2>/dev/null; echo "rc=$?")" = rc=0 ] \
+     && [ "$(PATH="$MO_SHIM:$PATH" MO_SHIM_FAIL=emptyvault cygpath -m "$RV" 2>/dev/null; echo "rc=$?")" = rc=0 ] \
+     && [ -n "$(PATH="$MO_SHIM:$PATH" MO_SHIM_FAIL=emptyvault cygpath -m "$TMP/x/pass-settings.json" 2>/dev/null)" ] \
      && [ -n "$(PATH="$MO_SHIM:$PATH" MO_SHIM_FAIL=vault cygpath -m "$TMP" 2>/dev/null)" ]; then
     ran mem-override-cygpath-refused
     mo_refused "claude mode: cygpath fails on the settings file's path" "cygpath could not convert a path for the memory override" \
@@ -2422,6 +2433,8 @@ if is_windows_host; then
       dream-pass.sh journal "$MO_LOG" PATH="$MO_SHIM:$PATH" MO_SHIM_FAIL=vault
     mo_refused "claude mode: cygpath succeeds on the settings file's path but prints nothing" "cygpath could not convert a path for the memory override" \
       dream-pass.sh journal "$MO_LOG" PATH="$MO_SHIM:$PATH" MO_SHIM_FAIL=empty
+    mo_refused "claude mode: cygpath succeeds on the vault's path but prints nothing" "cygpath could not convert a path for the memory override" \
+      dream-pass.sh journal "$MO_LOG" PATH="$MO_SHIM:$PATH" MO_SHIM_FAIL=emptyvault
   else
     bad "mem-override-cygpath-refused: the cygpath stand-in does not fail exactly where it should"
   fi
@@ -2615,15 +2628,46 @@ tripwire_clear
 # 1.4.1 took Skill out of the dream agent's tools. Every Skill call was refused
 # under -p anyway (measured on Claude Code 2.1.284). The tools must first be read
 # and name Read and Write, so a parse that finds nothing cannot pass for a list
-# without Skill. A trailing comment and a Skill(name) entry are read too.
-mo_tools="$(awk '{ sub(/\r$/, "") } NR == 1 { if ($0 != "---") exit; next } $0 == "---" { exit }
-  /^tools:/ { sub(/^tools:[ \t]*/, ""); sub(/[ \t]+#.*$/, ""); print; exit }' "$ROOT/.claude/agents/dream-agent.md" 2>/dev/null \
-  | tr ',' '\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+# without Skill. The value may go on over indented lines, as a list or not, and
+# may carry quotes, brackets, CRLF line ends, comments and Skill(name) entries.
+mo_tools_of() {  # mo_tools_of <agent file> - the tools its frontmatter names, one per line
+  awk '{ sub(/\r$/, "") } NR == 1 { if ($0 != "---") exit; next } $0 == "---" { exit }
+    on && !/^[ \t]/ && $0 != "" { exit }
+    /^tools:/ { on = 1; sub(/^tools:/, "") }
+    on { sub(/^[ \t]*#.*$/, ""); sub(/[ \t]+#.*$/, ""); gsub(/[]["'\'']/, "")
+      n = split($0, t, ","); for (i = 1; i <= n; i++) { s = t[i]; sub(/^[ \t]*(- )?[ \t]*/, "", s); sub(/[ \t]+$/, "", s); if (s != "") print s } }' "$1" 2>/dev/null
+}
 mo_names_skill() {  # mo_names_skill <tools, one per line> - true when one is Skill or Skill(...), any case
   printf '%s\n' "$1" | grep -qix skill || printf '%s\n' "$1" | grep -qi '^skill('
 }
+# The whole extraction is first run on files that name Skill in each of those
+# shapes, and on two that name it only outside the tools value.
+MO_FX="$TMP/memovr-tools"
+rm -rf "$MO_FX"
+mkdir -p "$MO_FX"
+printf -- '---\nname: x\ntools: Read, Glob, Grep, Write, Skill\n---\n' > "$MO_FX/inline.md"
+printf -- '---\nname: x\ntools: Read, Glob, Grep, Write,\n  Skill\nmodel: x\n---\n' > "$MO_FX/continued.md"
+printf -- '---\r\nname: x\r\ntools: Read, Glob, Grep, Write, Skill\r\n---\r\n' > "$MO_FX/crlf.md"
+printf -- '---\nname: x\ntools: Read, Write, Skill(x)  # a comment\n---\n' > "$MO_FX/comment.md"
+printf -- '---\nname: x\ntools:\n  - Read\n  - Write\n\n  - Skill\n---\n' > "$MO_FX/block.md"
+printf -- '---\nname: x\ntools: [Read, Write, "Skill"]\n---\n' > "$MO_FX/flow.md"
+printf -- '---\nname: x\ntools: Read, Write\ndescription: no tool\n  Skill\n---\n' > "$MO_FX/other-key.md"
+printf -- '---\nname: x\ntools: Read, Write  # Skill\n---\nSkill\n' > "$MO_FX/after.md"
+mo_fx_bad=
+for mo_x in inline continued crlf comment block flow other-key after; do
+  mo_t="$(mo_tools_of "$MO_FX/$mo_x.md")"
+  mo_sk=no
+  mo_names_skill "$mo_t" && mo_sk=yes
+  case "$mo_x" in other-key|after) mo_want=no ;; *) mo_want=yes ;; esac
+  printf '%s\n' "$mo_t" | grep -qx Read && printf '%s\n' "$mo_t" | grep -qx Write && [ "$mo_sk" = "$mo_want" ] \
+    || mo_fx_bad="$mo_fx_bad $mo_x"
+done
+rm -rf "$MO_FX"
+mo_tools="$(mo_tools_of "$ROOT/.claude/agents/dream-agent.md")"
 if ! mo_names_skill Skill || ! mo_names_skill 'Skill(x)' || mo_names_skill Skills; then
   bad "dream-agent-tools: the Skill matcher does not match Skill and Skill(x) alone on this host, so a miss would prove nothing"
+elif [ -n "$mo_fx_bad" ]; then
+  bad "dream-agent-tools: the tools extraction misreads these fixtures on this host, so a miss would prove nothing:$mo_fx_bad"
 elif printf '%s\n' "$mo_tools" | grep -qx Read && printf '%s\n' "$mo_tools" | grep -qx Write; then
   ran dream-agent-tools
   if mo_names_skill "$mo_tools"; then

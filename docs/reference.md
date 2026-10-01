@@ -717,12 +717,13 @@ Around that call, each runner does several things an exit code cannot:
   was measured on Windows with Claude Code 2.1.284 and 2.1.285 (the default folder on 2.1.285
   only), and is unverified on Linux and macOS. A folder named in project or user settings rests on
   settings precedence (`--settings` outranks both) rather than on a measurement. Managed settings
-  outrank `--settings`, so a memory folder set there is not overridden. A memory write that does happen lands in
-  `.pass-agent/`, where it is contained and trips the tripwire like any other write under
-  `90-auto-memory/`. The pass refuses to start (exit 1) when `.pass-agent/` already holds anything
-  but a regular `.DS_Store` file with no other hard link, or cannot be listed, because what it holds
-  could be read into the pass as memory and a linked file could let a write out; when it or `90-auto-memory` is a symlink or junction, because the fence would see
-  only the link; when either is not a folder; when the vault's path holds a `"`, a `\` or a control
+  outrank `--settings`, so a memory folder set there is not overridden. A memory write that does
+  happen lands in `.pass-agent/`, where it is contained and trips the tripwire like any other write
+  under `90-auto-memory/`. The pass refuses to start (exit 1) when `.pass-agent/` already holds
+  anything but a regular `.DS_Store` file with no other hard link, or cannot be listed, because what
+  it holds could be read into the pass as memory and a linked file could let a write leave the
+  vault; when it or `90-auto-memory` is a symlink or junction, because the fence would see only the
+  link; when either is not a folder; when the vault's path holds a `"`, a `\` or a control
   character, which the file cannot carry; and when the file cannot be written. The file covers
   memory only. A folder a settings file grants through `additionalDirectories` stays outside the
   fence.
