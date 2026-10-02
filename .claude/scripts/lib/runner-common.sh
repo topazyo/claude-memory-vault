@@ -3160,9 +3160,9 @@ note_tripwire() {
 # and CLAUDE_CODE_DISABLE_AUTO_MEMORY does not withdraw the grant. The runner's
 # own settings file, passed with --settings, points the memory folder at
 # 90-auto-memory/.pass-agent/ inside the vault instead, where the fence sees a
-# write. With it, a Write to a named folder and one to the default folder were
-# both measured refused, on Windows only, with Claude Code 2.1.284, 2.1.285 and
-# 2.1.287.
+# write. With it, a Write to a named folder (Claude Code 2.1.284, 2.1.285 and
+# 2.1.287) and one to the default folder (2.1.285 and 2.1.287) were measured
+# refused, on Windows only.
 #
 # On Windows both paths are converted with cygpath under a UTF-8 locale: under
 # the runners' LC_ALL=C it cuts a path at its first character outside the ANSI
@@ -3179,11 +3179,12 @@ note_tripwire() {
 # but a regular .DS_Store file with no other hard link, since anything else could
 # be read into the pass as memory or let a write leave the vault. They write
 # nothing. They must run after the pass's "before" snapshot, so that anything
-# planted after them is still a change the fence sees. Then the file, private to
-# this account, replaces any earlier <state-dir>/pass-settings.json and must
-# read back byte for byte,
+# planted after them is still a change the fence sees. Then the file replaces
+# any earlier <state-dir>/pass-settings.json and must read back byte for byte,
 # because Claude Code reads an empty or invalid settings file as if there were
-# none. AGENT_SETTINGS_FILE names it as Claude Code reads a path.
+# none. On POSIX hosts it is readable by this account only; on Windows its
+# folder's permissions decide. AGENT_SETTINGS_FILE names it as Claude Code reads
+# a path.
 # .pass-agent itself is never created here. Returns 1, with the reason in <log>,
 # when the pass must not start.
 memory_override() {
@@ -3191,9 +3192,19 @@ memory_override() {
   local dir="$1/90-auto-memory/.pass-agent" list line p win=0
   # Set only on success below, so no value from the environment can stand in.
   unset AGENT_SETTINGS_FILE
-  # Chosen by platform, not by finding cygpath: on Windows a path left in
-  # Git Bash form is read by Claude Code as a folder under the drive root.
+  # On Windows a path left in Git Bash form is read by Claude Code as a folder
+  # under the drive root, so either the platform or cygpath picks this branch.
+  # A stray cygpath elsewhere then fails the drive check below.
   case "$RUNNER_UNAME" in MINGW*|MSYS*|CYGWIN*) win=1 ;; esac
+  command -v cygpath >/dev/null 2>&1 && win=1
+  if [ "$win" = 0 ]; then
+    # A Windows Claude Code started from WSL would read POSIX paths the same way.
+    case "${AGENT_BIN:-}" in
+      *.exe|*.EXE|/mnt/[A-Za-z]/*)
+        printf '[%s] ERROR: Claude Code here (%s) looks like a Windows program, but this runner is not running under Git Bash, so Claude Code would read the memory override'"'"'s paths as other folders. Run the .cmd runner on Windows instead. Refusing to run.\n' "$(ts)" "$AGENT_BIN" >> "$log"
+        return 1 ;;
+    esac
+  fi
   if [ "$win" = 1 ]; then
     vault="$(LC_ALL=C.UTF-8 cygpath -m "$root" 2>/dev/null)" && [ -n "$vault" ] \
       && arg="$(LC_ALL=C.UTF-8 cygpath -m "$file" 2>/dev/null)" && [ -n "$arg" ] || {
@@ -3202,7 +3213,7 @@ memory_override() {
     }
     for p in "$vault" "$arg"; do
       case "$p" in
-        [A-Za-z]:/*|//[!/]*) ;;
+        [A-Za-z]:/*|//[!/?.]*) ;;
         *)
           printf '[%s] ERROR: cygpath gave %s for a path of the memory override, which is not a Windows drive or network path, so Claude Code would read it as another folder. Refusing to run.\n' "$(ts)" "$p" >> "$log"
           return 1 ;;
@@ -3246,8 +3257,8 @@ memory_override() {
   # it standing in for this pass's.
   rm -f "$file" 2>/dev/null
   line="{\"autoMemoryDirectory\":\"$vault/90-auto-memory/.pass-agent\"}"
-  # Private to this account whatever the umask: Claude Code runs the hooks a
-  # settings file names.
+  # Readable by this account only on POSIX hosts, whatever the umask, because
+  # Claude Code runs the hooks a settings file names.
   if [ -e "$file" ] || [ -L "$file" ] \
      || ! ( umask 077 && printf '%s\n' "$line" > "$work/pass-settings.json" ) \
      || ! write_file_atomic "$file" "$work/pass-settings.json"; then
