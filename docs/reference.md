@@ -449,6 +449,17 @@ a lint that does nothing and a lint that found nothing wrong print the same thin
   warning, and still trips the fence; a missing wrapper exits 127 and an unknown `VAULT_AGENT`
   exits 64. A runner given `CLAUDE_PROJECT_DIR` and `VAULT_ROOT` pointing at a decoy vault leaves
   the decoy untouched.
+- **Memory override** — in claude mode both runners pass one `--settings` file, left in the state
+  directory, that names the vault's own `90-auto-memory/.pass-agent`; command mode writes none.
+  A pass refuses with exit 1 and an `ERROR:` line when that folder holds anything but a plain
+  `.DS_Store` (a file, a hidden file, a folder, a FIFO, a link, a second hard link, an entry that
+  lists before it) or cannot be listed, when it or `90-auto-memory` is a link or not a folder, when
+  the file cannot be written or does not read back as written, on Windows when `cygpath` fails,
+  prints nothing or gives a path naming something else, on Linux when the vault's path is not
+  valid UTF-8, and outside Windows when it holds a `"`, a `\` or a tab. Vaults under folders named
+  with an e-acute or in Cyrillic, on Windows also with a `"` or a tab, and a state directory under
+  a Cyrillic folder, run with the file naming their own folder. Both runners call the override
+  between the run-lock check and the in-flight marker.
 - **Pre-commit gate** — allows a commit on a conformant vault even with an inherited
   `CLAUDE_PROJECT_DIR` pointing at a broken one, and refuses it once a note violates C1.
 - **Progress watchdog** — a pass that streams a line a second is not stopped, a silent pass is
@@ -503,15 +514,16 @@ the run lock, the tripwire, the state directory and the `.cmd` wrapper's Git Bas
 - **`claude`** (default): `claude -p "<prompt>" --agent <name> --permission-mode acceptEdits
   --output-format stream-json --verbose --include-partial-messages --session-id <uuid>
   --settings <state directory>/pass-settings.json --disallowedTools Bash PowerShell Monitor`. The
-  `--settings` file keeps Claude Code's memory inside the fence (measured on Windows; see **Write
-  fence** below). The
+  `--settings` file points Claude Code's memory folder inside the fence (measured for Write, on
+  Windows only; see **Write fence** below). The
   agent definition's `tools:` allowlist is enforced
   by Claude Code. The stream flags make progress visible to the watchdog below, and Claude Code
   refuses `stream-json` under `-p` without `--verbose`. The runner chooses the session id, a random
   version 4 UUID, so it knows the session even when the stream never names it. The deny list names every tool that runs a command, so a definition edited to
   add one still gets no shell. Claude Code offers `PowerShell` on Windows and accepts a name it
   does not offer, so the same list works on every platform. Checked on Claude Code 2.1.272
-  (2026-09-15), where a pass's start event lists exactly the tools its definition allows.
+  (2026-09-15), where a pass's start event lists exactly the tools its definition allows; the
+  `--settings` argument was measured on 2.1.284 to 2.1.287.
 - **`command`**: `$VAULT_AGENT_CMD <prompt-file>`, run from the vault root, where `<prompt-file>` is
   the relative path `.claude/logs/<pass>.prompt.md`. The runner writes that file first: the agent
   definition's body without its frontmatter, then this run's task. A file rather than an argument,
@@ -708,25 +720,37 @@ Around that call, each runner does several things an exit code cannot:
   add it. Memory (`.claude/agent-memory*` and `90-auto-memory/`) is fenced in both modes, because
   it loads into later sessions. In claude mode, Claude Code grants the agent's Write and Edit tools
   its memory folder: the one a settings file names as `autoMemoryDirectory`, or by default one under
-  `~/.claude/projects/`. The default folder, and usually a named one, lies outside the vault, and
+  `~/.claude/projects/`. The default folder lies outside the vault, a named one may too, and
   `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`, which the runner also sets, does not withdraw that grant. So
   before each claude-mode pass the runner writes `pass-settings.json` into the state directory,
   replacing an earlier one, and passes it with `--settings`. It points the memory folder at
   `90-auto-memory/.pass-agent/`, inside the fence. With it, a Write to the folder the vault's local
-  settings name and one to the default folder were both refused, where both landed without it. That
-  was measured on Windows with Claude Code 2.1.284 and 2.1.285 (the default folder on 2.1.285
-  only), and is unverified on Linux and macOS. A folder named in project or user settings rests on
-  settings precedence (`--settings` outranks both) rather than on a measurement. Managed settings
-  outrank `--settings`, so a memory folder set there is not overridden. A memory write that does
-  happen lands in `.pass-agent/`, where it is contained and trips the tripwire like any other write
-  under `90-auto-memory/`. The pass refuses to start (exit 1) when `.pass-agent/` already holds
-  anything but a regular `.DS_Store` file with no other hard link, or cannot be listed, because what
-  it holds could be read into the pass as memory and a linked file could let a write leave the
-  vault; when it or `90-auto-memory` is a symlink or junction, because the fence would see only the
-  link; when either is not a folder; when the vault's path holds a `"`, a `\` or a control
-  character, which the file cannot carry; and when the file cannot be written. The file covers
-  memory only. A folder a settings file grants through `additionalDirectories` stays outside the
-  fence.
+  settings name and one to the default folder were both refused, where both landed without it.
+  That was measured for the Write tool on Windows with Claude Code 2.1.284, 2.1.285 and 2.1.287
+  (the default folder from 2.1.285), for an ASCII vault path; for vaults under folders named in
+  Cyrillic, with an e-acute and with a Git Bash double quote, a Write to a folder outside the vault
+  was refused and one into `.pass-agent/` landed (2.1.287). Edit was not probed, and Linux and
+  macOS are unverified. On Windows the runner converts the vault's path and the file's with
+  `cygpath` under a UTF-8 locale, because under the runners' `LC_ALL=C` it cuts a path at its first
+  character outside the ANSI code page, which made the file name a folder outside the vault, and a
+  Write there landed (measured). Each converted path must then name, converted back, the folder or
+  file it came from. A folder named in project or user settings rests on settings precedence
+  (`--settings` outranks both) rather than on a measurement. Managed settings outrank
+  `--settings`, so a memory folder set there is not overridden. A memory write that does happen
+  lands in `.pass-agent/`, where it is contained and trips the tripwire like any other write under
+  `90-auto-memory/`. The pass refuses to start (exit 1) when `.pass-agent/` already holds anything
+  but a regular `.DS_Store` file with no other hard link, or cannot be listed, because what it
+  holds could be read into the pass as memory and a linked file could let a write leave the vault;
+  when it or `90-auto-memory` is a symlink or junction, because the fence would see only the link;
+  when either is not a folder; when the vault's path holds a `"`, a `\` or a control character,
+  which the file cannot carry (on Windows Git Bash keeps a `"` or a tab in a name as U+F022 or
+  U+F009, which `cygpath` gives back, so such a vault runs there); when the vault's or the state
+  directory's path is not valid UTF-8, which Claude Code could read as another folder (on Linux,
+  where a path is bytes); when `cygpath` fails, prints nothing, or gives a path that names another
+  folder or file; when the file cannot be written; and when it does not read back byte for byte,
+  because Claude Code 2.1.287 reads an empty or invalid settings file as if there were none and
+  grants the folders outside the vault again (measured). The file covers memory only. A folder a
+  settings file grants through `additionalDirectories` stays outside the fence.
   Inside `.git/`, only the files that make git run code are fenced: `config`, `config.worktree`,
   `commondir`, `hooks/`, `info/attributes`, `info/grafts` and `objects/info/alternates`, and
   `info/`, `objects/` or `objects/info/` when one of them is a symlink. The same files, and every
@@ -836,6 +860,20 @@ Around that call, each runner does several things an exit code cannot:
   shows their diff.
 
   Known limits:
+  - Claude Code 2.1.287 reads an empty or invalid `--settings` file as if there were none, with
+    exit 0 and nothing on stderr, so the memory grant outside the vault comes back (measured). The
+    runner reads `pass-settings.json` back byte for byte before it starts the agent, but a change
+    between that read and Claude Code's is not seen. That is why the state directory should be
+    private to the account the passes run as.
+  - Only the Write tool was probed under the memory override. Edit is granted the same folder by
+    the same setting, and was not measured.
+  - On Windows the state directory's path, and the path keys that compare vault and repository
+    paths, are still converted with `cygpath` under the runners' `C` locale, as in 1.4.0. That
+    double-encodes a non-ASCII name: with the default `%LOCALAPPDATA%` base, an account whose name
+    is not ASCII gets a state directory beside its profile that it cannot create, so every pass
+    exits 1 until `VAULT_STATE_DIR` names a folder it owns; a non-ASCII `VAULT_STATE_DIR` is used
+    under its double-encoded name. Two vaults whose paths differ only after their first character
+    outside the ANSI code page can get the same state directory id, and so block each other's runs.
   - The watchdog stops a pass's process tree only when it times out or stalls. A pass that exits
     on its own but leaves a background process running, such as a server a hook started, is not
     stopped, and that process can write after the second snapshot. A process that leaves the
@@ -1273,7 +1311,7 @@ Known limits, each failing in the quiet direction:
 | Exit | Meaning (dream and promotion runners) |
 | --- | --- |
 | `0` | OK: the artifact assertion held, nothing outside the fence changed, and the pass's files were committed, HEAD already held them, git ignores them, or the vault is not a repository of its own |
-| `1` | NO-ARTIFACT, the runner could not create its temporary directory, use its state directory, write its in-flight marker or (promotion pass) its git state file, run `git status` or back up the steering surfaces, git cannot read the vault's repository, or (command mode) the agent definition file is missing. Also, in claude mode, the memory override refused the pass before the agent started: `90-auto-memory/.pass-agent/` holds anything but a regular `.DS_Store` file with no other hard link, or cannot be listed ("the memory override folder already held a file"), it or `90-auto-memory` is a symlink or junction ("the memory override folder is a link"), either is not a folder ("is not a folder, so the memory override folder cannot be made there"), the vault's path holds a `"`, a `\` or a control character ("the vault's path holds a character the settings file cannot carry"), or `pass-settings.json` could not be written ("could not write the memory override") or, on Windows, `cygpath` could not convert a path it needs ("cygpath could not convert a path for the memory override") |
+| `1` | NO-ARTIFACT, the runner could not create its temporary directory, use its state directory, write its in-flight marker or (promotion pass) its git state file, run `git status` or back up the steering surfaces, git cannot read the vault's repository, or (command mode) the agent definition file is missing. Also, in claude mode, the memory override refused the pass before the agent started: `90-auto-memory/.pass-agent/` holds anything but a regular `.DS_Store` file with no other hard link, or cannot be listed ("the memory override folder already held a file"), it or `90-auto-memory` is a symlink or junction ("the memory override folder is a link"), either is not a folder ("is not a folder, so the memory override folder cannot be made there"), the vault's path holds a `"`, a `\` or a control character ("the vault's path holds a character the settings file cannot carry"), the vault's or the state directory's path is not valid UTF-8 ("is not valid UTF-8, or iconv could not check it"), `pass-settings.json` could not be written ("could not write the memory override") or does not read back as written ("does not hold what was written to it"), or, on Windows, `cygpath` could not convert a path it needs ("cygpath could not convert a path for the memory override") or gave one that names another folder or file ("which is not the same folder or file"). Claude Code's own exit 1, for example on a settings file it cannot use, also ends the run with 1: the log then says `dream-agent exited with code 1` (or `promotion-agent`) and the run log holds Claude Code's message |
 | `2` | VIOLATION: a file outside the allowed write areas changed during the run. When steering surfaces are among them they are contained and the tripwire is set. Also when the pass changed a file it owns that already had uncommitted changes before it started, or a file it owns and changed is no longer a regular file, or (promotion pass) it changed a long-tier note that was there before it started. The runner commits nothing. Those last three reasons give exit 2 even when the agent failed, timed out or (promotion pass) gave no summary, and nothing is recorded for the next run. The promotion pass also puts back its notes, as for exit 5, except one that already had uncommitted changes |
 | `3` | REFUSED: `VAULT_AGENT=command` without `VAULT_ALLOW_UNENFORCED_TOOLS=1`; the agent was not started |
 | `4` | COMMIT-FAILED: staging or committing the pass's files failed, ran longer than `RUNNER_GIT_TIMEOUT`, or a file changed while it was checked. The files are left in place and uncommitted, and the log says whether they could be unstaged. Also a commit that was made but does not hold the checked content, which the log names |
@@ -1492,7 +1530,7 @@ can point at what established it). A vivid one-off is not a standard.
 | --- | --- |
 | Cadence | Scheduled; nightly or daily is typical (`dream-pass.sh` / `.cmd`) |
 | Tools | Read, Glob, Grep, Write. No shell and no skills, and in claude mode the runner also passes `--disallowedTools Bash PowerShell Monitor` |
-| Model | `sonnet`, `maxTurns: 40`, no agent memory (memory loads into later passes, so an unattended agent gets none) |
+| Model | `sonnet`, `maxTurns: 40`, no `memory:` key (memory loads into later passes, so an unattended agent gets none). Claude Code's own memory folder is pointed at `90-auto-memory/.pass-agent/` for a claude-mode pass (§ 4.3, **Write fence**) |
 | Writes | **Exactly one file**: `20-projects/_logs/dream-<YYYY-MM-DD>.md`, fenced by `dream-pass.sh` |
 | Never | Modifies, stamps, or deletes an existing note |
 
@@ -1545,7 +1583,7 @@ to re-run or synthesize to close it: closing a gap is the owner's call.
 | --- | --- |
 | Cadence | Weekly (`promotion-pass.sh` / `.cmd`) |
 | Tools | Read, Glob, Grep, Write, Edit. No shell and no skills, and in claude mode the runner also passes `--disallowedTools Bash PowerShell Monitor` |
-| Model | `sonnet`, `maxTurns: 30`, no agent memory (memory loads into later passes, so an unattended agent gets none) |
+| Model | `sonnet`, `maxTurns: 30`, no `memory:` key (memory loads into later passes, so an unattended agent gets none). Claude Code's own memory folder is pointed at `90-auto-memory/.pass-agent/` for a claude-mode pass (§ 4.3, **Write fence**) |
 | Writes | New notes in `31-standards/` and `40-llm-wiki/wiki/` (never their `templates/`); a `20-projects/_logs/promotion-*.md` report, which holds its proposals |
 | Never | Changes, retires or stamps a long-tier note that was there before the pass, whoever wrote it; deletes or overwrites a note to resolve a conflict |
 
@@ -1670,8 +1708,8 @@ while a note under `40-llm-wiki/wiki/` is covered by the six-tier rules only.
 | `.claude/hooks/read-guard.sh` | `2` blocked (`.env`, `.env.*`, `secrets/`) · `0` allowed, or no path to check | `.claude/logs/read-guard.log` (`BLOCKED:`, `DEGRADED:`); the reason also to stderr |
 | `.claude/scripts/vault-check.sh` | `0` at least one note scanned and none violates an invariant · `1` a note violates an invariant, including a malformed date · `2` the checker could not run, meaning zero notes scanned (`VACUOUS`), no content-tier folder under the root, or a named note that is not a readable file · `64` the command line was wrong · `78` a scheduled pass set the tripwire | stdout, plus the `VACUOUS` and unreadable-note lines on stderr — never writes to a note |
 | `.claude/scripts/run-tests.sh` | `0` all controls passed · `1` at least one failed · `130` SIGINT · `143` SIGTERM | stdout only; fixtures in a temp dir, removed on exit |
-| `.claude/scripts/dream-pass.sh` / `.cmd` | `0` OK · `1` NO-ARTIFACT · `2` VIOLATION · `3` REFUSED · `4` COMMIT-FAILED · `5` CHECK-FAILED · `64` unknown `VAULT_AGENT` · `70` TRIPWIRE-ERROR · `75` LOCKED · `78` TRIPWIRE · `124` TIMEOUT · `125` STALLED · `127` `claude`, wrapper or Git Bash not found · otherwise the agent's code | `.claude/logs/dream-agent.log` · agent output in `dream-agent.run.log` · `dream-pass.git-state.txt` · `dream-pass.prompt.md` in command mode · `pass-settings.json` in the state directory in claude mode, the memory override passed with `--settings` and rewritten each pass · `runner-tripwire` after a contained violation or a `KILL_FAILED` stop · `dream-pass.interrupted.run` in the state directory after a signal or a `KILL_FAILED` stop, or when the run log could not be written, or `dream-pass.interrupted.run.<six characters>` beside it when something was in the way |
-| `.claude/scripts/promotion-pass.sh` / `.cmd` | `0` OK · `1` NO-ARTIFACT · `2` VIOLATION · `3` REFUSED · `4` COMMIT-FAILED · `5` CHECK-FAILED · `64` unknown `VAULT_AGENT` · `70` TRIPWIRE-ERROR · `75` LOCKED · `78` TRIPWIRE · `124` TIMEOUT · `125` STALLED · `127` `claude`, wrapper or Git Bash not found · otherwise the agent's code | `.claude/logs/promotion-agent.log` · agent output added to `promotion-agent.run.log` · `promotion-pass.git-state.txt` · `promotion-pass.prompt.md` in command mode · `pass-settings.json` in the state directory in claude mode, the memory override passed with `--settings` and rewritten each pass · `runner-tripwire` after a contained violation or a `KILL_FAILED` stop · `promotion-pass.interrupted.run` in the state directory after a signal or a `KILL_FAILED` stop, or when the run log could not be written, or `promotion-pass.interrupted.run.<six characters>` beside it when something was in the way |
+| `.claude/scripts/dream-pass.sh` / `.cmd` | `0` OK · `1` NO-ARTIFACT · `2` VIOLATION · `3` REFUSED · `4` COMMIT-FAILED · `5` CHECK-FAILED · `64` unknown `VAULT_AGENT` · `70` TRIPWIRE-ERROR · `75` LOCKED · `78` TRIPWIRE · `124` TIMEOUT · `125` STALLED · `127` `claude`, wrapper or Git Bash not found · otherwise the agent's code | `.claude/logs/dream-agent.log` · agent output in `dream-agent.run.log` · `dream-pass.git-state.txt` · `dream-pass.prompt.md` in command mode · `pass-settings.json` in the state directory in claude mode, the memory override passed with `--settings`, replaced by each claude-mode pass whose override checks pass · `runner-tripwire` after a contained violation or a `KILL_FAILED` stop · `dream-pass.interrupted.run` in the state directory after a signal or a `KILL_FAILED` stop, or when the run log could not be written, or `dream-pass.interrupted.run.<six characters>` beside it when something was in the way |
+| `.claude/scripts/promotion-pass.sh` / `.cmd` | `0` OK · `1` NO-ARTIFACT · `2` VIOLATION · `3` REFUSED · `4` COMMIT-FAILED · `5` CHECK-FAILED · `64` unknown `VAULT_AGENT` · `70` TRIPWIRE-ERROR · `75` LOCKED · `78` TRIPWIRE · `124` TIMEOUT · `125` STALLED · `127` `claude`, wrapper or Git Bash not found · otherwise the agent's code | `.claude/logs/promotion-agent.log` · agent output added to `promotion-agent.run.log` · `promotion-pass.git-state.txt` · `promotion-pass.prompt.md` in command mode · `pass-settings.json` in the state directory in claude mode, the memory override passed with `--settings`, replaced by each claude-mode pass whose override checks pass · `runner-tripwire` after a contained violation or a `KILL_FAILED` stop · `promotion-pass.interrupted.run` in the state directory after a signal or a `KILL_FAILED` stop, or when the run log could not be written, or `promotion-pass.interrupted.run.<six characters>` beside it when something was in the way |
 | `.claude/scripts/vault-retention.sh` / `.cmd` | `0` OK · `1` setup, a `_logs` it cannot list or enter, git or repository shape · `2` REPORT-REFUSED · `3` PARTIAL · `4` COMMIT-FAILED · `6` PATH-BLOCKED · `64` usage · `70` TRIPWIRE-ERROR · `71` RECOVERY-NEEDED · `75` LOCKED · `78` TRIPWIRE · `127` Git Bash not found (from the `.cmd`) · `129` `130` `143` stopped by HUP, INT or TERM · `128`+N a signal it does not catch | `.claude/logs/vault-retention.log`, and on stdout as the run ends its own copy of the lines it logged, kept in its temporary folder until then, in the form § 4.3.1 describes · in the state directory `retention-legacy-<date>-<hash8>.txt` and the `retention-legacy.hashes` index of reports it wrote, and `retention-inflight` while a move is in flight, which is left behind on exit 71 and holds later runs back · no run log and no prompt file, because it starts no agent |
 | `.claude/scripts/vault-update.sh` | `0` it could look and there is nothing to adopt · `10` it could look and there **is** something to adopt, meaning `--status` found local drift, `--check` found something upstream, or `--diff` printed a difference · `2` it could **not** look, meaning no manifest, no working hash tool, a file it could not read, an unreadable or non-template source, an unknown hash algorithm, a source older than this vault, a comparison of zero files on either side (`VACUOUS`, `SOURCE-VACUOUS`), a source that disagrees with its own manifest, a source reaching an entry through a symbolic link at any point in its path or naming one it cannot open, a source claiming machinery inside a folder of your own, or two copies claiming one version and disagreeing · `1` this vault has a problem, meaning a manifest that cannot be parsed, a version it will not print, a rules file it will not use, or a stale manifest under `--verify-manifest` · `11` refused for the state of the vault rather than the command line, meaning `--adopt` where a baseline already exists, and numbered away from the `3` the retention runner spends on a partial pass · `6` a manifest entry named a path outside the vault · `64` the command line was wrong, or `--generate` was run without `VAULT_TEMPLATE_MAINTAINER=1` · `75` a pass is in flight · `78` a runner tripwire is set · `130` interrupted · `143` terminated | stdout and stderr only. Writes `.claude/template-manifest` under `--adopt` and `--generate`, and nothing else, ever |
 | `.claude/githooks/pre-commit` | `vault-check.sh`'s status: `0` commit proceeds · `1` commit refused | stdout/stderr only |

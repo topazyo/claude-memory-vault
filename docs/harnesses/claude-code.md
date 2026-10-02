@@ -17,7 +17,8 @@ already works when you start Claude Code from the vault root.
 
 - **Enforced:** the lint after every Write or Edit, the compaction stub, the Read deny for the
   three secret paths (not for shell commands such as `cat`), and each agent's tool allowlist in
-  the scheduled passes.
+  the scheduled passes. Where those passes keep Claude Code's memory is under **Scheduled passes**
+  below.
 - **Guidance:** everything else in `.claude/rules/security.md`, and the note contract itself,
   which the lint reports on but never blocks.
 
@@ -59,7 +60,11 @@ without asking me.
 ## Scheduled passes
 
 The runners use Claude Code by default (`VAULT_AGENT=claude`), and the agents' allowlists are
-enforced. See `docs/setup.md` § 8.
+enforced. See `docs/setup.md` § 8. Each claude-mode pass also gets a settings file of the
+runner's own, passed with `--settings`, that points Claude Code's memory folder at
+`90-auto-memory/.pass-agent/` inside the vault, where the write fence sees it. That was measured
+for the Write tool on Windows only; managed settings outrank it, and a pass refuses to start when
+the folder already holds something. `docs/reference.md` § 4.3, **Write fence**, has the limits.
 
 ## Sources
 
