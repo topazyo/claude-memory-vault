@@ -94,8 +94,8 @@ set -u
 # also covers the other unprefixed awks and the one sed the library runs on this
 # path. Nothing here reads a translated message. It also reaches Git Bash's
 # cygpath, which under C cuts a path at its first character outside the ANSI
-# code page, so memory_override runs its two conversions under C.UTF-8 and
-# checks each one, while the state directory's and path_key's still run under C.
+# code page, so memory_override runs its cygpath calls under C.UTF-8 and checks
+# what they give, while the state directory's and path_key's still run under C.
 LC_ALL=C
 export LC_ALL
 

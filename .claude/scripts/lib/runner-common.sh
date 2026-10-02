@@ -3161,12 +3161,14 @@ note_tripwire() {
 # own settings file, passed with --settings, points the memory folder at
 # 90-auto-memory/.pass-agent/ inside the vault instead, where the fence sees a
 # write. With it, a Write to a named folder and one to the default folder were
-# both measured refused, on Windows only, with Claude Code 2.1.284 to 2.1.287.
+# both measured refused, on Windows only, with Claude Code 2.1.284, 2.1.285 and
+# 2.1.287.
 #
 # On Windows both paths are converted with cygpath under a UTF-8 locale: under
 # the runners' LC_ALL=C it cuts a path at its first character outside the ANSI
 # code page, which made the file name a folder outside the vault. Each converted
-# path must then name, converted back, the very folder or file it came from.
+# path must be a drive or network path and name, converted back, the very
+# folder or file it came from.
 #
 # The checks refuse a pass the file would not protect: a converted path that
 # names something else; a vault path the JSON would have to escape; a vault or
@@ -3177,23 +3179,35 @@ note_tripwire() {
 # but a regular .DS_Store file with no other hard link, since anything else could
 # be read into the pass as memory or let a write leave the vault. They write
 # nothing. They must run after the pass's "before" snapshot, so that anything
-# planted after them is still a change the fence sees. Then the file replaces
-# any earlier <state-dir>/pass-settings.json and must read back byte for byte,
+# planted after them is still a change the fence sees. Then the file, private to
+# this account, replaces any earlier <state-dir>/pass-settings.json and must
+# read back byte for byte,
 # because Claude Code reads an empty or invalid settings file as if there were
 # none. AGENT_SETTINGS_FILE names it as Claude Code reads a path.
 # .pass-agent itself is never created here. Returns 1, with the reason in <log>,
 # when the pass must not start.
 memory_override() {
   local root="$1" state="$2" work="$3" log="$4" vault="$1" file="$2/pass-settings.json" arg="$2/pass-settings.json"
-  local dir="$1/90-auto-memory/.pass-agent" list line
+  local dir="$1/90-auto-memory/.pass-agent" list line p win=0
   # Set only on success below, so no value from the environment can stand in.
   unset AGENT_SETTINGS_FILE
-  if command -v cygpath >/dev/null 2>&1; then
+  # Chosen by platform, not by finding cygpath: on Windows a path left in
+  # Git Bash form is read by Claude Code as a folder under the drive root.
+  case "$RUNNER_UNAME" in MINGW*|MSYS*|CYGWIN*) win=1 ;; esac
+  if [ "$win" = 1 ]; then
     vault="$(LC_ALL=C.UTF-8 cygpath -m "$root" 2>/dev/null)" && [ -n "$vault" ] \
       && arg="$(LC_ALL=C.UTF-8 cygpath -m "$file" 2>/dev/null)" && [ -n "$arg" ] || {
       printf '[%s] ERROR: cygpath could not convert a path for the memory override. Refusing to run.\n' "$(ts)" >> "$log"
       return 1
     }
+    for p in "$vault" "$arg"; do
+      case "$p" in
+        [A-Za-z]:/*|//[!/]*) ;;
+        *)
+          printf '[%s] ERROR: cygpath gave %s for a path of the memory override, which is not a Windows drive or network path, so Claude Code would read it as another folder. Refusing to run.\n' "$(ts)" "$p" >> "$log"
+          return 1 ;;
+      esac
+    done
     if ! [ "$(LC_ALL=C.UTF-8 cygpath -u "$vault" 2>/dev/null)" -ef "$root" ]; then
       printf '[%s] ERROR: cygpath turned %s into %s, which is not the same folder or file, so the memory override would name a path outside the vault. Refusing to run.\n' "$(ts)" "$root" "$vault" >> "$log"
       return 1
@@ -3232,14 +3246,16 @@ memory_override() {
   # it standing in for this pass's.
   rm -f "$file" 2>/dev/null
   line="{\"autoMemoryDirectory\":\"$vault/90-auto-memory/.pass-agent\"}"
+  # Private to this account whatever the umask: Claude Code runs the hooks a
+  # settings file names.
   if [ -e "$file" ] || [ -L "$file" ] \
-     || ! printf '%s\n' "$line" > "$work/pass-settings.json" \
+     || ! ( umask 077 && printf '%s\n' "$line" > "$work/pass-settings.json" ) \
      || ! write_file_atomic "$file" "$work/pass-settings.json"; then
     printf '[%s] ERROR: could not write the memory override %s. Refusing to run.\n' "$(ts)" "$file" >> "$log"
     return 1
   fi
-  if command -v cygpath >/dev/null 2>&1 && ! [ "$(LC_ALL=C.UTF-8 cygpath -u "$arg" 2>/dev/null)" -ef "$file" ]; then
-    printf '[%s] ERROR: cygpath turned %s into %s, which is not the same folder or file, so the memory override would name a path outside the vault. Refusing to run.\n' "$(ts)" "$file" "$arg" >> "$log"
+  if [ "$win" = 1 ] && ! [ "$(LC_ALL=C.UTF-8 cygpath -u "$arg" 2>/dev/null)" -ef "$file" ]; then
+    printf '[%s] ERROR: cygpath turned %s into %s, which is not the same folder or file, so Claude Code would be handed another settings file. Refusing to run.\n' "$(ts)" "$file" "$arg" >> "$log"
     return 1
   fi
   if ! printf '%s\n' "$line" | cmp -s - "$file"; then

@@ -2243,6 +2243,8 @@ MO_NOTDIR='is not a folder, so the memory override folder cannot be made there'
 MO_WRITE='could not write the memory override'
 MO_PATH="the vault's path holds a character the settings file cannot carry"
 MO_SAME='which is not the same folder or file, so the memory override would name a path outside the vault'
+MO_SAMEFILE='which is not the same folder or file, so Claude Code would be handed another settings file'
+MO_DRIVE='which is not a Windows drive or network path'
 MO_UTF8='is not valid UTF-8, or iconv could not check it'
 MO_READBACK='does not hold what was written to it'
 MO_LOG="$RV/.claude/logs/dream-agent.log"
@@ -2420,23 +2422,56 @@ rm -f "$MO_STATE/pass-settings.json"
 # A settings file that is in place but does not hold what was written refuses
 # too, because Claude Code reads an empty or invalid one as if there were none
 # and grants the memory folders outside the vault again (measured on 2.1.287).
-# A stand-in mv moves the file into place and then empties it.
+# A stand-in mv moves the file into place and then writes over it what the
+# file MO_SWAP_WITH names: nothing, then another valid line, so a read-back
+# that only asked for some content would not pass.
 MO_EMPTY="$TMP/memovr-empty"
 rm -rf "$MO_EMPTY" "$TMP/memovr-empty-dest"
 mkdir -p "$MO_EMPTY" "$TMP/memovr-empty-dest"
-printf '#!/usr/bin/env bash\neval "last=\\${$#}"\n%q "$@" || exit $?\ncase "$last" in */pass-settings.json) : > "$last" ;; esac\n' "$mo_real_mv" > "$MO_EMPTY/mv"
+printf '#!/usr/bin/env bash\neval "last=\\${$#}"\n%q "$@" || exit $?\ncase "$last" in */pass-settings.json) cat "$MO_SWAP_WITH" > "$last" ;; esac\n' "$mo_real_mv" > "$MO_EMPTY/mv"
 chmod +x "$MO_EMPTY/mv"
-printf 'x\n' > "$TMP/memovr-empty-probe"
-if [ ! -e "$MO_STATE/pass-settings.json" ] && [ ! -L "$MO_STATE/pass-settings.json" ] \
-   && PATH="$MO_EMPTY:$PATH" mv -f "$TMP/memovr-empty-probe" "$TMP/memovr-empty-dest/pass-settings.json" \
-   && [ ! -e "$TMP/memovr-empty-probe" ] && [ -f "$TMP/memovr-empty-dest/pass-settings.json" ] \
-   && [ ! -s "$TMP/memovr-empty-dest/pass-settings.json" ]; then
-  mo_refused "claude mode: the settings file is in place but empty" "$MO_READBACK" dream-pass.sh journal "$MO_LOG" PATH="$MO_EMPTY:$PATH"
+: > "$TMP/memovr-swap-empty"
+printf '{"autoMemoryDirectory":"%s/elsewhere"}\n' "$TMP" > "$TMP/memovr-swap-other"
+for mo_w in empty other; do
+  printf 'x\n' > "$TMP/memovr-empty-probe"
+  rm -f "$TMP/memovr-empty-dest/pass-settings.json"
+  if [ ! -e "$MO_STATE/pass-settings.json" ] && [ ! -L "$MO_STATE/pass-settings.json" ] \
+     && MO_SWAP_WITH="$TMP/memovr-swap-$mo_w" PATH="$MO_EMPTY:$PATH" mv -f "$TMP/memovr-empty-probe" "$TMP/memovr-empty-dest/pass-settings.json" \
+     && [ ! -e "$TMP/memovr-empty-probe" ] && [ -f "$TMP/memovr-empty-dest/pass-settings.json" ] \
+     && cmp -s "$TMP/memovr-swap-$mo_w" "$TMP/memovr-empty-dest/pass-settings.json"; then
+    case "$mo_w" in
+      empty) mo_say='in place but empty' ;;
+      *) mo_say='in place but naming another folder' ;;
+    esac
+    mo_refused "claude mode: the settings file is $mo_say" "$MO_READBACK" dream-pass.sh journal "$MO_LOG" \
+      PATH="$MO_EMPTY:$PATH" MO_SWAP_WITH="$TMP/memovr-swap-$mo_w"
+  else
+    bad "mem-override-flag: the mv stand-in does not move the settings file into place and write the $mo_w content over it"
+  fi
+  rm -f "$MO_STATE/pass-settings.json"
+done
+rm -rf "$MO_EMPTY" "$TMP/memovr-empty-probe" "$TMP/memovr-empty-dest" "$TMP/memovr-swap-empty" "$TMP/memovr-swap-other"
+# The settings file is private to the runner's account whatever its umask,
+# because Claude Code runs the hooks a settings file names.
+if is_windows_host; then
+  skip mem-override-file-mode 'the settings file mode: Git Bash mode bits are not Windows permissions'
 else
-  bad "mem-override-flag: the mv stand-in does not move the settings file into place and empty it"
+  rm -f "$TMP/memovr-umask-probe"
+  ( umask 002 && printf 'x\n' > "$TMP/memovr-umask-probe" )
+  if [ "$(ls -l "$TMP/memovr-umask-probe" 2>/dev/null | cut -c1-10)" = -rw-rw-r-- ] && [ ! -e "$MO_STATE/pass-settings.json" ]; then
+    ran mem-override-file-mode
+    mo_rc="$(umask 002 && runner dream-pass.sh journal)"
+    mo_mode="$(ls -l "$MO_STATE/pass-settings.json" 2>/dev/null | cut -c1-10)"
+    if [ "$mo_rc" -eq 0 ] && [ "$mo_mode" = -rw------- ]; then
+      ok "claude mode under umask 002: the settings file is readable and writable by the runner's account only (exit 0)"
+    else
+      bad "claude mode under umask 002: the settings file is not private to the runner's account -- got exit $mo_rc, mode ${mo_mode:-none}"
+    fi
+  else
+    bad "mem-override-file-mode: a file made under umask 002 is not group-writable here, or a settings file was left, so this twin would prove nothing"
+  fi
+  rm -f "$TMP/memovr-umask-probe" "$MO_STATE/pass-settings.json"
 fi
-rm -rf "$MO_EMPTY" "$TMP/memovr-empty-probe" "$TMP/memovr-empty-dest"
-rm -f "$MO_STATE/pass-settings.json"
 
 # cygpath failing on either path the override needs refuses the pass, rather
 # than passing an empty value, and so does cygpath succeeding with a path that
@@ -2447,7 +2482,7 @@ if is_windows_host; then
   MO_SHIM="$TMP/memovr-shim"
   rm -rf "$MO_SHIM"
   mkdir -p "$MO_SHIM"
-  printf '#!/usr/bin/env bash\nif [ "$#" -eq 2 ] && [ "$1" = -m ]; then\n  case "$MO_SHIM_FAIL:$2" in\n    settings:*/pass-settings.json|vault:*/runnervault) exit 1 ;;\n    empty:*/pass-settings.json|emptyvault:*/runnervault) exit 0 ;;\n    wrongsettings:*/pass-settings.json|wrongvault:*/runnervault) exec /usr/bin/cygpath -m "${2%%/*}" ;;\n  esac\nfi\nexec /usr/bin/cygpath "$@"\n' > "$MO_SHIM/cygpath"
+  printf '#!/usr/bin/env bash\nif [ "$#" -eq 2 ] && [ "$1" = -m ]; then\n  case "$MO_SHIM_FAIL:$2" in\n    settings:*/pass-settings.json|vault:*/runnervault) exit 1 ;;\n    empty:*/pass-settings.json|emptyvault:*/runnervault) exit 0 ;;\n    wrongsettings:*/pass-settings.json|wrongvault:*/runnervault) exec /usr/bin/cygpath -m "${2%%/*}" ;;\n    posixsettings:*/pass-settings.json|posixvault:*/runnervault) echo "$2"; exit 0 ;;\n  esac\nfi\nexec /usr/bin/cygpath "$@"\n' > "$MO_SHIM/cygpath"
   chmod +x "$MO_SHIM/cygpath"
   if [ "$(PATH="$MO_SHIM:$PATH" MO_SHIM_FAIL=settings cygpath -m "$TMP/x/pass-settings.json" >/dev/null 2>&1; echo "rc=$?")" = rc=1 ] \
      && [ "$(PATH="$MO_SHIM:$PATH" MO_SHIM_FAIL=vault cygpath -m "$RV" >/dev/null 2>&1; echo "rc=$?")" = rc=1 ] \
@@ -2457,7 +2492,10 @@ if is_windows_host; then
      && [ -n "$(PATH="$MO_SHIM:$PATH" MO_SHIM_FAIL=vault cygpath -m "$TMP" 2>/dev/null)" ] \
      && [ "$(PATH="$MO_SHIM:$PATH" MO_SHIM_FAIL=wrongvault cygpath -m "$RV" 2>/dev/null)" = "$(cygpath -m "$TMP")" ] \
      && [ "$(PATH="$MO_SHIM:$PATH" MO_SHIM_FAIL=wrongsettings cygpath -m "$TMP/x/pass-settings.json" 2>/dev/null)" = "$(cygpath -m "$TMP/x")" ] \
-     && [ "$(PATH="$MO_SHIM:$PATH" MO_SHIM_FAIL=wrongvault cygpath -m "$TMP/x/pass-settings.json" 2>/dev/null)" = "$(cygpath -m "$TMP/x/pass-settings.json")" ]; then
+     && [ "$(PATH="$MO_SHIM:$PATH" MO_SHIM_FAIL=wrongvault cygpath -m "$TMP/x/pass-settings.json" 2>/dev/null)" = "$(cygpath -m "$TMP/x/pass-settings.json")" ] \
+     && [ "$(PATH="$MO_SHIM:$PATH" MO_SHIM_FAIL=wrongsettings cygpath -m "$RV" 2>/dev/null)" = "$(cygpath -m "$RV")" ] \
+     && [ "$(PATH="$MO_SHIM:$PATH" MO_SHIM_FAIL=posixvault cygpath -m "$RV" 2>/dev/null)" = "$RV" ] \
+     && [ "$(PATH="$MO_SHIM:$PATH" MO_SHIM_FAIL=posixsettings cygpath -m "$TMP/x/pass-settings.json" 2>/dev/null)" = "$TMP/x/pass-settings.json" ]; then
     ran mem-override-cygpath-refused
     mo_refused "claude mode: cygpath fails on the settings file's path" "cygpath could not convert a path for the memory override" \
       dream-pass.sh journal "$MO_LOG" PATH="$MO_SHIM:$PATH" MO_SHIM_FAIL=settings
@@ -2469,8 +2507,14 @@ if is_windows_host; then
       dream-pass.sh journal "$MO_LOG" PATH="$MO_SHIM:$PATH" MO_SHIM_FAIL=emptyvault
     mo_refused "claude mode: cygpath gives the vault's parent folder for the vault's path" "$MO_SAME" \
       dream-pass.sh journal "$MO_LOG" PATH="$MO_SHIM:$PATH" MO_SHIM_FAIL=wrongvault
-    mo_refused "claude mode: cygpath gives the state folder for the settings file's path" "$MO_SAME" \
+    mo_refused "claude mode: cygpath gives the state folder for the settings file's path" "$MO_SAMEFILE" \
       dream-pass.sh journal "$MO_LOG" PATH="$MO_SHIM:$PATH" MO_SHIM_FAIL=wrongsettings
+    # A path left in Git Bash form names the same folder to Git Bash, but Claude
+    # Code reads /c/... as a folder under the drive root.
+    mo_refused "claude mode: cygpath gives the vault's own Git Bash path back" "$MO_DRIVE" \
+      dream-pass.sh journal "$MO_LOG" PATH="$MO_SHIM:$PATH" MO_SHIM_FAIL=posixvault
+    mo_refused "claude mode: cygpath gives the settings file's own Git Bash path back" "$MO_DRIVE" \
+      dream-pass.sh journal "$MO_LOG" PATH="$MO_SHIM:$PATH" MO_SHIM_FAIL=posixsettings
   else
     bad "mem-override-cygpath-refused: the cygpath stand-in does not fail exactly where it should"
   fi
@@ -2573,13 +2617,13 @@ else
 fi
 rm -f "$MO_DIR/.DS_Store" "$TMP/memovr-hard"
 # A .DS_Store that is not a regular file, a FIFO here, is not the file macOS leaves.
-if is_windows_host; then
-  skip mem-override-sink-fifo 'a .DS_Store that is a FIFO: Git Bash only emulates FIFOs, so this twin runs on POSIX hosts'
-elif mkfifo "$MO_DIR/.DS_Store" 2>/dev/null && [ -p "$MO_DIR/.DS_Store" ] && [ "$(ls -A "$MO_DIR")" = .DS_Store ]; then
+if ! mkfifo "$MO_DIR/.DS_Store" 2>/dev/null; then
+  skip mem-override-sink-fifo 'a .DS_Store that is a FIFO: mkfifo cannot make one here'
+elif [ -p "$MO_DIR/.DS_Store" ] && [ "$(ls -A "$MO_DIR")" = .DS_Store ]; then
   ran mem-override-sink-fifo
   mo_refused "claude mode: 90-auto-memory/.pass-agent/.DS_Store is a FIFO" "$MO_SINK"
 else
-  skip mem-override-sink-fifo 'a .DS_Store that is a FIFO: mkfifo cannot make one here'
+  bad "mem-override-sink-fifo: mkfifo made something that is not a FIFO alone in 90-auto-memory/.pass-agent"
 fi
 rm -f "$MO_DIR/.DS_Store"
 if is_windows_host; then
@@ -4902,20 +4946,23 @@ is_windows_host && MO_TS="$MO_TM"
 # path that names an existing file), and that file holds exactly
 # {"autoMemoryDirectory":"<W>/90-auto-memory/.pass-agent"} and a line break.
 mo_accepts() {
-  local label="$1" v="$2" w="$3" s="$4" rc arg got
+  local label="$1" v="$2" w="$3" s="$4" rc arg got form=yes
   rm -f "$REC.argv"
   rc="$(RUNNER_VAULT="$v" runner dream-pass.sh journal FAKE_RECORD="$REC")"
   arg="$(awk 'prev == "--settings" { print; exit } { prev = $0 }' "$REC.argv" 2>/dev/null)"
   got="$(cat "$arg" 2>/dev/null; printf x)"
-  if [ "$rc" -eq 0 ] && [ -n "$arg" ] && { [ -z "$s" ] || [ "$arg" = "$s" ]; } && [ -f "$arg" ] \
+  # Claude Code is a Windows program there, so the argument must be a drive path.
+  if is_windows_host; then case "$arg" in [A-Za-z]:/*) ;; *) form=no ;; esac; fi
+  if [ "$rc" -eq 0 ] && [ -n "$arg" ] && [ "$form" = yes ] && { [ -z "$s" ] || [ "$arg" = "$s" ]; } && [ -f "$arg" ] \
      && [ "$got" = "{\"autoMemoryDirectory\":\"$w/90-auto-memory/.pass-agent\"}${NL}x" ]; then
     ok "$label -> runs (exit 0), with the override naming that vault's own 90-auto-memory/.pass-agent"
   else
     bad "$label -- expected exit 0 and the override naming $w/90-auto-memory/.pass-agent; got exit $rc, --settings ${arg:-none}, file: $(cat "$arg" 2>/dev/null)"
   fi
 }
-# mo_ascii_tmp - true when the temp folder's path, as the runners convert it, is
+# mo_ascii_tmp - true when the temp folder's path, as this suite converts it, is
 # printable ASCII, so the only other bytes in an expected value are the suite's.
+# A temp folder under a non-ASCII profile fails it, with this guard's message.
 mo_ascii_tmp() {
   [ -n "$MO_TM" ] && ! printf '%s' "$MO_TM" | LC_ALL=C grep -q '[^ -~]'
 }
@@ -4991,28 +5038,45 @@ for mo_n in "caf$(printf '\303\251')" "$(printf '\320\264\320\276\320\272')" sta
 done
 CASE_STATE="$TMP/state-memovr-path"
 
-# On Linux a path is bytes, and one that is not valid UTF-8 would reach Claude
-# Code as another folder, or none, so a claude-mode pass refuses it.
+# On Linux a path is bytes, and a vault or state directory path that is not
+# valid UTF-8 would reach Claude Code as another folder, or none, so a
+# claude-mode pass refuses it. Where the file system refuses such a name (APFS
+# does), memory_override is called as the runners call it, under LC_ALL=C, to
+# show this host's iconv refuses the byte before anything is written.
 if is_windows_host; then
   skip mem-override-utf8-refused 'a vault path that is not valid UTF-8: Git Bash reads a lone byte 0xFF as U+00FF, so the folder has a valid name'
 else
-  MO_UV="$TMP/v$(printf '\377')ault"
-  rm -rf "$MO_UV"
-  if mkdir "$MO_UV" 2>/dev/null && make_runner_vault "$MO_UV" && [ -f "$MO_UV/.claude/scripts/dream-pass.sh" ]; then
-    ran mem-override-utf8-refused
-    new_case_state memovr-utf8
-    rm -f "$REC.argv"
-    mo_rc="$(RUNNER_VAULT="$MO_UV" runner dream-pass.sh journal FAKE_RECORD="$REC")"
-    if [ "$mo_rc" -eq 1 ] && grep -F -- "$MO_UTF8" "$MO_UV/.claude/logs/dream-agent.log" 2>/dev/null | grep -q '^\[[^]]*\] ERROR: ' \
-       && [ ! -e "$REC.argv" ]; then
-      ok "dream-pass: a vault whose path is not valid UTF-8 -> refused (exit 1), an ERROR: line says why, and the agent never started"
+  MO_FF="$(printf '\377')"
+  for mo_where in vault 'state directory'; do
+    if [ "$mo_where" = vault ]; then MO_UV="$TMP/v${MO_FF}ault" mo_us="$TMP/state-memovr-utf8"; else MO_UV="$TMP/memovr-utf8-vault" mo_us="$TMP/state-${MO_FF}-utf8"; fi
+    rm -rf "$MO_UV" "$mo_us" "$TMP/memovr-utf8-work" "$TMP/memovr-utf8.log"
+    grep -qx mem-override-utf8-refused "$RAN_CONTROLS" || ran mem-override-utf8-refused
+    if mkdir "$MO_UV" "$mo_us" 2>/dev/null && make_runner_vault "$MO_UV" && [ -f "$MO_UV/.claude/scripts/dream-pass.sh" ]; then
+      rmdir "$mo_us"
+      CASE_STATE="$mo_us"
+      rm -f "$REC.argv"
+      mo_rc="$(RUNNER_VAULT="$MO_UV" runner dream-pass.sh journal FAKE_RECORD="$REC")"
+      if [ "$mo_rc" -eq 1 ] && grep -F -- "$MO_UTF8" "$MO_UV/.claude/logs/dream-agent.log" 2>/dev/null | grep -q '^\[[^]]*\] ERROR: ' \
+         && [ ! -e "$REC.argv" ] && [ ! -e "$MO_UV/.claude/logs/runner-inflight" ] && [ ! -e "$mo_us/runner-inflight" ]; then
+        ok "dream-pass: a $mo_where path that is not valid UTF-8 -> refused (exit 1), an ERROR: line says why, the agent never started, and no in-flight marker is left"
+      else
+        bad "dream-pass: a $mo_where path that is not valid UTF-8 was not refused for it -- got exit $mo_rc: $(tail -n 3 "$MO_UV/.claude/logs/dream-agent.log" 2>/dev/null | tr '\n' '|')"
+      fi
     else
-      bad "dream-pass: a vault whose path is not valid UTF-8 was not refused for it -- got exit $mo_rc: $(tail -n 3 "$MO_UV/.claude/logs/dream-agent.log" 2>/dev/null | tr '\n' '|')"
+      mkdir -p "$TMP/memovr-utf8-work"
+      ( LC_ALL=C; export LC_ALL; . "$RV/.claude/scripts/lib/runner-common.sh"
+        memory_override "$MO_UV" "$mo_us" "$TMP/memovr-utf8-work" "$TMP/memovr-utf8.log" )
+      mo_rc=$?
+      if [ "$mo_rc" -eq 1 ] && grep -F -- "$MO_UTF8" "$TMP/memovr-utf8.log" 2>/dev/null | grep -q '^\[[^]]*\] ERROR: ' \
+         && [ ! -e "$mo_us/pass-settings.json" ] && [ ! -e "$TMP/memovr-utf8-work/pass-settings.json" ]; then
+        ok "memory_override, called directly where the file system refuses the name: a $mo_where path that is not valid UTF-8 -> refused (1), an ERROR: line says why, nothing written"
+      else
+        bad "memory_override did not refuse a $mo_where path that is not valid UTF-8 -- got $mo_rc: $(cat "$TMP/memovr-utf8.log" 2>/dev/null)"
+      fi
     fi
-  else
-    skip mem-override-utf8-refused 'a vault path that is not valid UTF-8: this file system refuses such a name'
-  fi
-  rm -rf "$MO_UV"
+    rm -rf "$MO_UV" "$mo_us" "$TMP/memovr-utf8-work" "$TMP/memovr-utf8.log"
+  done
+  CASE_STATE="$TMP/state-memovr-utf8"
 fi
 
 if command -v git >/dev/null 2>&1; then

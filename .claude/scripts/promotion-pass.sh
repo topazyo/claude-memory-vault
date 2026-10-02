@@ -111,8 +111,8 @@ set -u
 # also covers the other unprefixed awks and the one sed the library runs on this
 # path. Nothing here reads a translated message. It also reaches Git Bash's
 # cygpath, which under C cuts a path at its first character outside the ANSI
-# code page, so memory_override runs its two conversions under C.UTF-8 and
-# checks each one, while the state directory's and path_key's still run under C.
+# code page, so memory_override runs its cygpath calls under C.UTF-8 and checks
+# what they give, while the state directory's and path_key's still run under C.
 LC_ALL=C
 export LC_ALL
 
@@ -389,9 +389,9 @@ main() {
     exit 1
   fi
   HEAD_BEFORE="$(head_state "$ROOT" "$SNAP_DIR/nohooks")"
-  # The last check before the in-flight marker and backup are written to the
-  # shared state directory. A leftover put back above has already written its
-  # quarantine copy there.
+  # The last check of the run lock before the memory override, the in-flight
+  # marker and the backup are written to the shared state directory. A leftover
+  # put back above has already written its quarantine copy there.
   if ! run_lock_held; then
     printf '[%s] LOCKED: another runner replaced or removed this one'"'"'s owner file in the run lock before the pass started. Not starting.\n' "$(ts)" >> "$LOG"
     exit 75
