@@ -585,8 +585,8 @@ relabel() {
 # mode. Memory loads into later sessions, so an unseen write there would be a
 # planted instruction. In claude mode, memory_override points Claude Code's
 # memory folder at 90-auto-memory/.pass-agent/, inside the fence. That withdraws
-# the grant the agent's tools otherwise have to a memory folder outside the vault
-# (measured on Windows), which CLAUDE_CODE_DISABLE_AUTO_MEMORY does not.
+# the grant the agent's Write tool otherwise has to a memory folder outside the
+# vault (measured on Windows only), which CLAUDE_CODE_DISABLE_AUTO_MEMORY does not.
 #
 # In .git/ only the files that make git run code are fenced. They are config,
 # config.worktree, commondir (git reads config and hooks from the directory it
@@ -1048,7 +1048,11 @@ vault_state_dir() {
 # resolve into the vault. Another account could otherwise plant a forged tripwire
 # or marker there, and a symlink planted at the temp-folder fallback could put
 # the state back inside the agent's reach. A group-writable directory is
-# allowed, because many Linux systems give each user a private group. Git Bash
+# allowed, because many Linux systems give each user a private group. Where a
+# group is shared, its other members could also replace the memory override's
+# pass-settings.json between the runner's read-back and Claude Code's read, and
+# a settings file can name hooks Claude Code runs, so keep the state directory
+# private to this account on such a system. Git Bash
 # reports every file as owned by the current user and its mode bits are not
 # ACLs, so on Windows only the check against the vault means anything.
 #
@@ -3151,42 +3155,62 @@ note_tripwire() {
 #
 # Claude mode only. Claude Code grants the agent's Write and Edit tools its
 # memory folder: the one a settings file names as autoMemoryDirectory, or by
-# default one under ~/.claude/projects. The default folder, and usually a named
-# one, lies outside the vault, so a write there would be outside the fence, and
-# CLAUDE_CODE_DISABLE_AUTO_MEMORY does not withdraw the grant. The runner's own
-# settings file, passed with --settings, points the memory folder at
-# 90-auto-memory/.pass-agent/ inside the vault instead, where the fence sees
-# every write. With it, a Write to a named folder and one to the default folder
-# were both measured refused, on Windows only.
+# default one under ~/.claude/projects. The default folder lies outside the
+# vault, and so may a named one, so a write there would be outside the fence,
+# and CLAUDE_CODE_DISABLE_AUTO_MEMORY does not withdraw the grant. The runner's
+# own settings file, passed with --settings, points the memory folder at
+# 90-auto-memory/.pass-agent/ inside the vault instead, where the fence sees a
+# write. With it, a Write to a named folder and one to the default folder were
+# both measured refused, on Windows only, with Claude Code 2.1.284 to 2.1.287.
 #
-# The checks refuse a pass the file would not protect: a vault path the JSON
-# would have to escape; a 90-auto-memory or .pass-agent that is a link (the
-# fence sees a folder link that was there before the pass only as a link, so
-# writes through it would not be seen) or is not a folder; and a .pass-agent
-# holding anything but a regular .DS_Store file with no other hard link, since
-# anything else could be read into the pass as memory or let a write leave the
-# vault. They write nothing. They must run after the pass's "before" snapshot,
-# so that anything planted after them is still a change the fence sees. Then
-# the file replaces any earlier <state-dir>/pass-settings.json, and
-# AGENT_SETTINGS_FILE names it as Claude Code reads a path. .pass-agent itself
-# is never created here. Returns 1, with the reason in <log>, when the pass must
-# not start.
+# On Windows both paths are converted with cygpath under a UTF-8 locale: under
+# the runners' LC_ALL=C it cuts a path at its first character outside the ANSI
+# code page, which made the file name a folder outside the vault. Each converted
+# path must then name, converted back, the very folder or file it came from.
+#
+# The checks refuse a pass the file would not protect: a converted path that
+# names something else; a vault path the JSON would have to escape; a vault or
+# state path that is not valid UTF-8, which Claude Code could read as another
+# folder; a 90-auto-memory or .pass-agent that is a link (the fence sees a
+# folder link that was there before the pass only as a link, so writes through
+# it would not be seen) or is not a folder; and a .pass-agent holding anything
+# but a regular .DS_Store file with no other hard link, since anything else could
+# be read into the pass as memory or let a write leave the vault. They write
+# nothing. They must run after the pass's "before" snapshot, so that anything
+# planted after them is still a change the fence sees. Then the file replaces
+# any earlier <state-dir>/pass-settings.json and must read back byte for byte,
+# because Claude Code reads an empty or invalid settings file as if there were
+# none. AGENT_SETTINGS_FILE names it as Claude Code reads a path.
+# .pass-agent itself is never created here. Returns 1, with the reason in <log>,
+# when the pass must not start.
 memory_override() {
   local root="$1" state="$2" work="$3" log="$4" vault="$1" file="$2/pass-settings.json" arg="$2/pass-settings.json"
-  local dir="$1/90-auto-memory/.pass-agent" list
+  local dir="$1/90-auto-memory/.pass-agent" list line
   # Set only on success below, so no value from the environment can stand in.
   unset AGENT_SETTINGS_FILE
   if command -v cygpath >/dev/null 2>&1; then
-    vault="$(cygpath -m "$root" 2>/dev/null)" && [ -n "$vault" ] \
-      && arg="$(cygpath -m "$file" 2>/dev/null)" && [ -n "$arg" ] || {
+    vault="$(LC_ALL=C.UTF-8 cygpath -m "$root" 2>/dev/null)" && [ -n "$vault" ] \
+      && arg="$(LC_ALL=C.UTF-8 cygpath -m "$file" 2>/dev/null)" && [ -n "$arg" ] || {
       printf '[%s] ERROR: cygpath could not convert a path for the memory override. Refusing to run.\n' "$(ts)" >> "$log"
       return 1
     }
+    if ! [ "$(LC_ALL=C.UTF-8 cygpath -u "$vault" 2>/dev/null)" -ef "$root" ]; then
+      printf '[%s] ERROR: cygpath turned %s into %s, which is not the same folder or file, so the memory override would name a path outside the vault. Refusing to run.\n' "$(ts)" "$root" "$vault" >> "$log"
+      return 1
+    fi
   fi
   case "$vault" in
     *'"'*|*\\*|*[[:cntrl:]]*)
       printf '[%s] ERROR: the vault'"'"'s path holds a character the settings file cannot carry (a double quote, a backslash or a control character), so Claude Code'"'"'s memory cannot be kept inside the vault. Rename the folder. Refusing to run.\n' "$(ts)" >> "$log"
       return 1 ;;
+  esac
+  # Only a path with a byte outside printable ASCII needs iconv to vouch for it.
+  case "$vault$arg" in
+    *[![:print:]]*)
+      if ! printf '%s\n%s\n' "$vault" "$arg" | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1; then
+        printf '[%s] ERROR: the vault'"'"'s path or the state directory'"'"'s path is not valid UTF-8, or iconv could not check it, so Claude Code could read the memory override as naming another folder. Rename the folder. Refusing to run.\n' "$(ts)" >> "$log"
+        return 1
+      fi ;;
   esac
   if [ -L "$root/90-auto-memory" ] || [ -L "$dir" ]; then
     printf '[%s] ERROR: the memory override folder is a link, so writes through it would leave the fence. 90-auto-memory and 90-auto-memory/.pass-agent must be plain folders, not symlinks or junctions. Refusing to run.\n' "$(ts)" >> "$log"
@@ -3207,10 +3231,19 @@ memory_override() {
   # An earlier pass's file is removed first, so a write that fails cannot leave
   # it standing in for this pass's.
   rm -f "$file" 2>/dev/null
+  line="{\"autoMemoryDirectory\":\"$vault/90-auto-memory/.pass-agent\"}"
   if [ -e "$file" ] || [ -L "$file" ] \
-     || ! printf '{"autoMemoryDirectory":"%s/90-auto-memory/.pass-agent"}\n' "$vault" > "$work/pass-settings.json" \
+     || ! printf '%s\n' "$line" > "$work/pass-settings.json" \
      || ! write_file_atomic "$file" "$work/pass-settings.json"; then
     printf '[%s] ERROR: could not write the memory override %s. Refusing to run.\n' "$(ts)" "$file" >> "$log"
+    return 1
+  fi
+  if command -v cygpath >/dev/null 2>&1 && ! [ "$(LC_ALL=C.UTF-8 cygpath -u "$arg" 2>/dev/null)" -ef "$file" ]; then
+    printf '[%s] ERROR: cygpath turned %s into %s, which is not the same folder or file, so the memory override would name a path outside the vault. Refusing to run.\n' "$(ts)" "$file" "$arg" >> "$log"
+    return 1
+  fi
+  if ! printf '%s\n' "$line" | cmp -s - "$file"; then
+    printf '[%s] ERROR: the memory override %s does not hold what was written to it, or cmp could not compare it, and Claude Code reads an empty or invalid settings file as if there were none. Refusing to run.\n' "$(ts)" "$file" >> "$log"
     return 1
   fi
   AGENT_SETTINGS_FILE="$arg"
@@ -3241,8 +3274,8 @@ run_agent() {
       # Auto memory is switched off for the pass, so Claude Code does not write
       # memory files of its own. That does not withdraw the agent's tools' grant
       # to a memory folder outside the vault. The --settings file memory_override
-      # wrote does, by pointing the memory folder inside the fence (measured on
-      # Windows).
+      # wrote does, by pointing the memory folder inside the fence (measured for
+      # Write, on Windows only).
       #
       # Neither agent's allowlist names a tool that runs commands. --disallowedTools
       # denies Bash, PowerShell (which Claude Code offers on Windows) and Monitor
