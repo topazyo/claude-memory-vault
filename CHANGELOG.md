@@ -89,8 +89,10 @@ What that covers, and what it does not:
   replacing the one an earlier pass wrote, and start the agent with `--settings <that file>` just
   before `--disallowedTools`. The file holds one key, `autoMemoryDirectory`. On Linux and macOS
   it is written readable by the runner's account only, whatever the umask, because a settings file
-  can name hooks Claude Code runs; on Windows the state folder's permissions decide. The runner
-  never creates `.pass-agent/` itself. Command mode is unchanged.
+  can name hooks Claude Code runs; on Windows the state folder's permissions decide. A file mode
+  does not stop an account that can write the state directory from replacing the file, so that
+  directory has to be private too (item 11). The runner never creates `.pass-agent/` itself.
+  Command mode is unchanged.
 - **A claude-mode pass now needs `cmp`, and `iconv` for a vault or state path that is not plain
   ASCII.** It reads the file back with the first and checks the path with the second, and refuses
   to start without them. Git for Windows and macOS ship both.
@@ -112,18 +114,27 @@ What that covers, and what it does not:
     carry. On Windows, Git Bash keeps a `"` or a tab in a folder name as the private-use character
     U+F022 or U+F009. `dream-pass.cmd` and `promotion-pass.cmd` start the runner with the path
     spelled that way, which `cygpath` gives back, so from them the override names such a vault as
-    Windows spells it. Started from Git Bash with the `"` or the tab typed, git cannot enter the
-    folder and the pass exits 1 before the override, as in 1.4.0.
+    Windows spells it (measured through `cmd.exe` with a stand-in agent, and for a `"` with real
+    Claude Code). Started from a Git Bash prompt, which shows such a name with the `"` or the tab
+    itself in `ls`, tab completion and `pwd`, git cannot enter the folder and the pass exits 1
+    before the override, as in 1.4.0 (measured).
   - The vault's or the state directory's path is not valid UTF-8, which Claude Code could read as
     another folder, or holds a byte outside printable ASCII and `iconv` is missing to check it. A
     path can be invalid UTF-8 on Linux, where it is bytes.
   - On Windows, `cygpath` is missing, fails or prints nothing for a path the override needs, or
     gives one that is not a Windows drive or network path, or that names another folder or file.
-    A `cygpath` found on `PATH` elsewhere goes through the same checks, and so refuses.
-  - Outside Git Bash, `CLAUDE_BIN` looks like a Windows program (a `.exe`, or one under
-    `/mnt/<drive>/`, as when a runner in WSL starts Windows' `claude.exe`), which would read the
-    runner's POSIX paths as other folders.
+    A `cygpath` found on `PATH` elsewhere goes through the same checks, so one that does not
+    convert a path and back to the same folder refuses; one that does is outside what the runner
+    can check.
+  - Outside Git Bash, the Claude Code the runner would start is a Windows program: the file
+    `CLAUDE_BIN` names, or the `claude` found on `PATH`, ends in `.exe` or, read through any link,
+    starts with a Windows program's `MZ` header, as when a runner in WSL starts Windows'
+    `claude.exe`. Such a program would read the runner's POSIX paths as other folders. A wrapper
+    script that starts one is not recognised.
   - The settings file could not be written, or does not read back exactly as written.
+  - No settings file was written for the pass, which happens only when the runner and
+    `runner-common.sh` come from different releases (Adopting 1). This refusal comes from the
+    library just before Claude Code would start, so its `ERROR:` line is in the run log.
 - **`Skill` is no longer among the dream agent's tools.** Every `Skill` call was already refused
   under `-p` (measured on Claude Code 2.1.284), so on that version no pass loses anything.
   Removing it closes a route nobody measured: whether a skill's own `allowed-tools` could widen
@@ -141,22 +152,25 @@ What that covers, and what it does not:
   in `.pass-agent/`, and was seen failing against a runner that exempts that folder.
   `mem-override-flag`, `mem-override-sink-refused`, `mem-override-sink-link`,
   `mem-override-sink-hardlink`, `mem-override-sink-contained`, `mem-override-sink-fifo`,
-  `mem-override-path-refused`, `mem-override-nonascii`, `mem-override-order` and
-  `dream-agent-tools` are required on every CI job. `mem-override-sink-unreadable`,
-  `mem-override-sink-filelink`, `mem-override-file-mode`, `mem-override-utf8-refused`,
-  `mem-override-winbin` and `mem-override-stray-cygpath` are required on the Linux and macOS jobs
-  and not on Windows, where they skip or may skip; the unreadable one also skips as root.
+  `mem-override-path-refused`, `mem-override-nonascii`, `mem-override-order`,
+  `mem-override-mixed-release` and `dream-agent-tools` are required on every CI job.
+  `mem-override-sink-unreadable`, `mem-override-sink-filelink`, `mem-override-file-mode`,
+  `mem-override-utf8-refused`, `mem-override-winbin`, `mem-override-stray-cygpath` and
+  `mem-override-no-cygpath` are required on the Linux and macOS jobs and not on Windows, where
+  they skip or may skip; the unreadable one also skips as root.
   `mem-override-cygpath-refused` is required on the Windows job, the only one with `cygpath`.
 
 ### Adopting this
 
 1. **Take `.claude/scripts/lib/runner-common.sh`, `dream-pass.sh` and `promotion-pass.sh`
-   together.** Each depends on the others. With the 1.4.1 library and an older runner, a
-   claude-mode pass stops with `AGENT_SETTINGS_FILE: unbound variable` after its in-flight marker,
-   and every later pass exits 78 behind a tripwire that says a pass ended before containment.
-   With an older library and a 1.4.1 runner, every claude-mode pass exits 1 with
-   `memory_override: command not found`. Both go to the runner's stderr, not to its log (measured
-   on Linux). If it happened, take all three, then clear the tripwire: no agent ran.
+   together.** Each depends on the others. With the 1.4.1 library and an older runner, every
+   claude-mode pass exits 1 before Claude Code starts, the log says `dream-agent exited with code
+   1` (or `promotion-agent`), and the run log (`.claude/logs/dream-agent.run.log` or
+   `promotion-agent.run.log`) says `no memory override was written for this pass`; no tripwire is
+   left, also when `AGENT_SETTINGS_FILE` is set in the environment (measured on Linux with 1.4.0's
+   `dream-pass.sh`). With an older library and a 1.4.1 runner, every claude-mode pass exits 1 with
+   `memory_override: command not found`, which goes to the runner's stderr, not to its log
+   (measured on Linux). Either way no agent ran: take all three.
 2. **Nothing to configure for most vaults.** The override is on in claude mode for every pass.
    Item 11 asks some Windows accounts to set `VAULT_STATE_DIR`, and items 5 and 9 name the tools
    (`iconv`, `cmp`) a pass now needs.
@@ -169,9 +183,10 @@ What that covers, and what it does not:
 4. **Outside Windows, a pass refuses to start while the vault's path holds a `"` or a `\`** (or a
    control character). The log says `the vault's path holds a character the settings file cannot
    carry`. Rename the folder. On Windows a `"` or a tab Git Bash put in a folder name is kept as
-   U+F022 or U+F009, and such a vault runs from the `.cmd` wrappers. Started from Git Bash with the
-   character typed, the pass exits 1 with `git could not read this vault's repository`, as in
-   1.4.0; start it from the `.cmd` wrapper, or rename the folder.
+   U+F022 or U+F009, and such a vault runs from the `.cmd` wrappers. Started from a Git Bash
+   prompt, which shows the name with the `"` or the tab itself, the pass exits 1 with `git could not
+   read this vault's repository`, as in 1.4.0; start it from the `.cmd` wrapper, or rename the
+   folder.
 5. **A pass refuses to start while the vault's or the state directory's path is not valid
    UTF-8**, which can happen on Linux, where a path is bytes. The log says `is not valid UTF-8, or
    iconv could not check it`. Rename the folder. The same line appears on any platform when the
@@ -195,9 +210,9 @@ What that covers, and what it does not:
    that `command -v cmp` finds `cmp`, which the read-back needs. On
    Windows the line may instead say `cygpath could not convert a path for the memory override`,
    `which is not a Windows drive or network path` or `which is not the same folder or file`; check
-   Git Bash's `cygpath` (`docs/setup.md`, Troubleshooting). A runner started outside Git Bash with
-   `CLAUDE_BIN` naming Windows' `claude.exe` now refuses with `looks like a Windows program`; run
-   the `.cmd` runner instead.
+   Git Bash's `cygpath` (`docs/setup.md`, Troubleshooting). A runner started outside Git Bash whose
+   Claude Code is Windows' `claude.exe`, named in `CLAUDE_BIN` or found on `PATH`, directly or
+   through a link, now refuses with `looks like a Windows program`; run the `.cmd` runner instead.
 10. **If you renamed `90-auto-memory`, rename it in `runner-common.sh` too**, in `memory_override`
     and in the fence's steering list (`docs/customizing.md` § 2). Otherwise a pass checks, and
     points memory at, a folder that is no longer your memory tier.
@@ -208,16 +223,23 @@ What that covers, and what it does not:
     non-elevated account create a folder in `C:\Users`, so every pass of a task that does not run
     with highest privileges exits 1 with `the state directory ... could not be created, or cannot
     be entered` (measured the same before and after this release, with a profile folder named
-    `Łukasz` whose parent the account could not write to). Make a folder with an ASCII path outside
-    the vault, directly under a drive root, for example `C:\vault-state`, and make it private to
+    `Łukasz` whose parent the account could not write to). Make a new folder with an ASCII path
+    outside the vault, directly under `C:\`, for example `C:\vault-state`, and make it private to
     your account: a new folder under `C:\` lets every signed-in account change its files, and the
-    override file there can name hooks Claude Code runs. In Command Prompt run
-    `icacls C:\vault-state /inheritance:r /grant:r "%USERNAME%:(OI)(CI)F"` (in PowerShell write
-    `"${env:USERNAME}:(OI)(CI)F"`) as the account the scheduled task runs as, then check that
+    override file there can name hooks Claude Code runs. Make the folder yourself. If `mkdir` says
+    it already exists, check its owner with `dir /q C:\` or `(Get-Acl C:\vault-state).Owner`, and
+    do not use one another account owns, because its owner can change its permissions back at any
+    time. In Command Prompt run
+    `icacls C:\vault-state /inheritance:r /grant:r "%USERDOMAIN%\%USERNAME%:(OI)(CI)F"` (in
+    PowerShell write `"${env:USERDOMAIN}\${env:USERNAME}:(OI)(CI)F"`) as the account the scheduled
+    task runs as, or write that account's name in their place, then check that
     `icacls C:\vault-state` lists only that account; both forms left only the account, on the
-    folder and on a subfolder already inside it (measured). A folder deeper down, such as `D:\data\vault-state`, is only as safe as the folders
-    above it, because another account that can rename `D:\data` can put its own folder in its
-    place. Then set `VAULT_STATE_DIR` to `C:\vault-state\my-vault`. The vault itself may stay
+    folder and on a subfolder already inside it (measured). `C:\` itself gave other accounts only
+    the rights to read it and to add folders (measured with `icacls C:\`), but another drive's root may give every
+    account full control, as `D:\` did here (`Everyone:(OI)(CI)(F)`), and then another account can
+    rename your folder and put its own in its place: check a root with `icacls` before you use it.
+    A folder deeper down, such as `D:\data\vault-state`, is only as safe as the folders above it,
+    for the same reason. Then set `VAULT_STATE_DIR` to `C:\vault-state\my-vault`. The vault itself may stay
     under the profile, because the memory override now converts its path faithfully (other path
     checks still convert under `C`; `docs/reference.md` § 4.3, Known limits). A `VAULT_STATE_DIR`
     with non-ASCII characters works too, but the runner then keeps its state in a double-encoded

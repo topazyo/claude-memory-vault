@@ -25,6 +25,10 @@ ts() {
 
 RUNNER_UNAME="$(uname -s 2>/dev/null)"
 
+# Set only by memory_override, so a value from the environment cannot reach
+# run_agent, even under a runner that never calls memory_override.
+unset AGENT_SETTINGS_FILE
+
 # is_windows_bash
 # True under Git Bash, MSYS or Cygwin, where a native Windows process is stopped
 # with taskkill rather than a signal.
@@ -3170,8 +3174,10 @@ note_tripwire() {
 # path must be a drive or network path and name, converted back, the very
 # folder or file it came from.
 #
-# The checks refuse a pass the file would not protect: a converted path that
-# names something else; a vault path the JSON would have to escape; a vault or
+# The checks refuse a pass the file would not protect: outside Git Bash, an
+# agent binary that is a Windows program, which would read the POSIX paths as
+# other folders; a converted path that names something else; a vault path the
+# JSON would have to escape; a vault or
 # state path that is not valid UTF-8, which Claude Code could read as another
 # folder; a 90-auto-memory or .pass-agent that is a link (the fence sees a
 # folder link that was there before the pass only as a link, so writes through
@@ -3189,21 +3195,27 @@ note_tripwire() {
 # when the pass must not start.
 memory_override() {
   local root="$1" state="$2" work="$3" log="$4" vault="$1" file="$2/pass-settings.json" arg="$2/pass-settings.json"
-  local dir="$1/90-auto-memory/.pass-agent" list line p win=0
+  local dir="$1/90-auto-memory/.pass-agent" list line p win=0 exe=0
   # Set only on success below, so no value from the environment can stand in.
   unset AGENT_SETTINGS_FILE
   # On Windows a path left in Git Bash form is read by Claude Code as a folder
   # under the drive root, so either the platform or cygpath picks this branch.
-  # A stray cygpath elsewhere then fails the drive check below.
+  # A stray cygpath elsewhere must then give paths that pass the checks below.
   case "$RUNNER_UNAME" in MINGW*|MSYS*|CYGWIN*) win=1 ;; esac
   command -v cygpath >/dev/null 2>&1 && win=1
   if [ "$win" = 0 ]; then
     # A Windows Claude Code started from WSL would read POSIX paths the same way.
-    case "${AGENT_BIN:-}" in
-      *.exe|*.EXE|/mnt/[A-Za-z]/*)
-        printf '[%s] ERROR: Claude Code here (%s) looks like a Windows program, but this runner is not running under Git Bash, so Claude Code would read the memory override'"'"'s paths as other folders. Run the .cmd runner on Windows instead. Refusing to run.\n' "$(ts)" "$AGENT_BIN" >> "$log"
-        return 1 ;;
-    esac
+    # WSL starts a Windows program by its header whatever it is called, so the
+    # name is looked up as the runner will start it, and the file it resolves to,
+    # through any link, is read: a Windows program starts with MZ. A wrapper
+    # script that starts one is not recognised.
+    p="$(command -v "${AGENT_BIN:-}" 2>/dev/null)" || p=
+    case "$p" in *.[eE][xX][eE]) exe=1 ;; esac
+    if [ -f "$p" ] && [ "$(LC_ALL=C dd if="$p" bs=2 count=1 2>/dev/null)" = MZ ]; then exe=1; fi
+    if [ "$exe" = 1 ]; then
+      printf '[%s] ERROR: Claude Code here (%s) looks like a Windows program, but this runner is not running under Git Bash, so Claude Code would read the memory override'"'"'s paths as other folders. Run the .cmd runner on Windows instead. Refusing to run.\n' "$(ts)" "$p" >> "$log"
+      return 1
+    fi
   fi
   if [ "$win" = 1 ]; then
     vault="$(LC_ALL=C.UTF-8 cygpath -m "$root" 2>/dev/null)" && [ -n "$vault" ] \
@@ -3213,7 +3225,7 @@ memory_override() {
     }
     for p in "$vault" "$arg"; do
       case "$p" in
-        [A-Za-z]:/*|//[!/?.]*) ;;
+        [ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]:/*|//[!/?.]*) ;;
         *)
           printf '[%s] ERROR: cygpath gave %s for a path of the memory override, which is not a Windows drive or network path, so Claude Code would read it as another folder. Refusing to run.\n' "$(ts)" "$p" >> "$log"
           return 1 ;;
@@ -3292,6 +3304,19 @@ run_agent() {
   AGENT_SESSION_ID="$nonce"
   case "$AGENT_KIND" in
     claude)
+      # Only memory_override sets AGENT_SETTINGS_FILE, and a runner from an earlier
+      # release never calls it. Such a pass fails here with a status and the
+      # reason in the run output, rather than under set -u after the in-flight
+      # marker, which would leave the next pass a tripwire.
+      if [ -z "${AGENT_SETTINGS_FILE:-}" ]; then
+        printf '[%s] ERROR: no memory override was written for this pass, so this runner and lib/runner-common.sh come from different releases. Take runner-common.sh, dream-pass.sh and promotion-pass.sh together. Refusing to start Claude Code.\n' "$(ts)" >> "$out"
+        RUN_RC=1
+        RUN_TIMED_OUT=0
+        RUN_STALLED=0
+        RUN_KILL_FAILED=0
+        RUN_KILL_REPORT=""
+        return 0
+      fi
       # -p is REQUIRED. Without it, `claude --agent X` starts an INTERACTIVE
       # session; under a scheduler there is no TTY, so it either reads EOF and
       # exits 0 having done nothing, or waits on input that never arrives. Both

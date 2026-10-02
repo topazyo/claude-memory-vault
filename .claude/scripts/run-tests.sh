@@ -2423,42 +2423,47 @@ rm -f "$MO_STATE/pass-settings.json"
 # A settings file that is in place but does not hold what was written refuses
 # too, because Claude Code reads an empty or invalid one as if there were none
 # and grants the memory folders outside the vault again (measured on 2.1.287).
-# A stand-in mv moves the file into place and then writes over it, or adds to
-# it, what the file MO_SWAP_WITH names: nothing; another vault's override, which
-# ends the same way; and an extra line after the right one. So a read-back that
-# asked only for some content, for the right ending or for the right first line
-# would not pass.
+# A stand-in mv moves the file into place and then writes over it, adds to it,
+# or puts before it what the file MO_SWAP_WITH names, or changes one byte of the
+# vault's folder name in it: nothing; an extra line after the right one; an
+# extra line before it; and an override naming another vault whose path has the
+# same length and ends the same way. So a read-back that asked only for some
+# content, for the right size, for the right ending, or for the right first or
+# last line would not pass.
 MO_EMPTY="$TMP/memovr-empty"
 rm -rf "$MO_EMPTY" "$TMP/memovr-empty-dest"
 mkdir -p "$MO_EMPTY" "$TMP/memovr-empty-dest"
-printf '#!/usr/bin/env bash\neval "last=\\${$#}"\n%q "$@" || exit $?\ncase "$MO_SWAP_HOW:$last" in\n  add:*/pass-settings.json) cat "$MO_SWAP_WITH" >> "$last" ;;\n  *:*/pass-settings.json) cat "$MO_SWAP_WITH" > "$last" ;;\nesac\n' "$mo_real_mv" > "$MO_EMPTY/mv"
+printf '#!/usr/bin/env bash\neval "last=\\${$#}"\n%q "$@" || exit $?\ncase "$MO_SWAP_HOW:$last" in\n  add:*/pass-settings.json) cat "$MO_SWAP_WITH" >> "$last" ;;\n  pre:*/pass-settings.json) cat "$MO_SWAP_WITH" "$last" > "$last.swap" && cat "$last.swap" > "$last" && rm -f "$last.swap" ;;\n  sub:*/pass-settings.json) sed "s#/runnervault/90-auto-memory/#/runnervaulx/90-auto-memory/#" "$last" > "$last.swap" && cat "$last.swap" > "$last" && rm -f "$last.swap" ;;\n  *:*/pass-settings.json) cat "$MO_SWAP_WITH" > "$last" ;;\nesac\n' "$mo_real_mv" > "$MO_EMPTY/mv"
 chmod +x "$MO_EMPTY/mv"
 : > "$TMP/memovr-swap-empty"
-printf '{"autoMemoryDirectory":"%s/othervault/90-auto-memory/.pass-agent"}\n' "$TMP" > "$TMP/memovr-swap-other"
-printf '{"hooks":{}}\n' > "$TMP/memovr-swap-add"
-for mo_w in empty other add; do
-  mo_how=put
-  [ "$mo_w" = add ] && mo_how=add
-  printf 'x\n' > "$TMP/memovr-empty-probe"
+printf '{"hooks":{}}\n' > "$TMP/memovr-swap-line"
+mo_sub_in='{"autoMemoryDirectory":"/v/runnervault/90-auto-memory/.pass-agent"}'
+for mo_w in empty other add pre; do
+  case "$mo_w" in
+    empty) mo_how=put mo_with=empty mo_in=x mo_wantx=x
+           mo_say='in place but empty' ;;
+    other) mo_how=sub mo_with=empty mo_in="$mo_sub_in" mo_wantx="{\"autoMemoryDirectory\":\"/v/runnervaulx/90-auto-memory/.pass-agent\"}${NL}x"
+           mo_say="in place but naming another vault whose path has the same length" ;;
+    add) mo_how=add mo_with=line mo_in=x mo_wantx="x${NL}{\"hooks\":{}}${NL}x"
+         mo_say='in place with a line added after the right one' ;;
+    *) mo_how=pre mo_with=line mo_in=x mo_wantx="{\"hooks\":{}}${NL}x${NL}x"
+       mo_say='in place with a line put before the right one' ;;
+  esac
+  printf '%s\n' "$mo_in" > "$TMP/memovr-empty-probe"
   rm -f "$TMP/memovr-empty-dest/pass-settings.json"
-  if [ "$mo_how" = add ]; then mo_wantx="x${NL}{\"hooks\":{}}${NL}x"; else mo_wantx="$(cat "$TMP/memovr-swap-$mo_w"; printf x)"; fi
   if [ ! -e "$MO_STATE/pass-settings.json" ] && [ ! -L "$MO_STATE/pass-settings.json" ] \
-     && MO_SWAP_HOW="$mo_how" MO_SWAP_WITH="$TMP/memovr-swap-$mo_w" PATH="$MO_EMPTY:$PATH" mv -f "$TMP/memovr-empty-probe" "$TMP/memovr-empty-dest/pass-settings.json" \
+     && MO_SWAP_HOW="$mo_how" MO_SWAP_WITH="$TMP/memovr-swap-$mo_with" PATH="$MO_EMPTY:$PATH" mv -f "$TMP/memovr-empty-probe" "$TMP/memovr-empty-dest/pass-settings.json" \
      && [ ! -e "$TMP/memovr-empty-probe" ] && [ -f "$TMP/memovr-empty-dest/pass-settings.json" ] \
+     && [ ! -e "$TMP/memovr-empty-dest/pass-settings.json.swap" ] \
      && [ "$(cat "$TMP/memovr-empty-dest/pass-settings.json"; printf x)" = "$mo_wantx" ]; then
-    case "$mo_w" in
-      empty) mo_say='in place but empty' ;;
-      other) mo_say="in place but holding another vault's override" ;;
-      *) mo_say='in place with a line added after the right one' ;;
-    esac
     mo_refused "claude mode: the settings file is $mo_say" "$MO_READBACK" dream-pass.sh journal "$MO_LOG" \
-      PATH="$MO_EMPTY:$PATH" MO_SWAP_HOW="$mo_how" MO_SWAP_WITH="$TMP/memovr-swap-$mo_w"
+      PATH="$MO_EMPTY:$PATH" MO_SWAP_HOW="$mo_how" MO_SWAP_WITH="$TMP/memovr-swap-$mo_with"
   else
     bad "mem-override-flag: the mv stand-in does not move the settings file into place and $mo_how the $mo_w content"
   fi
   rm -f "$MO_STATE/pass-settings.json"
 done
-rm -rf "$MO_EMPTY" "$TMP/memovr-empty-probe" "$TMP/memovr-empty-dest" "$TMP/memovr-swap-empty" "$TMP/memovr-swap-other" "$TMP/memovr-swap-add"
+rm -rf "$MO_EMPTY" "$TMP/memovr-empty-probe" "$TMP/memovr-empty-dest" "$TMP/memovr-swap-empty" "$TMP/memovr-swap-line"
 # The settings file is private to the runner's account whatever its umask,
 # because Claude Code runs the hooks a settings file names.
 if is_windows_host; then
@@ -2490,7 +2495,7 @@ if is_windows_host; then
   MO_SHIM="$TMP/memovr-shim"
   rm -rf "$MO_SHIM"
   mkdir -p "$MO_SHIM"
-  printf '#!/usr/bin/env bash\nif [ "$#" -eq 2 ] && [ "$1" = -m ]; then\n  case "$MO_SHIM_FAIL:$2" in\n    settings:*/pass-settings.json|vault:*/runnervault) exit 1 ;;\n    empty:*/pass-settings.json|emptyvault:*/runnervault) exit 0 ;;\n    wrongsettings:*/pass-settings.json|wrongvault:*/runnervault) exec /usr/bin/cygpath -m "${2%%/*}" ;;\n    posixsettings:*/pass-settings.json|posixvault:*/runnervault) echo "$2"; exit 0 ;;\n    devicevault:*/runnervault) echo "//?/$(/usr/bin/cygpath -m "$2")"; exit 0 ;;\n  esac\nfi\nexec /usr/bin/cygpath "$@"\n' > "$MO_SHIM/cygpath"
+  printf '#!/usr/bin/env bash\nif [ "$#" -eq 2 ] && [ "$1" = -m ]; then\n  case "$MO_SHIM_FAIL:$2" in\n    settings:*/pass-settings.json|vault:*/runnervault) exit 1 ;;\n    empty:*/pass-settings.json|emptyvault:*/runnervault) exit 0 ;;\n    wrongsettings:*/pass-settings.json|wrongvault:*/runnervault) exec /usr/bin/cygpath -m "${2%%/*}" ;;\n    posixsettings:*/pass-settings.json|posixvault:*/runnervault) echo "$2"; exit 0 ;;\n    devicevault:*/runnervault) echo "//?/$(/usr/bin/cygpath -m "$2")"; exit 0 ;;\n    dotdevicevault:*/runnervault) echo "//./$(/usr/bin/cygpath -m "$2")"; exit 0 ;;\n  esac\nfi\nexec /usr/bin/cygpath "$@"\n' > "$MO_SHIM/cygpath"
   chmod +x "$MO_SHIM/cygpath"
   if [ "$(PATH="$MO_SHIM:$PATH" MO_SHIM_FAIL=settings cygpath -m "$TMP/x/pass-settings.json" >/dev/null 2>&1; echo "rc=$?")" = rc=1 ] \
      && [ "$(PATH="$MO_SHIM:$PATH" MO_SHIM_FAIL=vault cygpath -m "$RV" >/dev/null 2>&1; echo "rc=$?")" = rc=1 ] \
@@ -2504,7 +2509,8 @@ if is_windows_host; then
      && [ "$(PATH="$MO_SHIM:$PATH" MO_SHIM_FAIL=wrongsettings cygpath -m "$RV" 2>/dev/null)" = "$(cygpath -m "$RV")" ] \
      && [ "$(PATH="$MO_SHIM:$PATH" MO_SHIM_FAIL=posixvault cygpath -m "$RV" 2>/dev/null)" = "$RV" ] \
      && [ "$(PATH="$MO_SHIM:$PATH" MO_SHIM_FAIL=posixsettings cygpath -m "$TMP/x/pass-settings.json" 2>/dev/null)" = "$TMP/x/pass-settings.json" ] \
-     && [ "$(PATH="$MO_SHIM:$PATH" MO_SHIM_FAIL=devicevault cygpath -m "$RV" 2>/dev/null)" = "//?/$(cygpath -m "$RV")" ]; then
+     && [ "$(PATH="$MO_SHIM:$PATH" MO_SHIM_FAIL=devicevault cygpath -m "$RV" 2>/dev/null)" = "//?/$(cygpath -m "$RV")" ] \
+     && [ "$(PATH="$MO_SHIM:$PATH" MO_SHIM_FAIL=dotdevicevault cygpath -m "$RV" 2>/dev/null)" = "//./$(cygpath -m "$RV")" ]; then
     ran mem-override-cygpath-refused
     mo_refused "claude mode: cygpath fails on the settings file's path" "cygpath could not convert a path for the memory override" \
       dream-pass.sh journal "$MO_LOG" PATH="$MO_SHIM:$PATH" MO_SHIM_FAIL=settings
@@ -2525,9 +2531,12 @@ if is_windows_host; then
       dream-pass.sh journal "$MO_LOG" PATH="$MO_SHIM:$PATH" MO_SHIM_FAIL=posixvault
     mo_refused "claude mode: cygpath gives the settings file's own Git Bash path back" "/pass-settings.json for a path of the memory override, $MO_DRIVE" \
       dream-pass.sh journal "$MO_LOG" PATH="$MO_SHIM:$PATH" MO_SHIM_FAIL=posixsettings
-    # A //?/ device path is not a network path, and Claude Code may not read it as one.
+    # A //?/ or //./ device path is not a network path, and Claude Code may not
+    # read it as one.
     mo_refused "claude mode: cygpath gives a //?/ device path for the vault" "gave //?/" \
       dream-pass.sh journal "$MO_LOG" PATH="$MO_SHIM:$PATH" MO_SHIM_FAIL=devicevault
+    mo_refused "claude mode: cygpath gives a //./ device path for the vault" "gave //./" \
+      dream-pass.sh journal "$MO_LOG" PATH="$MO_SHIM:$PATH" MO_SHIM_FAIL=dotdevicevault
   else
     bad "mem-override-cygpath-refused: the cygpath stand-in does not fail exactly where it should"
   fi
@@ -2537,7 +2546,9 @@ else
 fi
 # Off Windows the runner passes POSIX paths, which a Windows Claude Code (a
 # claude.exe started from WSL) would read as folders under its drive root, so a
-# claude-mode pass refuses an agent binary that looks like one.
+# claude-mode pass refuses an agent binary that looks like one: a name ending in
+# .exe, or, since WSL starts a Windows program by its header whatever it is
+# called, a claude found on PATH that links to a file starting with MZ.
 if is_windows_host; then
   skip mem-override-winbin 'a Windows claude.exe outside Git Bash: on Windows a .exe is the binary the runner should start'
 else
@@ -2551,6 +2562,20 @@ else
     bad "mem-override-winbin: the .exe stand-in for the agent could not be made"
   fi
   rm -f "$TMP/memovr-claude.exe"
+  MO_MZ="$TMP/memovr-mz"
+  rm -rf "$MO_MZ"
+  mkdir -p "$MO_MZ/bin"
+  printf 'MZ stand-in, never started\n' > "$MO_MZ/program"
+  chmod +x "$MO_MZ/program"
+  ln -s "$MO_MZ/program" "$MO_MZ/bin/claude" 2>/dev/null
+  if [ -L "$MO_MZ/bin/claude" ] && [ "$(PATH="$MO_MZ/bin:$PATH" command -v claude)" = "$MO_MZ/bin/claude" ] \
+     && [ "$(LC_ALL=C dd if="$MO_MZ/bin/claude" bs=2 count=1 2>/dev/null)" = MZ ]; then
+    mo_refused "claude mode outside Git Bash: the claude found on PATH links to a file starting with MZ" "$MO_WINBIN" \
+      dream-pass.sh journal "$MO_LOG" CLAUDE_BIN=claude PATH="$MO_MZ/bin:$PATH"
+  else
+    bad "mem-override-winbin: the linked MZ stand-in for the agent could not be made or found on PATH"
+  fi
+  rm -rf "$MO_MZ"
 fi
 # A cygpath on PATH picks the Windows branch whatever the platform says, so off
 # Windows a stray one makes the pass refuse at the checks rather than pass a path
@@ -2572,6 +2597,47 @@ else
   fi
   rm -rf "$MO_SC"
 fi
+# The platform alone also picks the Windows branch, so a Git Bash platform name
+# with no cygpath anywhere refuses rather than pass POSIX paths unconverted.
+# memory_override is called directly, with the name set as Git Bash reports it,
+# on a host that has no cygpath; the suite's not-found handler is dropped so the
+# missing cygpath fails as it would in a runner.
+if command -v cygpath >/dev/null 2>&1; then
+  skip mem-override-no-cygpath 'a Windows platform name with no cygpath: this host has cygpath'
+else
+  rm -rf "$TMP/memovr-nocyg-state" "$TMP/memovr-nocyg-work" "$TMP/memovr-nocyg.log"
+  mkdir -p "$TMP/memovr-nocyg-state" "$TMP/memovr-nocyg-work"
+  ran mem-override-no-cygpath
+  ( unset -f command_not_found_handle; . "$RV/.claude/scripts/lib/runner-common.sh"; RUNNER_UNAME=MINGW64_NT-10.0
+    memory_override "$RV" "$TMP/memovr-nocyg-state" "$TMP/memovr-nocyg-work" "$TMP/memovr-nocyg.log" )
+  mo_rc=$?
+  if [ "$mo_rc" -eq 1 ] && grep -F -- "cygpath could not convert a path for the memory override" "$TMP/memovr-nocyg.log" 2>/dev/null | grep -q '^\[[^]]*\] ERROR: ' \
+     && [ ! -e "$TMP/memovr-nocyg-state/pass-settings.json" ] && [ ! -e "$TMP/memovr-nocyg-work/pass-settings.json" ]; then
+    ok "memory_override with a Git Bash platform name and no cygpath -> refused (1), an ERROR: line says why, nothing written"
+  else
+    bad "memory_override with a Git Bash platform name and no cygpath was not refused for it -- got $mo_rc: $(cat "$TMP/memovr-nocyg.log" 2>/dev/null)"
+  fi
+  rm -rf "$TMP/memovr-nocyg-state" "$TMP/memovr-nocyg-work" "$TMP/memovr-nocyg.log"
+fi
+# Only memory_override sets AGENT_SETTINGS_FILE, and a runner from an earlier
+# release never calls it, so run_agent refuses a claude-mode start without it,
+# with a status and the reason in the run output, and a value exported before
+# the library loads does not count.
+rm -f "$REC.argv" "$TMP/memovr-mixed.out"
+ran mem-override-mixed-release
+( export AGENT_SETTINGS_FILE="$TMP/memovr-mixed-planted.json" FAKE_RECORD="$REC"
+  . "$RV/.claude/scripts/lib/runner-common.sh"
+  AGENT_KIND=claude AGENT_BIN="$FAKE"
+  run_agent 30 "$TMP/memovr-mixed.out" dream-agent task prompt.md
+  [ "$RUN_RC" = 1 ] )
+mo_rc=$?
+if [ "$mo_rc" -eq 0 ] && grep -F -- 'no memory override was written for this pass' "$TMP/memovr-mixed.out" 2>/dev/null | grep -q '^\[[^]]*\] ERROR: ' \
+   && [ ! -e "$REC.argv" ]; then
+  ok "run_agent in claude mode with no memory override written for the pass -> RUN_RC 1, an ERROR: line in the run output, Claude Code never started, an exported value ignored"
+else
+  bad "run_agent in claude mode with no memory override written did not refuse with RUN_RC 1 and a reason -- got $mo_rc, agent started: $([ -e "$REC.argv" ] && echo yes || echo no): $(cat "$TMP/memovr-mixed.out" 2>/dev/null)"
+fi
+rm -f "$REC.argv" "$TMP/memovr-mixed.out"
 
 # Whatever the override folder holds could be read into the pass as memory, so
 # the pass refuses to start. The listing sees hidden names and folders, and a
