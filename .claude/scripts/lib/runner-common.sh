@@ -3207,11 +3207,19 @@ memory_override() {
     # A Windows Claude Code started from WSL would read POSIX paths the same way.
     # WSL starts a Windows program by its header whatever it is called, so the
     # name is looked up as the runner will start it, and the file it resolves to,
-    # through any link, is read: a Windows program starts with MZ. A wrapper
-    # script that starts one is not recognised.
+    # through any link, is read: a Windows program starts with MZ. A name that
+    # resolves to no file (a function, say) cannot be checked, and a file that
+    # cannot be read could still be started by its header, so both refuse. A
+    # wrapper script that starts a Windows program is not recognised.
     p="$(command -v "${AGENT_BIN:-}" 2>/dev/null)" || p=
+    case "$p" in
+      */*) ;;
+      *)
+        printf '[%s] ERROR: Claude Code here (%s) is not a file the runner can check, so it could be a Windows program that would read the memory override'"'"'s paths as other folders. Refusing to run.\n' "$(ts)" "${AGENT_BIN:-}" >> "$log"
+        return 1 ;;
+    esac
     case "$p" in *.[eE][xX][eE]) exe=1 ;; esac
-    if [ -f "$p" ] && [ "$(LC_ALL=C dd if="$p" bs=2 count=1 2>/dev/null)" = MZ ]; then exe=1; fi
+    if [ -f "$p" ] && { ! [ -r "$p" ] || [ "$(LC_ALL=C dd if="$p" bs=2 count=1 2>/dev/null)" = MZ ]; }; then exe=1; fi
     if [ "$exe" = 1 ]; then
       printf '[%s] ERROR: Claude Code here (%s) looks like a Windows program, but this runner is not running under Git Bash, so Claude Code would read the memory override'"'"'s paths as other folders. Run the .cmd runner on Windows instead. Refusing to run.\n' "$(ts)" "$p" >> "$log"
       return 1

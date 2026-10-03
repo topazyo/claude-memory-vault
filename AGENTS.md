@@ -206,7 +206,8 @@ never changes one already there, proposing such changes in its report instead, a
 is its own git repository its runner refuses a pass that does (exit 2). Those two runners also fail a pass that writes outside
 its allowed folders (exit 2) and kill one that hangs (exit 124) or stops streaming (exit 125). In
 claude mode they refuse to start (exit 1) when they cannot point Claude Code's memory inside the
-vault; the log's `ERROR:` line says why, and the dream and promotion runners' exit-code table in
+vault; the log's `ERROR:` line says why (the run log's, when the runner and its library come
+from different releases), and the dream and promotion runners' exit-code table in
 `docs/reference.md` lists the lines under exit `1`.
 
 The retention pass is the third scheduled thing and it is not an agent, so `VAULT_AGENT` does not

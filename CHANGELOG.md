@@ -25,7 +25,7 @@ bash .claude/scripts/vault-update.sh --check --from ../template-new
 
 ---
 
-## 1.4.1 — 2026-10-02
+## 1.4.1 — 2026-10-03
 
 A security fix for the dream and promotion passes in claude mode. Claude Code's memory folder for
 a pass is now pointed inside the vault, where the write fence sees it. Measured for the Write tool
@@ -91,7 +91,8 @@ What that covers, and what it does not:
   it is written readable by the runner's account only, whatever the umask, because a settings file
   can name hooks Claude Code runs; on Windows the state folder's permissions decide. A file mode
   does not stop an account that can write the state directory from replacing the file, so that
-  directory has to be private too (item 11). The runner never creates `.pass-agent/` itself.
+  directory has to be private too (on Windows item 11; elsewhere `docs/reference.md` § 4.3, Known
+  limits). The runner never creates `.pass-agent/` itself.
   Command mode is unchanged.
 - **A claude-mode pass now needs `cmp`, and `iconv` for a vault or state path that is not plain
   ASCII.** It reads the file back with the first and checks the path with the second, and refuses
@@ -127,10 +128,11 @@ What that covers, and what it does not:
     convert a path and back to the same folder refuses; one that does is outside what the runner
     can check.
   - Outside Git Bash, the Claude Code the runner would start is a Windows program: the file
-    `CLAUDE_BIN` names, or the `claude` found on `PATH`, ends in `.exe` or, read through any link,
-    starts with a Windows program's `MZ` header, as when a runner in WSL starts Windows'
-    `claude.exe`. Such a program would read the runner's POSIX paths as other folders. A wrapper
-    script that starts one is not recognised.
+    `CLAUDE_BIN` names, or the `claude` found on `PATH`, ends in `.exe`, or, read through any link,
+    starts with a Windows program's `MZ` header or cannot be read, as when a runner in WSL starts
+    Windows' `claude.exe`. Such a program would read the runner's POSIX paths as other folders. A
+    name that is not a file at all, such as an exported shell function, refuses too, with `is not a
+    file the runner can check`. A wrapper script that starts a Windows program is not recognised.
   - The settings file could not be written, or does not read back exactly as written.
   - No settings file was written for the pass, which happens only when the runner and
     `runner-common.sh` come from different releases (Adopting 1). This refusal comes from the
@@ -168,7 +170,8 @@ What that covers, and what it does not:
    1` (or `promotion-agent`), and the run log (`.claude/logs/dream-agent.run.log` or
    `promotion-agent.run.log`) says `no memory override was written for this pass`; no tripwire is
    left, also when `AGENT_SETTINGS_FILE` is set in the environment (measured on Linux with 1.4.0's
-   `dream-pass.sh`). With an older library and a 1.4.1 runner, every claude-mode pass exits 1 with
+   `dream-pass.sh`; 1.4.0's `promotion-pass.sh` takes the same path and is unmeasured, as are
+   older releases). With an older library and a 1.4.1 runner, every claude-mode pass exits 1 with
    `memory_override: command not found`, which goes to the runner's stderr, not to its log
    (measured on Linux). Either way no agent ran: take all three.
 2. **Nothing to configure for most vaults.** The override is on in claude mode for every pass.
@@ -210,7 +213,10 @@ What that covers, and what it does not:
    that `command -v cmp` finds `cmp`, which the read-back needs. On
    Windows the line may instead say `cygpath could not convert a path for the memory override`,
    `which is not a Windows drive or network path` or `which is not the same folder or file`; check
-   Git Bash's `cygpath` (`docs/setup.md`, Troubleshooting). A runner started outside Git Bash whose
+   Git Bash's `cygpath` (`docs/setup.md`, Troubleshooting). When the quoted path starts `//?/`, the
+   vault's or the state directory's path is about 260 characters or more, which `cygpath` gives
+   in that form: such a vault ran under 1.4.0 and now refuses, so move it, or set
+   `VAULT_STATE_DIR`, nearer a drive root. A runner started outside Git Bash whose
    Claude Code is Windows' `claude.exe`, named in `CLAUDE_BIN` or found on `PATH`, directly or
    through a link, now refuses with `looks like a Windows program`; run the `.cmd` runner instead.
 10. **If you renamed `90-auto-memory`, rename it in `runner-common.sh` too**, in `memory_override`
@@ -234,10 +240,14 @@ What that covers, and what it does not:
     PowerShell write `"${env:USERDOMAIN}\${env:USERNAME}:(OI)(CI)F"`) as the account the scheduled
     task runs as, or write that account's name in their place, then check that
     `icacls C:\vault-state` lists only that account; both forms left only the account, on the
-    folder and on a subfolder already inside it (measured). `C:\` itself gave other accounts only
-    the rights to read it and to add folders (measured with `icacls C:\`), but another drive's root may give every
-    account full control, as `D:\` did here (`Everyone:(OI)(CI)(F)`), and then another account can
-    rename your folder and put its own in its place: check a root with `icacls` before you use it.
+    folder and on a subfolder already inside it (measured). Until `icacls` runs, other accounts can
+    make folders inside the new one, so then check that it is still empty (`dir /a /q
+    C:\vault-state`) and point `VAULT_STATE_DIR` at a subfolder that does not exist yet, which the
+    runner makes. `C:\` itself gave other accounts only the rights to read it and to add folders
+    (measured with `icacls C:\`), but another drive's root may give them more, as `D:\` did here
+    (`Everyone:(OI)(CI)(F)`). A root where any account but yours, SYSTEM and Administrators has
+    `(F)` or `(DC)` lets that account rename your folder and put its own in its place: check a root
+    with `icacls` before you use it.
     A folder deeper down, such as `D:\data\vault-state`, is only as safe as the folders above it,
     for the same reason. Then set `VAULT_STATE_DIR` to `C:\vault-state\my-vault`. The vault itself may stay
     under the profile, because the memory override now converts its path faithfully (other path
