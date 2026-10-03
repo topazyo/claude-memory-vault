@@ -40,7 +40,8 @@
 #                           sandboxed (no shell, no network), or the run is refused
 #   PROMOTION_PASS_TIMEOUT  seconds before a hung run is killed (default 5400)
 #   VAULT_STATE_DIR         per-vault state outside the vault: run lock,
-#                           quarantine, tripwire copy, in-flight marker (default
+#                           quarantine, tripwire copy, in-flight marker, the
+#                           memory override's pass-settings.json (default
 #                           under %LOCALAPPDATA% or ~/.local/state)
 #   RUN_LOCK_WAIT           seconds to wait for another pass's run lock (default 1800)
 #   RUN_LOCK_POLL           seconds between checks while waiting (default 30)
@@ -59,7 +60,8 @@
 #   1    NO-ARTIFACT: exited 0 with no summary line and no long-tier change,
 #        or the runner could not set itself up (temp dir, state directory, backup,
 #        prompt file, git state file, run lock, in-flight marker, git status), or
-#        git cannot read the vault's repository
+#        git cannot read the vault's repository, or in claude mode the memory
+#        override refused the pass (memory_override in lib/runner-common.sh)
 #   2    VIOLATION: files outside the allowed write areas changed during the run
 #        (steering surfaces among them are contained and the tripwire is set),
 #        or the pass changed a long-tier note or promotion report that already
@@ -107,7 +109,10 @@ set -u
 # user's session carries, which no CI job models, and LC_ALL rather than
 # LC_COLLATE because LC_ALL in the environment overrides LC_COLLATE. The pin
 # also covers the other unprefixed awks and the one sed the library runs on this
-# path. Nothing here reads a translated message.
+# path. Nothing here reads a translated message. It also reaches Git Bash's
+# cygpath, which under C cuts a path at its first character outside the ANSI
+# code page, so memory_override runs its cygpath calls under C.UTF-8 and checks
+# what they give, while the state directory's and path_key's still run under C.
 LC_ALL=C
 export LC_ALL
 
@@ -384,12 +389,17 @@ main() {
     exit 1
   fi
   HEAD_BEFORE="$(head_state "$ROOT" "$SNAP_DIR/nohooks")"
-  # The last check before the in-flight marker and backup are written to the
-  # shared state directory. A leftover put back above has already written its
-  # quarantine copy there.
+  # The last check of the run lock before the memory override, the in-flight
+  # marker and the backup are written to the shared state directory. A leftover
+  # put back above has already written its quarantine copy there.
   if ! run_lock_held; then
     printf '[%s] LOCKED: another runner replaced or removed this one'"'"'s owner file in the run lock before the pass started. Not starting.\n' "$(ts)" >> "$LOG"
     exit 75
+  fi
+  # In claude mode, Claude Code's memory for this pass is pointed inside the
+  # fence, or the pass does not start.
+  if [ "$AGENT_KIND" = claude ] && ! memory_override "$ROOT" "$STATE" "$SNAP_DIR" "$LOG"; then
+    exit 1
   fi
   cp "$SNAP_DIR/steering.tar" "$STATE/inflight-backup.tar" 2>/dev/null
   # Without the marker outside the vault, a pass killed mid-run would leave no

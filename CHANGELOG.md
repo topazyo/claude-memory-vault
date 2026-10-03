@@ -25,6 +25,259 @@ bash .claude/scripts/vault-update.sh --check --from ../template-new
 
 ---
 
+## 1.4.1 — 2026-10-03
+
+A security fix for the dream and promotion passes in claude mode. Claude Code's memory folder for
+a pass is now pointed inside the vault, where the write fence sees it. Measured for the Write tool
+on Windows, with ASCII and non-ASCII vault paths; Linux and macOS are unverified.
+
+### Security
+
+In 1.4.0 a claude-mode pass could write memory **outside the fence**. Claude Code grants the
+agent's Write and Edit tools its memory folder: the folder a settings file names as
+`autoMemoryDirectory`, or by default one under `~/.claude/projects/` for the vault's path. The
+default folder lies outside the vault, and a named one may too. Memory kept there is meant to be
+read by later Claude Code sessions, which this release did not measure. The runner's
+`CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` does not withdraw the grant, although `docs/reference.md` and
+the runner's comments said the pass wrote no memory.
+
+Each claude-mode pass now gets a settings file of the runner's own, passed with `--settings`. It
+points the memory folder at `90-auto-memory/.pass-agent/`, inside the vault and inside the fence.
+What that covers, and what it does not:
+
+- **A folder the vault's local settings name is no longer granted.** Measured on Windows with a
+  probe agent, for an ASCII vault path: a Write to the folder `.claude/settings.local.json` named
+  as `autoMemoryDirectory` landed without the runner's file and was refused with it. A folder named
+  in the project's `.claude/settings.json` was not measured; a `--settings` file outranks it in
+  Claude Code's settings precedence.
+- **The default memory folder is no longer granted.** Measured on Windows the same way, for an
+  ASCII vault path: a Write there landed without the runner's file and was refused with it.
+- **A vault path that is not ASCII is converted faithfully.** On Windows the runner converts the
+  vault's path, and the settings file's, with Git Bash's `cygpath`. Under the runners' `LC_ALL=C`
+  that cuts a path at its first character outside the ANSI code page and turns `é` into one invalid
+  byte, so the file would name a folder outside the vault, and a Write there landed (measured). The
+  conversions now run under a UTF-8 locale, and the pass refuses unless each converted path names,
+  converted back, the folder or file it came from. Measured with real Claude Code for vaults under
+  a folder named in Cyrillic, one named `José` and one holding a Git Bash `"`: a Write to the folder
+  the C-locale conversion named landed with that conversion's file and was refused with the new
+  one.
+- **A memory folder named in your user settings is unmeasured.** Measuring it would have meant
+  editing someone's user settings. The fix rests on settings precedence there too: a `--settings`
+  file outranks user settings.
+- **Managed settings are outside this fix and unmeasured.** Claude Code ranks them above
+  `--settings`, so a memory folder set there would not be overridden.
+- **An agent definition's own `memory:` key is outside this fix and unmeasured.** The template's
+  agents set none.
+- **Edit is unmeasured.** Only the Write tool was probed under the runner's file. Edit is granted
+  the same folder by the same setting.
+- **An empty or invalid settings file fails open in Claude Code.** Claude Code 2.1.287 reads one as
+  if there were none, with exit 0 and nothing on stderr, and grants the folders outside the vault
+  again (measured). The runner reads its file back byte for byte before it starts the agent and
+  refuses on any difference, but a change made between that read and Claude Code's is not seen, so
+  keep the state directory private to the account the passes run as.
+- **Linux and macOS are unverified.** No Claude Code run has measured the grant on either. There
+  the runner refuses a vault or state path that is not valid UTF-8, which Claude Code could read as
+  another folder; that refusal was measured on Linux with a stand-in agent.
+- **Measured on Claude Code 2.1.284 (a named folder), 2.1.285 and 2.1.287 (a named folder and the
+  default one, and on 2.1.287 the non-ASCII paths).** No other version was measured.
+- **Memory only.** A folder a settings file grants through `additionalDirectories` stays outside
+  the fence, as in 1.4.0.
+
+### Changed
+
+- **Both runners write `pass-settings.json` into the state directory before a claude-mode pass**,
+  replacing the one an earlier pass wrote, and start the agent with `--settings <that file>` just
+  before `--disallowedTools`. The file holds one key, `autoMemoryDirectory`. On Linux and macOS
+  it is written readable by the runner's account only, whatever the umask, because a settings file
+  can name hooks Claude Code runs; on Windows the state folder's permissions decide. A file mode
+  does not stop an account that can write the state directory from replacing the file, so that
+  directory has to be private too (on Windows item 11; elsewhere `docs/reference.md` § 4.3, Known
+  limits). The runner never creates `.pass-agent/` itself.
+  Command mode is unchanged.
+- **A claude-mode pass now needs `cmp`, and `iconv` for a vault or state path that is not plain
+  ASCII.** It reads the file back with the first and checks the path with the second, and refuses
+  to start without them. Git for Windows and macOS ship both.
+- **A memory Write the agent makes during a pass lands inside the vault**, in
+  `90-auto-memory/.pass-agent/`, and one aimed at the folder the vault's local settings name or at
+  the default folder is refused (measured for Write on Windows; the Security section lists what is
+  not covered). `90-auto-memory/` is a steering surface, so the fence contains a write there and
+  sets the tripwire, as for any other write under `90-auto-memory/`. In 1.4.0 a write to a memory
+  folder outside the vault landed there unseen.
+- **A claude-mode pass refuses to start, with exit 1 and an `ERROR:` line, when**:
+  - `90-auto-memory/.pass-agent/` holds anything but a regular `.DS_Store` file, or cannot be
+    listed. A hidden file, an empty folder, a `.DS_Store` beside another entry, and a `.DS_Store`
+    that is a link, a FIFO or has a second hard link all count. What the folder holds could be read
+    into the pass as memory, and a linked file could let a write leave the vault.
+  - `90-auto-memory` or `.pass-agent` is a symlink or junction. The fence sees a folder link that
+    was there before the pass only as a link, so writes through it would leave the vault unseen.
+  - `90-auto-memory` or `.pass-agent` is not a folder, so the memory folder cannot be made there.
+  - The vault's path holds a `"`, a `\` or a control character, which the settings file cannot
+    carry. On Windows, Git Bash keeps a `"` or a tab in a folder name as the private-use character
+    U+F022 or U+F009. `dream-pass.cmd` and `promotion-pass.cmd` start the runner with the path
+    spelled that way, which `cygpath` gives back, so from them the override names such a vault as
+    Windows spells it (measured through `cmd.exe` with a stand-in agent, and for a `"` with real
+    Claude Code). Started from a Git Bash prompt, which shows such a name with the `"` or the tab
+    itself in `ls`, tab completion and `pwd`, git cannot enter the folder and the pass exits 1
+    before the override, as in 1.4.0 (measured).
+  - The vault's or the state directory's path is not valid UTF-8, which Claude Code could read as
+    another folder, or holds a byte outside printable ASCII and `iconv` is missing to check it. A
+    path can be invalid UTF-8 on Linux, where it is bytes.
+  - On Windows, `cygpath` is missing, fails or prints nothing for a path the override needs, or
+    gives one that is not a Windows drive or network path, or that names another folder or file.
+    A `cygpath` found on `PATH` elsewhere goes through the same checks, so one that does not
+    convert a path and back to the same folder refuses; one that does is outside what the runner
+    can check.
+  - Outside Git Bash, the Claude Code the runner would start is a Windows program: the file
+    `CLAUDE_BIN` names, or the `claude` found on `PATH`, ends in `.exe` or, read through any link,
+    starts with a Windows program's `MZ` header, as when a runner in WSL starts Windows'
+    `claude.exe`. Such a program would read the runner's POSIX paths as other folders. A name that
+    is not a file at all, such as an exported shell function, and a file the runner cannot read
+    refuse too, with `is not a file the runner can check`. A wrapper script that starts a Windows
+    program is not recognised.
+  - The settings file could not be written, or does not read back exactly as written.
+  - No settings file was written for the pass, which happens only when the runner and
+    `runner-common.sh` come from different releases (Adopting 1). This refusal comes from the
+    library just before Claude Code would start, so its `ERROR:` line is in the run log.
+- **`Skill` is no longer among the dream agent's tools.** Every `Skill` call was already refused
+  under `-p` (measured on Claude Code 2.1.284), so on that version no pass loses anything.
+  Removing it closes a route nobody measured: whether a skill's own `allowed-tools` could widen
+  what the pass may use.
+- `docs/reference.md` states what the memory override covers, its limits, the new exit-1 reasons,
+  `pass-settings.json`, the agent's argv and its tools. `AGENTS.md` lets you, or an agent you ask,
+  empty `90-auto-memory/.pass-agent/` by hand, the one exception to "never by hand" there.
+  `docs/setup.md` has a troubleshooting row for each refusal and lists `cmp` and `iconv`,
+  `docs/customizing.md` and the `onboard-project` skill say to keep `90-auto-memory` a plain folder,
+  `docs/harnesses/claude-code.md` describes the override, `README.md` scopes "every unattended write
+  fenced" to writes inside the vault, and the runners' comments no longer credit
+  `CLAUDE_CODE_DISABLE_AUTO_MEMORY` with keeping memory in.
+- The control suite holds each of these. Each new control id was seen failing against 1.4.0
+  first, except `mem-override-sink-contained`: it holds the unchanged fence to containing a write
+  in `.pass-agent/`, and was seen failing against a runner that exempts that folder.
+  `mem-override-flag`, `mem-override-sink-refused`, `mem-override-sink-link`,
+  `mem-override-sink-hardlink`, `mem-override-sink-contained`, `mem-override-sink-fifo`,
+  `mem-override-path-refused`, `mem-override-nonascii`, `mem-override-order`,
+  `mem-override-mixed-release` and `dream-agent-tools` are required on every CI job.
+  `mem-override-sink-unreadable`, `mem-override-sink-filelink`, `mem-override-file-mode`,
+  `mem-override-utf8-refused`, `mem-override-winbin`, `mem-override-stray-cygpath` and
+  `mem-override-no-cygpath` are required on the Linux and macOS jobs and not on Windows, where
+  they skip or may skip; the unreadable one also skips as root.
+  `mem-override-cygpath-refused` is required on the Windows job, the only one with `cygpath`.
+
+### Adopting this
+
+1. **Take `.claude/scripts/lib/runner-common.sh`, `dream-pass.sh` and `promotion-pass.sh`
+   together.** Each depends on the others. With the 1.4.1 library and an older runner, every
+   claude-mode pass exits 1 before Claude Code starts, the log says `dream-agent exited with code
+   1` (or `promotion-agent`), and the run log (`.claude/logs/dream-agent.run.log` or
+   `promotion-agent.run.log`) says `no memory override was written for this pass`; no tripwire is
+   left, also when `AGENT_SETTINGS_FILE` is set in the environment (measured on Linux with 1.4.0's
+   `dream-pass.sh`; 1.4.0's `promotion-pass.sh` takes the same path and is unmeasured, as are
+   older releases). With an older library and a 1.4.1 runner, every claude-mode pass exits 1 with
+   `memory_override: command not found`, which goes to the runner's stderr, not to its log
+   (measured on Linux). Either way no agent ran: take all three.
+2. **Nothing to configure for most vaults.** The override is on in claude mode for every pass.
+   Item 11 asks some Windows accounts to set `VAULT_STATE_DIR`, and items 5 and 9 name the tools
+   (`iconv`, `cmp`) a pass now needs.
+3. **A pass refuses to start while `90-auto-memory/.pass-agent/` holds anything but a plain
+   `.DS_Store` file (not a link, a FIFO or one with another hard link), or cannot be listed.** The
+   log says `the memory override folder already held a file`. What is there was written by an
+   unattended agent, so treat it as data: read it before you keep any of it, keep it outside every
+   memory folder, and empty the folder. `AGENTS.md` now allows this one edit under
+   `90-auto-memory/`.
+4. **Outside Windows, a pass refuses to start while the vault's path holds a `"` or a `\`** (or a
+   control character). The log says `the vault's path holds a character the settings file cannot
+   carry`. Rename the folder. On Windows a `"` or a tab Git Bash put in a folder name is kept as
+   U+F022 or U+F009, and such a vault runs from the `.cmd` wrappers. Started from a Git Bash
+   prompt, which shows the name with the `"` or the tab itself, the pass exits 1 with `git could not
+   read this vault's repository`, as in 1.4.0; start it from the `.cmd` wrapper, or rename the
+   folder.
+5. **A pass refuses to start while the vault's or the state directory's path is not valid
+   UTF-8**, which can happen on Linux, where a path is bytes. The log says `is not valid UTF-8, or
+   iconv could not check it`. Rename the folder. The same line appears on any platform when the
+   path is valid but holds a byte outside printable ASCII and `iconv` is not installed; install it.
+6. **A pass refuses to start while `90-auto-memory` or `90-auto-memory/.pass-agent` is a symlink or
+   junction.** The log says `the memory override folder is a link`. Replace the link with a plain
+   folder.
+7. **A pass refuses to start while `90-auto-memory` or `90-auto-memory/.pass-agent` is a file.**
+   The log says `is not a folder, so the memory override folder cannot be made there`. Make both
+   plain folders.
+8. **A pass whose agent writes memory now exits 2 and sets the tripwire.** The write lands in
+   `90-auto-memory/.pass-agent/`, a steering surface, where 1.4.0 usually let it land outside the
+   vault unseen. Read the tripwire and its quarantine as for any contained pass. Containment moves
+   the files, but a folder the agent made inside `.pass-agent/` stays behind. The tripwire stops
+   every pass first; once you clear it, the next pass refuses under item 3 until you empty the
+   folder.
+9. **A pass refuses to start when it cannot write its settings file, or the file does not read
+   back as written.** The log says `could not write the memory override` or `does not hold what
+   was written to it`. Check that the state directory is writable and has space, that nothing but
+   a file stands at `pass-settings.json` in it, that no other program holds that file open, and
+   that `command -v cmp` finds `cmp`, which the read-back needs. On
+   Windows the line may instead say `cygpath could not convert a path for the memory override`,
+   `which is not a Windows drive or network path` or `which is not the same folder or file`; check
+   Git Bash's `cygpath` (`docs/setup.md`, Troubleshooting). When the quoted path starts `//?/`, the
+   vault's or the state directory's path is about 260 characters or more, which `cygpath` gives
+   in that form: such a vault ran under 1.4.0 and now refuses, so move it, or set
+   `VAULT_STATE_DIR`, nearer a drive root. A runner started outside Git Bash whose
+   Claude Code is Windows' `claude.exe`, named in `CLAUDE_BIN` or found on `PATH`, directly or
+   through a link, now refuses with `looks like a Windows program`; run the `.cmd` runner instead.
+10. **If you renamed `90-auto-memory`, rename it in `runner-common.sh` too**, in `memory_override`
+    and in the fence's steering list (`docs/customizing.md` § 2). Otherwise a pass checks, and
+    points memory at, a folder that is no longer your memory tier.
+11. **On Windows, an account whose name is not ASCII (`Łukasz`, `José`, a Cyrillic name) needs
+    `VAULT_STATE_DIR`, as it already did in 1.4.0.** The default state directory is under
+    `%LOCALAPPDATA%`, and the runners still convert that path under `C`, which turns such a name
+    into a different, double-encoded folder beside the profile. Windows does not let a
+    non-elevated account create a folder in `C:\Users`, so every pass of a task that does not run
+    with highest privileges exits 1 with `the state directory ... could not be created, or cannot
+    be entered` (measured the same before and after this release, with a profile folder named
+    `Łukasz` whose parent the account could not write to). Make a new folder with an ASCII path
+    outside the vault, directly under `C:\`, for example `C:\vault-state`, and make it private to
+    your account: a new folder under `C:\` lets every signed-in account change its files, and the
+    override file there can name hooks Claude Code runs. Make the folder yourself. If `mkdir` says
+    it already exists, check its owner with `dir /q C:\` or `(Get-Acl C:\vault-state).Owner`, and
+    do not use one another account owns, because its owner can change its permissions back at any
+    time. In Command Prompt run
+    `icacls C:\vault-state /inheritance:r /grant:r "%USERDOMAIN%\%USERNAME%:(OI)(CI)F"` (in
+    PowerShell write `"${env:USERDOMAIN}\${env:USERNAME}:(OI)(CI)F"`) as the account the scheduled
+    task runs as, or write that account's name in their place, then check that
+    `icacls C:\vault-state` lists only that account; both forms left only the account, on the
+    folder and on a subfolder already inside it (measured). Until `icacls` runs, other accounts can
+    make folders inside the new one, so then check that it is still empty (`dir /a /q
+    C:\vault-state`) and point `VAULT_STATE_DIR` at a subfolder that does not exist yet, which the
+    runner makes. `C:\` itself gave other accounts only the rights to read it and to add folders
+    (measured with `icacls C:\`), but another drive's root may give them more, as `D:\` did here
+    (`Everyone:(OI)(CI)(F)`). A root where any account but yours, SYSTEM and Administrators has
+    `(F)` or `(DC)` lets that account rename your folder and put its own in its place: check a root
+    with `icacls` before you use it.
+    A folder deeper down, such as `D:\data\vault-state`, is only as safe as the folders above it,
+    for the same reason. Then set `VAULT_STATE_DIR` to `C:\vault-state\my-vault`. The vault itself may stay
+    under the profile, because the memory override now converts its path faithfully (other path
+    checks still convert under `C`; `docs/reference.md` § 4.3, Known limits). A `VAULT_STATE_DIR`
+    with non-ASCII characters works too, but the runner then keeps its state in a double-encoded
+    sibling of the folder you named, which does not carry that folder's permissions. If
+    `VAULT_STATE_DIR` already names a folder other accounts can write, on any platform, make it
+    private now: it holds a file Claude Code reads, and that can name hooks.
+12. **Use Claude Code 2.1.284 or later.** The override was measured on 2.1.284 (a named folder),
+    2.1.285 (the default folder too) and 2.1.287 (both again, the non-ASCII paths, and the
+    fail-open on an empty or invalid file) only: an older version is unmeasured, and so is a newer
+    one until someone measures it.
+13. **If your `dream-agent.md` still names `Skill`, it keeps working**, because the call was already
+    refused under `-p` (measured on Claude Code 2.1.284). In that vault `run-tests.sh`'s
+    `dream-agent-tools` control fails until you remove `Skill` from its `tools:` line.
+
+`--check` will list `.claude/scripts/lib/runner-common.sh`, `.claude/scripts/dream-pass.sh`,
+`.claude/scripts/promotion-pass.sh`, `.claude/scripts/run-tests.sh`, `.claude/agents/dream-agent.md`,
+both copies of `onboard-project/SKILL.md` (under `.claude/skills/` and `.agents/skills/`),
+`AGENTS.md`, `docs/reference.md`, `docs/setup.md`, `docs/customizing.md` and
+`docs/harnesses/claude-code.md` as safe to take, alongside `VERSION` and `CHANGELOG.md`. Take the
+three runner files in one step (item 1). If you customized `dream-agent.md`, `AGENTS.md` or one of
+the docs, take it as a merge rather than a copy. `README.md` changed in one line too; it is yours
+once the vault exists, so `--check` does not list it. `AGENTS.md` gains one exception to "never by
+hand"; no note, `.claude/rules/` file, hook, frontmatter key or checker behaviour a vault relies on
+has moved.
+
+---
+
 ## 1.4.0 — 2026-09-27
 
 The retention pass now tells whoever ran it what it did. Its judgement used to go only to its log,

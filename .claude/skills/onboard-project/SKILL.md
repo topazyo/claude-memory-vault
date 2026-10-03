@@ -23,7 +23,9 @@ order — later steps reference the slug and paths the earlier ones fix.
    harness writes one for this project, skip the step and say so in the report. The folder is
    deliberately out of scope for `vault-check.sh` and for the frontmatter contract, so do not add
    tiered frontmatter to anything you put there. Durable knowledge belongs in the long tier, never
-   here.
+   here. Make it a plain folder inside `90-auto-memory/`, and leave `90-auto-memory` a plain folder
+   too: a claude-mode dream or promotion pass refuses to start while `90-auto-memory` is a symlink or
+   junction.
 
 4. **Write the first medium-term log.** Copy
    `20-projects/_logs/templates/medium-term-project-log.md` to
