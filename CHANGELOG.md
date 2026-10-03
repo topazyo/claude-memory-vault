@@ -128,11 +128,12 @@ What that covers, and what it does not:
     convert a path and back to the same folder refuses; one that does is outside what the runner
     can check.
   - Outside Git Bash, the Claude Code the runner would start is a Windows program: the file
-    `CLAUDE_BIN` names, or the `claude` found on `PATH`, ends in `.exe`, or, read through any link,
-    starts with a Windows program's `MZ` header or cannot be read, as when a runner in WSL starts
-    Windows' `claude.exe`. Such a program would read the runner's POSIX paths as other folders. A
-    name that is not a file at all, such as an exported shell function, refuses too, with `is not a
-    file the runner can check`. A wrapper script that starts a Windows program is not recognised.
+    `CLAUDE_BIN` names, or the `claude` found on `PATH`, ends in `.exe` or, read through any link,
+    starts with a Windows program's `MZ` header, as when a runner in WSL starts Windows'
+    `claude.exe`. Such a program would read the runner's POSIX paths as other folders. A name that
+    is not a file at all, such as an exported shell function, and a file the runner cannot read
+    refuse too, with `is not a file the runner can check`. A wrapper script that starts a Windows
+    program is not recognised.
   - The settings file could not be written, or does not read back exactly as written.
   - No settings file was written for the pass, which happens only when the runner and
     `runner-common.sh` come from different releases (Adopting 1). This refusal comes from the

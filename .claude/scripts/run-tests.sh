@@ -2468,6 +2468,15 @@ for mo_w in empty other add pre hooks; do
   rm -f "$MO_STATE/pass-settings.json"
 done
 rm -rf "$MO_EMPTY" "$TMP/memovr-empty-probe" "$TMP/memovr-empty-dest" "$TMP/memovr-swap-empty" "$TMP/memovr-swap-line"
+# Each twin above rules out one shortcut, and a read-back that compared less than
+# the whole file could still pass all of them, so the comparison itself is
+# pinned: one cmp of the exact line against the whole file.
+mo_rb_lines="$(grep -cFx -- '  if ! printf '"'%s\\n'"' "$line" | cmp -s - "$file"; then' "$RV/.claude/scripts/lib/runner-common.sh" 2>/dev/null)"
+if [ "$mo_rb_lines" = 1 ]; then
+  ok "memory_override reads its settings file back with one cmp of the exact line against the whole file"
+else
+  bad "memory_override's read-back is not the one cmp of the exact line against the whole file (found ${mo_rb_lines:-no} such line)"
+fi
 # The settings file is private to the runner's account whatever its umask,
 # because Claude Code runs the hooks a settings file names.
 if is_windows_host; then
@@ -2515,8 +2524,8 @@ if is_windows_host; then
      && [ "$(PATH="$MO_SHIM:$PATH" MO_SHIM_FAIL=posixsettings cygpath -m "$TMP/x/pass-settings.json" 2>/dev/null)" = "$TMP/x/pass-settings.json" ] \
      && [ "$(PATH="$MO_SHIM:$PATH" MO_SHIM_FAIL=devicevault cygpath -m "$RV" 2>/dev/null)" = "//?/$(cygpath -m "$RV")" ] \
      && [ "$(PATH="$MO_SHIM:$PATH" MO_SHIM_FAIL=dotdevicevault cygpath -m "$RV" 2>/dev/null)" = "//./$(cygpath -m "$RV")" ] \
-     && [ "$(PATH="$MO_SHIM:$PATH" MO_SHIM_FAIL=failprintsettings cygpath -m "$TMP/x/pass-settings.json" 2>/dev/null; echo " rc=$?")" = "$(cygpath -m "$TMP/x/pass-settings.json") rc=1" ] \
-     && [ "$(PATH="$MO_SHIM:$PATH" MO_SHIM_FAIL=failprintvault cygpath -m "$RV" 2>/dev/null; echo " rc=$?")" = "$(cygpath -m "$RV") rc=1" ]; then
+     && [ "$(PATH="$MO_SHIM:$PATH" MO_SHIM_FAIL=failprintsettings cygpath -m "$TMP/x/pass-settings.json" 2>/dev/null; echo "rc=$?")" = "$(cygpath -m "$TMP/x/pass-settings.json")${NL}rc=1" ] \
+     && [ "$(PATH="$MO_SHIM:$PATH" MO_SHIM_FAIL=failprintvault cygpath -m "$RV" 2>/dev/null; echo "rc=$?")" = "$(cygpath -m "$RV")${NL}rc=1" ]; then
     ran mem-override-cygpath-refused
     mo_refused "claude mode: cygpath fails on the settings file's path" "cygpath could not convert a path for the memory override" \
       dream-pass.sh journal "$MO_LOG" PATH="$MO_SHIM:$PATH" MO_SHIM_FAIL=settings
@@ -2587,8 +2596,9 @@ else
     bad "mem-override-winbin: the linked MZ stand-in for the agent could not be made or found on PATH"
   fi
   # A name that resolves to no file, such as an exported function, cannot be
-  # checked, and a file that cannot be read could still start by its header, so
-  # both refuse too. Root reads any file, so the second has no fixture there.
+  # checked, and neither can a file that cannot be read, which could still start
+  # by its header, so both refuse as not a file the runner can check. Root reads
+  # any file, so the second has no fixture there and records a skip.
   rm -f "$MO_MZ/bin/claude"
   printf '#!/bin/sh\nexit 0\n' > "$MO_MZ/bin/claude"
   chmod 111 "$MO_MZ/bin/claude"
@@ -2598,9 +2608,9 @@ else
     dream-pass.sh journal "$MO_LOG" CLAUDE_BIN=claude
   unset -f claude
   if [ -r "$MO_MZ/bin/claude" ]; then
-    printf '  (mem-override-winbin: the unreadable sub-case has no fixture here, where a mode-111 file can still be read; not counted)\n'
+    skip mem-override-winbin-unreadable 'an agent binary that can be started but not read: a mode-111 file can still be read here (root)'
   elif [ "$(PATH="$MO_MZ/bin:$PATH" command -v claude)" = "$MO_MZ/bin/claude" ]; then
-    mo_refused "claude mode outside Git Bash: the claude found on PATH can be started but not read" "$MO_WINBIN" \
+    mo_refused "claude mode outside Git Bash: the claude found on PATH can be started but not read" "$MO_NOTFILE" \
       dream-pass.sh journal "$MO_LOG" CLAUDE_BIN=claude PATH="$MO_MZ/bin:$PATH"
   else
     bad "mem-override-winbin: the unreadable stand-in for the agent could not be found on PATH"
@@ -5219,7 +5229,7 @@ else
       fi
     else
       mkdir -p "$TMP/memovr-utf8-work"
-      ( LC_ALL=C; export LC_ALL; . "$RV/.claude/scripts/lib/runner-common.sh"
+      ( LC_ALL=C; export LC_ALL; . "$RV/.claude/scripts/lib/runner-common.sh"; AGENT_BIN="$FAKE"
         memory_override "$MO_UV" "$mo_us" "$TMP/memovr-utf8-work" "$TMP/memovr-utf8.log" )
       mo_rc=$?
       if [ "$mo_rc" -eq 1 ] && grep -F -- "$MO_UTF8" "$TMP/memovr-utf8.log" 2>/dev/null | grep -q '^\[[^]]*\] ERROR: ' \

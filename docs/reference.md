@@ -760,9 +760,9 @@ Around that call, each runner does several things an exit code cannot:
   where a path is bytes); on Windows when `cygpath` is missing, fails, prints nothing, or gives a
   path that is not a drive or network path or that names another folder or file; outside Git Bash
   when the agent binary looks like a Windows program (the file `CLAUDE_BIN` names, or the `claude`
-  found on `PATH`, ends in `.exe`, or, read through any link, starts with `MZ` or cannot be read),
-  which would read the runner's POSIX paths as other folders, or is not a file it can check; when
-  the file
+  found on `PATH`, ends in `.exe` or, read through any link, starts with `MZ`), which would read
+  the runner's POSIX paths as other folders, or is not a file it can check, being no file at all
+  or one it cannot read; when the file
   cannot be written (off Windows readable by the runner's account only; on Windows the state
   folder's permissions decide); and when it does not read back byte for byte,
   because Claude Code 2.1.287 reads an empty or invalid settings file as if there were none and
@@ -897,6 +897,10 @@ Around that call, each runner does several things an exit code cannot:
     script that starts a Windows Claude Code is not recognised, and the name is looked up again
     when Claude Code starts, so a `PATH` folder or link changed in between by someone who can
     write it is not seen.
+  - On Windows the override names the vault as the runner was started with it, so a vault reached
+    through an 8.3 short name (`C:\Users\RUNNER~1\...`) is named that way, while the settings
+    file's path is resolved to long names. Both pass the identity checks; real Claude Code has not
+    been measured with a short-name value.
   - On Windows, `cygpath -m` gives a `//?/` device path for a path of about 260 characters or more
     (254 converted normally, 309 did not, measured), so a vault or state directory that deep is
     refused with `which is not a Windows drive or network path`. Move it nearer a drive root.
