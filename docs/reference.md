@@ -898,7 +898,7 @@ Around that call, each runner does several things an exit code cannot:
     when Claude Code starts, so a `PATH` folder or link changed in between by someone who can
     write it is not seen.
   - On Windows the override names the vault as the runner was started with it, so a vault reached
-    through an 8.3 short name (`C:\Users\RUNNER~1\...`) is named that way, while the settings
+    through an 8.3 short name (a profile folder such as `RUNNER~1`) is named that way, while the settings
     file's path is resolved to long names. Both pass the identity checks; real Claude Code has not
     been measured with a short-name value.
   - On Windows, `cygpath -m` gives a `//?/` device path for a path of about 260 characters or more
