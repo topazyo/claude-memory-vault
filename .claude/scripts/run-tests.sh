@@ -2498,8 +2498,10 @@ fi
 # change the file unseen. Off Windows so does one under a folder every account
 # can write that has no sticky bit, where another account could swap the folder.
 # Apple's mktemp takes its per-user folder whatever TMPDIR says, so where a twin
-# cannot steer the runner's folder that way, memory_override is called directly,
-# as the runners call it, with that folder.
+# cannot steer the runner's folder that way only the direct call below runs.
+# memory_override is called directly, as the runners call it, with a folder
+# there on every host, because the pass removes its own folder when it ends and
+# only a folder the twin keeps can show the refusal wrote nothing.
 MO_WORK="and the memory override's settings file there can name hooks Claude Code runs"
 mo_tmpdir_steers() {  # mo_tmpdir_steers <dir> - true when mktemp -d under TMPDIR=<dir> makes its folder there
   local d
@@ -2512,20 +2514,18 @@ mo_direct() {
   ( LC_ALL=C; export LC_ALL; . "$RV/.claude/scripts/lib/runner-common.sh"; AGENT_BIN="$FAKE"
     memory_override "$1" "${CASE_STATE:-$TMP/state}" "$2" "$3" )
 }
-# mo_work_refused <label> <reason> <TMPDIR> - a pass with that TMPDIR refuses with <reason>, or, where
-# mktemp does not take TMPDIR, memory_override with a folder in it does and writes nothing there
+# mo_work_refused <label> <reason> <TMPDIR> - a pass with that TMPDIR refuses with <reason> where
+# mktemp takes TMPDIR, and on every host memory_override with a folder in it does and writes nothing there
 mo_work_refused() {
   local rc
-  if mo_tmpdir_steers "$3"; then
-    mo_refused "$1" "$2" dream-pass.sh journal "$MO_LOG" TMPDIR="$3"
-    return
-  fi
+  mo_tmpdir_steers "$3" && mo_refused "$1" "$2" dream-pass.sh journal "$MO_LOG" TMPDIR="$3"
   rm -rf "$3/w" "$TMP/memovr-direct.log"
   ( umask 077 && mkdir -p "$3/w" )
   mo_direct "$RV" "$3/w" "$TMP/memovr-direct.log"
   rc=$?
-  if [ "$rc" -eq 1 ] && grep -F -- "$2" "$TMP/memovr-direct.log" 2>/dev/null | grep -q '^\[[^]]*\] ERROR: ' && [ ! -e "$3/w/pass-settings.json" ]; then
-    ok "$1 -> memory_override, called directly as mktemp here does not take TMPDIR, refused (1), an ERROR: line says why, nothing written"
+  if [ "$rc" -eq 1 ] && grep -F -- "$2" "$TMP/memovr-direct.log" 2>/dev/null | grep -q '^\[[^]]*\] ERROR: ' \
+     && [ -d "$3/w" ] && [ -z "$(ls -A "$3/w" 2>/dev/null)" ]; then
+    ok "$1 -> memory_override, called directly with a folder there, refused (1), an ERROR: line says why, nothing written"
   else
     bad "$1 -- memory_override, called directly, was not refused for it -- got $rc: $(cat "$TMP/memovr-direct.log" 2>/dev/null)"
   fi
@@ -2547,6 +2547,7 @@ else
   mkdir -p "$TMP/memovr-open"
   chmod 777 "$TMP/memovr-open"
   if [ -n "$(find "$TMP/memovr-open" -maxdepth 0 -perm -0002 ! -perm -1000 -print 2>/dev/null)" ]; then
+    ran mem-override-work-open
     mo_work_refused "claude mode: TMPDIR under a folder every account can write that has no sticky bit" \
       "is inside a folder every account can write that has no sticky bit, $MO_WORK" "$TMP/memovr-open"
   else
@@ -5416,19 +5417,23 @@ CASE_STATE="$TMP/state-memovr-path"
 # TMPDIR, that is not valid UTF-8 would reach Claude Code as another folder, or
 # none, so a claude-mode pass refuses it. glibc's iconv passes some such forms
 # through to UTF-8 (above U+10FFFF, 5- and 6-byte forms), so each one is tried,
-# with a surrogate, an overlong form and a lone 0xFF, and its bytes checked. A
-# host whose iconv lets the first of them through records
-# mem-override-utf8-lax-host, so a job that requires it shows these twins ran
-# where they can fail. Where the file system refuses such a name (APFS does),
-# memory_override is called as the runners call it, under LC_ALL=C, to show this
-# host's iconv refuses the bytes before anything is written.
+# with a surrogate, an overlong form, a lone continuation byte and a lone 0xFF,
+# and its bytes checked. A host whose iconv lets the first of them through to
+# UTF-8 records mem-override-utf8-lax-host, and one whose iconv takes it to
+# UTF-16LE without an error (macOS's) records mem-override-utf16-lax-host, so a
+# job that requires one shows these twins ran where they can tell the round trip
+# from that one-way check. Where the file system takes the name the pass runs;
+# then, and where the file system refuses such a name (APFS does),
+# memory_override is called as the runners call it, under LC_ALL=C, with a
+# folder the twin keeps, to show the refusal comes before anything is written.
 if is_windows_host; then
   skip mem-override-utf8-refused 'a vault path that is not valid UTF-8: Git Bash reads a lone byte 0xFF as U+00FF, so the folder has a valid name'
 else
   if printf '\364\220\200\200\n' | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1; then ran mem-override-utf8-lax-host; fi
+  if printf '\364\220\200\200\n' | iconv -f UTF-8 -t UTF-16LE >/dev/null 2>&1; then ran mem-override-utf16-lax-host; fi
   for mo_seq in '\364\220\200\200:f4908080' '\364\241\260\241:f4a1b0a1' '\365\200\200\200:f5808080' \
                 '\370\210\200\200\200:f888808080' '\374\204\200\200\200\200:fc8480808080' \
-                '\355\240\200:eda080' '\300\257:c0af' '\377:ff'; do
+                '\355\240\200:eda080' '\300\257:c0af' '\200:80' '\377:ff'; do
     MO_FF="$(printf "${mo_seq%%:*}")"
     for mo_where in vault 'settings file'; do
       if [ "$mo_where" = vault ]; then MO_UV="$TMP/v${MO_FF}ault" mo_ut=; else MO_UV="$TMP/memovr-utf8-vault" mo_ut="$TMP/t${MO_FF}mp"; fi
@@ -5440,29 +5445,34 @@ else
         bad "mem-override-utf8-refused: the $mo_where twin's name holds the bytes $(mo_hex "$MO_FF"), not ${mo_seq#*:}"
       elif mkdir "${mo_ut:-$MO_UV}" 2>/dev/null && ! { make_runner_vault "$MO_UV" && [ -f "$MO_UV/.claude/scripts/dream-pass.sh" ]; }; then
         bad "mem-override-utf8-refused: the file system took the name, but a vault could not be made for the $mo_where twin (${mo_seq#*:})"
-      elif [ -d "${mo_ut:-$MO_UV}" ] && { [ -z "$mo_ut" ] || mo_tmpdir_steers "$mo_ut"; }; then
-        rm -f "$REC.argv"
-        if [ -n "$mo_ut" ]; then
-          mo_rc="$(RUNNER_VAULT="$MO_UV" runner dream-pass.sh journal FAKE_RECORD="$REC" TMPDIR="$mo_ut")"
-        else
-          mo_rc="$(RUNNER_VAULT="$MO_UV" runner dream-pass.sh journal FAKE_RECORD="$REC")"
-        fi
-        if [ "$mo_rc" -eq 1 ] && grep -F -- "$MO_UTF8" "$MO_UV/.claude/logs/dream-agent.log" 2>/dev/null | grep -q '^\[[^]]*\] ERROR: ' \
-           && [ ! -e "$REC.argv" ] && [ ! -e "$MO_UV/.claude/logs/runner-inflight" ] && [ ! -e "$CASE_STATE/runner-inflight" ]; then
-          ok "dream-pass: a $mo_where path holding ${mo_seq#*:}, not valid UTF-8 -> refused (exit 1), an ERROR: line says why, the agent never started, and no in-flight marker is left"
-        else
-          bad "dream-pass: a $mo_where path holding ${mo_seq#*:}, not valid UTF-8, was not refused for it -- got exit $mo_rc: $(tail -n 3 "$MO_UV/.claude/logs/dream-agent.log" 2>/dev/null | tr '\n' '|')"
-        fi
       else
-        mkdir -p "$TMP/memovr-utf8-work"
+        mo_how='called directly where the file system refuses the name'
+        if [ -d "${mo_ut:-$MO_UV}" ]; then mo_how='called directly'; fi
+        if [ -d "${mo_ut:-$MO_UV}" ] && { [ -z "$mo_ut" ] || mo_tmpdir_steers "$mo_ut"; }; then
+          rm -f "$REC.argv"
+          if [ -n "$mo_ut" ]; then
+            mo_rc="$(RUNNER_VAULT="$MO_UV" runner dream-pass.sh journal FAKE_RECORD="$REC" TMPDIR="$mo_ut")"
+          else
+            mo_rc="$(RUNNER_VAULT="$MO_UV" runner dream-pass.sh journal FAKE_RECORD="$REC")"
+          fi
+          if [ "$mo_rc" -eq 1 ] && grep -F -- "$MO_UTF8" "$MO_UV/.claude/logs/dream-agent.log" 2>/dev/null | grep -q '^\[[^]]*\] ERROR: ' \
+             && [ ! -e "$REC.argv" ] && [ ! -e "$MO_UV/.claude/logs/runner-inflight" ] && [ ! -e "$CASE_STATE/runner-inflight" ]; then
+            ok "dream-pass: a $mo_where path holding ${mo_seq#*:}, not valid UTF-8 -> refused (exit 1), an ERROR: line says why, the agent never started, and no in-flight marker is left"
+          else
+            bad "dream-pass: a $mo_where path holding ${mo_seq#*:}, not valid UTF-8, was not refused for it -- got exit $mo_rc: $(tail -n 3 "$MO_UV/.claude/logs/dream-agent.log" 2>/dev/null | tr '\n' '|')"
+          fi
+          rm -rf "$CASE_STATE"
+        fi
+        if [ -n "$mo_ut" ]; then mo_w="$mo_ut/w"; else mo_w="$TMP/memovr-utf8-work"; fi
+        if [ -z "$mo_ut" ] || [ -d "$mo_ut" ]; then mkdir -p "$mo_w"; fi
         ( LC_ALL=C; export LC_ALL; . "$RV/.claude/scripts/lib/runner-common.sh"; AGENT_BIN="$FAKE"
-          memory_override "$MO_UV" "$CASE_STATE" "${mo_ut:-$TMP/memovr-utf8-work}" "$TMP/memovr-utf8.log" )
+          memory_override "$MO_UV" "$CASE_STATE" "$mo_w" "$TMP/memovr-utf8.log" )
         mo_rc=$?
         if [ "$mo_rc" -eq 1 ] && grep -F -- "$MO_UTF8" "$TMP/memovr-utf8.log" 2>/dev/null | grep -q '^\[[^]]*\] ERROR: ' \
-           && [ ! -e "${mo_ut:-$TMP/memovr-utf8-work}/pass-settings.json" ]; then
-          ok "memory_override, called directly where the file system refuses the name: a $mo_where path holding ${mo_seq#*:}, not valid UTF-8 -> refused (1), an ERROR: line says why, nothing written"
+           && [ -z "$(ls -A "$mo_w" 2>/dev/null)" ]; then
+          ok "memory_override, $mo_how: a $mo_where path holding ${mo_seq#*:}, not valid UTF-8 -> refused (1), an ERROR: line says why, nothing written"
         else
-          bad "memory_override did not refuse a $mo_where path holding ${mo_seq#*:}, not valid UTF-8 -- got $mo_rc: $(cat "$TMP/memovr-utf8.log" 2>/dev/null)"
+          bad "memory_override, $mo_how, did not refuse a $mo_where path holding ${mo_seq#*:}, not valid UTF-8, before writing -- got $mo_rc: $(cat "$TMP/memovr-utf8.log" 2>/dev/null)"
         fi
       fi
       rm -rf "$MO_UV" "$CASE_STATE" "$TMP/memovr-utf8-work" "$TMP/memovr-utf8.log"
@@ -5471,6 +5481,52 @@ else
   done
   CASE_STATE="$TMP/state-memovr-utf8"
 fi
+# A path outside printable ASCII is checked with iconv, so without it the pass
+# refuses rather than skipping the check. A stand-in iconv that fails and prints
+# nothing, as a missing one would, is first on PATH, and the vault's path holds
+# an e-acute, which is valid UTF-8, so only the missing check can refuse it.
+# Off Windows the pass also runs with a PATH of links to every command on PATH
+# but iconv, so a check that skipped itself when no iconv is found is caught too.
+# Git for Windows ships iconv, and Git Bash would copy, not link, the commands.
+MO_NI="$TMP/caf$(printf '\303\251')-noiconv-vault"
+rm -rf "$MO_NI" "$TMP/memovr-noiconv-bin"
+mkdir -p "$TMP/memovr-noiconv-bin"
+printf '#!/bin/sh\nexit 1\n' > "$TMP/memovr-noiconv-bin/iconv"
+chmod +x "$TMP/memovr-noiconv-bin/iconv"
+make_runner_vault "$MO_NI" 2>/dev/null
+CASE_STATE="$TMP/state-memovr-noiconv"
+rm -rf "$CASE_STATE"
+if [ ! -f "$MO_NI/.claude/scripts/dream-pass.sh" ]; then
+  bad "mem-override-no-iconv: a vault under a folder named with an e-acute could not be made"
+elif [ "$(PATH="$TMP/memovr-noiconv-bin:$PATH"; command -v iconv)" != "$TMP/memovr-noiconv-bin/iconv" ]; then
+  bad "mem-override-no-iconv: the iconv stand-in is not the iconv found on PATH -- got $(PATH="$TMP/memovr-noiconv-bin:$PATH"; command -v iconv)"
+else
+  ran mem-override-no-iconv
+  RUNNER_VAULT="$MO_NI" mo_refused "claude mode: a failing iconv to check a vault path holding an e-acute" "$MO_UTF8" \
+    dream-pass.sh journal "$MO_NI/.claude/logs/dream-agent.log" PATH="$TMP/memovr-noiconv-bin:$PATH"
+  if ! is_windows_host; then
+    rm -rf "$TMP/memovr-noiconv-path"
+    mkdir -p "$TMP/memovr-noiconv-path"
+    mo_ifs="$IFS"
+    IFS=:
+    # Earlier PATH folders win, as on PATH: ln leaves a name already linked alone.
+    for mo_d in $PATH; do
+      [ -d "$mo_d" ] && ln -s "$mo_d"/* "$TMP/memovr-noiconv-path/" 2>/dev/null
+    done
+    IFS="$mo_ifs"
+    rm -f "$TMP/memovr-noiconv-path/iconv"
+    if [ -n "$(PATH="$TMP/memovr-noiconv-path"; command -v iconv)" ] \
+       || [ -z "$(PATH="$TMP/memovr-noiconv-path"; command -v git)" ] || [ -z "$(PATH="$TMP/memovr-noiconv-path"; command -v cmp)" ]; then
+      bad "mem-override-no-iconv: a PATH holding every command but iconv could not be made"
+    else
+      RUNNER_VAULT="$MO_NI" mo_refused "claude mode: no iconv on PATH to check a vault path holding an e-acute" "$MO_UTF8" \
+        dream-pass.sh journal "$MO_NI/.claude/logs/dream-agent.log" PATH="$TMP/memovr-noiconv-path"
+    fi
+    rm -rf "$TMP/memovr-noiconv-path"
+  fi
+fi
+rm -rf "$MO_NI" "$TMP/memovr-noiconv-bin" "$CASE_STATE"
+CASE_STATE="$TMP/state-memovr-utf8"
 
 if command -v git >/dev/null 2>&1; then
   # A vault that has a .git git cannot read is a repository that must not pass as

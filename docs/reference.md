@@ -910,13 +910,16 @@ Around that call, each runner does several things an exit code cannot:
     `mktemp` takes whatever `TMPDIR` says), which `mktemp -d` makes private off Windows and which must
     pass the state directory's checks. As there, a group-writable folder above it is allowed, and a
     member of that group could rename the folder and put their own in its place, so keep `TMPDIR`
-    writable by your account only. The checks judge the folder as its links resolve, but the file is
-    written and handed to Claude Code through `TMPDIR` as spelled, so a `TMPDIR` spelled through a
-    link, or through a folder another account can rename, is not caught: name the folder itself. On Windows it carries the temporary folder's permissions and the
-    runner cannot read them, so leave `TMPDIR` unset there: the folder is then made in Git Bash's
-    `/tmp`, this account's temporary folder, which only the account, SYSTEM and Administrators can
-    change (measured; setting `TEMP` for the `.cmd` did not move `/tmp`). The same folder has held the
-    pass's snapshots, its steering backup and the folder git takes hooks from since 1.4.0.
+    writable by your account only. The checks read mode bits only, so an access control list that
+    lets another account change the folder is not seen, as for the state directory. They judge the
+    folder as its links resolve, but the file is written and handed to Claude Code through `TMPDIR`
+    as spelled, so a `TMPDIR` spelled through a link, or through a folder another account can
+    rename, is not caught: name the folder itself. On Windows it carries the temporary folder's
+    permissions and the runner cannot read them, so leave `TMPDIR` unset there: the folder is then
+    made in Git Bash's `/tmp`, this account's temporary folder, which only the account, SYSTEM and
+    Administrators can change (measured; setting `TEMP` for the `.cmd` did not move `/tmp`). The
+    same folder has held the pass's snapshots, its steering backup and the folder git takes hooks
+    from since 1.4.0, and only a claude-mode pass checks it; command mode does not, as in 1.4.0.
   - The runner removes the settings file with its folder when the pass ends. After a stop that
     leaves Claude Code running (`KILL_FAILED`, which sets the tripwire), the file is gone while the
     process may still be at work; whether Claude Code would then grant its default memory folder
@@ -946,12 +949,14 @@ Around that call, each runner does several things an exit code cannot:
     vault (measured). The `.cmd` wrappers cannot start such a vault at all (`CMD does not support
     UNC paths as current directories`). A mapped network drive gives a drive path and runs: for one
     drive mapped to an SMB share, a Write to the default folder was refused with the file (2.1.289,
-    measured through `dream-pass.cmd`). DFS, WebDAV and other redirectors, and a local link to a
-    share, are unmeasured.
+    measured through `dream-pass.cmd`). Any other drive letter whose target is a network path is
+    accepted too and unmeasured: DFS, WebDAV and other redirectors, a local link to a share, `subst`
+    onto one, and a drive mapped to `\\wsl.localhost\...`.
   - When `VAULT_STATE_DIR` is rejected, or there is no per-user state folder to use, the state
     directory falls back to `${TMPDIR:-/tmp}/claude-memory-vault-state-<id>`. On Linux and macOS
     the checks above still apply to it; on Windows a `TMPDIR` other accounts can write would hold
-    the state and the settings file, so leave `TMPDIR` at its private default there.
+    the state, as it holds the settings file on every pass, so leave `TMPDIR` at its private
+    default there.
   - A vault in a folder other accounts can write, such as one made directly under `C:\` or on a
     data drive, is open to them before and during every pass: they can change its `.claude/`
     settings, swap `90-auto-memory` for a link after the checks, or plant memory there. Keep the

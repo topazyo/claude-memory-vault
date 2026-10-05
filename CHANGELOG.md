@@ -61,7 +61,9 @@ What that covers, and what it does not:
   2.1.289 ignored the runner's file: a Write to the default memory folder landed with it as without
   it (measured). On Windows the runner now accepts only a drive path for the vault and for its
   settings file, and refuses any other with exit 1. The `.cmd` wrappers could not start such a vault
-  before either. Measured for one mapped drive; DFS, WebDAV and other redirectors are unmeasured.
+  before either. Measured for one mapped drive; any other drive letter whose target is a network
+  path (DFS, WebDAV, a local link to a share, `subst` onto one, a drive mapped to
+  `\\wsl.localhost\...`) is accepted too and unmeasured.
 - **A vault path that is not ASCII is converted faithfully.** On Windows the runner converts the
   vault's path, and the settings file's, with Git Bash's `cygpath`. Under the runners' `LC_ALL=C`
   that cuts a path at its first character outside the ANSI code page and turns `é` into one invalid
@@ -187,20 +189,24 @@ What that covers, and what it does not:
 - The control suite holds each of these. Each new control id was seen failing against 1.4.0
   first, except `mem-override-sink-contained`: it holds the unchanged fence to containing a write
   in `.pass-agent/`, and was seen failing against a runner that exempts that folder; and
-  `mem-override-utf8-lax-host`, which records what the host's `iconv` does rather than holding a
-  refusal.
+  `mem-override-utf8-lax-host` and `mem-override-utf16-lax-host`, which record what the host's
+  `iconv` does rather than holding a refusal.
   `mem-override-flag`, `mem-override-sink-refused`, `mem-override-sink-link`,
   `mem-override-sink-hardlink`, `mem-override-sink-contained`, `mem-override-sink-fifo`,
   `mem-override-path-refused`, `mem-override-nonascii`, `mem-override-order`,
-  `mem-override-mixed-release`, `mem-override-unc-refused`, `mem-override-work-refused` and
-  `dream-agent-tools` are required on every CI job. `mem-override-sink-unreadable`, `mem-override-sink-filelink`,
+  `mem-override-mixed-release`, `mem-override-unc-refused`, `mem-override-work-refused`,
+  `mem-override-no-iconv` and `dream-agent-tools` are required on every CI job.
+  `mem-override-sink-unreadable`, `mem-override-sink-filelink`,
   `mem-override-file-mode`, `mem-override-utf8-refused`, `mem-override-winbin`,
-  `mem-override-winbin-unreadable`, `mem-override-stray-cygpath` and `mem-override-no-cygpath` are
-  required on the Linux and macOS jobs and not on Windows, where they skip or may skip; the two
-  unreadable ones also skip as root. `mem-override-cygpath-refused` is required on the Windows
-  job, the only one with `cygpath`. `mem-override-utf8-lax-host`, required on the ubuntu job only,
-  is recorded where `iconv`'s conversion to UTF-8 lets a sequence above U+10FFFF through, as
-  glibc's does, so that job shows its UTF-8 twins could fail there.
+  `mem-override-winbin-unreadable`, `mem-override-stray-cygpath`, `mem-override-no-cygpath` and
+  `mem-override-work-open` are required on the Linux and macOS jobs and not on Windows, where they
+  skip or may skip; the two unreadable ones also skip as root. `mem-override-cygpath-refused` is
+  required on the Windows job, the only one with `cygpath`. `mem-override-utf8-lax-host`, required
+  on the ubuntu job only, is recorded where `iconv`'s conversion to UTF-8 lets a sequence above
+  U+10FFFF through, as glibc's does, so that job shows its UTF-8 twins can tell the round trip
+  from a conversion to UTF-8 alone. `mem-override-utf16-lax-host`, required on the two macOS jobs
+  only, is recorded where the conversion to UTF-16LE takes that sequence without an error, as
+  macOS's does, so those jobs show the same against a conversion to UTF-16LE alone.
 
 ### Adopting this
 
