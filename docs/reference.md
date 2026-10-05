@@ -954,11 +954,12 @@ Around that call, each runner does several things an exit code cannot:
     write it is not seen.
   - On Windows the override names the vault as the runner was started with it, so a vault reached
     through an 8.3 short name (a profile folder such as `RUNNER~1`) is named that way, and the
-    settings file by its folder's resolved path, in which Git Bash expands such a name, apart from a
-    folder under Git Bash's `/tmp`, which keeps the mount's own spelling (on CI's Windows image
-    `TEMP` is spelled `RUNNER~1`). Passes with the vault and the folder under that `/tmp` pass the
-    identity checks there (measured on CI); real Claude Code has not been measured with a short-name
-    value.
+    settings file by its folder's resolved path, in which Git Bash expands such a name. A folder
+    under Git Bash's `/tmp` keeps that spelling only where the temporary folder's path holds no 8.3
+    name; on CI's Windows image, whose `TEMP` is spelled `RUNNER~1`, it resolves to the long drive
+    path (`/c/Users/runneradmin/...`), while a vault there under `/tmp` is named with `RUNNER~1`
+    (measured on CI). Passes with both pass the identity checks there (measured on CI); real Claude
+    Code has not been measured with a short-name value.
   - On Windows, `cygpath -m` gives a `//?/` device path for a path of about 260 characters or more
     (254 converted normally, 309 did not, measured), so a vault, or a temporary folder, that deep is
     refused with `which is not a Windows drive path`. Move the vault nearer a drive root, or point

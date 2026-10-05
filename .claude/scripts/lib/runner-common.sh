@@ -3340,9 +3340,10 @@ memory_override() {
   # way, and on every platform path_key gives a vault at a drive or file-system
   # root a trailing slash the name never matches, so neither the folder nor any
   # folder above it may be the vault itself, walked as Git Bash spells it and,
-  # on Windows, as a drive path, since a folder under Git Bash's /tmp mount
-  # walks up to / and not to the drive. A subst or mapped drive, or a mount,
-  # whose root lies inside the vault is not seen (reasoned).
+  # on Windows, as a drive path, since a folder under Git Bash's /tmp mount,
+  # where pwd -P keeps that spelling, walks up to / and not to the drive. A
+  # subst or mapped drive, or a mount, whose root lies inside the vault is not
+  # seen (reasoned).
   if [ "$p" -eq 0 ]; then
     if path_under_by_identity "$work" "$root" \
        || { [ "$win" = 1 ] && path_under_by_identity "${arg%/*}" "$root"; }; then

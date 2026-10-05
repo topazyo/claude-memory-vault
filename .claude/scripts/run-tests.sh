@@ -2614,14 +2614,16 @@ rm -rf "$MO_CU" "$MO_CL" "$TMP/memovr-case.log"
 # A vault at the root of the file system, or on Windows of a drive, holds every
 # folder on it, the runner's folder for the pass among them, but path_key gives
 # a root a trailing slash and the name check misses it. The identity walk
-# refuses it. On Windows a folder under Git Bash's /tmp mount walks up to Git
-# Bash's own /, never to the drive, so only the walk up its drive path reaches
-# the drive, while one under a drive path (/c/...) walks up to the drive itself.
-# So on Windows the twin makes its folder under /tmp, whatever TMPDIR says, with
-# the vault at that folder's drive root. memory_override is called directly
-# with that root as the vault; it only reads there. The twin first shows that
-# the name check alone passes the folder on this host and, on Windows, that the
-# walk up its Git Bash path does not reach the drive.
+# refuses it. On Windows a folder under Git Bash's /tmp mount, where pwd -P
+# keeps that spelling, walks up to Git Bash's own /, never to the drive, so only
+# the walk up its drive path reaches the drive, while one under a drive path
+# (/c/...) walks up to the drive itself. So on Windows the twin makes its folder
+# under /tmp, whatever TMPDIR says, with the vault at that folder's drive root.
+# Where the temporary folder's path holds an 8.3 name (CI's Windows image),
+# pwd -P expands it, the resolved folder is a drive path, and its own walk
+# reaches the drive too; an INFO line says which walk refuses on this host.
+# memory_override is called directly with that root as the vault; it only reads
+# there. The twin first shows that the name check alone passes the folder.
 if is_windows_host; then
   mo_rb="$(mktemp -d /tmp/memovr-root.XXXXXX 2>/dev/null)" || mo_rb=
   MO_RB_TMP="$mo_rb"
@@ -2639,9 +2641,7 @@ fi
 rm -f "$TMP/memovr-root.log"
 [ -n "$mo_rb" ] && ( umask 077 && mkdir -p "$mo_rb/w" )
 # mo_root_why - why the fixture cannot show the walk, or nothing. Run in $( ),
-# since it loads the library. On Windows the walk up the folder's resolved Git
-# Bash path, written here rather than taken from the library under test, must
-# not reach the drive.
+# since it loads the library.
 mo_root_why() {
   local up
   { [ -n "$mo_rb" ] && [ -d "$mo_rb/w" ]; } || { echo "its folder could not be made"; return; }
@@ -2654,9 +2654,16 @@ mo_root_why() {
   ( case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) LC_ALL=C.UTF-8 ;; *) LC_ALL=C ;; esac; export LC_ALL
     state_dir_ready "$up" "$mo_dr" >/dev/null ) \
     || { echo "the name check alone refuses a folder under a vault at $mo_dr here (code $?)"; return; }
+}
+# mo_root_at - on Windows, where the walk up the folder's resolved Git Bash
+# path, written here rather than taken from the library under test, reaches
+# the drive, or nothing when only the drive-path walk can.
+mo_root_at() {
+  local up
   is_windows_host || return
+  up="$(cd "$mo_rb/w" && pwd -P)"
   while [ -n "$up" ]; do
-    [ "$up" -ef "$mo_dr" ] && { echo "the walk up the folder's Git Bash path, $(cd "$mo_rb/w" && pwd -P), already reaches $mo_dr at $up here"; return; }
+    [ "$up" -ef "$mo_dr" ] && { echo "$up"; return; }
     case "$up" in
       /) up= ;;
       */*) up="${up%/*}"; [ -n "$up" ] || up=/ ;;
@@ -2669,6 +2676,14 @@ if [ -n "$mo_why" ]; then
   bad "mem-override-work-root: $mo_why, so this twin cannot show the identity walk"
 else
   ran mem-override-work-root
+  if is_windows_host; then
+    mo_at="$(mo_root_at)"
+    if [ -n "$mo_at" ]; then
+      printf '  INFO  [mem-override-work-root] the walk up the folder'"'"'s resolved Git Bash path, %s, reaches %s at %s here, so the drive-path walk is not the only refusal on this host (not counted)\n' "$(cd "$mo_rb/w" && pwd -P)" "$mo_dr" "$mo_at"
+    else
+      printf '  INFO  [mem-override-work-root] the walk up the folder'"'"'s resolved Git Bash path, %s, does not reach %s here, so only the drive-path walk refuses it (not counted)\n' "$(cd "$mo_rb/w" && pwd -P)" "$mo_dr"
+    fi
+  fi
   mo_direct "$mo_dr" "$mo_rb/w" "$TMP/memovr-root.log"
   mo_rc=$?
   if [ "$mo_rc" -eq 1 ] && grep -F -- "resolves into the vault, $MO_WORK" "$TMP/memovr-root.log" 2>/dev/null | grep -q '^\[[^]]*\] ERROR: ' \
