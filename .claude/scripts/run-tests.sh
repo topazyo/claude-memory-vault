@@ -2275,7 +2275,7 @@ mo_refused() {
   started=no
   [ -e "$REC.argv" ] && started=yes
   left=no
-  [ -e "$RV/.claude/logs/runner-inflight" ] || [ -e "${CASE_STATE:-$TMP/state}/runner-inflight" ] && left=yes
+  [ -e "${RUNNER_VAULT:-$RV}/.claude/logs/runner-inflight" ] || [ -e "${CASE_STATE:-$TMP/state}/runner-inflight" ] && left=yes
   if [ "$rc" -eq 1 ] && [ "$said" = present ] && [ "$started" = no ] && [ "$went" = no ] && [ "$left" = no ]; then
     ok "$label -> refused (exit 1), an ERROR: line says why, the agent never started, and no in-flight marker is left"
   else
@@ -2524,7 +2524,7 @@ mo_work_refused() {
   mo_direct "$RV" "$3/w" "$TMP/memovr-direct.log"
   rc=$?
   if [ "$rc" -eq 1 ] && grep -F -- "$2" "$TMP/memovr-direct.log" 2>/dev/null | grep -q '^\[[^]]*\] ERROR: ' \
-     && [ -d "$3/w" ] && [ -z "$(ls -A "$3/w" 2>/dev/null)" ]; then
+     && [ -d "$3/w" ] && [ -z "$(ls -A "$3/w" 2>/dev/null)" ] && [ ! -e "${CASE_STATE:-$TMP/state}/pass-settings.json" ]; then
     ok "$1 -> memory_override, called directly with a folder there, refused (1), an ERROR: line says why, nothing written"
   else
     bad "$1 -- memory_override, called directly, was not refused for it -- got $rc: $(cat "$TMP/memovr-direct.log" 2>/dev/null)"
@@ -2551,7 +2551,7 @@ else
     mo_work_refused "claude mode: TMPDIR under a folder every account can write that has no sticky bit" \
       "is inside a folder every account can write that has no sticky bit, $MO_WORK" "$TMP/memovr-open"
   else
-    bad "mem-override-work-refused: a folder every account can write, with no sticky bit, could not be made"
+    bad "mem-override-work-open: a folder every account can write, with no sticky bit, could not be made"
   fi
   chmod 755 "$TMP/memovr-open"
   rm -rf "$TMP/memovr-open"
@@ -2587,7 +2587,6 @@ if [ -d "$MO_CL" ] && [ "$MO_CL" -ef "$MO_CU" ]; then
   fi
 fi
 rm -rf "$MO_CU" "$MO_CL" "$TMP/memovr-case.log"
-
 # cygpath failing on either path the override needs refuses the pass, rather
 # than passing an empty value, and so does cygpath succeeding with a path that
 # names another folder or file, which neither its exit status nor an emptiness
@@ -5263,6 +5262,11 @@ rm -rf "$NGV"
 # shows that would happen on this host. A backslash is a separator there.
 MO_TM="$TMP"
 is_windows_host && MO_TM="$(cygpath -m "$TMP")"
+# The settings file is named by its folder's resolved path (pwd -P), so where
+# the temporary folder is reached through a link or an 8.3 name its expected
+# folder is built from that form.
+MO_TMR="$(cd "$TMP" && pwd -P)"
+is_windows_host && MO_TMR="$(cygpath -m "$MO_TMR")"
 # mo_accepts <label> <vault> <W> <T> [NAME=value...] - a claude-mode dream pass
 # in <vault>, with CASE_STATE set first, exits 0 and passes --settings naming a
 # file under the folder <T> (any folder when <T> is empty) in a folder of the
@@ -5364,7 +5368,7 @@ for mo_i in e-acute cyrillic cjk emoji top tmp tmp-emoji; do
   if [ -n "$mo_tmp" ]; then
     rm -rf "$mo_tmp"
     mkdir -p "$mo_tmp"
-    mo_conv="$mo_tmp" mo_want="$MO_TM/${mo_tmp##*/}"
+    mo_conv="$mo_tmp" mo_want="$MO_TM/${mo_tmp##*/}" mo_wt="$MO_TMR/${mo_tmp##*/}"
   else
     mo_conv="$MO_NV" mo_want="$MO_TM/$mo_n-vault"
   fi
@@ -5396,7 +5400,7 @@ for mo_i in e-acute cyrillic cjk emoji top tmp tmp-emoji; do
     if is_windows_host && [ "$(LC_ALL=C cygpath -m "$mo_conv")" = "$mo_want" ]; then
       bad "mem-override-nonascii: cygpath under LC_ALL=C converts $mo_say faithfully on this host, so this twin cannot show the defect"
     elif [ -n "$mo_tmp" ] && mo_tmpdir_steers "$mo_tmp"; then
-      mo_accepts "dream-pass: $mo_say" "$MO_NV" "$MO_TM/${MO_NV##*/}" "$mo_want" TMPDIR="$mo_tmp"
+      mo_accepts "dream-pass: $mo_say" "$MO_NV" "$MO_TM/${MO_NV##*/}" "$mo_wt" TMPDIR="$mo_tmp"
     elif [ -n "$mo_tmp" ]; then
       rm -f "$TMP/memovr-na.log"
       ( umask 077 && mkdir -p "$mo_tmp/w" )
@@ -5420,7 +5424,8 @@ done
 # the runners' LC_ALL=C, cygpath cut both paths at that folder, so the work
 # folder's check saw the runner's folder inside the vault and refused every
 # pass (1.4.1 before its fix). Windows only: elsewhere that check converts
-# nothing. The twin first shows the cut would happen on this host.
+# nothing. The twin first shows the defect on this host: under C the check
+# itself takes a folder under that TMPDIR for one inside the vault.
 if is_windows_host; then
   MO_SH="$TMP/$(printf '\320\226')-shared"
   rm -rf "$MO_SH"
@@ -5432,16 +5437,42 @@ if is_windows_host; then
     bad "mem-override-nonascii: a vault under a folder named in Cyrillic, with TMPDIR beside it, could not be made"
   elif ! mo_ascii_tmp; then
     bad "mem-override-nonascii: the temp folder's converted path is not printable ASCII here -- $MO_TM"
-  elif [ "$(LC_ALL=C cygpath -m "$MO_SH/vault")" = "$MO_TM/${MO_SH##*/}/vault" ]; then
-    bad "mem-override-nonascii: cygpath under LC_ALL=C converts a folder named in Cyrillic faithfully on this host, so the shared-folder twin cannot show the defect"
-  elif ! mo_tmpdir_steers "$MO_SH/tmp"; then
+  elif ( LC_ALL=C; export LC_ALL; . "$RV/.claude/scripts/lib/runner-common.sh"
+         state_dir_ready "$MO_SH/tmp/probe" "$MO_SH/vault" >/dev/null; [ "$?" -ne 4 ] ); then
+    bad "mem-override-nonascii: under LC_ALL=C the work folder's check does not take a folder under TMPDIR for one inside the vault on this host, so the shared-folder twin cannot show the defect"
+  elif ! rm -rf "$MO_SH/tmp/probe" || ! mo_tmpdir_steers "$MO_SH/tmp"; then
     bad "mem-override-nonascii: mktemp -d does not make its folder under TMPDIR here, so the shared-folder twin cannot show the defect"
   else
     mo_accepts "dream-pass: a vault and TMPDIR under one folder named in Cyrillic" "$MO_SH/vault" \
-      "$MO_TM/${MO_SH##*/}/vault" "$MO_TM/${MO_SH##*/}/tmp" TMPDIR="$MO_SH/tmp"
+      "$MO_TM/${MO_SH##*/}/vault" "$MO_TMR/${MO_SH##*/}/tmp" TMPDIR="$MO_SH/tmp"
   fi
   rm -rf "$MO_SH"
 fi
+# The settings file is written and handed to Claude Code through its folder's
+# resolved path, so a TMPDIR spelled through a link (a junction on Windows)
+# cannot be pointed at another folder after the checks: the --settings argument
+# lies under the folder the link leads to, not under the link. Where mktemp does
+# not take TMPDIR (macOS) the pass cannot be steered that way.
+rm -rf "$TMP/memovr-real" "$TMP/memovr-link" "$TMP/memovr-rl-vault"
+mkdir -p "$TMP/memovr-real"
+if mo_link "$TMP/memovr-real" "$TMP/memovr-link" && [ "$TMP/memovr-link" -ef "$TMP/memovr-real" ] \
+   && mo_tmpdir_steers "$TMP/memovr-link"; then
+  ran mem-override-work-resolved
+  make_runner_vault "$TMP/memovr-rl-vault" 2>/dev/null
+  CASE_STATE="$TMP/state-memovr-resolved"
+  rm -rf "$CASE_STATE"
+  if [ ! -f "$TMP/memovr-rl-vault/.claude/scripts/dream-pass.sh" ]; then
+    bad "mem-override-work-resolved: a vault for the TMPDIR-through-a-link twin could not be made"
+  else
+    mo_accepts "dream-pass: TMPDIR spelled through a link" "$TMP/memovr-rl-vault" "$MO_TM/memovr-rl-vault" \
+      "$MO_TMR/memovr-real" TMPDIR="$TMP/memovr-link"
+  fi
+  rm -rf "$CASE_STATE" "$TMP/memovr-rl-vault"
+fi
+if is_windows_host; then
+  MSYS_NO_PATHCONV=1 cmd /c rmdir "$(cygpath -w "$TMP/memovr-link")" >/dev/null 2>&1
+fi
+rm -rf "$TMP/memovr-link" "$TMP/memovr-real"
 CASE_STATE="$TMP/state-memovr-path"
 
 # On Linux a path is bytes, and a vault path, or a settings file path under
@@ -5499,9 +5530,13 @@ else
         ( LC_ALL=C; export LC_ALL; . "$RV/.claude/scripts/lib/runner-common.sh"; AGENT_BIN="$FAKE"
           memory_override "$MO_UV" "$CASE_STATE" "$mo_w" "$TMP/memovr-utf8.log" )
         mo_rc=$?
+        # Where the file system refused the folder's name there is no folder to
+        # write in, so only the reason and the state directory can be checked.
+        if [ -d "$mo_w" ]; then mo_said='nothing written'; else mo_said='no folder could be made to write in'; fi
         if [ "$mo_rc" -eq 1 ] && grep -F -- "$MO_UTF8" "$TMP/memovr-utf8.log" 2>/dev/null | grep -q '^\[[^]]*\] ERROR: ' \
-           && [ -z "$(ls -A "$mo_w" 2>/dev/null)" ]; then
-          ok "memory_override, $mo_how: a $mo_where path holding ${mo_seq#*:}, not valid UTF-8 -> refused (1), an ERROR: line says why, nothing written"
+           && { [ ! -d "${mo_ut:-$MO_UV}" ] || [ -d "$mo_w" ]; } && [ -z "$(ls -A "$mo_w" 2>/dev/null)" ] \
+           && [ ! -e "$CASE_STATE/pass-settings.json" ]; then
+          ok "memory_override, $mo_how: a $mo_where path holding ${mo_seq#*:}, not valid UTF-8 -> refused (1), an ERROR: line says why, $mo_said"
         else
           bad "memory_override, $mo_how, did not refuse a $mo_where path holding ${mo_seq#*:}, not valid UTF-8, before writing -- got $mo_rc: $(cat "$TMP/memovr-utf8.log" 2>/dev/null)"
         fi
@@ -5515,8 +5550,8 @@ fi
 # A path outside printable ASCII is checked with iconv, so without it the pass
 # refuses rather than skipping the check. A stand-in iconv that fails and prints
 # nothing, as a missing one would, is first on PATH, and the vault's path holds
-# an e-acute, which is valid UTF-8, so only the missing check can refuse it.
-# Off Windows the pass also runs with a PATH of links to every command on PATH
+# an e-acute, which is valid UTF-8, so only the missing check can refuse it; with
+# iconv on PATH the same vault first runs. Off Windows the pass also runs with a PATH of links to every command on PATH
 # but iconv, so a check that skipped itself when no iconv is found is caught too.
 # Git for Windows ships iconv, and Git Bash would copy, not link, the commands.
 MO_NI="$TMP/caf$(printf '\303\251')-noiconv-vault"
@@ -5533,6 +5568,9 @@ elif [ "$(PATH="$TMP/memovr-noiconv-bin:$PATH"; command -v iconv)" != "$TMP/memo
   bad "mem-override-no-iconv: the iconv stand-in is not the iconv found on PATH -- got $(PATH="$TMP/memovr-noiconv-bin:$PATH"; command -v iconv)"
 else
   ran mem-override-no-iconv
+  # With iconv on PATH the same vault runs, so a check that refused every path
+  # outside ASCII cannot pass for the two refusals below.
+  mo_accepts "dream-pass: a vault path holding an e-acute, with iconv on PATH" "$MO_NI" "$MO_TM/${MO_NI##*/}" ""
   RUNNER_VAULT="$MO_NI" mo_refused "claude mode: a failing iconv to check a vault path holding an e-acute" "$MO_UTF8" \
     dream-pass.sh journal "$MO_NI/.claude/logs/dream-agent.log" PATH="$TMP/memovr-noiconv-bin:$PATH"
   if ! is_windows_host; then

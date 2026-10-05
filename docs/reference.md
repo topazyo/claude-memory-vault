@@ -907,21 +907,24 @@ Around that call, each runner does several things an exit code cannot:
     runner reads `pass-settings.json` back byte for byte before it starts the agent, but a change
     between that read and Claude Code's is not seen, nor one Claude Code might read later in the
     pass (whether it re-reads the file is unmeasured). The file lies in the runner's own folder for
-    the pass under `TMPDIR` (or `/tmp`; on macOS the per-user temporary folder, which Apple's
-    `mktemp` takes whatever `TMPDIR` says), which `mktemp -d` makes private off Windows and which must
-    pass the state directory's checks. As there, a group-writable folder above it is allowed, and a
-    member of that group could rename the folder and put their own in its place, so keep `TMPDIR`
-    writable by your account only. The checks read mode bits only, so an access control list that
-    lets another account change the folder is not seen, as for the state directory. They judge the
-    folder as its links resolve, but the file is written and handed to Claude Code through `TMPDIR`
-    as spelled, so a `TMPDIR` spelled through a link, or through a folder another account can
-    rename, is not caught: name the folder itself. On Windows it carries the temporary folder's
-    permissions and the runner cannot read them, so leave `TMPDIR` unset there: the folder is then
-    made in Git Bash's `/tmp`, this account's temporary folder, which only the account, SYSTEM and
-    Administrators can change (measured; on the one host measured, setting `TEMP` and `TMP` for the
-    `.cmd` did not move `/tmp`). The
-    same folder has held the pass's snapshots, its steering backup and the folder git takes hooks
-    from since 1.4.0, and only a claude-mode pass checks it; command mode does not, as in 1.4.0.
+    the pass under `TMPDIR` (or `/tmp`; on macOS in the per-user temporary folder, where Apple's
+    `mktemp` makes it even when `TMPDIR` names another folder), which `mktemp -d` makes private off
+    Windows and which must pass the state directory's checks. The file is written, checked and
+    handed to Claude Code through the folder's resolved path, so a link in `TMPDIR`'s spelling
+    cannot be pointed at another folder after the checks; a link inside the vault that leads to
+    the folder, or to one above it, is not seen and puts the file within the agent's reach. As for
+    the state directory, a group-writable folder above it is allowed, and a member of that group
+    could rename the folder and put their own in its place, and the checks read mode bits only, so
+    an access control list that lets another account change the folder is not seen: keep `TMPDIR`
+    writable by your account only. On Windows it carries the temporary folder's permissions and the
+    runner cannot read them, so leave `TMPDIR` unset there: the folder is then made in Git Bash's
+    `/tmp`, this account's temporary folder, which only the account, SYSTEM and Administrators can
+    change (measured; on the one host measured, setting `TEMP` and `TMP` for the `.cmd` did not
+    move `/tmp`). The same folder has held the pass's snapshots, its steering backup and the folder
+    git takes hooks from since 1.4.0, reached through `TMPDIR` as spelled, so name the folder
+    itself rather than a link to it; only a claude-mode pass checks it, and command mode does not,
+    as in 1.4.0. The settings file adds a file there whose hooks Claude Code would run as your
+    account at every claude-mode pass, whether or not the vault is a git repository.
   - The runner removes the settings file with its folder when the pass ends. After a stop that
     leaves Claude Code running (`KILL_FAILED`, which sets the tripwire), the file is gone while the
     process may still be at work; whether Claude Code would then grant its default memory folder
@@ -937,10 +940,12 @@ Around that call, each runner does several things an exit code cannot:
     script that starts a Windows Claude Code is not recognised, and the name is looked up again
     when Claude Code starts, so a `PATH` folder or link changed in between by someone who can
     write it is not seen.
-  - On Windows the override names the vault, and the settings file, as the runner was started with
-    them, so a vault or a temporary folder reached through an 8.3 short name (a profile folder such
-    as `RUNNER~1`) is named that way. Both pass the identity checks; real Claude Code has not been
-    measured with a short-name value.
+  - On Windows the override names the vault as the runner was started with it, so a vault reached
+    through an 8.3 short name (a profile folder such as `RUNNER~1`) is named that way, and the
+    settings file by its folder's resolved path, in which Git Bash expands such a name, apart from
+    a folder under Git Bash's `/tmp`, which keeps the mount's own spelling (`RUNNER~1` on CI's
+    Windows image). Both pass the identity checks; real Claude Code has not been measured with a
+    short-name value.
   - On Windows, `cygpath -m` gives a `//?/` device path for a path of about 260 characters or more
     (254 converted normally, 309 did not, measured), so a vault, or a temporary folder, that deep is
     refused with `which is not a Windows drive path`. Move the vault nearer a drive root, or point

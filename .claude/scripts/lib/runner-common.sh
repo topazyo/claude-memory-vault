@@ -3185,8 +3185,9 @@ note_tripwire() {
 # UTF-8 locale on Windows) or lies inside the vault however the two are spelled.
 # They write nothing. They must run after the pass's "before" snapshot, so that
 # anything planted after them is still a change the fence sees. Then the file is
-# written as <work-dir>/pass-settings.json, in the runner's own folder for the
-# pass, and must read back byte for byte, because Claude Code reads an empty or
+# written as pass-settings.json in <work-dir>, the runner's own folder for the
+# pass, which every check above takes by its resolved path (pwd -P), and must
+# read back byte for byte, because Claude Code reads an empty or
 # invalid settings file as if there were none. Those two checks, and the one
 # that the converted settings path names that file, need the file, so a refusal
 # there leaves it in <work-dir>, which the runner removes with the folder. The state directory may be shared
@@ -3202,6 +3203,12 @@ memory_override() {
   local dir="$1/90-auto-memory/.pass-agent" list line p h= up win=0 exe=0
   # Set only on success below, so no value from the environment can stand in.
   unset AGENT_SETTINGS_FILE
+  # The file is written, checked and handed to Claude Code through the folder's
+  # resolved path, so a link or a relative part in TMPDIR's spelling cannot be
+  # pointed at another folder after the checks below. A folder that cannot be
+  # entered is left as given, for those checks to refuse.
+  p="$(cd "$work" 2>/dev/null && pwd -P)" && [ -n "$p" ] && work="$p"
+  file="$work/pass-settings.json" arg="$work/pass-settings.json"
   # On Windows a path left in Git Bash form is read by Claude Code as a folder
   # under the drive root, so either the platform or cygpath picks this branch.
   # A stray cygpath elsewhere must then give paths that pass the checks below.

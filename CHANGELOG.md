@@ -86,13 +86,16 @@ What that covers, and what it does not:
   if there were none, with exit 0 and nothing on stderr, and grants the folders outside the vault
   again (measured; not re-run on 2.1.289). The runner reads its file back byte for byte before it
   starts the agent and refuses on any difference, but a change made between that read and Claude
-  Code's is not seen. So the file is not kept in the state directory, which may be shared or, on
-  Windows, take its parent's permissions: it is written in the runner's own folder for the pass,
-  which must pass the checks the state directory gets, which only the runner's account can enter
-  on Linux and macOS, and which on Windows carries the temporary folder's permissions, under the
-  per-user default the account's, SYSTEM's and Administrators' (measured). Whoever can change
-  `TMPDIR` or what lies under it could already change the pass's snapshots and steering backup,
-  kept in the same folder since 1.4.0.
+  Code's is not seen, nor one Claude Code might read later in the pass (whether it re-reads the
+  file is unmeasured). So the file is not kept in the state directory, which may be shared or, on
+  Windows, take its parent's permissions: it is written, by its resolved path, in the runner's own
+  folder for the pass, which must pass the checks the state directory gets, which only the
+  runner's account can enter on Linux and macOS, and which on Windows carries the temporary
+  folder's permissions, under the per-user default the account's, SYSTEM's and Administrators'
+  (measured). Whoever can change `TMPDIR` or what lies under it could already change the pass's
+  snapshots and steering backup, kept in the same folder since 1.4.0, and the settings file adds
+  one there whose hooks Claude Code would run as your account at every claude-mode pass, whether
+  or not the vault is a git repository.
 - **Linux and macOS are unverified.** No Claude Code run has measured the grant on either. There
   the runner refuses a vault or settings-file path that does not come back byte for byte when
   `iconv` converts it from UTF-8 to UTF-16LE and back, which Claude Code could read as another
@@ -115,9 +118,11 @@ What that covers, and what it does not:
 
 - **Both runners write `pass-settings.json` into their own folder for the pass before a
   claude-mode pass**, the one each already makes with `mktemp -d` for its snapshots, under
-  `TMPDIR` or `/tmp` (on macOS under the per-user temporary folder, which Apple's `mktemp` takes
-  whatever `TMPDIR` says, measured on CI), and removes when the pass ends. They start the agent
-  with `--settings <that file>` just before `--disallowedTools`. The file holds one key,
+  `TMPDIR` or `/tmp` (on macOS in the per-user temporary folder, where Apple's `mktemp` makes it
+  even when `TMPDIR` names another folder, measured on CI), and removes when the pass ends. They
+  start the agent with `--settings <that file>` just before `--disallowedTools`, the file named by
+  its folder's resolved path, so a link in `TMPDIR`'s spelling cannot be pointed elsewhere after
+  the checks. The file holds one key,
   `autoMemoryDirectory`. On Linux and macOS it is written readable by the runner's account only,
   whatever the umask, in a folder only that account can enter, because a settings file can name
   hooks Claude Code runs; on Windows it carries the temporary folder's permissions. The folder
@@ -192,9 +197,11 @@ What that covers, and what it does not:
   `CLAUDE_CODE_DISABLE_AUTO_MEMORY` with keeping memory in.
 - The control suite holds each of these. Each new control id was seen failing against 1.4.0
   first, except `mem-override-sink-contained`: it holds the unchanged fence to containing a write
-  in `.pass-agent/`, and was seen failing against a runner that exempts that folder; and
+  in `.pass-agent/`, and was seen failing against a runner that exempts that folder;
   `mem-override-utf8-lax-host` and `mem-override-utf16-lax-host`, which record what the host's
-  `iconv` does rather than holding a refusal.
+  `iconv` does rather than holding a refusal; and `mem-override-cygpath-refused` and
+  `mem-override-work-case`, which run only on Windows or macOS and were not run against 1.4.0,
+  which has no memory override for them to call.
   `mem-override-flag`, `mem-override-sink-refused`, `mem-override-sink-link`,
   `mem-override-sink-hardlink`, `mem-override-sink-contained`, `mem-override-sink-fifo`,
   `mem-override-path-refused`, `mem-override-nonascii`, `mem-override-order`,
@@ -207,7 +214,9 @@ What that covers, and what it does not:
   skip or may skip; the two unreadable ones also skip as root. `mem-override-cygpath-refused` is
   required on the Windows job, the only one with `cygpath`. `mem-override-work-case`, a `TMPDIR`
   inside the vault spelled with a letter in the other case, is required on the Windows and macOS
-  jobs, whose file systems ignore case, and not on ubuntu. `mem-override-utf8-lax-host`, required
+  jobs, whose file systems ignore case, and not on ubuntu. `mem-override-work-resolved`, a
+  `TMPDIR` spelled through a link, is required on the ubuntu and Windows jobs, where `mktemp` takes
+  `TMPDIR`, and not on macOS. `mem-override-utf8-lax-host`, required
   on the ubuntu job only, is recorded where `iconv`'s conversion to UTF-8 lets a sequence above
   U+10FFFF through, as glibc's does, so that job shows its UTF-8 twins can tell the round trip
   from a conversion to UTF-8 alone. `mem-override-utf16-lax-host`, required on the two macOS jobs
@@ -340,8 +349,9 @@ What that covers, and what it does not:
     default temporary folder passes on Linux (`/tmp`, sticky), macOS (a per-user folder) and Windows
     (Git Bash's `/tmp`, this account's temporary folder), measured on CI's three platforms. If you
     set `TMPDIR` for the passes, point it at a folder outside the vault that only your account can
-    change, named directly rather than through a link, because the checks judge the folder a link
-    leads to and the file is written through the link. On Windows the runner cannot read a
+    change, named directly rather than through a link: the settings file is reached through the
+    folder's resolved path, but the snapshots, the steering backup and git's hooks folder there
+    are reached through `TMPDIR` as spelled, as in 1.4.0. On Windows the runner cannot read a
     folder's permissions, so leave `TMPDIR` unset there (on the one host measured, setting `TEMP`
     and `TMP` for the `.cmd` did not move Git Bash's `/tmp`). On macOS
     `TMPDIR` does not move the folder: Apple's `mktemp` takes the per-user one (measured on CI).
