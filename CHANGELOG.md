@@ -92,12 +92,13 @@ What that covers, and what it does not:
   folder for the pass, which must pass the checks the state directory gets and an identity check of
   its own, which only the runner's account can enter on Linux and macOS, and which on Windows
   carries the temporary folder's permissions, under the per-user default the account's, SYSTEM's and
-  Administrators' (measured). Whoever can change `TMPDIR` or what lies under it could already change
-  what the pass keeps in that folder since 1.4.0: its snapshots, its steering backup, which is
-  restored into the vault on containment, and, in a git vault, the folder git takes hooks from. The
-  settings file adds one there whose hooks Claude Code would run as your account at every
-  claude-mode pass (a settings file can name hooks; not probed here), whether or not the vault is a
-  git repository.
+  Administrators' (measured). Whoever can change `TMPDIR`, a folder above it or what lies under it
+  (another account that owns a folder above it, or can write one through a group or an access
+  control list, is not refused) could already change what the pass keeps in that folder since 1.4.0:
+  its snapshots, its steering backup, which is restored into the vault on containment, and, in a git
+  vault, the folder git takes hooks from. The settings file adds one there whose hooks Claude Code
+  would run as your account at every claude-mode pass (a settings file can name hooks; not probed
+  here), whether or not the vault is a git repository.
 - **Linux and macOS are unverified.** No Claude Code run has measured the grant on either. There the
   runner refuses a vault or settings-file path that does not come back byte for byte when `iconv`
   converts it from UTF-8 to UTF-16LE and back, which Claude Code could read as another folder:
@@ -178,10 +179,11 @@ What that covers, and what it does not:
   - The runner's folder for the pass, under `TMPDIR`, fails the checks the state directory gets, or
     one it does not get: it lies inside the vault, by name or by identity, the check only this
     folder gets (a letter in another case, an 8.3 name or a vault at a drive root does not hide it;
-    a `subst` drive or a mount that leads into the vault does), where the agent could change the
-    file (and under `.claude/logs`, `.obsidian` or `.git` the fence would not see it), or, off
-    Windows, a folder above it every account can write has no sticky bit. The folder itself, new
-    from `mktemp -d`, is this account's own and private, so the owner and mode checks on it pass.
+    a `subst` or mapped drive, or a mount, whose root lies inside the vault does), where the agent
+    could change the file (and under `.claude/logs`, `.obsidian` or `.git` the fence would not see
+    it), or, off Windows, a folder above it every account can write has no sticky bit. The folder
+    itself, new from `mktemp -d`, is this account's own and private, so the owner and mode checks on
+    it pass.
   - The settings file could not be written, or does not read back exactly as written.
   - No settings file was written for the pass, which happens only when the runner and
     `runner-common.sh` come from different releases (Adopting 1). This refusal comes from the

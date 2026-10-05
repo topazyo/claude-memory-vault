@@ -787,25 +787,26 @@ Around that call, each runner does several things an exit code cannot:
   cannot read; when the runner's folder for the pass fails the checks the state directory gets
   (below), or lies inside the vault by file identity, a check the state directory does not get,
   because the file can name hooks Claude Code runs: inside the vault (by name, then by identity, so
-  a letter in another case, an 8.3 name or a vault at a drive root does not hide it; a `subst` drive
-  or a mount that leads into the vault is not seen), where the agent could change it, or, off
-  Windows, under a folder every account can write that has no sticky bit; when the file cannot be
-  written (off Windows readable by the runner's account only, in a folder only it can enter; on
-  Windows it carries the temporary folder's permissions, which under the per-user default give it to
-  the account, SYSTEM and Administrators only, measured); and when it does not read back byte for
-  byte, because Claude Code 2.1.287 reads an empty or invalid settings file as if there were none
-  and grants the folders outside the vault again (measured). The file covers memory only. A folder a
-  settings file grants through `additionalDirectories` stays outside the fence. Inside `.git/`, only
-  the files that make git run code are fenced: `config`, `config.worktree`, `commondir`, `hooks/`,
-  `info/attributes`, `info/grafts` and `objects/info/alternates`, and `info/`, `objects/` or
-  `objects/info/` when one of them is a symlink. The same files, and every symlink, are fenced in
-  every linked worktree's git directory under `.git/worktrees/` and every submodule's under
-  `.git/modules/`, except under the ref folders `heads`, `tags`, `remotes`, `prefetch`, `notes` and
-  `rewritten` inside `refs/`, where a ref may be named `config`. Git reads config and hooks from the
-  directory `commondir` names. The rest of `info/` is not fenced, because `git gc --auto` after an
-  ordinary commit rewrites `info/refs`. For a vault that is a linked worktree, the same files in the
-  shared git directory are fenced too, and appear in logs under `.git-common/`. HEAD and refs are
-  not fenced, because you or a sync plugin may commit while a pass runs.
+  a letter in another case, an 8.3 name or a vault at a drive root does not hide it; a `subst` or
+  mapped drive, or a mount, whose root lies inside the vault is not seen), where the agent could
+  change it, or, off Windows, under a folder every account can write that has no sticky bit; when
+  the file cannot be written (off Windows readable by the runner's account only, in a folder only it
+  can enter; on Windows it carries the temporary folder's permissions, which under the per-user
+  default give it to the account, SYSTEM and Administrators only, measured); and when it does not
+  read back byte for byte, because Claude Code 2.1.287 reads an empty or invalid settings file as if
+  there were none and grants the folders outside the vault again (measured). The file covers memory
+  only. A folder a settings file grants through `additionalDirectories` stays outside the fence.
+  Inside `.git/`, only the files that make git run code are fenced: `config`, `config.worktree`,
+  `commondir`, `hooks/`, `info/attributes`, `info/grafts` and `objects/info/alternates`, and
+  `info/`, `objects/` or `objects/info/` when one of them is a symlink. The same files, and every
+  symlink, are fenced in every linked worktree's git directory under `.git/worktrees/` and every
+  submodule's under `.git/modules/`, except under the ref folders `heads`, `tags`, `remotes`,
+  `prefetch`, `notes` and `rewritten` inside `refs/`, where a ref may be named `config`. Git reads
+  config and hooks from the directory `commondir` names. The rest of `info/` is not fenced, because
+  `git gc --auto` after an ordinary commit rewrites `info/refs`. For a vault that is a linked
+  worktree, the same files in the shared git directory are fenced too, and appear in logs under
+  `.git-common/`. HEAD and refs are not fenced, because you or a sync plugin may commit while a pass
+  runs.
 - **Containment.** A fence that only reports leaves a planted file in place, where it runs the next
   time something opens the vault. So when the changed paths include a *steering or execution
   surface*, the runner contains it before anything else, including before it looks at the agent's
@@ -920,18 +921,20 @@ Around that call, each runner does several things an exit code cannot:
     in `TMPDIR`'s spelling cannot be pointed at another folder after the checks; a link inside the
     vault that leads to the folder, or to one above it, is not seen, and may put the file within the
     agent's reach (unmeasured). As for the state directory, a group-writable folder above it is
-    allowed, and a member of that group could rename the folder and put their own in its place, and
-    the checks read mode bits only, so an access control list that lets another account change the
-    folder is not seen: keep `TMPDIR` writable by your account only. On Windows it carries the
-    temporary folder's permissions and the runner cannot read them, so leave `TMPDIR` unset there
-    unless the `//?/` limit below needs a shorter folder: the folder is then made in Git Bash's
-    `/tmp`, this account's temporary folder, which only the account, SYSTEM and Administrators can
-    change (measured; on the one host measured, setting `TEMP` and `TMP` for the `.cmd` did not move
-    `/tmp`). The same folder has held the pass's snapshots, its steering backup and the folder git
-    takes hooks from since 1.4.0, reached through `TMPDIR` as spelled, so name the folder itself
-    rather than a link to it; only a claude-mode pass checks it, and command mode does not, as in
-    1.4.0. The settings file adds a file there whose hooks Claude Code would run as your account at
-    every claude-mode pass, whether or not the vault is a git repository.
+    allowed, and a member of that group could rename the folder and put their own in its place; so
+    is a folder above it that another account owns, whose owner could do the same; and the checks
+    read mode bits only, so an access control list that lets another account change the folder is
+    not seen: keep `TMPDIR`, and every folder above it, owned and writable by your account only, or
+    by root, as `/tmp` is. On Windows it carries the temporary folder's permissions and the runner
+    cannot read them, so leave `TMPDIR` unset there unless the `//?/` limit below needs a shorter
+    folder: the folder is then made in Git Bash's `/tmp`, this account's temporary folder, which
+    only the account, SYSTEM and Administrators can change (measured; on the one host measured,
+    setting `TEMP` and `TMP` for the `.cmd` did not move `/tmp`). The same folder has held the
+    pass's snapshots, its steering backup and the folder git takes hooks from since 1.4.0, reached
+    through `TMPDIR` as spelled, so name the folder itself rather than a link to it; only a
+    claude-mode pass checks it, and command mode does not, as in 1.4.0. The settings file adds a
+    file there whose hooks Claude Code would run as your account at every claude-mode pass, whether
+    or not the vault is a git repository.
   - The runner removes the settings file with its folder when the pass ends. After a stop that
     leaves Claude Code running (`KILL_FAILED`, which sets the tripwire), the file is gone while the
     process may still be at work; whether Claude Code would then grant its default memory folder

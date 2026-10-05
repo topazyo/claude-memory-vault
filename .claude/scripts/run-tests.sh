@@ -2509,6 +2509,13 @@ mo_tmpdir_steers() {  # mo_tmpdir_steers <dir> - true when mktemp -d under TMPDI
   rmdir "$d" 2>/dev/null
   case "$d" in "$1"/*) return 0 ;; *) return 1 ;; esac
 }
+# mo_steers <dir> - mo_tmpdir_steers, and a FAIL where it is false off macOS, whose
+# mktemp alone ignores TMPDIR, so a twin's pass leg cannot drop out unseen
+mo_steers() {
+  mo_tmpdir_steers "$1" && return 0
+  [ "$(uname -s)" = Darwin ] || bad "mktemp -d did not make its folder under TMPDIR=$1 on this host, so a twin's pass leg with that TMPDIR could not run"
+  return 1
+}
 # mo_direct <vault> <work> <log> - memory_override as the runners call it; its status
 mo_direct() {
   ( LC_ALL=C; export LC_ALL; . "$RV/.claude/scripts/lib/runner-common.sh"; AGENT_BIN="$FAKE"
@@ -2518,7 +2525,7 @@ mo_direct() {
 # mktemp takes TMPDIR, and on every host memory_override with a folder in it does and writes nothing there
 mo_work_refused() {
   local rc
-  mo_tmpdir_steers "$3" && mo_refused "$1" "$2" dream-pass.sh journal "$MO_LOG" TMPDIR="$3"
+  mo_steers "$3" && mo_refused "$1" "$2" dream-pass.sh journal "$MO_LOG" TMPDIR="$3"
   rm -rf "$3/w" "$TMP/memovr-direct.log"
   ( umask 077 && mkdir -p "$3/w" )
   mo_direct "$RV" "$3/w" "$TMP/memovr-direct.log"
@@ -2586,38 +2593,68 @@ if [ -d "$MO_CL" ] && [ "$MO_CL" -ef "$MO_CU" ]; then
   else
     bad "claude mode: TMPDIR inside the vault, spelled with a Cyrillic letter in the other case -- memory_override, called directly, was not refused for it -- got $mo_rc: $(cat "$TMP/memovr-case.log" 2>/dev/null)"
   fi
+else
+  skip mem-override-work-case 'a folder spelled with a Cyrillic letter in the other case is another folder on this file system, so there is nothing to hold'
 fi
 rm -rf "$MO_CU" "$MO_CL" "$TMP/memovr-case.log"
-# A vault at the root of the file system, or on Windows of the temporary
-# folder's own drive, holds every folder, the runner's folder for the pass among
-# them, but path_key gives a root a trailing slash and the name check misses it.
-# The identity walk refuses it, and on Windows only its walk up the drive path
-# reaches the drive: Git Bash's /tmp walks up to its own /. memory_override is
-# called directly with that root as the vault; it only reads there. The twin
-# first shows the name check alone passes the folder on this host.
+# A vault at the root of the file system, or on Windows of a drive, holds every
+# folder on it, the runner's folder for the pass among them, but path_key gives
+# a root a trailing slash and the name check misses it. The identity walk
+# refuses it. On Windows a folder under Git Bash's /tmp mount walks up to Git
+# Bash's own /, never to the drive, so only the walk up its drive path reaches
+# the drive, while one under a drive path (/c/...) walks up to the drive itself.
+# So on Windows the twin makes its folder under /tmp, whatever TMPDIR says, with
+# the vault at that folder's drive root. memory_override is called directly
+# with that root as the vault; it only reads there. The twin first shows that
+# the name check alone passes the folder on this host and, on Windows, that the
+# walk up its Git Bash path does not reach the drive.
 if is_windows_host; then
-  mo_dr="$(cygpath -m "$TMP")"
+  mo_rb="$(mktemp -d /tmp/memovr-root.XXXXXX 2>/dev/null)" || mo_rb=
+  mo_dr="$(cygpath -m "${mo_rb:-/tmp}")"
   mo_dr="$(cygpath -u "${mo_dr%%:*}:/")"
 else
+  mo_rb="$TMP/memovr-root"
   mo_dr=/
 fi
-rm -rf "$TMP/memovr-root" "$TMP/memovr-root.log"
-( umask 077 && mkdir -p "$TMP/memovr-root/w" )
-if ! ( . "$RV/.claude/scripts/lib/runner-common.sh"; state_dir_ready "$TMP/memovr-root/w" "$mo_dr" >/dev/null ); then
-  bad "mem-override-work-root: the name check alone already refuses a folder under a vault at $mo_dr here, so this twin cannot show the identity walk"
+rm -f "$TMP/memovr-root.log"
+[ -n "$mo_rb" ] && ( umask 077 && mkdir -p "$mo_rb/w" )
+# mo_root_why - why the fixture cannot show the walk, or nothing. Run in $( ),
+# since it loads the library. On Windows the walk up the folder's resolved Git
+# Bash path, written here rather than taken from the library under test, must
+# not reach the drive.
+mo_root_why() {
+  local up
+  { [ -n "$mo_rb" ] && [ -d "$mo_rb/w" ]; } || { echo "its folder could not be made"; return; }
+  . "$RV/.claude/scripts/lib/runner-common.sh"
+  state_dir_ready "$mo_rb/w" "$mo_dr" >/dev/null || { echo "the name check alone refuses a folder under a vault at $mo_dr here (code $?)"; return; }
+  is_windows_host || return
+  up="$(cd "$mo_rb/w" && pwd -P)"
+  while [ -n "$up" ]; do
+    [ "$up" -ef "$mo_dr" ] && { echo "the walk up the folder's Git Bash path, $(cd "$mo_rb/w" && pwd -P), already reaches $mo_dr at $up here"; return; }
+    case "$up" in
+      /) up= ;;
+      */*) up="${up%/*}"; [ -n "$up" ] || up=/ ;;
+      *) up= ;;
+    esac
+  done
+}
+mo_why="$(mo_root_why)"
+if [ -n "$mo_why" ]; then
+  bad "mem-override-work-root: $mo_why, so this twin cannot show the identity walk"
 else
   ran mem-override-work-root
-  mo_direct "$mo_dr" "$TMP/memovr-root/w" "$TMP/memovr-root.log"
+  mo_direct "$mo_dr" "$mo_rb/w" "$TMP/memovr-root.log"
   mo_rc=$?
   if [ "$mo_rc" -eq 1 ] && grep -F -- "resolves into the vault, $MO_WORK" "$TMP/memovr-root.log" 2>/dev/null | grep -q '^\[[^]]*\] ERROR: ' \
-     && [ -d "$TMP/memovr-root/w" ] && [ -z "$(ls -A "$TMP/memovr-root/w" 2>/dev/null)" ] \
+     && [ -d "$mo_rb/w" ] && [ -z "$(ls -A "$mo_rb/w" 2>/dev/null)" ] \
      && [ ! -e "${CASE_STATE:-$TMP/state}/pass-settings.json" ]; then
     ok "claude mode: a vault at $mo_dr, which holds the runner's folder for the pass -> memory_override, called directly, refused (1), an ERROR: line says why, nothing written"
   else
     bad "claude mode: a vault at $mo_dr, which holds the runner's folder for the pass -- memory_override, called directly, was not refused for it -- got $mo_rc: $(cat "$TMP/memovr-root.log" 2>/dev/null)"
   fi
 fi
-rm -rf "$TMP/memovr-root" "$TMP/memovr-root.log"
+[ -n "$mo_rb" ] && rm -rf "$mo_rb"
+rm -f "$TMP/memovr-root.log"
 # cygpath failing on either path the override needs refuses the pass, rather
 # than passing an empty value, and so does cygpath succeeding with a path that
 # names another folder or file, which neither its exit status nor an emptiness
@@ -5321,11 +5358,12 @@ mo_accepts() {
     bad "$label -- expected exit 0 and the override naming $w/90-auto-memory/.pass-agent; got exit $rc, --settings ${arg:-none} (under ${t:-any folder}: $under, the runner's own folder: $own), file: $(cat "$MO_CAP.json" 2>/dev/null)"
   fi
 }
-# mo_ascii_tmp - true when the temp folder's path, as this suite converts it, is
-# printable ASCII, so the only other bytes in an expected value are the suite's.
-# A temp folder under a non-ASCII profile fails it, with this guard's message.
+# mo_ascii_tmp - true when the temp folder's path, as this suite converts it and
+# as it resolves, is printable ASCII, so the only other bytes in an expected
+# value are the suite's. A temp folder under a non-ASCII profile fails it, with
+# this guard's message, and so does an 8.3 TMPDIR that expands to one.
 mo_ascii_tmp() {
-  [ -n "$MO_TM" ] && ! printf '%s' "$MO_TM" | LC_ALL=C grep -q '[^ -~]'
+  [ -n "$MO_TM" ] && [ -n "$MO_TMR" ] && ! printf '%s\n%s' "$MO_TM" "$MO_TMR" | LC_ALL=C grep -q '[^ -~]'
 }
 for mo_what in 'a double quote' 'a backslash' 'a tab'; do
   case "$mo_what" in
@@ -5338,7 +5376,7 @@ for mo_what in 'a double quote' 'a backslash' 'a tab'; do
   if [ ! -f "$MO_PV/.claude/scripts/dream-pass.sh" ]; then
     bad "mem-override-path-refused: a vault whose path holds $mo_what could not be made"
   elif is_windows_host && ! mo_ascii_tmp; then
-    bad "mem-override-path-refused: the temp folder's converted path is not printable ASCII here -- $MO_TM"
+    bad "mem-override-path-refused: the temp folder's path, converted or resolved, is not printable ASCII here -- $MO_TM, $MO_TMR"
   else
     grep -qx mem-override-path-refused "$RAN_CONTROLS" || ran mem-override-path-refused
     new_case_state memovr-path
@@ -5406,7 +5444,7 @@ for mo_i in e-acute cyrillic cjk emoji top tmp tmp-emoji; do
   if [ "$(mo_hex "$mo_n")" != "$mo_x" ]; then
     bad "mem-override-nonascii: the name for $mo_say holds the bytes $(mo_hex "$mo_n"), not $mo_x"
   elif ! mo_ascii_tmp; then
-    bad "mem-override-nonascii: the temp folder's converted path is not printable ASCII here -- $MO_TM"
+    bad "mem-override-nonascii: the temp folder's path, converted or resolved, is not printable ASCII here -- $MO_TM, $MO_TMR"
   elif ! make_runner_vault "$MO_NV" 2>/dev/null || [ ! -f "$MO_NV/.claude/scripts/dream-pass.sh" ]; then
     if [ -n "$mo_tmp" ] || is_windows_host || mkdir "$MO_NV" 2>/dev/null; then
       bad "mem-override-nonascii: $mo_say could not be made"
@@ -5430,7 +5468,7 @@ for mo_i in e-acute cyrillic cjk emoji top tmp tmp-emoji; do
     grep -qx mem-override-nonascii "$RAN_CONTROLS" || ran mem-override-nonascii
     if is_windows_host && [ "$(LC_ALL=C cygpath -m "$mo_conv")" = "$mo_want" ]; then
       bad "mem-override-nonascii: cygpath under LC_ALL=C converts $mo_say faithfully on this host, so this twin cannot show the defect"
-    elif [ -n "$mo_tmp" ] && mo_tmpdir_steers "$mo_tmp"; then
+    elif [ -n "$mo_tmp" ] && mo_steers "$mo_tmp"; then
       mo_accepts "dream-pass: $mo_say" "$MO_NV" "$MO_TM/${MO_NV##*/}" "$mo_wt" TMPDIR="$mo_tmp"
     elif [ -n "$mo_tmp" ]; then
       rm -f "$TMP/memovr-na.log"
@@ -5467,7 +5505,7 @@ if is_windows_host; then
   if [ ! -f "$MO_SH/vault/.claude/scripts/dream-pass.sh" ]; then
     bad "mem-override-nonascii: a vault under a folder named in Cyrillic, with TMPDIR beside it, could not be made"
   elif ! mo_ascii_tmp; then
-    bad "mem-override-nonascii: the temp folder's converted path is not printable ASCII here -- $MO_TM"
+    bad "mem-override-nonascii: the temp folder's path, converted or resolved, is not printable ASCII here -- $MO_TM, $MO_TMR"
   elif ( LC_ALL=C; export LC_ALL; . "$RV/.claude/scripts/lib/runner-common.sh"
          state_dir_ready "$MO_SH/tmp/probe" "$MO_SH/vault" >/dev/null; [ "$?" -ne 4 ] ); then
     bad "mem-override-nonascii: under LC_ALL=C the work folder's check does not take a folder under TMPDIR for one inside the vault on this host, so the shared-folder twin cannot show the defect"
@@ -5483,27 +5521,36 @@ fi
 # resolved path, so a TMPDIR spelled through a link (a junction on Windows)
 # cannot be pointed at another folder after the checks: the --settings argument
 # lies under the folder the link leads to, not under the link. Where mktemp does
-# not take TMPDIR (macOS) the pass cannot be steered that way.
+# not take TMPDIR (macOS) the pass cannot be steered that way, and only the
+# direct call below runs.
 rm -rf "$TMP/memovr-real" "$TMP/memovr-link" "$TMP/memovr-rl-vault"
 mkdir -p "$TMP/memovr-real"
-if mo_link "$TMP/memovr-real" "$TMP/memovr-link" && [ "$TMP/memovr-link" -ef "$TMP/memovr-real" ] \
-   && mo_tmpdir_steers "$TMP/memovr-link"; then
-  ran mem-override-work-resolved
+if ! mo_link "$TMP/memovr-real" "$TMP/memovr-link" || ! [ "$TMP/memovr-link" -ef "$TMP/memovr-real" ]; then
+  skip mem-override-work-resolved 'TMPDIR spelled through a link: a link to a folder could not be made here'
+else
   make_runner_vault "$TMP/memovr-rl-vault" 2>/dev/null
   CASE_STATE="$TMP/state-memovr-resolved"
   rm -rf "$CASE_STATE"
   if [ ! -f "$TMP/memovr-rl-vault/.claude/scripts/dream-pass.sh" ]; then
     bad "mem-override-work-resolved: a vault for the TMPDIR-through-a-link twin could not be made"
   else
-    mo_accepts "dream-pass: TMPDIR spelled through a link" "$TMP/memovr-rl-vault" "$MO_TM/memovr-rl-vault" \
-      "$MO_TMR/memovr-real" TMPDIR="$TMP/memovr-link"
+    if mo_steers "$TMP/memovr-link"; then
+      ran mem-override-work-resolved
+      mo_accepts "dream-pass: TMPDIR spelled through a link" "$TMP/memovr-rl-vault" "$MO_TM/memovr-rl-vault" \
+        "$MO_TMR/memovr-real" TMPDIR="$TMP/memovr-link"
+    elif [ "$(uname -s)" = Darwin ]; then
+      skip mem-override-work-resolved "a pass with TMPDIR spelled through a link: Apple's mktemp takes its per-user folder whatever TMPDIR says (the direct call with a folder made through the link still runs)"
+    fi
     # A folder that does not exist yet, spelled through the link: the checks
-    # make it, and must then refuse it, since it is not the path it resolves to.
+    # make it, through the link, and must then refuse it, since it is not the
+    # path it resolves to. The folder must be there, and empty, so the refusal
+    # is not mkdir failing through the link, which gives the same reason.
     rm -rf "$TMP/memovr-real/new" "$TMP/memovr-made.log"
     mo_direct "$TMP/memovr-rl-vault" "$TMP/memovr-link/new" "$TMP/memovr-made.log"
     mo_rc=$?
     if [ "$mo_rc" -eq 1 ] && grep -F -- "could not be created, or cannot be entered, $MO_WORK" "$TMP/memovr-made.log" 2>/dev/null | grep -q '^\[[^]]*\] ERROR: ' \
-       && [ ! -e "$TMP/memovr-real/new/pass-settings.json" ] && [ ! -e "$CASE_STATE/pass-settings.json" ]; then
+       && [ -d "$TMP/memovr-real/new" ] && [ -z "$(ls -A "$TMP/memovr-real/new" 2>/dev/null)" ] \
+       && [ ! -e "$CASE_STATE/pass-settings.json" ]; then
       ok "claude mode: a folder for the pass that does not exist yet, spelled through a link -> memory_override, called directly, refused (1), an ERROR: line says why, nothing written"
     else
       bad "claude mode: a folder for the pass that does not exist yet, spelled through a link -- memory_override, called directly, was not refused for it -- got $mo_rc: $(cat "$TMP/memovr-made.log" 2>/dev/null)"
@@ -5557,7 +5604,7 @@ else
       else
         mo_how='called directly where the file system refuses the name'
         if [ -d "${mo_ut:-$MO_UV}" ]; then mo_how='called directly'; fi
-        if [ -d "${mo_ut:-$MO_UV}" ] && { [ -z "$mo_ut" ] || mo_tmpdir_steers "$mo_ut"; }; then
+        if [ -d "${mo_ut:-$MO_UV}" ] && { [ -z "$mo_ut" ] || mo_steers "$mo_ut"; }; then
           rm -f "$REC.argv"
           if [ -n "$mo_ut" ]; then
             mo_rc="$(RUNNER_VAULT="$MO_UV" runner dream-pass.sh journal FAKE_RECORD="$REC" TMPDIR="$mo_ut")"

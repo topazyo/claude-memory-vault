@@ -3206,8 +3206,8 @@ note_tripwire() {
 # be read into the pass as memory or let a write leave the vault; and a
 # <work-dir> that fails the state directory's checks (state_dir_ready, under a
 # UTF-8 locale on Windows) or lies inside the vault by file identity, walked as
-# Git Bash spells it and, on Windows, as a drive path (a subst drive or a mount
-# that leads into the vault is not seen). They write nothing, apart from the
+# Git Bash spells it and, on Windows, as a drive path (a subst or mapped drive,
+# or a mount, whose root lies inside the vault is not seen). They write nothing, apart from the
 # folder state_dir_ready makes for a <work-dir> that did not exist, which must
 # then be the path it resolves to. They must run after the pass's "before"
 # snapshot, so that anything planted after them is still a change the fence
@@ -3337,7 +3337,8 @@ memory_override() {
   # same folder another way, so neither the folder nor any folder above it may be
   # the vault itself, walked as Git Bash spells it and, on Windows, as a drive
   # path, since a folder under Git Bash's /tmp mount walks up to / and not to the
-  # drive. A subst drive or a mount that leads into the vault is not seen.
+  # drive. A subst or mapped drive, or a mount, whose root lies inside the vault
+  # is not seen.
   if [ "$p" -eq 0 ]; then
     if path_under_by_identity "$work" "$root" \
        || { [ "$win" = 1 ] && path_under_by_identity "${arg%/*}" "$root"; }; then
