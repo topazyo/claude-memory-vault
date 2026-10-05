@@ -705,8 +705,8 @@ matching `.sh` runner through Git Bash, so the watchdog, write fence and artifac
 same code as on macOS and Linux. Some steps are Windows-only: a stopped pass's processes are
 looked up through PowerShell, and Git Bash's `cygpath` converts paths between Git Bash and
 Windows forms. The memory override converts its paths under a UTF-8 locale and checks them, so
-its settings file names a vault under a non-ASCII folder correctly, and it refuses a vault on a
-network path, which Claude Code did not honour; the state directory's path and other path checks
+its settings file names a vault under a non-ASCII folder correctly, and it refuses a vault reached
+as `//server/share/...` or `//wsl.localhost/...`, for which Claude Code did not honour the file; the state directory's path and other path checks
 are still converted under the runners' `C` locale, so an account whose name is not ASCII needs
 `VAULT_STATE_DIR` (see Troubleshooting). It looks for Git Bash in the standard Git for Windows locations
 and never searches `PATH`, because `C:\Windows\System32\bash.exe` is WSL; set `BASH_EXE` if yours

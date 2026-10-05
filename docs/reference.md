@@ -743,9 +743,9 @@ Around that call, each runner does several things an exit code cannot:
   the folder the vault's local settings name and one to the default folder were both refused,
   where both landed without it. That was measured for the Write tool on Windows with Claude Code
   2.1.284, 2.1.285, 2.1.287 and 2.1.289 (the default folder from 2.1.285), for an ASCII vault path
-  on a drive, and on 2.1.289 for a vault on a mapped network drive too; for vaults under folders
-  named in Cyrillic and with a Git Bash double quote (2.1.287 and 2.1.289), and with an e-acute
-  (one run on 2.1.287), a Write to the folder a `C`-locale conversion named landed with that
+  on a drive, and on 2.1.289, for the default folder only, for a vault on a mapped network drive;
+  for vaults under folders named in Cyrillic and with a Git Bash double quote (2.1.287 and 2.1.289),
+  and with an e-acute (one run on 2.1.287, against an earlier build), a Write to the folder a `C`-locale conversion named landed with that
   conversion's file and was refused with the runner's. For a vault reached as a network path
   (`//server/share/...` or `//wsl.localhost/...`) and started from Git Bash, Claude Code 2.1.289
   ignored the file and a Write to the default folder landed with it as without it (measured), so on
@@ -778,9 +778,9 @@ Around that call, each runner does several things an exit code cannot:
   found on `PATH`, ends in `.exe` or, read through any link, starts with `MZ`), which would read
   the runner's POSIX paths as other folders, or is not a file it can check, being no file at all
   or one whose first bytes it cannot read; when the runner's folder for the pass fails the checks
-  the state directory gets (below), because the file can name hooks Claude Code runs: not this
-  account's own, writable by every account, under a folder every account can write that has no
-  sticky bit, or inside the vault, where the agent could change it; when the file
+  the state directory gets (below), because the file can name hooks Claude Code runs: inside the
+  vault, where the agent could change it, or, off Windows, not this account's own, writable by
+  every account, or under a folder every account can write that has no sticky bit; when the file
   cannot be written (off Windows readable by the runner's account only, in a folder only it can
   enter; on Windows it carries the temporary folder's permissions, which under the per-user
   default give it to the account, SYSTEM and Administrators only, measured); and when it does not
@@ -911,8 +911,9 @@ Around that call, each runner does several things an exit code cannot:
     pass the state directory's checks. As there, a group-writable folder above it is allowed, and a
     member of that group could rename the folder and put their own in its place, so keep `TMPDIR`
     writable by your account only. On Windows it carries the temporary folder's permissions and the
-    runner cannot read them, so leave `TEMP` and `TMPDIR` at the per-user default there, which only
-    the account, SYSTEM and Administrators can change (measured). The same folder has held the
+    runner cannot read them, so leave `TMPDIR` unset there: the folder is then made in Git Bash's
+    `/tmp`, this account's temporary folder, which only the account, SYSTEM and Administrators can
+    change (measured; setting `TEMP` for the `.cmd` did not move `/tmp`). The same folder has held the
     pass's snapshots, its steering backup and the folder git takes hooks from since 1.4.0.
   - The runner removes the settings file with its folder when the pass ends. After a stop that
     leaves Claude Code running (`KILL_FAILED`, which sets the tripwire), the file is gone while the

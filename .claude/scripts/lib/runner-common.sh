@@ -3160,9 +3160,9 @@ note_tripwire() {
 # and CLAUDE_CODE_DISABLE_AUTO_MEMORY does not withdraw the grant. The runner's
 # own settings file, passed with --settings, points the memory folder at
 # 90-auto-memory/.pass-agent/ inside the vault instead, where the fence sees a
-# write. With it, a Write to a named folder (Claude Code 2.1.284, 2.1.285 and
-# 2.1.287) and one to the default folder (2.1.285 and 2.1.287) were measured
-# refused, on Windows only, for a vault on a drive path.
+# write. With it, a Write to a named folder (Claude Code 2.1.284, 2.1.285,
+# 2.1.287 and 2.1.289) and one to the default folder (2.1.285, 2.1.287 and
+# 2.1.289) were measured refused, on Windows only, for a vault on a drive path.
 #
 # On Windows both paths are converted with cygpath under a UTF-8 locale: under
 # the runners' LC_ALL=C it cuts a path at its first character outside the ANSI
@@ -3259,7 +3259,7 @@ memory_override() {
     *[![:print:]]*)
       p="$(printf '%s\n%s\n' "$vault" "$arg" | iconv -f UTF-8 -t UTF-16LE 2>/dev/null | iconv -f UTF-16LE -t UTF-8 2>/dev/null; printf x)"
       if [ "$p" != "$(printf '%s\n%s\nx' "$vault" "$arg")" ]; then
-        printf '[%s] ERROR: the vault'"'"'s path or the settings file'"'"'s path in the temporary folder is not valid UTF-8, or iconv could not check it, so Claude Code could read the memory override as naming another folder. Rename the folder. Refusing to run.\n' "$(ts)" >> "$log"
+        printf '[%s] ERROR: the vault'"'"'s path or the settings file'"'"'s path in the temporary folder is not valid UTF-8, or iconv could not check it, so Claude Code could read the memory override as naming another folder. Rename the folder, or point TMPDIR at one with a plain name. Refusing to run.\n' "$(ts)" >> "$log"
         return 1
       fi ;;
   esac
