@@ -1052,11 +1052,7 @@ vault_state_dir() {
 # resolve into the vault. Another account could otherwise plant a forged tripwire
 # or marker there, and a symlink planted at the temp-folder fallback could put
 # the state back inside the agent's reach. A group-writable directory is
-# allowed, because many Linux systems give each user a private group. Where a
-# group is shared, its other members could also replace the memory override's
-# pass-settings.json between the runner's read-back and Claude Code's read, and
-# a settings file can name hooks Claude Code runs, so keep the state directory
-# private to this account on such a system. Git Bash
+# allowed, because many Linux systems give each user a private group. Git Bash
 # reports every file as owned by the current user and its mode bits are not
 # ACLs, so on Windows only the check against the vault means anything.
 #
@@ -3166,36 +3162,39 @@ note_tripwire() {
 # 90-auto-memory/.pass-agent/ inside the vault instead, where the fence sees a
 # write. With it, a Write to a named folder (Claude Code 2.1.284, 2.1.285 and
 # 2.1.287) and one to the default folder (2.1.285 and 2.1.287) were measured
-# refused, on Windows only.
+# refused, on Windows only, for a vault on a drive path.
 #
 # On Windows both paths are converted with cygpath under a UTF-8 locale: under
 # the runners' LC_ALL=C it cuts a path at its first character outside the ANSI
 # code page, which made the file name a folder outside the vault. Each converted
-# path must be a drive or network path and name, converted back, the very
-# folder or file it came from.
+# path must be a drive path and name, converted back, the very folder or file it
+# came from. A network path is refused: for a vault reached as //host/share,
+# Claude Code 2.1.289 ignored the file and kept granting the default folder.
 #
 # The checks refuse a pass the file would not protect: outside Git Bash, an
 # agent binary that is a Windows program, which would read the POSIX paths as
 # other folders; a converted path that names something else; a vault path the
-# JSON would have to escape; a vault or
-# state path that is not valid UTF-8, which Claude Code could read as another
-# folder; a 90-auto-memory or .pass-agent that is a link (the fence sees a
+# JSON would have to escape; a vault or settings-file
+# path that iconv will not convert from UTF-8, which Claude Code could read as
+# another folder; a 90-auto-memory or .pass-agent that is a link (the fence sees a
 # folder link that was there before the pass only as a link, so writes through
 # it would not be seen) or is not a folder; and a .pass-agent holding anything
 # but a regular .DS_Store file with no other hard link, since anything else could
 # be read into the pass as memory or let a write leave the vault. They write
 # nothing. They must run after the pass's "before" snapshot, so that anything
-# planted after them is still a change the fence sees. Then the file replaces
-# any earlier <state-dir>/pass-settings.json and must read back byte for byte,
-# because Claude Code reads an empty or invalid settings file as if there were
-# none. On POSIX hosts it is readable by this account only; on Windows its
-# folder's permissions decide. AGENT_SETTINGS_FILE names it as Claude Code reads
-# a path.
+# planted after them is still a change the fence sees. Then the file is written
+# as <work-dir>/pass-settings.json, in the runner's own folder for the pass, and
+# must read back byte for byte, because Claude Code reads an empty or invalid
+# settings file as if there were none. The state directory may be shared or take
+# its parent's permissions, so a copy an earlier build left there is removed. On
+# POSIX hosts the file is readable by this account only, in a folder only it can
+# enter; on Windows the temporary folder's permissions decide.
+# AGENT_SETTINGS_FILE names it as Claude Code reads a path.
 # .pass-agent itself is never created here. Returns 1, with the reason in <log>,
 # when the pass must not start.
 memory_override() {
-  local root="$1" state="$2" work="$3" log="$4" vault="$1" file="$2/pass-settings.json" arg="$2/pass-settings.json"
-  local dir="$1/90-auto-memory/.pass-agent" list line p win=0 exe=0
+  local root="$1" state="$2" work="$3" log="$4" vault="$1" file="$3/pass-settings.json" arg="$3/pass-settings.json"
+  local dir="$1/90-auto-memory/.pass-agent" list line p h win=0 exe=0
   # Set only on success below, so no value from the environment can stand in.
   unset AGENT_SETTINGS_FILE
   # On Windows a path left in Git Bash form is read by Claude Code as a folder
@@ -3210,17 +3209,18 @@ memory_override() {
     # through any link, is read: a Windows program starts with MZ. A name that
     # resolves to no file (a function, say) cannot be checked, and neither can a
     # file that cannot be read, which could still be started by its header, so
-    # both refuse. A wrapper script that starts a Windows program is not
-    # recognised.
+    # both refuse, as does a read that fails. A wrapper script that starts a
+    # Windows program is not recognised.
     p="$(command -v "${AGENT_BIN:-}" 2>/dev/null)" || p=
     case "$p" in */*) ;; *) p= ;; esac
     if [ -f "$p" ] && ! [ -r "$p" ]; then p=; fi
+    if [ -f "$p" ] && ! h="$(LC_ALL=C dd if="$p" bs=2 count=1 2>/dev/null)"; then p=; fi
     if [ -z "$p" ]; then
       printf '[%s] ERROR: Claude Code here (%s) is not a file the runner can check, so it could be a Windows program that would read the memory override'"'"'s paths as other folders. Refusing to run.\n' "$(ts)" "${AGENT_BIN:-}" >> "$log"
       return 1
     fi
     case "$p" in *.[eE][xX][eE]) exe=1 ;; esac
-    if [ -f "$p" ] && [ "$(LC_ALL=C dd if="$p" bs=2 count=1 2>/dev/null)" = MZ ]; then exe=1; fi
+    if [ -f "$p" ] && [ "$h" = MZ ]; then exe=1; fi
     if [ "$exe" = 1 ]; then
       printf '[%s] ERROR: Claude Code here (%s) looks like a Windows program, but this runner is not running under Git Bash, so Claude Code would read the memory override'"'"'s paths as other folders. Run the .cmd runner on Windows instead. Refusing to run.\n' "$(ts)" "$p" >> "$log"
       return 1
@@ -3234,9 +3234,9 @@ memory_override() {
     }
     for p in "$vault" "$arg"; do
       case "$p" in
-        [ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]:/*|//[!/?.]*) ;;
+        [ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]:/*) ;;
         *)
-          printf '[%s] ERROR: cygpath gave %s for a path of the memory override, which is not a Windows drive or network path, so Claude Code would read it as another folder. Refusing to run.\n' "$(ts)" "$p" >> "$log"
+          printf '[%s] ERROR: cygpath gave %s for a path of the memory override, which is not a Windows drive path, so Claude Code would read it as another folder, or ignore the override, as it does for a vault on a network path. Keep the vault on a drive. Refusing to run.\n' "$(ts)" "$p" >> "$log"
           return 1 ;;
       esac
     done
@@ -3251,10 +3251,12 @@ memory_override() {
       return 1 ;;
   esac
   # Only a path with a byte outside printable ASCII needs iconv to vouch for it.
+  # The target is UTF-16LE, not UTF-8: glibc's iconv passes code points above
+  # U+10FFFF and 5- and 6-byte forms through to UTF-8 (2.43, measured).
   case "$vault$arg" in
     *[![:print:]]*)
-      if ! printf '%s\n%s\n' "$vault" "$arg" | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1; then
-        printf '[%s] ERROR: the vault'"'"'s path or the state directory'"'"'s path is not valid UTF-8, or iconv could not check it, so Claude Code could read the memory override as naming another folder. Rename the folder. Refusing to run.\n' "$(ts)" >> "$log"
+      if ! printf '%s\n%s\n' "$vault" "$arg" | iconv -f UTF-8 -t UTF-16LE >/dev/null 2>&1; then
+        printf '[%s] ERROR: the vault'"'"'s path or the settings file'"'"'s path in the temporary folder is not valid UTF-8, or iconv could not check it, so Claude Code could read the memory override as naming another folder. Rename the folder. Refusing to run.\n' "$(ts)" >> "$log"
         return 1
       fi ;;
   esac
@@ -3274,15 +3276,13 @@ memory_override() {
       return 1
     fi
   fi
-  # An earlier pass's file is removed first, so a write that fails cannot leave
-  # it standing in for this pass's.
-  rm -f "$file" 2>/dev/null
+  # Nothing reads a copy an earlier build left in the state directory.
+  rm -f "$state/pass-settings.json" 2>/dev/null
   line="{\"autoMemoryDirectory\":\"$vault/90-auto-memory/.pass-agent\"}"
   # Readable by this account only on POSIX hosts, whatever the umask, because
   # Claude Code runs the hooks a settings file names.
-  if [ -e "$file" ] || [ -L "$file" ] \
-     || ! ( umask 077 && printf '%s\n' "$line" > "$work/pass-settings.json" ) \
-     || ! write_file_atomic "$file" "$work/pass-settings.json"; then
+  if ! ( umask 077 && printf '%s\n' "$line" > "$work/pass-settings.new" ) \
+     || ! write_file_atomic "$file" "$work/pass-settings.new"; then
     printf '[%s] ERROR: could not write the memory override %s. Refusing to run.\n' "$(ts)" "$file" >> "$log"
     return 1
   fi

@@ -40,8 +40,7 @@
 #                           sandboxed (no shell, no network), or the run is refused
 #   PROMOTION_PASS_TIMEOUT  seconds before a hung run is killed (default 5400)
 #   VAULT_STATE_DIR         per-vault state outside the vault: run lock,
-#                           quarantine, tripwire copy, in-flight marker, the
-#                           memory override's pass-settings.json (default
+#                           quarantine, tripwire copy, in-flight marker (default
 #                           under %LOCALAPPDATA% or ~/.local/state)
 #   RUN_LOCK_WAIT           seconds to wait for another pass's run lock (default 1800)
 #   RUN_LOCK_POLL           seconds between checks while waiting (default 30)
@@ -390,7 +389,7 @@ main() {
   fi
   HEAD_BEFORE="$(head_state "$ROOT" "$SNAP_DIR/nohooks")"
   # The last check of the run lock before the memory override, the in-flight
-  # marker and the backup are written to the shared state directory. A leftover
+  # marker and the backup touch the shared state directory. A leftover
   # put back above has already written its quarantine copy there.
   if ! run_lock_held; then
     printf '[%s] LOCKED: another runner replaced or removed this one'"'"'s owner file in the run lock before the pass started. Not starting.\n' "$(ts)" >> "$LOG"

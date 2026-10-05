@@ -28,9 +28,8 @@
 #                       sandboxed (no shell, no network), or the run is refused
 #   DREAM_PASS_TIMEOUT  seconds before a hung run is killed (default 3600)
 #   VAULT_STATE_DIR     per-vault state outside the vault: run lock, quarantine,
-#                       tripwire copy, in-flight marker, the memory override's
-#                       pass-settings.json (default under %LOCALAPPDATA% or
-#                       ~/.local/state)
+#                       tripwire copy, in-flight marker (default under
+#                       %LOCALAPPDATA% or ~/.local/state)
 #   RUN_LOCK_WAIT       seconds to wait for another pass's run lock (default 1800)
 #   RUN_LOCK_POLL       seconds between checks while waiting (default 30)
 #   RUNNER_GIT_TIMEOUT  seconds each git step of the journal commit may take
@@ -334,7 +333,7 @@ main() {
   fi
   HEAD_BEFORE="$(head_state "$ROOT" "$SNAP_DIR/nohooks")"
   # The last check of the run lock before the memory override, the backup and
-  # the in-flight marker are written to the shared state directory.
+  # the in-flight marker touch the shared state directory.
   if ! run_lock_held; then
     printf '[%s] LOCKED: another runner replaced or removed this one'"'"'s owner file in the run lock before the pass started. Not starting.\n' "$(ts)" >> "$LOG"
     exit 75
