@@ -780,9 +780,10 @@ Around that call, each runner does several things an exit code cannot:
   read the runner's POSIX paths as other folders, or is not a file it can check, being no file at
   all or one whose first bytes it cannot read; when the runner's folder for the pass fails the
   checks the state directory gets (below), because the file can name hooks Claude Code runs: inside
-  the vault however the two paths are spelled (by name, then by identity, so a letter in another
-  case or an 8.3 name does not hide it), where the agent could change it, or, off Windows, under a
-  folder every account can write that has no sticky bit; when the file
+  the vault (by name, then by identity, so a letter in another case, an 8.3 name or a vault at a
+  drive root does not hide it; a `subst` drive or a mount that leads into the vault is not seen),
+  where the agent could change it, or, off Windows, under a folder every account can write that
+  has no sticky bit; when the file
   cannot be written (off Windows readable by the runner's account only, in a folder only it can
   enter; on Windows it carries the temporary folder's permissions, which under the per-user default
   give it to the account, SYSTEM and Administrators only, measured); and when it does not read back
@@ -956,9 +957,11 @@ Around that call, each runner does several things an exit code cannot:
     vault (measured). The `.cmd` wrappers cannot start such a vault at all (`CMD does not support
     UNC paths as current directories`). A mapped network drive gives a drive path and runs: for one
     drive mapped to an SMB share, a Write to the default folder was refused with the file (2.1.289,
-    measured through `dream-pass.cmd`). Any other drive letter whose target is a network path is
-    accepted too and unmeasured: DFS, WebDAV and other redirectors, a local link to a share, `subst`
-    onto one, and a drive mapped to `\\wsl.localhost\...`.
+    measured through `dream-pass.cmd`). For the vault, any other drive letter whose target is a
+    network path is accepted too and unmeasured: DFS, WebDAV and other redirectors, a local link to
+    a share, `subst` onto one, and a drive mapped to `\\wsl.localhost\...`. The temporary folder is
+    taken by its resolved path, so one reached through a local link to a share should be refused as
+    a network path (reasoned; not measured).
   - When `VAULT_STATE_DIR` is rejected, or there is no per-user state folder to use, the state
     directory falls back to `${TMPDIR:-/tmp}/claude-memory-vault-state-<id>`. On Linux and macOS
     the checks above still apply to it; on Windows a `TMPDIR` other accounts can write would hold

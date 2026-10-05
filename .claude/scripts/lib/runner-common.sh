@@ -1113,6 +1113,29 @@ state_dir_problem() {
   esac
 }
 
+# path_under_by_identity <dir> <root>
+# True when <dir>, or a folder above it, is <root> itself by file identity
+# (test -ef), however either is spelled. <dir> is an absolute Git Bash or POSIX
+# path, or on Windows a drive path (C:/...), which Git Bash's test compares
+# with its own spelling of the same folder. A relative <dir> is never under.
+path_under_by_identity() {
+  local up="$1"
+  while [ -n "$up" ]; do
+    [ "$up" -ef "$2" ] && return 0
+    case "$up" in
+      /|[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]:/) return 1 ;;
+      */*)
+        up="${up%/*}"
+        case "$up" in
+          '') up=/ ;;
+          *:) up="$up/" ;;
+        esac ;;
+      *) return 1 ;;
+    esac
+  done
+  return 1
+}
+
 # write_file_atomic <path> <content-file>
 # Copies <content-file> to a temporary name beside <path> and renames it into
 # place, then verifies a regular file (not a symlink) is there.
@@ -3174,27 +3197,31 @@ note_tripwire() {
 # The checks refuse a pass the file would not protect: outside Git Bash, an
 # agent binary that is a Windows program, which would read the POSIX paths as
 # other folders; a converted path that names something else; a vault path the
-# JSON would have to escape; a vault or settings-file
-# path that does not come back unchanged from UTF-8 to UTF-16LE and back, which Claude Code could read as
+# JSON would have to escape; a vault or settings-file path that does not come
+# back unchanged from UTF-8 to UTF-16LE and back, which Claude Code could read as
 # another folder; a 90-auto-memory or .pass-agent that is a link (the fence sees a
 # folder link that was there before the pass only as a link, so writes through
 # it would not be seen) or is not a folder; and a .pass-agent holding anything
 # but a regular .DS_Store file with no other hard link, since anything else could
 # be read into the pass as memory or let a write leave the vault; and a
 # <work-dir> that fails the state directory's checks (state_dir_ready, under a
-# UTF-8 locale on Windows) or lies inside the vault however the two are spelled.
-# They write nothing. They must run after the pass's "before" snapshot, so that
-# anything planted after them is still a change the fence sees. Then the file is
-# written as pass-settings.json in <work-dir>, the runner's own folder for the
-# pass, which every check above takes by its resolved path (pwd -P), and must
-# read back byte for byte, because Claude Code reads an empty or
-# invalid settings file as if there were none. Those two checks, and the one
-# that the converted settings path names that file, need the file, so a refusal
-# there leaves it in <work-dir>, which the runner removes with the folder. The state directory may be shared
-# or take its parent's permissions, so a copy an earlier build left there is
-# removed. On POSIX hosts the file is readable by this account only, in the
-# folder mktemp -d made, which only it can enter; on Windows the temporary
-# folder's permissions decide.
+# UTF-8 locale on Windows) or lies inside the vault by file identity, walked as
+# Git Bash spells it and, on Windows, as a drive path (a subst drive or a mount
+# that leads into the vault is not seen). They write nothing, apart from the
+# folder state_dir_ready makes for a <work-dir> that did not exist, which must
+# then be the path it resolves to. They must run after the pass's "before"
+# snapshot, so that anything planted after them is still a change the fence
+# sees. <work-dir> is taken by its resolved path (pwd -P) first, so the
+# conversions, the UTF-8 check, these checks and the write all see one folder.
+# Then the file is written as pass-settings.json in <work-dir>, the runner's own
+# folder for the pass, and must read back byte for byte, because Claude Code
+# reads an empty or invalid settings file as if there were none. The read-back,
+# and the check that the converted settings path names that file, need the
+# file, so a refusal at either leaves it in <work-dir>, which the runner removes
+# with the folder. The state directory may be shared or take its parent's
+# permissions, so a copy an earlier build left there is removed. On POSIX hosts
+# the file is readable by this account only, in the folder mktemp -d made, which
+# only it can enter; on Windows the temporary folder's permissions decide.
 # AGENT_SETTINGS_FILE names it as Claude Code reads a path.
 # .pass-agent itself is never created here. Returns 1, with the reason in <log>,
 # when the pass must not start.
@@ -3206,7 +3233,8 @@ memory_override() {
   # The file is written, checked and handed to Claude Code through the folder's
   # resolved path, so a link or a relative part in TMPDIR's spelling cannot be
   # pointed at another folder after the checks below. A folder that cannot be
-  # entered is left as given, for those checks to refuse.
+  # entered is left as given: the checks below refuse it, or make it and then
+  # require it to be the path it resolves to.
   p="$(cd "$work" 2>/dev/null && pwd -P)" && [ -n "$p" ] && work="$p"
   file="$work/pass-settings.json" arg="$work/pass-settings.json"
   # On Windows a path left in Git Bash form is read by Claude Code as a folder
@@ -3296,23 +3324,24 @@ memory_override() {
   # at a folder above both named outside the ANSI code page, a profile folder
   # among them, and the folder looked as if it lay inside the vault.
   case "$RUNNER_UNAME" in
-    MINGW*|MSYS*|CYGWIN*) ( LC_ALL=C.UTF-8; export LC_ALL; state_dir_ready "$work" "$root" >/dev/null ) ;;
-    *) state_dir_ready "$work" "$root" >/dev/null ;;
+    MINGW*|MSYS*|CYGWIN*) up="$( LC_ALL=C.UTF-8; export LC_ALL; state_dir_ready "$work" "$root" )" ;;
+    *) up="$(state_dir_ready "$work" "$root")" ;;
   esac
   p=$?
+  # A folder that could not be entered above, which that check then made, must
+  # be the path it resolves to, or the file would go through another spelling.
+  [ "$p" -eq 0 ] && [ "$up" != "$work" ] && p=1
   # That check compares the two paths by name, and on Windows and macOS a letter
-  # outside ASCII in another case, or an 8.3 name, spells the same folder another
-  # way, so neither the folder nor any folder above it may be the vault itself.
+  # outside ASCII in another case, an 8.3 name or a drive-root vault spells the
+  # same folder another way, so neither the folder nor any folder above it may be
+  # the vault itself, walked as Git Bash spells it and, on Windows, as a drive
+  # path, since a folder under Git Bash's /tmp mount walks up to / and not to the
+  # drive. A subst drive or a mount that leads into the vault is not seen.
   if [ "$p" -eq 0 ]; then
-    up="$(cd "$work" 2>/dev/null && pwd -P)"
-    while [ -n "$up" ]; do
-      if [ "$up" -ef "$root" ]; then p=4; break; fi
-      case "$up" in
-        /) break ;;
-        */*) up="${up%/*}"; [ -n "$up" ] || up=/ ;;
-        *) break ;;
-      esac
-    done
+    if path_under_by_identity "$work" "$root" \
+       || { [ "$win" = 1 ] && path_under_by_identity "${arg%/*}" "$root"; }; then
+      p=4
+    fi
   fi
   if [ "$p" -ne 0 ]; then
     printf '[%s] ERROR: the runner'"'"'s folder for the pass, %s, %s, and the memory override'"'"'s settings file there can name hooks Claude Code runs. Point TMPDIR at a folder only this account can change, outside the vault. Refusing to run.\n' "$(ts)" "$work" "$(state_dir_problem "$p")" >> "$log"

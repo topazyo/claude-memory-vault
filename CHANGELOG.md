@@ -61,9 +61,9 @@ What that covers, and what it does not:
   2.1.289 ignored the runner's file: a Write to the default memory folder landed with it as without
   it (measured). On Windows the runner now accepts only a drive path for the vault and for its
   settings file, and refuses any other with exit 1. The `.cmd` wrappers could not start such a vault
-  before either. Measured for one mapped drive; any other drive letter whose target is a network
-  path (DFS, WebDAV, a local link to a share, `subst` onto one, a drive mapped to
-  `\\wsl.localhost\...`) is accepted too and unmeasured.
+  before either. Measured for one mapped drive; for the vault, any other drive letter whose
+  target is a network path (DFS, WebDAV, a local link to a share, `subst` onto one, a drive mapped
+  to `\\wsl.localhost\...`) is accepted too and unmeasured.
 - **A vault path that is not ASCII is converted faithfully.** On Windows the runner converts the
   vault's path, and the settings file's, with Git Bash's `cygpath`. Under the runners' `LC_ALL=C`
   that cuts a path at its first character outside the ANSI code page and turns `é` into one invalid
@@ -174,9 +174,11 @@ What that covers, and what it does not:
     runner cannot read refuse too, with `is not a file the runner can check`. A wrapper script
     that starts a Windows program is not recognised.
   - The runner's folder for the pass, under `TMPDIR`, fails the checks the state directory gets:
-    it lies inside the vault, however the two paths are spelled, where the agent could change the
-    file (and under `.claude/logs`, `.obsidian` or `.git` the fence would not see it), or, off
-    Windows, a folder above it every account can write has no sticky bit. The folder itself, new
+    it lies inside the vault, by name or by identity (a letter in another case, an 8.3 name or a
+    vault at a drive root does not hide it; a `subst` drive or a mount that leads into the vault
+    does), where the agent could change the file (and under `.claude/logs`, `.obsidian` or `.git`
+    the fence would not see it), or, off Windows, a folder above it every account can write has no
+    sticky bit. The folder itself, new
     from `mktemp -d`, is this account's own and private, so the owner and mode checks on it pass.
   - The settings file could not be written, or does not read back exactly as written.
   - No settings file was written for the pass, which happens only when the runner and
@@ -206,7 +208,8 @@ What that covers, and what it does not:
   `mem-override-sink-hardlink`, `mem-override-sink-contained`, `mem-override-sink-fifo`,
   `mem-override-path-refused`, `mem-override-nonascii`, `mem-override-order`,
   `mem-override-mixed-release`, `mem-override-unc-refused`, `mem-override-work-refused`,
-  `mem-override-no-iconv` and `dream-agent-tools` are required on every CI job.
+  `mem-override-work-root`, `mem-override-no-iconv` and `dream-agent-tools` are required on every
+  CI job.
   `mem-override-sink-unreadable`, `mem-override-sink-filelink`,
   `mem-override-file-mode`, `mem-override-utf8-refused`, `mem-override-winbin`,
   `mem-override-winbin-unreadable`, `mem-override-stray-cygpath`, `mem-override-no-cygpath` and

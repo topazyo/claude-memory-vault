@@ -2580,13 +2580,44 @@ if [ -d "$MO_CL" ] && [ "$MO_CL" -ef "$MO_CU" ]; then
   mo_direct "$MO_CU/vault" "$MO_CL/vault/.claude/logs/w" "$TMP/memovr-case.log"
   mo_rc=$?
   if [ "$mo_rc" -eq 1 ] && grep -F -- "resolves into the vault, $MO_WORK" "$TMP/memovr-case.log" 2>/dev/null | grep -q '^\[[^]]*\] ERROR: ' \
-     && [ -d "$MO_CU/vault/.claude/logs/w" ] && [ -z "$(ls -A "$MO_CU/vault/.claude/logs/w" 2>/dev/null)" ]; then
+     && [ -d "$MO_CU/vault/.claude/logs/w" ] && [ -z "$(ls -A "$MO_CU/vault/.claude/logs/w" 2>/dev/null)" ] \
+     && [ ! -e "${CASE_STATE:-$TMP/state}/pass-settings.json" ]; then
     ok "claude mode: TMPDIR inside the vault, spelled with a Cyrillic letter in the other case -> memory_override, called directly, refused (1), an ERROR: line says why, nothing written"
   else
     bad "claude mode: TMPDIR inside the vault, spelled with a Cyrillic letter in the other case -- memory_override, called directly, was not refused for it -- got $mo_rc: $(cat "$TMP/memovr-case.log" 2>/dev/null)"
   fi
 fi
 rm -rf "$MO_CU" "$MO_CL" "$TMP/memovr-case.log"
+# A vault at the root of the file system, or on Windows of the temporary
+# folder's own drive, holds every folder, the runner's folder for the pass among
+# them, but path_key gives a root a trailing slash and the name check misses it.
+# The identity walk refuses it, and on Windows only its walk up the drive path
+# reaches the drive: Git Bash's /tmp walks up to its own /. memory_override is
+# called directly with that root as the vault; it only reads there. The twin
+# first shows the name check alone passes the folder on this host.
+if is_windows_host; then
+  mo_dr="$(cygpath -m "$TMP")"
+  mo_dr="$(cygpath -u "${mo_dr%%:*}:/")"
+else
+  mo_dr=/
+fi
+rm -rf "$TMP/memovr-root" "$TMP/memovr-root.log"
+( umask 077 && mkdir -p "$TMP/memovr-root/w" )
+if ! ( . "$RV/.claude/scripts/lib/runner-common.sh"; state_dir_ready "$TMP/memovr-root/w" "$mo_dr" >/dev/null ); then
+  bad "mem-override-work-root: the name check alone already refuses a folder under a vault at $mo_dr here, so this twin cannot show the identity walk"
+else
+  ran mem-override-work-root
+  mo_direct "$mo_dr" "$TMP/memovr-root/w" "$TMP/memovr-root.log"
+  mo_rc=$?
+  if [ "$mo_rc" -eq 1 ] && grep -F -- "resolves into the vault, $MO_WORK" "$TMP/memovr-root.log" 2>/dev/null | grep -q '^\[[^]]*\] ERROR: ' \
+     && [ -d "$TMP/memovr-root/w" ] && [ -z "$(ls -A "$TMP/memovr-root/w" 2>/dev/null)" ] \
+     && [ ! -e "${CASE_STATE:-$TMP/state}/pass-settings.json" ]; then
+    ok "claude mode: a vault at $mo_dr, which holds the runner's folder for the pass -> memory_override, called directly, refused (1), an ERROR: line says why, nothing written"
+  else
+    bad "claude mode: a vault at $mo_dr, which holds the runner's folder for the pass -- memory_override, called directly, was not refused for it -- got $mo_rc: $(cat "$TMP/memovr-root.log" 2>/dev/null)"
+  fi
+fi
+rm -rf "$TMP/memovr-root" "$TMP/memovr-root.log"
 # cygpath failing on either path the override needs refuses the pass, rather
 # than passing an empty value, and so does cygpath succeeding with a path that
 # names another folder or file, which neither its exit status nor an emptiness
@@ -5466,6 +5497,18 @@ if mo_link "$TMP/memovr-real" "$TMP/memovr-link" && [ "$TMP/memovr-link" -ef "$T
   else
     mo_accepts "dream-pass: TMPDIR spelled through a link" "$TMP/memovr-rl-vault" "$MO_TM/memovr-rl-vault" \
       "$MO_TMR/memovr-real" TMPDIR="$TMP/memovr-link"
+    # A folder that does not exist yet, spelled through the link: the checks
+    # make it, and must then refuse it, since it is not the path it resolves to.
+    rm -rf "$TMP/memovr-real/new" "$TMP/memovr-made.log"
+    mo_direct "$TMP/memovr-rl-vault" "$TMP/memovr-link/new" "$TMP/memovr-made.log"
+    mo_rc=$?
+    if [ "$mo_rc" -eq 1 ] && grep -F -- "could not be created, or cannot be entered, $MO_WORK" "$TMP/memovr-made.log" 2>/dev/null | grep -q '^\[[^]]*\] ERROR: ' \
+       && [ ! -e "$TMP/memovr-real/new/pass-settings.json" ] && [ ! -e "$CASE_STATE/pass-settings.json" ]; then
+      ok "claude mode: a folder for the pass that does not exist yet, spelled through a link -> memory_override, called directly, refused (1), an ERROR: line says why, nothing written"
+    else
+      bad "claude mode: a folder for the pass that does not exist yet, spelled through a link -- memory_override, called directly, was not refused for it -- got $mo_rc: $(cat "$TMP/memovr-made.log" 2>/dev/null)"
+    fi
+    rm -f "$TMP/memovr-made.log"
   fi
   rm -rf "$CASE_STATE" "$TMP/memovr-rl-vault"
 fi
