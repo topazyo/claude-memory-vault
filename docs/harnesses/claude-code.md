@@ -63,10 +63,11 @@ The runners use Claude Code by default (`VAULT_AGENT=claude`), and the agents' a
 enforced. See `docs/setup.md` § 8. Each claude-mode pass also gets a settings file of the
 runner's own, passed with `--settings`, that points Claude Code's memory folder at
 `90-auto-memory/.pass-agent/` inside the vault, where the write fence sees it. That was measured
-for the Write tool on Windows only, for a vault on a drive path; Claude Code ignored the file for
-a vault reached as `//server/share/...` or `//wsl.localhost/...`, so the runner refuses one. Managed settings outrank the file, and a
-pass refuses to start when the folder already holds something. `docs/reference.md` § 4.3, in the dream and promotion
-runners' **Write fence** item, has the limits.
+for the Write tool on Windows only, for a vault on a drive path; Claude Code 2.1.289 ignored the
+file for a vault reached as `//server/share/...` or `//wsl.localhost/...`, so on Windows the
+runner refuses one. Managed settings outrank the file, and a pass refuses to start when the folder
+already holds something. `docs/reference.md` § 4.3, in the dream and promotion runners' **Write
+fence** item, has the limits.
 
 ## Sources
 

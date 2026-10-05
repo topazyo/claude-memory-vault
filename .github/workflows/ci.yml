@@ -145,7 +145,8 @@ jobs:
           # glibc's does, so it is on the ubuntu list only, where it shows that
           # job's twins can tell the round trip from a check to UTF-8 alone.
           # mem-override-utf16-lax-host is recorded only where iconv -t UTF-16LE
-          # takes that sequence without an error, as macOS's does, so it is on
+          # takes that sequence without an error under LC_ALL=C, the runners'
+          # locale, as macOS's does, so it is on
           # the two macOS lists only, where it shows those twins can tell the
           # round trip from a check to UTF-16LE alone. mem-override-unc-refused
           # runs everywhere: a cygpath stand-in gives a network path.

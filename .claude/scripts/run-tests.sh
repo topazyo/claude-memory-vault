@@ -5527,15 +5527,19 @@ CASE_STATE="$TMP/state-memovr-path"
 # UTF-8 records mem-override-utf8-lax-host, and one whose iconv takes it to
 # UTF-16LE without an error (macOS's) records mem-override-utf16-lax-host, so a
 # job that requires one shows these twins ran where they can tell the round trip
-# from that one-way check. Where the file system takes the name the pass runs;
+# from that one-way check. Each asks as memory_override does, under LC_ALL=C with
+# the bytes inside a path: asked in the suite's locale with the bytes alone,
+# macOS's iconv failed the first of them (en_US.UTF-8, CI run 37303147857), while
+# memory_override's own one-way check let all five through under C (CI run
+# 37261467942). Where the file system takes the name the pass runs;
 # then, and where the file system refuses such a name (APFS does),
 # memory_override is called as the runners call it, under LC_ALL=C, with a
 # folder the twin keeps, to show the refusal comes before anything is written.
 if is_windows_host; then
   skip mem-override-utf8-refused 'a vault path that is not valid UTF-8: Git Bash reads a lone byte 0xFF as U+00FF, so the folder has a valid name'
 else
-  if printf '\364\220\200\200\n' | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1; then ran mem-override-utf8-lax-host; fi
-  if printf '\364\220\200\200\n' | iconv -f UTF-8 -t UTF-16LE >/dev/null 2>&1; then ran mem-override-utf16-lax-host; fi
+  if printf '%s\n' "$TMP/v$(printf '\364\220\200\200')ault" | LC_ALL=C iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1; then ran mem-override-utf8-lax-host; fi
+  if printf '%s\n' "$TMP/v$(printf '\364\220\200\200')ault" | LC_ALL=C iconv -f UTF-8 -t UTF-16LE >/dev/null 2>&1; then ran mem-override-utf16-lax-host; fi
   for mo_seq in '\364\220\200\200:f4908080' '\364\241\260\241:f4a1b0a1' '\365\200\200\200:f5808080' \
                 '\370\210\200\200\200:f888808080' '\374\204\200\200\200\200:fc8480808080' \
                 '\355\240\200:eda080' '\300\257:c0af' '\200:80' '\377:ff'; do

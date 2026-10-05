@@ -3293,7 +3293,8 @@ memory_override() {
   # The paths go to UTF-16LE and back and must come back byte for byte: glibc's
   # iconv passes code points above U+10FFFF and 5- and 6-byte forms through to
   # UTF-8 (2.43, measured), and macOS's takes them to UTF-16LE without an error
-  # (measured on CI). Valid UTF-8 always comes back as it went in.
+  # under the C locale the runners set (measured on CI). Valid UTF-8 always comes
+  # back as it went in.
   case "$vault$arg" in
     *[![:print:]]*)
       p="$(printf '%s\n%s\n' "$vault" "$arg" | iconv -f UTF-8 -t UTF-16LE 2>/dev/null | iconv -f UTF-16LE -t UTF-8 2>/dev/null; printf x)"
@@ -3344,7 +3345,7 @@ memory_override() {
     fi
   fi
   if [ "$p" -ne 0 ]; then
-    printf '[%s] ERROR: the runner'"'"'s folder for the pass, %s, %s, and the memory override'"'"'s settings file there can name hooks Claude Code runs. Point TMPDIR at a folder only this account can change, outside the vault. Refusing to run.\n' "$(ts)" "$work" "$(state_dir_problem "$p")" >> "$log"
+    printf '[%s] ERROR: the runner'"'"'s folder for the pass, %s, %s, and the memory override'"'"'s settings file there can name hooks Claude Code runs. Point TMPDIR at a folder outside the vault that only this account can change, or, on Windows, leave it unset. Refusing to run.\n' "$(ts)" "$work" "$(state_dir_problem "$p")" >> "$log"
     return 1
   fi
   # Nothing reads a copy an earlier build left in the state directory.
