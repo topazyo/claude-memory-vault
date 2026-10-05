@@ -97,10 +97,12 @@ What that covers, and what it does not:
   the runner refuses a vault or settings-file path that does not come back byte for byte when
   `iconv` converts it from UTF-8 to UTF-16LE and back, which Claude Code could read as another
   folder: invalid bytes, surrogates, overlong forms, code points above U+10FFFF and 5- and 6-byte
-  forms. That refusal was measured on Linux (glibc 2.43) with a stand-in agent, and the suite's
-  twins hold it on CI's Linux and macOS jobs. glibc's conversion to UTF-8, which an earlier build
-  of this release used, let the last two through, and macOS's `iconv` takes them to UTF-16LE
-  without an error (measured on CI), which is why the result must also convert back.
+  forms. An earlier build's one-way check, to UTF-16LE, was measured refusing such vault names on
+  Linux (glibc 2.43) with a stand-in agent; the round trip, for the vault's path and the settings
+  file's, is held by the suite's twins on CI's Linux and macOS jobs. glibc's conversion to UTF-8,
+  which an earlier build of this release used, let code points above U+10FFFF and 5- and 6-byte
+  forms through, and macOS's `iconv` takes them to UTF-16LE without an error (measured on CI),
+  which is why the result must also convert back.
 - **Measured on Claude Code 2.1.284 (a named folder), 2.1.285 and 2.1.287 (a named folder and the
   default one, and on 2.1.287 the non-ASCII paths), and 2.1.289 (the named and default folders,
   the Cyrillic and `"` vaults, glob and trailing-dot names, a drive root (on an earlier build of
@@ -114,22 +116,24 @@ What that covers, and what it does not:
 - **Both runners write `pass-settings.json` into their own folder for the pass before a
   claude-mode pass**, the one each already makes with `mktemp -d` for its snapshots, under
   `TMPDIR` or `/tmp` (on macOS under the per-user temporary folder, which Apple's `mktemp` takes
-  whatever `TMPDIR` says, measured on CI), and removes when the pass ends. They start the agent with `--settings <that
-  file>` just before `--disallowedTools`. The file holds one key, `autoMemoryDirectory`. On Linux
-  and macOS it is written readable by the runner's account only, whatever the umask, in a folder
-  only that account can enter, because a settings file can name hooks Claude Code runs; on Windows
-  it carries the temporary folder's permissions. The folder gets the state directory's checks
-  first (Adopting 15). A `pass-settings.json` that an earlier build of this release left in the
-  state directory is removed by the next claude-mode pass that reaches the write. The runner
-  never creates `.pass-agent/` itself. Command mode is unchanged.
-- **A claude-mode pass now needs `cmp`, and `iconv` for a vault or settings-file path that is not
-  plain ASCII.** It reads the file back with the first and checks the path with the second, and refuses
-  to start without them. Git for Windows and macOS ship both.
+  whatever `TMPDIR` says, measured on CI), and removes when the pass ends. They start the agent
+  with `--settings <that file>` just before `--disallowedTools`. The file holds one key,
+  `autoMemoryDirectory`. On Linux and macOS it is written readable by the runner's account only,
+  whatever the umask, in a folder only that account can enter, because a settings file can name
+  hooks Claude Code runs; on Windows it carries the temporary folder's permissions. The folder
+  gets the state directory's checks first (Adopting 15). A `pass-settings.json` that an earlier
+  build of this release left in the state directory is removed by the next claude-mode pass that
+  reaches the write. The runner never creates `.pass-agent/` itself. Command mode is unchanged,
+  apart from `AGENT_SETTINGS_FILE` being unset when the runners' library loads.
+- **A claude-mode pass now needs `cmp`, and `iconv` for a vault or settings-file path with a byte
+  outside printable ASCII.** It reads the file back with the first and checks the path with the
+  second, and refuses to start without them. Git for Windows and macOS ship both.
 - **A memory Write the agent makes during a pass lands inside the vault**, in
   `90-auto-memory/.pass-agent/`, and one aimed at the folder the vault's local settings name or at
   the default folder is refused (measured for Write on Windows, for a vault on a drive path; the
-  Security section lists what is not covered). `90-auto-memory/` is a steering surface, so the fence contains a write there and
-  sets the tripwire, as for any other write under `90-auto-memory/`. In 1.4.0 a write to a memory
+  Security section lists what is not covered). `90-auto-memory/` is a steering surface, so the
+  fence contains a write there and sets the tripwire, as for any other write under
+  `90-auto-memory/`. In 1.4.0 a write to a memory
   folder outside the vault landed there unseen.
 - **A claude-mode pass refuses to start, with exit 1 and an `ERROR:` line, when**:
   - `90-auto-memory/.pass-agent/` holds anything but a regular `.DS_Store` file, or cannot be
@@ -148,9 +152,9 @@ What that covers, and what it does not:
     itself in `ls` and `pwd`, git cannot enter the folder and the pass exits 1 before the override
     (measured on this release; the git step that stops it is unchanged from 1.4.0).
   - The vault's path, or the settings file's in the temporary folder, holds bytes `iconv` will not
-    convert from UTF-8 to UTF-16LE and back unchanged, which Claude Code could read as another folder, or holds a byte
-    outside printable ASCII and `iconv` is missing to check it. A path can be invalid UTF-8 on
-    Linux, where it is bytes.
+    convert from UTF-8 to UTF-16LE and back unchanged, which Claude Code could read as another
+    folder, or holds a byte outside printable ASCII and `iconv` is missing to check it. A path
+    can be invalid UTF-8 on Linux, where it is bytes.
   - On Windows, `cygpath` is missing, fails or prints nothing for a path the override needs, or
     gives one that is not a Windows drive path (a network path `//server/share/...`, a `//?/` or
     `//./` device path, a Git Bash `/c/...` path), or one that names another folder or file.
@@ -162,13 +166,13 @@ What that covers, and what it does not:
     starts with a Windows program's `MZ` header, as when a runner in WSL starts Windows'
     `claude.exe`. Such a program would read the runner's POSIX paths as other folders. A name that
     is not a file at all, such as an exported shell function, and a file whose first bytes the
-    runner cannot read refuse too, with `is not a file the runner can check`. A wrapper script that starts a Windows
-    program is not recognised.
+    runner cannot read refuse too, with `is not a file the runner can check`. A wrapper script
+    that starts a Windows program is not recognised.
   - The runner's folder for the pass, under `TMPDIR`, fails the checks the state directory gets:
     it lies inside the vault, where the agent could change the file (and under `.claude/logs`,
-    `.obsidian` or `.git` the fence would not see it), or, off Windows, it is not this account's
-    own, every account can write it, or a folder above it every account can write has no sticky
-    bit.
+    `.obsidian` or `.git` the fence would not see it), or, off Windows, a folder above it every
+    account can write has no sticky bit. The folder itself, new from `mktemp -d`, is this
+    account's own and private, so the owner and mode checks on it pass.
   - The settings file could not be written, or does not read back exactly as written.
   - No settings file was written for the pass, which happens only when the runner and
     `runner-common.sh` come from different releases (Adopting 1). This refusal comes from the
@@ -216,8 +220,8 @@ What that covers, and what it does not:
    (`.claude/logs/dream-agent.run.log` or `promotion-agent.run.log`) says `no memory override was
    written for this pass`; no tripwire is left, also when `AGENT_SETTINGS_FILE` is set in the
    environment (measured on Linux with 1.4.0's `dream-pass.sh` and `promotion-pass.sh`; older
-   releases are unmeasured). With an older library and a 1.4.1 runner, every claude-mode pass exits 1 with
-   `memory_override: command not found`, which goes to the runner's stderr, not to its log
+   releases are unmeasured). With an older library and a 1.4.1 runner, every claude-mode pass exits
+   1 with `memory_override: command not found`, which goes to the runner's stderr, not to its log
    (measured on Linux). Either way no agent ran: take all three.
 2. **Nothing to configure for most vaults.** The override is on in claude mode for every pass.
    Item 11 asks some Windows accounts to set `VAULT_STATE_DIR`, and items 5 and 9 name the tools
@@ -236,8 +240,9 @@ What that covers, and what it does not:
    read this vault's repository` (measured on this release; that git step is unchanged from
    1.4.0); start it from the `.cmd` wrapper, or rename the folder.
 5. **A pass refuses to start while the vault's path, or the settings file's under `TMPDIR`, holds
-   bytes that do not come back unchanged from UTF-8 to UTF-16LE and back**, which can happen on Linux, where a path is bytes:
-   a folder name kept from a legacy encoding (GBK, Big5) by `unzip` or `rsync`, say. The log says
+   bytes that do not come back unchanged from UTF-8 to UTF-16LE and back**, which can happen on
+   Linux, where a path is bytes: a folder name kept from a legacy encoding (GBK, Big5) by `unzip`
+   or `rsync`, say. The log says
    `is not valid UTF-8, or iconv could not check it`. Rename the folder, or point `TMPDIR` at one
    with a plain name. The same line appears on any platform when the path is valid but holds a
    byte outside printable ASCII and `iconv` is not installed; install it.
@@ -260,11 +265,13 @@ What that covers, and what it does not:
    Windows the line may instead say `cygpath could not convert a path for the memory override`,
    `which is not a Windows drive path` or `which is not the same folder or file`; check Git Bash's
    `cygpath` (`docs/setup.md`, Troubleshooting), and for a quoted path that starts `//` and a host
-   name see item 14. When the quoted path starts `//?/`, the vault's path, or the temporary
-   folder's, is about 260 characters or more, which `cygpath` gives in that form: move the vault
-   nearer a drive root, or point `TMPDIR` at a shorter folder. A runner started outside Git Bash whose
-   Claude Code is Windows' `claude.exe`, named in `CLAUDE_BIN` or found on `PATH`, directly or
-   through a link, now refuses with `looks like a Windows program`; run the `.cmd` runner instead.
+   name, which means the vault or the temporary folder is on a network path, see item 14. When the
+   quoted path starts `//?/`, the vault's path, or the temporary folder's, is about 260 characters
+   or more, which `cygpath` gives in that form: move the vault nearer a drive root, or point
+   `TMPDIR` at a shorter folder outside the vault that only your account can change. A runner
+   started outside Git Bash whose Claude Code is Windows' `claude.exe`, named in `CLAUDE_BIN` or
+   found on `PATH`, directly or through a link, now refuses with `looks like a Windows program`;
+   run the `.cmd` runner instead.
 10. **If you renamed `90-auto-memory`, rename it in `runner-common.sh` too**, in `memory_override`
     and in the fence's steering list (`docs/customizing.md` § 2). Otherwise a pass checks, and
     points memory at, a folder that is no longer your memory tier.
@@ -278,10 +285,10 @@ What that covers, and what it does not:
     `Łukasz` whose parent the account could not write to). Make a new folder with an ASCII path
     outside the vault, directly under `C:\`, for example `C:\vault-state`, and make it private to
     your account: a new folder under `C:\` lets every signed-in account change its files, and the
-    runner trusts the tripwire, in-flight marker and backup it keeps there. Make the folder yourself. If `mkdir` says
-    it already exists, check its owner with `dir /q C:\` or `(Get-Acl C:\vault-state).Owner`, and
-    do not use one another account owns, because its owner can change its permissions back at any
-    time. In Command Prompt run
+    runner trusts the tripwire, in-flight marker and backup it keeps there. Make the folder
+    yourself. If `mkdir` says it already exists, check its owner with `dir /q C:\` or `(Get-Acl
+    C:\vault-state).Owner`, and do not use one another account owns, because its owner can change
+    its permissions back at any time. In Command Prompt run
     `icacls C:\vault-state /inheritance:r /grant:r "%USERDOMAIN%\%USERNAME%:(OI)(CI)F"` (in
     PowerShell write `"${env:USERDOMAIN}\${env:USERNAME}:(OI)(CI)F"`) as the account the scheduled
     task runs as, or write that account's name in their place, then check that
@@ -295,14 +302,14 @@ What that covers, and what it does not:
     `(F)` or `(DC)` lets that account rename your folder and put its own in its place, and `(WDAC)`
     or `(WO)` lets it give itself those rights: check a root with `icacls` before you use it.
     A folder deeper down, such as `D:\data\vault-state`, is only as safe as the folders above it,
-    for the same reason. Then set `VAULT_STATE_DIR` to `C:\vault-state\my-vault`. The vault itself may stay
-    under the profile, because the memory override now converts its path faithfully (other path
-    checks still convert under `C`; `docs/reference.md` § 4.3, Known limits). Give `VAULT_STATE_DIR`
-    an ASCII path on Windows. A non-ASCII one is used under a double-encoded name the runner makes
-    itself beside the folder you named, which takes its parent's permissions, not yours: directly
-    under `C:\`, every signed-in account could then change the state it holds (measured), and where
-    you cannot create folders, as in `C:\Users`, every pass exits 1. The memory override's settings
-    file is not kept in the state directory (Changed).
+    for the same reason. Then set `VAULT_STATE_DIR` to `C:\vault-state\my-vault`. The vault itself
+    may stay under the profile, because the memory override now converts its path faithfully (other
+    path checks still convert under `C`; `docs/reference.md` § 4.3, Known limits). Give
+    `VAULT_STATE_DIR` an ASCII path on Windows. A non-ASCII one is used under a double-encoded name
+    the runner makes itself beside the folder you named, which takes its parent's permissions, not
+    yours: directly under `C:\`, every signed-in account could then change the state it holds
+    (measured), and where you cannot create folders, as in `C:\Users`, every pass exits 1. The
+    memory override's settings file is not kept in the state directory (Changed).
 12. **The override was measured on Claude Code 2.1.284, 2.1.285, 2.1.287 and 2.1.289 only.**
     2.1.284 for a named folder, 2.1.285 for the default folder too, 2.1.287 for both again, the
     non-ASCII paths and the fail-open on an empty or invalid file, and 2.1.289 for the named and
@@ -317,13 +324,13 @@ What that covers, and what it does not:
 14. **On Windows a vault on a network path no longer runs from Git Bash.** A vault reached as
     `//server/share/...` or `//wsl.localhost/...` (a NAS share, the WSL file system, a Documents
     folder redirected to a server) was accepted from Git Bash by an earlier build of this release,
-    but Claude Code did not honour the memory override for it (measured), so such a
-    pass now exits 1 with `cygpath gave //... for a path of the memory override, which is not a
-    Windows drive path`. Move the vault to a local drive, or reach
-    the share through a mapped drive letter (`net use Z: \\server\share`), which runs: for one drive
-    mapped to an SMB share, a memory Write to the default folder was refused (Claude Code 2.1.289,
-    through `dream-pass.cmd`). The `.cmd` wrappers cannot start a vault from a `//` path
-    (`CMD does not support UNC paths as current directories`, measured on this release).
+    but Claude Code did not honour the memory override for it (measured), so such a pass now exits 1
+    with `cygpath gave //... for a path of the memory override, which is not a Windows drive path`.
+    Move the vault to a local drive, or reach the share through a mapped drive letter (`net use Z:
+    \\server\share`), which runs: for one drive mapped to an SMB share, a memory Write to the
+    default folder was refused (Claude Code 2.1.289, through `dream-pass.cmd`). The `.cmd` wrappers
+    cannot start a vault from a `//` path (`CMD does not support UNC paths as current directories`,
+    measured on this release).
 15. **A claude-mode pass refuses to start when its folder under `TMPDIR` fails the state
     directory's checks.** The log says `the runner's folder for the pass, ...`, then why (`resolves
     into the vault`, `is inside a folder every account can write that has no sticky bit`, and so
@@ -332,8 +339,9 @@ What that covers, and what it does not:
     (Git Bash's `/tmp`, this account's temporary folder), measured on CI's three platforms. If you
     set `TMPDIR` for the passes, point it at a folder outside the vault that only your account can
     change, named directly rather than through a link, because the checks judge the folder a link
-    leads to and the file is written through the link; on Windows the runner cannot read a folder's permissions, so leave `TMPDIR` unset there
-    (setting `TEMP` for the `.cmd` did not move Git Bash's `/tmp`, measured). On macOS
+    leads to and the file is written through the link. On Windows the runner cannot read a
+    folder's permissions, so leave `TMPDIR` unset there (on the one host measured, setting `TEMP`
+    and `TMP` for the `.cmd` did not move Git Bash's `/tmp`). On macOS
     `TMPDIR` does not move the folder: Apple's `mktemp` takes the per-user one (measured on CI).
 
 `--check` will list `.claude/scripts/lib/runner-common.sh`, `.claude/scripts/dream-pass.sh`,
