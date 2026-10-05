@@ -2497,13 +2497,45 @@ fi
 # under .claude/logs, which the fence's snapshot does not walk, so the agent could
 # change the file unseen. Off Windows so does one under a folder every account
 # can write that has no sticky bit, where another account could swap the folder.
+# Apple's mktemp takes its per-user folder whatever TMPDIR says, so where a twin
+# cannot steer the runner's folder that way, memory_override is called directly,
+# as the runners call it, with that folder.
 MO_WORK="and the memory override's settings file there can name hooks Claude Code runs"
+mo_tmpdir_steers() {  # mo_tmpdir_steers <dir> - true when mktemp -d under TMPDIR=<dir> makes its folder there
+  local d
+  d="$(TMPDIR="$1" mktemp -d 2>/dev/null)" || return 1
+  rmdir "$d" 2>/dev/null
+  case "$d" in "$1"/*) return 0 ;; *) return 1 ;; esac
+}
+# mo_direct <vault> <work> <log> - memory_override as the runners call it; its status
+mo_direct() {
+  ( LC_ALL=C; export LC_ALL; . "$RV/.claude/scripts/lib/runner-common.sh"; AGENT_BIN="$FAKE"
+    memory_override "$1" "${CASE_STATE:-$TMP/state}" "$2" "$3" )
+}
+# mo_work_refused <label> <reason> <TMPDIR> - a pass with that TMPDIR refuses with <reason>, or, where
+# mktemp does not take TMPDIR, memory_override with a folder in it does and writes nothing there
+mo_work_refused() {
+  local rc
+  if mo_tmpdir_steers "$3"; then
+    mo_refused "$1" "$2" dream-pass.sh journal "$MO_LOG" TMPDIR="$3"
+    return
+  fi
+  rm -rf "$3/w" "$TMP/memovr-direct.log"
+  ( umask 077 && mkdir -p "$3/w" )
+  mo_direct "$RV" "$3/w" "$TMP/memovr-direct.log"
+  rc=$?
+  if [ "$rc" -eq 1 ] && grep -F -- "$2" "$TMP/memovr-direct.log" 2>/dev/null | grep -q '^\[[^]]*\] ERROR: ' && [ ! -e "$3/w/pass-settings.json" ]; then
+    ok "$1 -> memory_override, called directly as mktemp here does not take TMPDIR, refused (1), an ERROR: line says why, nothing written"
+  else
+    bad "$1 -- memory_override, called directly, was not refused for it -- got $rc: $(cat "$TMP/memovr-direct.log" 2>/dev/null)"
+  fi
+  rm -rf "$3/w" "$TMP/memovr-direct.log"
+}
 rm -rf "$RV/.claude/logs/memovr-tmp"
 mkdir -p "$RV/.claude/logs/memovr-tmp"
 if [ -d "$RV/.claude/logs/memovr-tmp" ]; then
   ran mem-override-work-refused
-  mo_refused "claude mode: TMPDIR inside the vault, under .claude/logs" "resolves into the vault, $MO_WORK" \
-    dream-pass.sh journal "$MO_LOG" TMPDIR="$RV/.claude/logs/memovr-tmp"
+  mo_work_refused "claude mode: TMPDIR inside the vault, under .claude/logs" "resolves into the vault, $MO_WORK" "$RV/.claude/logs/memovr-tmp"
 else
   bad "mem-override-work-refused: a temporary folder inside the vault could not be made"
 fi
@@ -2515,8 +2547,8 @@ else
   mkdir -p "$TMP/memovr-open"
   chmod 777 "$TMP/memovr-open"
   if [ -n "$(find "$TMP/memovr-open" -maxdepth 0 -perm -0002 ! -perm -1000 -print 2>/dev/null)" ]; then
-    mo_refused "claude mode: TMPDIR under a folder every account can write that has no sticky bit" \
-      "is inside a folder every account can write that has no sticky bit, $MO_WORK" dream-pass.sh journal "$MO_LOG" TMPDIR="$TMP/memovr-open"
+    mo_work_refused "claude mode: TMPDIR under a folder every account can write that has no sticky bit" \
+      "is inside a folder every account can write that has no sticky bit, $MO_WORK" "$TMP/memovr-open"
   else
     bad "mem-override-work-refused: a folder every account can write, with no sticky bit, could not be made"
   fi
@@ -5326,8 +5358,19 @@ for mo_i in e-acute cyrillic cjk emoji top tmp tmp-emoji; do
     grep -qx mem-override-nonascii "$RAN_CONTROLS" || ran mem-override-nonascii
     if is_windows_host && [ "$(LC_ALL=C cygpath -m "$mo_conv")" = "$mo_want" ]; then
       bad "mem-override-nonascii: cygpath under LC_ALL=C converts $mo_say faithfully on this host, so this twin cannot show the defect"
-    elif [ -n "$mo_tmp" ]; then
+    elif [ -n "$mo_tmp" ] && mo_tmpdir_steers "$mo_tmp"; then
       mo_accepts "dream-pass: $mo_say" "$MO_NV" "$MO_TM/${MO_NV##*/}" "$mo_want" TMPDIR="$mo_tmp"
+    elif [ -n "$mo_tmp" ]; then
+      rm -f "$TMP/memovr-na.log"
+      ( umask 077 && mkdir -p "$mo_tmp/w" )
+      mo_direct "$MO_NV" "$mo_tmp/w" "$TMP/memovr-na.log"
+      mo_rc=$?
+      if [ "$mo_rc" -eq 0 ] && [ "$(cat "$mo_tmp/w/pass-settings.json" 2>/dev/null)" = "{\"autoMemoryDirectory\":\"$MO_NV/90-auto-memory/.pass-agent\"}" ]; then
+        ok "memory_override, called directly as mktemp here does not take TMPDIR: $mo_say -> accepted (0), the file names that vault's own 90-auto-memory/.pass-agent"
+      else
+        bad "memory_override, called directly, did not accept $mo_say -- got $mo_rc: $(cat "$TMP/memovr-na.log" 2>/dev/null)"
+      fi
+      rm -f "$TMP/memovr-na.log"
     else
       mo_accepts "dream-pass: $mo_say" "$MO_NV" "$MO_TM/${MO_NV##*/}" ""
     fi
@@ -5365,7 +5408,7 @@ else
         bad "mem-override-utf8-refused: the $mo_where twin's name holds the bytes $(mo_hex "$MO_FF"), not ${mo_seq#*:}"
       elif mkdir "${mo_ut:-$MO_UV}" 2>/dev/null && ! { make_runner_vault "$MO_UV" && [ -f "$MO_UV/.claude/scripts/dream-pass.sh" ]; }; then
         bad "mem-override-utf8-refused: the file system took the name, but a vault could not be made for the $mo_where twin (${mo_seq#*:})"
-      elif [ -d "${mo_ut:-$MO_UV}" ]; then
+      elif [ -d "${mo_ut:-$MO_UV}" ] && { [ -z "$mo_ut" ] || mo_tmpdir_steers "$mo_ut"; }; then
         rm -f "$REC.argv"
         if [ -n "$mo_ut" ]; then
           mo_rc="$(RUNNER_VAULT="$MO_UV" runner dream-pass.sh journal FAKE_RECORD="$REC" TMPDIR="$mo_ut")"

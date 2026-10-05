@@ -91,11 +91,13 @@ What that covers, and what it does not:
   `TMPDIR` or what lies under it could already change the pass's snapshots and steering backup,
   kept in the same folder since 1.4.0.
 - **Linux and macOS are unverified.** No Claude Code run has measured the grant on either. There
-  the runner refuses a vault or settings-file path that `iconv` will not convert from UTF-8 to
-  UTF-16LE, which Claude Code could read as another folder: invalid bytes, surrogates, overlong
-  forms, code points above U+10FFFF and 5- and 6-byte forms. That refusal was measured on Linux
-  (glibc 2.43) with a stand-in agent; glibc's conversion to UTF-8, which an earlier build of this
-  release used, let the last two through. macOS's `iconv` was not measured.
+  the runner refuses a vault or settings-file path that does not come back byte for byte when
+  `iconv` converts it from UTF-8 to UTF-16LE and back, which Claude Code could read as another
+  folder: invalid bytes, surrogates, overlong forms, code points above U+10FFFF and 5- and 6-byte
+  forms. That refusal was measured on Linux (glibc 2.43) with a stand-in agent, and the suite's
+  twins hold it on CI's Linux and macOS jobs. glibc's conversion to UTF-8, which an earlier build
+  of this release used, let the last two through, and macOS's `iconv` takes them to UTF-16LE
+  without an error (measured on CI), which is why the result must also convert back.
 - **Measured on Claude Code 2.1.284 (a named folder), 2.1.285 and 2.1.287 (a named folder and the
   default one, and on 2.1.287 the non-ASCII paths), and 2.1.289 (the named and default folders,
   the Cyrillic and `"` vaults, glob and trailing-dot names, a drive root, a mapped network drive,
@@ -107,7 +109,8 @@ What that covers, and what it does not:
 
 - **Both runners write `pass-settings.json` into their own folder for the pass before a
   claude-mode pass**, the one each already makes with `mktemp -d` for its snapshots, under
-  `TMPDIR` or `/tmp`, and removes when the pass ends. They start the agent with `--settings <that
+  `TMPDIR` or `/tmp` (on macOS under the per-user temporary folder, which Apple's `mktemp` takes
+  whatever `TMPDIR` says, measured on CI), and removes when the pass ends. They start the agent with `--settings <that
   file>` just before `--disallowedTools`. The file holds one key, `autoMemoryDirectory`. On Linux
   and macOS it is written readable by the runner's account only, whatever the umask, in a folder
   only that account can enter, because a settings file can name hooks Claude Code runs; on Windows
@@ -141,7 +144,7 @@ What that covers, and what it does not:
     itself in `ls` and `pwd`, git cannot enter the folder and the pass exits 1 before the override
     (measured on this release; the git step that stops it is unchanged from 1.4.0).
   - The vault's path, or the settings file's in the temporary folder, holds bytes `iconv` will not
-    convert from UTF-8 to UTF-16LE, which Claude Code could read as another folder, or holds a byte
+    convert from UTF-8 to UTF-16LE and back unchanged, which Claude Code could read as another folder, or holds a byte
     outside printable ASCII and `iconv` is missing to check it. A path can be invalid UTF-8 on
     Linux, where it is bytes.
   - On Windows, `cygpath` is missing, fails or prints nothing for a path the override needs, or
@@ -224,7 +227,7 @@ What that covers, and what it does not:
    read this vault's repository` (measured on this release; that git step is unchanged from
    1.4.0); start it from the `.cmd` wrapper, or rename the folder.
 5. **A pass refuses to start while the vault's path, or the settings file's under `TMPDIR`, holds
-   bytes `iconv` will not convert from UTF-8**, which can happen on Linux, where a path is bytes:
+   bytes that do not come back unchanged from UTF-8 to UTF-16LE and back**, which can happen on Linux, where a path is bytes:
    a folder name kept from a legacy encoding (GBK, Big5) by `unzip` or `rsync`, say. The log says
    `is not valid UTF-8, or iconv could not check it`. Rename the folder, or point `TMPDIR` at one
    with a plain name. The same line appears on any platform when the path is valid but holds a
@@ -317,7 +320,8 @@ What that covers, and what it does not:
     default temporary folder passes on Linux (`/tmp`, sticky), macOS (a per-user folder) and Windows
     (Git Bash's `/tmp`, your `%TEMP%`). If you set `TMPDIR` for the passes, point it at a folder
     outside the vault that only your account can change; on Windows the runner cannot read a
-    folder's permissions, so keep `TMPDIR` and `TEMP` at the per-user default there.
+    folder's permissions, so keep `TMPDIR` and `TEMP` at the per-user default there. On macOS
+    `TMPDIR` does not move the folder: Apple's `mktemp` takes the per-user one (measured on CI).
 
 `--check` will list `.claude/scripts/lib/runner-common.sh`, `.claude/scripts/dream-pass.sh`,
 `.claude/scripts/promotion-pass.sh`, `.claude/scripts/run-tests.sh`, `.claude/agents/dream-agent.md`,

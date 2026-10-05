@@ -3175,7 +3175,7 @@ note_tripwire() {
 # agent binary that is a Windows program, which would read the POSIX paths as
 # other folders; a converted path that names something else; a vault path the
 # JSON would have to escape; a vault or settings-file
-# path that iconv will not convert from UTF-8, which Claude Code could read as
+# path that does not come back unchanged from UTF-8 to UTF-16LE and back, which Claude Code could read as
 # another folder; a 90-auto-memory or .pass-agent that is a link (the fence sees a
 # folder link that was there before the pass only as a link, so writes through
 # it would not be seen) or is not a folder; and a .pass-agent holding anything
@@ -3251,11 +3251,14 @@ memory_override() {
       return 1 ;;
   esac
   # Only a path with a byte outside printable ASCII needs iconv to vouch for it.
-  # The target is UTF-16LE, not UTF-8: glibc's iconv passes code points above
-  # U+10FFFF and 5- and 6-byte forms through to UTF-8 (2.43, measured).
+  # The paths go to UTF-16LE and back and must come back byte for byte: glibc's
+  # iconv passes code points above U+10FFFF and 5- and 6-byte forms through to
+  # UTF-8 (2.43, measured), and macOS's takes them to UTF-16LE without an error
+  # (measured on CI). Valid UTF-8 always comes back as it went in.
   case "$vault$arg" in
     *[![:print:]]*)
-      if ! printf '%s\n%s\n' "$vault" "$arg" | iconv -f UTF-8 -t UTF-16LE >/dev/null 2>&1; then
+      p="$(printf '%s\n%s\n' "$vault" "$arg" | iconv -f UTF-8 -t UTF-16LE 2>/dev/null | iconv -f UTF-16LE -t UTF-8 2>/dev/null; printf x)"
+      if [ "$p" != "$(printf '%s\n%s\nx' "$vault" "$arg")" ]; then
         printf '[%s] ERROR: the vault'"'"'s path or the settings file'"'"'s path in the temporary folder is not valid UTF-8, or iconv could not check it, so Claude Code could read the memory override as naming another folder. Rename the folder. Refusing to run.\n' "$(ts)" >> "$log"
         return 1
       fi ;;
