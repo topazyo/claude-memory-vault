@@ -2490,6 +2490,37 @@ else
   fi
   rm -f "$TMP/memovr-umask-probe" "$MO_CAP.json" "$MO_CAP.where"
 fi
+# The settings file can name hooks Claude Code runs, so the runner's folder for
+# the pass gets the state directory's checks. One inside the vault refuses: here
+# under .claude/logs, which the fence's snapshot does not walk, so the agent could
+# change the file unseen. Off Windows so does one under a folder every account
+# can write that has no sticky bit, where another account could swap the folder.
+MO_WORK="and the memory override's settings file there can name hooks Claude Code runs"
+rm -rf "$RV/.claude/logs/memovr-tmp"
+mkdir -p "$RV/.claude/logs/memovr-tmp"
+if [ -d "$RV/.claude/logs/memovr-tmp" ]; then
+  ran mem-override-work-refused
+  mo_refused "claude mode: TMPDIR inside the vault, under .claude/logs" "resolves into the vault, $MO_WORK" \
+    dream-pass.sh journal "$MO_LOG" TMPDIR="$RV/.claude/logs/memovr-tmp"
+else
+  bad "mem-override-work-refused: a temporary folder inside the vault could not be made"
+fi
+rm -rf "$RV/.claude/logs/memovr-tmp"
+if is_windows_host; then
+  skip mem-override-work-open 'a temporary folder under one every account can write: Git Bash mode bits are not Windows permissions'
+else
+  rm -rf "$TMP/memovr-open"
+  mkdir -p "$TMP/memovr-open"
+  chmod 777 "$TMP/memovr-open"
+  if [ -n "$(find "$TMP/memovr-open" -maxdepth 0 -perm -0002 ! -perm -1000 -print 2>/dev/null)" ]; then
+    mo_refused "claude mode: TMPDIR under a folder every account can write that has no sticky bit" \
+      "is inside a folder every account can write that has no sticky bit, $MO_WORK" dream-pass.sh journal "$MO_LOG" TMPDIR="$TMP/memovr-open"
+  else
+    bad "mem-override-work-refused: a folder every account can write, with no sticky bit, could not be made"
+  fi
+  chmod 755 "$TMP/memovr-open"
+  rm -rf "$TMP/memovr-open"
+fi
 
 # cygpath failing on either path the override needs refuses the pass, rather
 # than passing an empty value, and so does cygpath succeeding with a path that

@@ -455,7 +455,9 @@ a lint that does nothing and a lint that found nothing wrong print the same thin
   state directory is removed. A pass refuses with exit 1 and an `ERROR:` line when that folder
   holds anything but a plain `.DS_Store` (a file, a hidden file, a folder, a FIFO, a link, a second
   hard link, an entry that lists before it) or cannot be listed, when it or `90-auto-memory` is a
-  link or not a folder, when the file cannot be written or does not read back as written, on
+  link or not a folder, when the runner's folder for the pass lies inside the vault or, off Windows,
+  under a folder every account can write that has no sticky bit, when the file cannot be written
+  or does not read back as written, on
   Windows when `cygpath` fails, prints nothing, gives back a Git Bash path, a `//?/` or `//./`
   device path or a network path (`//host/share/...`), or gives a path naming something else, when
   a Git Bash platform name comes with no `cygpath`, when the vault's path or the settings file's
@@ -773,7 +775,10 @@ Around that call, each runner does several things an exit code cannot:
   when the agent binary looks like a Windows program (the file `CLAUDE_BIN` names, or the `claude`
   found on `PATH`, ends in `.exe` or, read through any link, starts with `MZ`), which would read
   the runner's POSIX paths as other folders, or is not a file it can check, being no file at all
-  or one whose first bytes it cannot read; when the file
+  or one whose first bytes it cannot read; when the runner's folder for the pass fails the checks
+  the state directory gets (below), because the file can name hooks Claude Code runs: not this
+  account's own, writable by every account, under a folder every account can write that has no
+  sticky bit, or inside the vault, where the agent could change it; when the file
   cannot be written (off Windows readable by the runner's account only, in a folder only it can
   enter; on Windows it carries the temporary folder's permissions, which under the per-user
   default give it to the account, SYSTEM and Administrators only, measured); and when it does not
@@ -899,9 +904,19 @@ Around that call, each runner does several things an exit code cannot:
     runner reads `pass-settings.json` back byte for byte before it starts the agent, but a change
     between that read and Claude Code's is not seen, nor one Claude Code might read later in the
     pass (whether it re-reads the file is unmeasured). The file lies in the runner's own folder for
-    the pass under `TMPDIR` (or `/tmp`), which `mktemp -d` makes private off Windows. On Windows it
-    carries the temporary folder's permissions, so leave `TEMP` and `TMPDIR` at the per-user
-    default there, which only the account, SYSTEM and Administrators can change (measured).
+    the pass under `TMPDIR` (or `/tmp`), which `mktemp -d` makes private off Windows and which must
+    pass the state directory's checks. As there, a group-writable folder above it is allowed, and a
+    member of that group could rename the folder and put their own in its place, so keep `TMPDIR`
+    writable by your account only. On Windows it carries the temporary folder's permissions and the
+    runner cannot read them, so leave `TEMP` and `TMPDIR` at the per-user default there, which only
+    the account, SYSTEM and Administrators can change (measured). The same folder has held the
+    pass's snapshots, its steering backup and the folder git takes hooks from since 1.4.0.
+  - The runner removes the settings file with its folder when the pass ends. After a stop that
+    leaves Claude Code running (`KILL_FAILED`, which sets the tripwire), the file is gone while the
+    process may still be at work; whether Claude Code would then grant its default memory folder
+    again is unmeasured, so when you review such a pass, look in its default memory folder too:
+    `~/.claude/projects/<the vault's path, with each character but a letter or digit turned into
+    a ->/memory/`.
   - The override assumes the runner and Claude Code see paths alike. A runner started outside Git
     Bash (in WSL, say) whose Claude Code is Windows' `claude.exe` would pass Linux paths a Windows
     program reads as folders under its drive root, so such a pass refuses to start. The check
@@ -1392,7 +1407,7 @@ Known limits, each failing in the quiet direction:
 | Exit | Meaning (dream and promotion runners) |
 | --- | --- |
 | `0` | OK: the artifact assertion held, nothing outside the fence changed, and the pass's files were committed, HEAD already held them, git ignores them, or the vault is not a repository of its own |
-| `1` | NO-ARTIFACT, the runner could not create its temporary directory, use its state directory, write its in-flight marker or (promotion pass) its git state file, run `git status` or back up the steering surfaces, git cannot read the vault's repository, or (command mode) the agent definition file is missing. Also, in claude mode, the memory override refused the pass before the agent started: `90-auto-memory/.pass-agent/` holds anything but a regular `.DS_Store` file with no other hard link, or cannot be listed ("the memory override folder already held a file"), it or `90-auto-memory` is a symlink or junction ("the memory override folder is a link"), either is not a folder ("is not a folder, so the memory override folder cannot be made there"), the vault's path holds a `"`, a `\` or a control character ("the vault's path holds a character the settings file cannot carry"), the vault's path or the settings file's holds bytes `iconv` will not convert from UTF-8 ("is not valid UTF-8, or iconv could not check it"), `pass-settings.json` could not be written ("could not write the memory override") or does not read back as written ("does not hold what was written to it"), or, on Windows, `cygpath` could not convert a path it needs ("cygpath could not convert a path for the memory override"), gave one that is not a drive path, a network path among them ("which is not a Windows drive path") or gave one that names another folder or file ("which is not the same folder or file"), or, outside Git Bash, the agent binary looks like a Windows program ("looks like a Windows program, but this runner is not running under Git Bash") or is not a file it can check ("is not a file the runner can check"). Claude Code's own exit 1, for example on a settings file it cannot use, also ends the run with 1: the log then says `dream-agent exited with code 1` (or `promotion-agent`) and the run log holds Claude Code's message. So does a claude-mode start for which no override was written, as when the runner and `lib/runner-common.sh` come from different releases: the run log then says "no memory override was written for this pass" and Claude Code was never started |
+| `1` | NO-ARTIFACT, the runner could not create its temporary directory, use its state directory, write its in-flight marker or (promotion pass) its git state file, run `git status` or back up the steering surfaces, git cannot read the vault's repository, or (command mode) the agent definition file is missing. Also, in claude mode, the memory override refused the pass before the agent started: `90-auto-memory/.pass-agent/` holds anything but a regular `.DS_Store` file with no other hard link, or cannot be listed ("the memory override folder already held a file"), it or `90-auto-memory` is a symlink or junction ("the memory override folder is a link"), either is not a folder ("is not a folder, so the memory override folder cannot be made there"), the vault's path holds a `"`, a `\` or a control character ("the vault's path holds a character the settings file cannot carry"), the vault's path or the settings file's holds bytes `iconv` will not convert from UTF-8 ("is not valid UTF-8, or iconv could not check it"), the runner's folder for the pass fails the state directory's checks ("the runner's folder for the pass", then the check, then "and the memory override's settings file there can name hooks Claude Code runs"), `pass-settings.json` could not be written ("could not write the memory override") or does not read back as written ("does not hold what was written to it"), or, on Windows, `cygpath` could not convert a path it needs ("cygpath could not convert a path for the memory override"), gave one that is not a drive path, a network path among them ("which is not a Windows drive path") or gave one that names another folder or file ("which is not the same folder or file"), or, outside Git Bash, the agent binary looks like a Windows program ("looks like a Windows program, but this runner is not running under Git Bash") or is not a file it can check ("is not a file the runner can check"). Claude Code's own exit 1, for example on a settings file it cannot use, also ends the run with 1: the log then says `dream-agent exited with code 1` (or `promotion-agent`) and the run log holds Claude Code's message. So does a claude-mode start for which no override was written, as when the runner and `lib/runner-common.sh` come from different releases: the run log then says "no memory override was written for this pass" and Claude Code was never started |
 | `2` | VIOLATION: a file outside the allowed write areas changed during the run. When steering surfaces are among them they are contained and the tripwire is set. Also when the pass changed a file it owns that already had uncommitted changes before it started, or a file it owns and changed is no longer a regular file, or (promotion pass) it changed a long-tier note that was there before it started. The runner commits nothing. Those last three reasons give exit 2 even when the agent failed, timed out or (promotion pass) gave no summary, and nothing is recorded for the next run. The promotion pass also puts back its notes, as for exit 5, except one that already had uncommitted changes |
 | `3` | REFUSED: `VAULT_AGENT=command` without `VAULT_ALLOW_UNENFORCED_TOOLS=1`; the agent was not started |
 | `4` | COMMIT-FAILED: staging or committing the pass's files failed, ran longer than `RUNNER_GIT_TIMEOUT`, or a file changed while it was checked. The files are left in place and uncommitted, and the log says whether they could be unstaged. Also a commit that was made but does not hold the checked content, which the log names |

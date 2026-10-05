@@ -85,8 +85,11 @@ What that covers, and what it does not:
   starts the agent and refuses on any difference, but a change made between that read and Claude
   Code's is not seen. So the file is not kept in the state directory, which may be shared or, on
   Windows, take its parent's permissions: it is written in the runner's own folder for the pass,
-  which only the runner's account can enter on Linux and macOS, and which on Windows carries the
-  per-user temporary folder's permissions (the account, SYSTEM and Administrators, measured).
+  which must pass the checks the state directory gets, which only the runner's account can enter
+  on Linux and macOS, and which on Windows carries the temporary folder's permissions, under the
+  per-user default the account's, SYSTEM's and Administrators' (measured). Whoever can change
+  `TMPDIR` or what lies under it could already change the pass's snapshots and steering backup,
+  kept in the same folder since 1.4.0.
 - **Linux and macOS are unverified.** No Claude Code run has measured the grant on either. There
   the runner refuses a vault or settings-file path that `iconv` will not convert from UTF-8 to
   UTF-16LE, which Claude Code could read as another folder: invalid bytes, surrogates, overlong
@@ -108,9 +111,10 @@ What that covers, and what it does not:
   file>` just before `--disallowedTools`. The file holds one key, `autoMemoryDirectory`. On Linux
   and macOS it is written readable by the runner's account only, whatever the umask, in a folder
   only that account can enter, because a settings file can name hooks Claude Code runs; on Windows
-  it carries the temporary folder's permissions. A `pass-settings.json` found in the state
-  directory, which an earlier build of this release wrote there, is removed. The runner never
-  creates `.pass-agent/` itself. Command mode is unchanged.
+  it carries the temporary folder's permissions. The folder gets the state directory's checks
+  first (Adopting 15). A `pass-settings.json` that an earlier build of this release left in the
+  state directory is removed by the next claude-mode pass that reaches the write. The runner
+  never creates `.pass-agent/` itself. Command mode is unchanged.
 - **A claude-mode pass now needs `cmp`, and `iconv` for a vault or settings-file path that is not
   plain ASCII.** It reads the file back with the first and checks the path with the second, and refuses
   to start without them. Git for Windows and macOS ship both.
@@ -153,6 +157,10 @@ What that covers, and what it does not:
     is not a file at all, such as an exported shell function, and a file whose first bytes the
     runner cannot read refuse too, with `is not a file the runner can check`. A wrapper script that starts a Windows
     program is not recognised.
+  - The runner's folder for the pass, under `TMPDIR`, fails the checks the state directory gets:
+    it is not this account's own, every account can write it, a folder above it every account can
+    write has no sticky bit, or it lies inside the vault, where the agent could change the file
+    (and under `.claude/logs`, `.obsidian` or `.git` the fence would not see it).
   - The settings file could not be written, or does not read back exactly as written.
   - No settings file was written for the pass, which happens only when the runner and
     `runner-common.sh` come from different releases (Adopting 1). This refusal comes from the
@@ -178,8 +186,8 @@ What that covers, and what it does not:
   `mem-override-flag`, `mem-override-sink-refused`, `mem-override-sink-link`,
   `mem-override-sink-hardlink`, `mem-override-sink-contained`, `mem-override-sink-fifo`,
   `mem-override-path-refused`, `mem-override-nonascii`, `mem-override-order`,
-  `mem-override-mixed-release`, `mem-override-unc-refused` and `dream-agent-tools` are required on
-  every CI job. `mem-override-sink-unreadable`, `mem-override-sink-filelink`,
+  `mem-override-mixed-release`, `mem-override-unc-refused`, `mem-override-work-refused` and
+  `dream-agent-tools` are required on every CI job. `mem-override-sink-unreadable`, `mem-override-sink-filelink`,
   `mem-override-file-mode`, `mem-override-utf8-refused`, `mem-override-winbin`,
   `mem-override-winbin-unreadable`, `mem-override-stray-cygpath` and `mem-override-no-cygpath` are
   required on the Linux and macOS jobs and not on Windows, where they skip or may skip; the two
@@ -302,6 +310,14 @@ What that covers, and what it does not:
     the share through a mapped drive letter (`net use Z: \\server\share`), which runs: for one drive
     mapped to an SMB share, a memory Write to the default folder was refused (Claude Code 2.1.289,
     through `dream-pass.cmd`). The `.cmd` wrappers never could start a vault on a network path.
+15. **A claude-mode pass refuses to start when its folder under `TMPDIR` fails the state
+    directory's checks.** The log says `the runner's folder for the pass, ...`, then why (`resolves
+    into the vault`, `is inside a folder every account can write that has no sticky bit`, and so
+    on), `and the memory override's settings file there can name hooks Claude Code runs`. The
+    default temporary folder passes on Linux (`/tmp`, sticky), macOS (a per-user folder) and Windows
+    (Git Bash's `/tmp`, your `%TEMP%`). If you set `TMPDIR` for the passes, point it at a folder
+    outside the vault that only your account can change; on Windows the runner cannot read a
+    folder's permissions, so keep `TMPDIR` and `TEMP` at the per-user default there.
 
 `--check` will list `.claude/scripts/lib/runner-common.sh`, `.claude/scripts/dream-pass.sh`,
 `.claude/scripts/promotion-pass.sh`, `.claude/scripts/run-tests.sh`, `.claude/agents/dream-agent.md`,

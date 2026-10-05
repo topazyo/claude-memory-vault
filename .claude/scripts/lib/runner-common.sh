@@ -3180,21 +3180,22 @@ note_tripwire() {
 # folder link that was there before the pass only as a link, so writes through
 # it would not be seen) or is not a folder; and a .pass-agent holding anything
 # but a regular .DS_Store file with no other hard link, since anything else could
-# be read into the pass as memory or let a write leave the vault. They write
-# nothing. They must run after the pass's "before" snapshot, so that anything
-# planted after them is still a change the fence sees. Then the file is written
-# as <work-dir>/pass-settings.json, in the runner's own folder for the pass, and
-# must read back byte for byte, because Claude Code reads an empty or invalid
-# settings file as if there were none. The state directory may be shared or take
-# its parent's permissions, so a copy an earlier build left there is removed. On
-# POSIX hosts the file is readable by this account only, in a folder only it can
-# enter; on Windows the temporary folder's permissions decide.
+# be read into the pass as memory or let a write leave the vault; and a
+# <work-dir> that fails the state directory's checks (state_dir_ready). They
+# write nothing. They must run after the pass's "before" snapshot, so that
+# anything planted after them is still a change the fence sees. Then the file is
+# written as <work-dir>/pass-settings.json, in the runner's own folder for the
+# pass, and must read back byte for byte, because Claude Code reads an empty or
+# invalid settings file as if there were none. The state directory may be shared
+# or take its parent's permissions, so a copy an earlier build left there is
+# removed. On POSIX hosts the file is readable by this account only, in a folder
+# only it can enter; on Windows the temporary folder's permissions decide.
 # AGENT_SETTINGS_FILE names it as Claude Code reads a path.
 # .pass-agent itself is never created here. Returns 1, with the reason in <log>,
 # when the pass must not start.
 memory_override() {
   local root="$1" state="$2" work="$3" log="$4" vault="$1" file="$3/pass-settings.json" arg="$3/pass-settings.json"
-  local dir="$1/90-auto-memory/.pass-agent" list line p h win=0 exe=0
+  local dir="$1/90-auto-memory/.pass-agent" list line p h= win=0 exe=0
   # Set only on success below, so no value from the environment can stand in.
   unset AGENT_SETTINGS_FILE
   # On Windows a path left in Git Bash form is read by Claude Code as a folder
@@ -3235,7 +3236,7 @@ memory_override() {
       case "$p" in
         [ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]:/*) ;;
         *)
-          printf '[%s] ERROR: cygpath gave %s for a path of the memory override, which is not a Windows drive path, so Claude Code would read it as another folder, or ignore the override, as it does for a vault on a network path. Keep the vault on a drive. Refusing to run.\n' "$(ts)" "$p" >> "$log"
+          printf '[%s] ERROR: cygpath gave %s for a path of the memory override, which is not a Windows drive path, so Claude Code would read it as another folder, or ignore the override, as it does for a vault on a network path. Keep the vault and the temporary folder on a drive. Refusing to run.\n' "$(ts)" "$p" >> "$log"
           return 1 ;;
       esac
     done
@@ -3274,6 +3275,14 @@ memory_override() {
       printf '[%s] ERROR: the memory override folder already held a file, or could not be listed. 90-auto-memory/.pass-agent/ must be empty, apart from a plain .DS_Store file (not a link, no other hard link), because what it holds could be read into the pass as memory. Remove it. Refusing to run.\n' "$(ts)" >> "$log"
       return 1
     fi
+  fi
+  # The file can name hooks Claude Code runs, so its folder must pass the state
+  # directory's checks.
+  state_dir_ready "$work" "$root" >/dev/null
+  p=$?
+  if [ "$p" -ne 0 ]; then
+    printf '[%s] ERROR: the runner'"'"'s folder for the pass, %s, %s, and the memory override'"'"'s settings file there can name hooks Claude Code runs. Point TMPDIR at a folder only this account can change, outside the vault. Refusing to run.\n' "$(ts)" "$work" "$(state_dir_problem "$p")" >> "$log"
+    return 1
   fi
   # Nothing reads a copy an earlier build left in the state directory.
   rm -f "$state/pass-settings.json" 2>/dev/null
