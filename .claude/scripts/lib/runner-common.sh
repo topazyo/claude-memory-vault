@@ -3181,12 +3181,15 @@ note_tripwire() {
 # it would not be seen) or is not a folder; and a .pass-agent holding anything
 # but a regular .DS_Store file with no other hard link, since anything else could
 # be read into the pass as memory or let a write leave the vault; and a
-# <work-dir> that fails the state directory's checks (state_dir_ready). They
-# write nothing. They must run after the pass's "before" snapshot, so that
+# <work-dir> that fails the state directory's checks (state_dir_ready, under a
+# UTF-8 locale on Windows) or lies inside the vault however the two are spelled.
+# They write nothing. They must run after the pass's "before" snapshot, so that
 # anything planted after them is still a change the fence sees. Then the file is
 # written as <work-dir>/pass-settings.json, in the runner's own folder for the
 # pass, and must read back byte for byte, because Claude Code reads an empty or
-# invalid settings file as if there were none. The state directory may be shared
+# invalid settings file as if there were none. Those two checks, and the one
+# that the converted settings path names that file, need the file, so a refusal
+# there leaves it in <work-dir>, which the runner removes with the folder. The state directory may be shared
 # or take its parent's permissions, so a copy an earlier build left there is
 # removed. On POSIX hosts the file is readable by this account only, in the
 # folder mktemp -d made, which only it can enter; on Windows the temporary
@@ -3196,7 +3199,7 @@ note_tripwire() {
 # when the pass must not start.
 memory_override() {
   local root="$1" state="$2" work="$3" log="$4" vault="$1" file="$3/pass-settings.json" arg="$3/pass-settings.json"
-  local dir="$1/90-auto-memory/.pass-agent" list line p h= win=0 exe=0
+  local dir="$1/90-auto-memory/.pass-agent" list line p h= up win=0 exe=0
   # Set only on success below, so no value from the environment can stand in.
   unset AGENT_SETTINGS_FILE
   # On Windows a path left in Git Bash form is read by Claude Code as a folder
@@ -3286,10 +3289,24 @@ memory_override() {
   # at a folder above both named outside the ANSI code page, a profile folder
   # among them, and the folder looked as if it lay inside the vault.
   case "$RUNNER_UNAME" in
-    MINGW*|MSYS*|CYGWIN*) LC_ALL=C.UTF-8 state_dir_ready "$work" "$root" >/dev/null ;;
+    MINGW*|MSYS*|CYGWIN*) ( LC_ALL=C.UTF-8; export LC_ALL; state_dir_ready "$work" "$root" >/dev/null ) ;;
     *) state_dir_ready "$work" "$root" >/dev/null ;;
   esac
   p=$?
+  # That check compares the two paths by name, and on Windows and macOS a letter
+  # outside ASCII in another case, or an 8.3 name, spells the same folder another
+  # way, so neither the folder nor any folder above it may be the vault itself.
+  if [ "$p" -eq 0 ]; then
+    up="$(cd "$work" 2>/dev/null && pwd -P)"
+    while [ -n "$up" ]; do
+      if [ "$up" -ef "$root" ]; then p=4; break; fi
+      case "$up" in
+        /) break ;;
+        */*) up="${up%/*}"; [ -n "$up" ] || up=/ ;;
+        *) break ;;
+      esac
+    done
+  fi
   if [ "$p" -ne 0 ]; then
     printf '[%s] ERROR: the runner'"'"'s folder for the pass, %s, %s, and the memory override'"'"'s settings file there can name hooks Claude Code runs. Point TMPDIR at a folder only this account can change, outside the vault. Refusing to run.\n' "$(ts)" "$work" "$(state_dir_problem "$p")" >> "$log"
     return 1

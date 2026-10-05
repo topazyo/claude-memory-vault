@@ -169,10 +169,10 @@ What that covers, and what it does not:
     runner cannot read refuse too, with `is not a file the runner can check`. A wrapper script
     that starts a Windows program is not recognised.
   - The runner's folder for the pass, under `TMPDIR`, fails the checks the state directory gets:
-    it lies inside the vault, where the agent could change the file (and under `.claude/logs`,
-    `.obsidian` or `.git` the fence would not see it), or, off Windows, a folder above it every
-    account can write has no sticky bit. The folder itself, new from `mktemp -d`, is this
-    account's own and private, so the owner and mode checks on it pass.
+    it lies inside the vault, however the two paths are spelled, where the agent could change the
+    file (and under `.claude/logs`, `.obsidian` or `.git` the fence would not see it), or, off
+    Windows, a folder above it every account can write has no sticky bit. The folder itself, new
+    from `mktemp -d`, is this account's own and private, so the owner and mode checks on it pass.
   - The settings file could not be written, or does not read back exactly as written.
   - No settings file was written for the pass, which happens only when the runner and
     `runner-common.sh` come from different releases (Adopting 1). This refusal comes from the
@@ -205,7 +205,9 @@ What that covers, and what it does not:
   `mem-override-winbin-unreadable`, `mem-override-stray-cygpath`, `mem-override-no-cygpath` and
   `mem-override-work-open` are required on the Linux and macOS jobs and not on Windows, where they
   skip or may skip; the two unreadable ones also skip as root. `mem-override-cygpath-refused` is
-  required on the Windows job, the only one with `cygpath`. `mem-override-utf8-lax-host`, required
+  required on the Windows job, the only one with `cygpath`. `mem-override-work-case`, a `TMPDIR`
+  inside the vault spelled with a letter in the other case, is required on the Windows and macOS
+  jobs, whose file systems ignore case, and not on ubuntu. `mem-override-utf8-lax-host`, required
   on the ubuntu job only, is recorded where `iconv`'s conversion to UTF-8 lets a sequence above
   U+10FFFF through, as glibc's does, so that job shows its UTF-8 twins can tell the round trip
   from a conversion to UTF-8 alone. `mem-override-utf16-lax-host`, required on the two macOS jobs

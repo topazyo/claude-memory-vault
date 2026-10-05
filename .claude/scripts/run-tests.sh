@@ -2556,6 +2556,37 @@ else
   chmod 755 "$TMP/memovr-open"
   rm -rf "$TMP/memovr-open"
 fi
+# Where the file system ignores case (Windows, macOS), a folder spelled with a
+# letter outside ASCII in the other case is the same folder, and path_key folds
+# ASCII letters only, so a TMPDIR inside the vault spelled that way must still be
+# refused: memory_override is called directly with a vault under a folder named
+# in Cyrillic and its folder under the same folder in the other case. On
+# Windows cygpath -l gives the stored case, so the name check already refuses
+# (measured); off Windows only the identity walk does. Where the two spellings
+# are two folders (Linux) there is nothing to hold.
+MO_CU="$TMP/$(printf '\320\226')-case" MO_CL="$TMP/$(printf '\320\266')-case"
+rm -rf "$MO_CU" "$MO_CL" "$TMP/memovr-case.log"
+mkdir -p "$MO_CU/vault/.claude/logs"
+if [ -d "$MO_CL" ] && [ "$MO_CL" -ef "$MO_CU" ]; then
+  ran mem-override-work-case
+  ( umask 077 && mkdir -p "$MO_CL/vault/.claude/logs/w" )
+  # Which check refuses on this host, for the record (not counted).
+  if ( case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) LC_ALL=C.UTF-8 ;; *) LC_ALL=C ;; esac; export LC_ALL
+       . "$RV/.claude/scripts/lib/runner-common.sh"; state_dir_ready "$MO_CL/vault/.claude/logs/w" "$MO_CU/vault" >/dev/null ); then
+    printf '  INFO  [mem-override-work-case] the name check alone passes the other-case spelling here, so the identity walk refuses it (not counted)\n'
+  else
+    printf '  INFO  [mem-override-work-case] the name check alone refuses the other-case spelling here (not counted)\n'
+  fi
+  mo_direct "$MO_CU/vault" "$MO_CL/vault/.claude/logs/w" "$TMP/memovr-case.log"
+  mo_rc=$?
+  if [ "$mo_rc" -eq 1 ] && grep -F -- "resolves into the vault, $MO_WORK" "$TMP/memovr-case.log" 2>/dev/null | grep -q '^\[[^]]*\] ERROR: ' \
+     && [ -d "$MO_CU/vault/.claude/logs/w" ] && [ -z "$(ls -A "$MO_CU/vault/.claude/logs/w" 2>/dev/null)" ]; then
+    ok "claude mode: TMPDIR inside the vault, spelled with a Cyrillic letter in the other case -> memory_override, called directly, refused (1), an ERROR: line says why, nothing written"
+  else
+    bad "claude mode: TMPDIR inside the vault, spelled with a Cyrillic letter in the other case -- memory_override, called directly, was not refused for it -- got $mo_rc: $(cat "$TMP/memovr-case.log" 2>/dev/null)"
+  fi
+fi
+rm -rf "$MO_CU" "$MO_CL" "$TMP/memovr-case.log"
 
 # cygpath failing on either path the override needs refuses the pass, rather
 # than passing an empty value, and so does cygpath succeeding with a path that

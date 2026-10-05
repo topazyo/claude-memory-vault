@@ -780,8 +780,9 @@ Around that call, each runner does several things an exit code cannot:
   read the runner's POSIX paths as other folders, or is not a file it can check, being no file at
   all or one whose first bytes it cannot read; when the runner's folder for the pass fails the
   checks the state directory gets (below), because the file can name hooks Claude Code runs: inside
-  the vault, where the agent could change it, or, off Windows, not this account's own, writable by
-  every account, or under a folder every account can write that has no sticky bit; when the file
+  the vault however the two paths are spelled (by name, then by identity, so a letter in another
+  case or an 8.3 name does not hide it), where the agent could change it, or, off Windows, under a
+  folder every account can write that has no sticky bit; when the file
   cannot be written (off Windows readable by the runner's account only, in a folder only it can
   enter; on Windows it carries the temporary folder's permissions, which under the per-user default
   give it to the account, SYSTEM and Administrators only, measured); and when it does not read back
