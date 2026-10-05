@@ -1101,6 +1101,8 @@ state_dir_ready() {
   case "$(path_key "$real")" in "$kroot"|"$kroot"/*) return 4 ;; esac
   printf '%s\n' "$real"
 }
+# state_dir_problem <code> - the words for a state_dir_ready code, and for 8,
+# which only memory_override gives: a folder that is not the path it resolves to.
 state_dir_problem() {
   case "$1" in
     2) printf 'is not owned by this account, or this account cannot write it' ;;
@@ -3210,9 +3212,9 @@ note_tripwire() {
 # Git Bash spells it and, on Windows, as a drive path (a subst or mapped drive,
 # or a mount, whose root lies inside the vault is not seen, reasoned). They
 # write nothing, apart from the folder state_dir_ready makes for a <work-dir>
-# that did not exist, which must then be the path it resolves to. They must run after the pass's "before"
-# snapshot, so that anything planted after them is still a change the fence
-# sees. <work-dir> is taken by its resolved path (pwd -P) first, so the
+# that did not exist, which must then be the path it resolves to. They must run
+# after the pass's "before" snapshot, so that anything planted after them is
+# still a change the fence sees. <work-dir> is taken by its resolved path (pwd -P) first, so the
 # conversions, the UTF-8 check, these checks and the write all see one folder.
 # Then the file is written as pass-settings.json in <work-dir>, the runner's own
 # folder for the pass, and must read back byte for byte, because Claude Code
@@ -3348,7 +3350,7 @@ memory_override() {
     fi
   fi
   if [ "$p" -ne 0 ]; then
-    printf '[%s] ERROR: the runner'"'"'s folder for the pass, %s, %s, and the memory override'"'"'s settings file there can name hooks Claude Code runs. Point TMPDIR at a folder outside the vault that only this account can change, or, on Windows, leave it unset; a vault that holds the temporary folder itself, as one at a drive root does, must move into a folder of its own. Refusing to run.\n' "$(ts)" "$work" "$(state_dir_problem "$p")" >> "$log"
+    printf '[%s] ERROR: the runner'"'"'s folder for the pass, %s, %s, and the memory override'"'"'s settings file there can name hooks Claude Code runs. Point TMPDIR at a folder outside the vault that only this account can change (on macOS TMPDIR does not move it), or, on Windows, leave it unset; if the vault holds the default temporary folder, as one at a drive root does, move the vault into a folder of its own, or point TMPDIR outside it. Refusing to run.\n' "$(ts)" "$work" "$(state_dir_problem "$p")" >> "$log"
     return 1
   fi
   # Nothing reads a copy an earlier build left in the state directory.

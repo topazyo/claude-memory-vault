@@ -358,18 +358,18 @@ What that covers, and what it does not:
     says `the runner's folder for the pass, ...`, then why (`resolves into the vault`, `is inside a
     folder every account can write that has no sticky bit`, `is not the path it resolves to`, and so
     on), `and the memory override's settings file there can name hooks Claude Code runs`. A vault
-    that holds the temporary folder itself, as one at a drive root does, must move into a folder of
-    its own. The default temporary folder passes on Linux (`/tmp`, sticky), macOS (a per-user
-    folder) and Windows (Git Bash's `/tmp`, this account's temporary folder), measured on CI's three
-    platforms. If you set `TMPDIR` for the passes, point it at a folder outside the vault that only
-    your account can change, named directly rather than through a link: the settings file is reached
-    through the folder's resolved path, but the snapshots, the steering backup and git's hooks
-    folder there are reached through `TMPDIR` as spelled, as in 1.4.0. On Windows the runner cannot
-    read a folder's permissions, so leave `TMPDIR` unset there unless item 9's `//?/` refusal needs
-    a shorter folder (on the one host measured, setting `TEMP` and `TMP` for the `.cmd` did not move
-    Git Bash's `/tmp`, and a Git Bash login shell sets `TMPDIR` to this account's temporary folder,
-    the same folder). On macOS `TMPDIR` does not move the folder: Apple's `mktemp` takes the
-    per-user one (measured on CI).
+    that holds the default temporary folder, as one at a drive root does, must move into a folder of
+    its own, or `TMPDIR` must point outside it. The default temporary folder passes on Linux
+    (`/tmp`, sticky), macOS (a per-user folder) and Windows (Git Bash's `/tmp`, this account's
+    temporary folder), measured on CI's three platforms. If you set `TMPDIR` for the passes, point
+    it at a folder outside the vault that only your account can change, named directly rather than
+    through a link: the settings file is reached through the folder's resolved path, but the
+    snapshots, the steering backup and git's hooks folder there are reached through `TMPDIR` as
+    spelled, as in 1.4.0. On Windows the runner cannot read a folder's permissions, so leave
+    `TMPDIR` unset there unless item 9's `//?/` refusal needs a shorter folder (on the one host
+    measured, setting `TEMP` and `TMP` for the `.cmd` did not move Git Bash's `/tmp`, and a Git Bash
+    login shell sets `TMPDIR` to this account's temporary folder, the same folder). On macOS
+    `TMPDIR` does not move the folder: Apple's `mktemp` takes the per-user one (measured on CI).
 
 `--check` will list `.claude/scripts/lib/runner-common.sh`, `.claude/scripts/dream-pass.sh`,
 `.claude/scripts/promotion-pass.sh`, `.claude/scripts/run-tests.sh`,

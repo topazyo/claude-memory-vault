@@ -18,6 +18,7 @@
 # Usage:  bash .claude/scripts/run-tests.sh
 # Exit:   0 = all controls passed, 1 = at least one failed.
 # Writes: nothing outside a temporary directory, which is removed on exit.
+#         On Windows one twin also makes, and removes, a folder under Git Bash's /tmp.
 
 set -u
 
@@ -65,6 +66,9 @@ TMP="$(mktemp -d 2>/dev/null || mktemp -d -t vaultcheck)" || {
   exit 1
 }
 WORK="$TMP/some one/my vault"
+# Set by the work-root twin on Windows, and removed by cleanup, so never taken
+# from the environment.
+MO_RB_TMP=
 
 # Cleanup must also EXIT on a signal. A cleanup-only trap on INT/TERM deletes
 # the fixtures and then lets the script keep running against a directory that
@@ -2517,6 +2521,7 @@ mo_steers() {
   local rc
   mo_tmpdir_steers "$1"
   rc=$?
+  MO_STEER_RC=$rc
   [ "$rc" -eq 0 ] && return 0
   if [ "$rc" -eq 2 ] && [ -d "$1" ]; then
     bad "mktemp -d failed under TMPDIR=$1, a folder that exists, so a twin's pass leg with that TMPDIR could not run"
@@ -2621,12 +2626,14 @@ if is_windows_host; then
   mo_rb="$(mktemp -d /tmp/memovr-root.XXXXXX 2>/dev/null)" || mo_rb=
   MO_RB_TMP="$mo_rb"
   # The drive of the folder as the library takes it: its resolved path, converted.
-  mo_dr="$(cd "${mo_rb:-/tmp}" 2>/dev/null && pwd -P)"
-  mo_dr="$(cygpath -m "${mo_dr:-/tmp}")"
-  mo_dr="$(cygpath -u "${mo_dr%%:*}:/" 2>/dev/null)"
+  mo_dr=
+  [ -n "$mo_rb" ] && mo_dr="$(cd "$mo_rb" 2>/dev/null && pwd -P)"
+  [ -n "$mo_dr" ] && mo_dr="$(cygpath -m "$mo_dr")"
+  [ -n "$mo_dr" ] && mo_dr="$(cygpath -u "${mo_dr%%:*}:/" 2>/dev/null)"
   case "$mo_dr" in /?/) ;; *) mo_dr= ;; esac
 else
   mo_rb="$TMP/memovr-root"
+  rm -rf "$mo_rb"
   mo_dr=/
 fi
 rm -f "$TMP/memovr-root.log"
@@ -2639,11 +2646,15 @@ mo_root_why() {
   local up
   { [ -n "$mo_rb" ] && [ -d "$mo_rb/w" ]; } || { echo "its folder could not be made"; return; }
   [ -n "$mo_dr" ] || { echo "the drive of its folder could not be found"; return; }
-  . "$RV/.claude/scripts/lib/runner-common.sh"
-  state_dir_ready "$mo_rb/w" "$mo_dr" >/dev/null || { echo "the name check alone refuses a folder under a vault at $mo_dr here (code $?)"; return; }
-  is_windows_host || return
   up="$(cd "$mo_rb/w" && pwd -P)"
   [ -n "$up" ] || { echo "its folder could not be resolved"; return; }
+  . "$RV/.claude/scripts/lib/runner-common.sh"
+  # The name check as memory_override makes it: on the resolved path, under
+  # C.UTF-8 on Windows and the runners' C elsewhere.
+  ( case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) LC_ALL=C.UTF-8 ;; *) LC_ALL=C ;; esac; export LC_ALL
+    state_dir_ready "$up" "$mo_dr" >/dev/null ) \
+    || { echo "the name check alone refuses a folder under a vault at $mo_dr here (code $?)"; return; }
+  is_windows_host || return
   while [ -n "$up" ]; do
     [ "$up" -ef "$mo_dr" ] && { echo "the walk up the folder's Git Bash path, $(cd "$mo_rb/w" && pwd -P), already reaches $mo_dr at $up here"; return; }
     case "$up" in
@@ -5452,7 +5463,7 @@ for mo_i in e-acute cyrillic cjk emoji top tmp tmp-emoji; do
   rm -rf "$CASE_STATE"
   if [ -n "$mo_tmp" ]; then
     rm -rf "$mo_tmp"
-    mkdir -p "$mo_tmp"
+    mkdir -p "$mo_tmp" || bad "mem-override-nonascii: the temporary folder for $mo_say could not be made"
     mo_conv="$mo_tmp" mo_want="$MO_TM/${mo_tmp##*/}" mo_wt="$MO_TMR/${mo_tmp##*/}"
   else
     mo_conv="$MO_NV" mo_want="$MO_TM/$mo_n-vault"
@@ -5555,7 +5566,7 @@ else
       ran mem-override-work-resolved
       mo_accepts "dream-pass: TMPDIR spelled through a link" "$TMP/memovr-rl-vault" "$MO_TM/memovr-rl-vault" \
         "$MO_TMR/memovr-real" TMPDIR="$TMP/memovr-link"
-    elif [ "$(uname -s)" = Darwin ]; then
+    elif [ "$MO_STEER_RC" -eq 1 ] && [ "$(uname -s)" = Darwin ]; then
       skip mem-override-work-resolved "a pass with TMPDIR spelled through a link: Apple's mktemp takes its per-user folder whatever TMPDIR says (mem-override-work-made, the direct call, still runs)"
     fi
     ran mem-override-work-made
