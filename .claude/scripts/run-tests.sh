@@ -2294,20 +2294,22 @@ mo_link() {  # mo_link <folder> <link> - links <link> to <folder>, a junction on
 # The settings file lies in the runner's own folder for the pass, which the
 # runner removes when the pass ends, so this stand-in for Claude Code keeps what
 # it is handed before it starts the fake agent: the file as MO_CAP.json, and in
-# MO_CAP.where the folder's physical path, its mode, the file's mode, and whether
-# the file was a link. Pass it as CLAUDE_BIN="$MO_CAP".
+# MO_CAP.where the folder's physical path, its mode, the file's mode, whether the
+# file was a link, and whether the folder held the nohooks folder each runner
+# makes in its own folder for the pass. Pass it as CLAUDE_BIN="$MO_CAP".
 MO_CAP="$TMP/memovr-capture"
-printf '#!/usr/bin/env bash\nprev=\nfor a in "$@"; do\n  if [ "$prev" = --settings ]; then\n    f="$a"\n    command -v cygpath >/dev/null 2>&1 && f="$(LC_ALL=C.UTF-8 cygpath -u "$a")"\n    cp "$f" %q\n    ( cd "$(dirname "$f")" && pwd -P && ls -ld . | cut -c1-10 ) > %q\n    ls -l "$f" | cut -c1-10 >> %q\n    if [ -L "$f" ]; then echo link; else echo file; fi >> %q\n  fi\n  prev="$a"\ndone\nexec %q "$@"\n' \
-  "$MO_CAP.json" "$MO_CAP.where" "$MO_CAP.where" "$MO_CAP.where" "$FAKE" > "$MO_CAP"
+printf '#!/usr/bin/env bash\nprev=\nfor a in "$@"; do\n  if [ "$prev" = --settings ]; then\n    f="$a"\n    command -v cygpath >/dev/null 2>&1 && f="$(LC_ALL=C.UTF-8 cygpath -u "$a")"\n    cp "$f" %q\n    ( cd "$(dirname "$f")" && pwd -P && ls -ld . | cut -c1-10 ) > %q\n    ls -l "$f" | cut -c1-10 >> %q\n    if [ -L "$f" ]; then echo link; else echo file; fi >> %q\n    if [ -d "$(dirname "$f")/nohooks" ]; then echo nohooks; else echo none; fi >> %q\n  fi\n  prev="$a"\ndone\nexec %q "$@"\n' \
+  "$MO_CAP.json" "$MO_CAP.where" "$MO_CAP.where" "$MO_CAP.where" "$MO_CAP.where" "$FAKE" > "$MO_CAP"
 chmod +x "$MO_CAP"
 # mo_own <vault> - what MO_CAP kept was a regular file in a folder outside
-# <vault> that is gone now, so one the runner removed when the pass ended, and,
-# off Windows, a file only this account can read in a folder only it can enter.
+# <vault> that held the runner's nohooks folder and is gone now, so the runner's
+# own folder for the pass, removed when the pass ended, and, off Windows, a file
+# only this account can read in a folder only it can enter.
 mo_own() {
-  local d m f k vr
-  { IFS= read -r d; IFS= read -r m; IFS= read -r f; IFS= read -r k; } 2>/dev/null < "$MO_CAP.where" || return 1
+  local d m f k w vr
+  { IFS= read -r d; IFS= read -r m; IFS= read -r f; IFS= read -r k; IFS= read -r w; } 2>/dev/null < "$MO_CAP.where" || return 1
   vr="$(cd "$1" 2>/dev/null && pwd -P)"
-  [ -n "$d" ] && [ "$k" = file ] && [ ! -e "$d" ] || return 1
+  [ -n "$d" ] && [ "$k" = file ] && [ "$w" = nohooks ] && [ ! -e "$d" ] || return 1
   case "$d/" in "$1"/*|"$vr"/*) return 1 ;; esac
   is_windows_host || { [ "$m" = drwx------ ] && [ "$f" = -rw------- ]; }
 }
@@ -5275,7 +5277,7 @@ done
 mo_hex() {  # mo_hex <string> - its bytes in hex, no spaces
   printf '%s' "$1" | od -An -tx1 | tr -d ' \n'
 }
-for mo_i in e-acute cyrillic cjk emoji top tmp; do
+for mo_i in e-acute cyrillic cjk emoji top tmp tmp-emoji; do
   mo_tmp=
   case "$mo_i" in
     e-acute) mo_n="caf$(printf '\303\251')" mo_x=636166c3a9 mo_say='a vault under a folder named with an e-acute' ;;
@@ -5283,6 +5285,8 @@ for mo_i in e-acute cyrillic cjk emoji top tmp; do
     cjk) mo_n="$(printf '\344\270\255')" mo_x=e4b8ad mo_say='a vault under a folder named with U+4E2D, three bytes' ;;
     emoji) mo_n="$(printf '\360\237\230\200')" mo_x=f09f9880 mo_say='a vault under a folder named with U+1F600, above U+FFFF' ;;
     top) mo_n="$(printf '\364\217\277\277')" mo_x=f48fbfbf mo_say='a vault under a folder named with U+10FFFF, the last code point' ;;
+    tmp-emoji) mo_n="$(printf '\360\237\230\200')" mo_x=f09f9880 mo_tmp="$TMP/memovr-tmp-$(printf '\360\237\230\200')"
+       mo_say='an ASCII vault whose settings file is written under a temporary folder named with U+1F600' ;;
     *) mo_n="$(printf '\320\264')" mo_x=d0b4 mo_tmp="$TMP/memovr-tmp-$(printf '\320\264')"
        mo_say='an ASCII vault whose settings file is written under a temporary folder named in Cyrillic' ;;
   esac
@@ -5380,7 +5384,7 @@ else
           memory_override "$MO_UV" "$CASE_STATE" "${mo_ut:-$TMP/memovr-utf8-work}" "$TMP/memovr-utf8.log" )
         mo_rc=$?
         if [ "$mo_rc" -eq 1 ] && grep -F -- "$MO_UTF8" "$TMP/memovr-utf8.log" 2>/dev/null | grep -q '^\[[^]]*\] ERROR: ' \
-           && [ ! -e "$TMP/memovr-utf8-work/pass-settings.json" ]; then
+           && [ ! -e "${mo_ut:-$TMP/memovr-utf8-work}/pass-settings.json" ]; then
           ok "memory_override, called directly where the file system refuses the name: a $mo_where path holding ${mo_seq#*:}, not valid UTF-8 -> refused (1), an ERROR: line says why, nothing written"
         else
           bad "memory_override did not refuse a $mo_where path holding ${mo_seq#*:}, not valid UTF-8 -- got $mo_rc: $(cat "$TMP/memovr-utf8.log" 2>/dev/null)"
@@ -7647,10 +7651,11 @@ for s in dream-pass.sh:journal promotion-pass.sh:summary; do
   printf '#!/bin/sh\nif [ "$1" = -cf ] && [ "$3" = -T ]; then\n  "%s" "$@" || exit $?\n  printf '"'"'runner=promotion-pass\\npid=999999\\nnonce=other-runner\\n'"'"' > "%s/run.lock/owner"\n  exit 0\nfi\nexec "%s" "$@"\n' \
     "$REAL_TAR" "$CASE_STATE" "$REAL_TAR" > "$SHIM/tar-takeover-${s%%.*}/tar"
   chmod +x "$SHIM/tar-takeover-${s%%.*}/tar"
-  # The memory override removes a settings file left in the state directory, so
-  # one planted there shows whether this runner reached it.
-  mkdir -p "$CASE_STATE"
-  printf 'the other runner'"'"'s\n' > "$CASE_STATE/pass-settings.json"
+  # A file in .pass-agent makes a runner that reached the memory override refuse
+  # with exit 1, not 75, whatever the override does with the state directory.
+  rm -rf "$RV/90-auto-memory"
+  mkdir -p "$MO_DIR"
+  printf 'planted\n' > "$MO_DIR/takeover.md"
   rm -f "$REC.argv"
   expect_rc "${s%%:*}: another runner's owner file replaces this one's before the pass starts -> LOCKED" 75 \
     "$(runner "${s%%:*}" "${s#*:}" FAKE_RECORD="$REC" PATH="$SHIM/tar-takeover-${s%%.*}:$PATH")"
@@ -7666,13 +7671,7 @@ for s in dream-pass.sh:journal promotion-pass.sh:summary; do
   else
     bad "${s%%:*} whose lock was taken over started the agent, marked the pass, removed the other lock, or logged nothing"
   fi
-  # Nor does it reach the memory override.
-  if [ "$(cat "$CASE_STATE/pass-settings.json" 2>/dev/null)" = "the other runner's" ]; then
-    ok "${s%%:*} whose lock was taken over never reaches the memory override: the settings file planted in the state directory is untouched"
-  else
-    bad "${s%%:*} whose lock was taken over reached the memory override anyway: the settings file planted in the state directory is gone or changed"
-  fi
-  rm -f "$CASE_STATE/pass-settings.json"
+  rm -rf "$RV/90-auto-memory"
 done
 
 # On Linux a kernel thread can reuse a dead runner's pid. Its command line is
