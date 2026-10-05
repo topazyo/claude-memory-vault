@@ -3188,8 +3188,9 @@ note_tripwire() {
 # pass, and must read back byte for byte, because Claude Code reads an empty or
 # invalid settings file as if there were none. The state directory may be shared
 # or take its parent's permissions, so a copy an earlier build left there is
-# removed. On POSIX hosts the file is readable by this account only, in a folder
-# only it can enter; on Windows the temporary folder's permissions decide.
+# removed. On POSIX hosts the file is readable by this account only, in the
+# folder mktemp -d made, which only it can enter; on Windows the temporary
+# folder's permissions decide.
 # AGENT_SETTINGS_FILE names it as Claude Code reads a path.
 # .pass-agent itself is never created here. Returns 1, with the reason in <log>,
 # when the pass must not start.
@@ -3280,8 +3281,14 @@ memory_override() {
     fi
   fi
   # The file can name hooks Claude Code runs, so its folder must pass the state
-  # directory's checks.
-  state_dir_ready "$work" "$root" >/dev/null
+  # directory's checks. On Windows they run under a UTF-8 locale, as the
+  # conversions above do: under C, cygpath cut the vault's path and the folder's
+  # at a folder above both named outside the ANSI code page, a profile folder
+  # among them, and the folder looked as if it lay inside the vault.
+  case "$RUNNER_UNAME" in
+    MINGW*|MSYS*|CYGWIN*) LC_ALL=C.UTF-8 state_dir_ready "$work" "$root" >/dev/null ;;
+    *) state_dir_ready "$work" "$root" >/dev/null ;;
+  esac
   p=$?
   if [ "$p" -ne 0 ]; then
     printf '[%s] ERROR: the runner'"'"'s folder for the pass, %s, %s, and the memory override'"'"'s settings file there can name hooks Claude Code runs. Point TMPDIR at a folder only this account can change, outside the vault. Refusing to run.\n' "$(ts)" "$work" "$(state_dir_problem "$p")" >> "$log"

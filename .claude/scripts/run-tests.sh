@@ -5383,6 +5383,33 @@ for mo_i in e-acute cyrillic cjk emoji top tmp tmp-emoji; do
   rm -rf "$MO_NV"
   [ -n "$mo_tmp" ] && rm -rf "$mo_tmp"
 done
+# A vault and TMPDIR under one folder named outside the ANSI code page, as under
+# such a profile folder with VAULT_STATE_DIR set and TMPDIR left alone. Under
+# the runners' LC_ALL=C, cygpath cut both paths at that folder, so the work
+# folder's check saw the runner's folder inside the vault and refused every
+# pass (1.4.1 before its fix). Windows only: elsewhere that check converts
+# nothing. The twin first shows the cut would happen on this host.
+if is_windows_host; then
+  MO_SH="$TMP/$(printf '\320\226')-shared"
+  rm -rf "$MO_SH"
+  mkdir -p "$MO_SH/tmp"
+  make_runner_vault "$MO_SH/vault" 2>/dev/null
+  CASE_STATE="$TMP/state-memovr-shared"
+  rm -rf "$CASE_STATE"
+  if [ ! -f "$MO_SH/vault/.claude/scripts/dream-pass.sh" ]; then
+    bad "mem-override-nonascii: a vault under a folder named in Cyrillic, with TMPDIR beside it, could not be made"
+  elif ! mo_ascii_tmp; then
+    bad "mem-override-nonascii: the temp folder's converted path is not printable ASCII here -- $MO_TM"
+  elif [ "$(LC_ALL=C cygpath -m "$MO_SH/vault")" = "$MO_TM/${MO_SH##*/}/vault" ]; then
+    bad "mem-override-nonascii: cygpath under LC_ALL=C converts a folder named in Cyrillic faithfully on this host, so the shared-folder twin cannot show the defect"
+  elif ! mo_tmpdir_steers "$MO_SH/tmp"; then
+    bad "mem-override-nonascii: mktemp -d does not make its folder under TMPDIR here, so the shared-folder twin cannot show the defect"
+  else
+    mo_accepts "dream-pass: a vault and TMPDIR under one folder named in Cyrillic" "$MO_SH/vault" \
+      "$MO_TM/${MO_SH##*/}/vault" "$MO_TM/${MO_SH##*/}/tmp" TMPDIR="$MO_SH/tmp"
+  fi
+  rm -rf "$MO_SH"
+fi
 CASE_STATE="$TMP/state-memovr-path"
 
 # On Linux a path is bytes, and a vault path, or a settings file path under

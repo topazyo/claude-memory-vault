@@ -325,7 +325,8 @@ What that covers, and what it does not:
     default temporary folder passes on Linux (`/tmp`, sticky), macOS (a per-user folder) and Windows
     (Git Bash's `/tmp`, this account's temporary folder), measured on CI's three platforms. If you
     set `TMPDIR` for the passes, point it at a folder outside the vault that only your account can
-    change; on Windows the runner cannot read a folder's permissions, so leave `TMPDIR` unset there
+    change, named directly rather than through a link, because the checks judge the folder a link
+    leads to and the file is written through the link; on Windows the runner cannot read a folder's permissions, so leave `TMPDIR` unset there
     (setting `TEMP` for the `.cmd` did not move Git Bash's `/tmp`, measured). On macOS
     `TMPDIR` does not move the folder: Apple's `mktemp` takes the per-user one (measured on CI).
 

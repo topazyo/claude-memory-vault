@@ -910,7 +910,9 @@ Around that call, each runner does several things an exit code cannot:
     `mktemp` takes whatever `TMPDIR` says), which `mktemp -d` makes private off Windows and which must
     pass the state directory's checks. As there, a group-writable folder above it is allowed, and a
     member of that group could rename the folder and put their own in its place, so keep `TMPDIR`
-    writable by your account only. On Windows it carries the temporary folder's permissions and the
+    writable by your account only. The checks judge the folder as its links resolve, but the file is
+    written and handed to Claude Code through `TMPDIR` as spelled, so a `TMPDIR` spelled through a
+    link, or through a folder another account can rename, is not caught: name the folder itself. On Windows it carries the temporary folder's permissions and the
     runner cannot read them, so leave `TMPDIR` unset there: the folder is then made in Git Bash's
     `/tmp`, this account's temporary folder, which only the account, SYSTEM and Administrators can
     change (measured; setting `TEMP` for the `.cmd` did not move `/tmp`). The same folder has held the
