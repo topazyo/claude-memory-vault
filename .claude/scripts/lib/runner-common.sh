@@ -3208,12 +3208,11 @@ memory_override() {
     # name is looked up as the runner will start it, and the file it resolves to,
     # through any link, is read: a Windows program starts with MZ. A name that
     # resolves to no file (a function, say) cannot be checked, and neither can a
-    # file that cannot be read, which could still be started by its header, so
-    # both refuse, as does a read that fails. A wrapper script that starts a
-    # Windows program is not recognised.
+    # file whose first bytes cannot be read, one this account may only start for
+    # instance, which could still be started by its header, so both refuse. A
+    # wrapper script that starts a Windows program is not recognised.
     p="$(command -v "${AGENT_BIN:-}" 2>/dev/null)" || p=
     case "$p" in */*) ;; *) p= ;; esac
-    if [ -f "$p" ] && ! [ -r "$p" ]; then p=; fi
     if [ -f "$p" ] && ! h="$(LC_ALL=C dd if="$p" bs=2 count=1 2>/dev/null)"; then p=; fi
     if [ -z "$p" ]; then
       printf '[%s] ERROR: Claude Code here (%s) is not a file the runner can check, so it could be a Windows program that would read the memory override'"'"'s paths as other folders. Refusing to run.\n' "$(ts)" "${AGENT_BIN:-}" >> "$log"

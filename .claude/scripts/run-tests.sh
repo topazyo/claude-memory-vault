@@ -2634,6 +2634,7 @@ else
   if [ -r "$MO_MZ/bin/claude" ]; then
     skip mem-override-winbin-unreadable 'an agent binary that can be started but not read: a mode-111 file can still be read here (root)'
   elif [ "$(PATH="$MO_MZ/bin:$PATH" command -v claude)" = "$MO_MZ/bin/claude" ]; then
+    ran mem-override-winbin-unreadable
     mo_refused "claude mode outside Git Bash: the claude found on PATH can be started but not read" "$MO_NOTFILE" \
       dream-pass.sh journal "$MO_LOG" CLAUDE_BIN=claude PATH="$MO_MZ/bin:$PATH"
   else
@@ -2702,24 +2703,30 @@ else
 fi
 # The platform alone also picks the Windows branch, so a Git Bash platform name
 # with no cygpath anywhere refuses rather than pass POSIX paths unconverted.
-# memory_override is called directly, with the name set as Git Bash reports it,
-# on a host that has no cygpath; the suite's not-found handler is dropped so the
-# missing cygpath fails as it would in a runner.
+# memory_override is called directly, with each name Git Bash and its kin
+# report, on a host that has no cygpath; the suite's not-found handler is
+# dropped so the missing cygpath fails as it would in a runner. A value set
+# after the library loads must not survive the refusal either (a refusal that
+# leaves it set exits 9).
 if command -v cygpath >/dev/null 2>&1; then
   skip mem-override-no-cygpath 'a Windows platform name with no cygpath: this host has cygpath'
 else
-  rm -rf "$TMP/memovr-nocyg-state" "$TMP/memovr-nocyg-work" "$TMP/memovr-nocyg.log"
-  mkdir -p "$TMP/memovr-nocyg-state" "$TMP/memovr-nocyg-work"
   ran mem-override-no-cygpath
-  ( unset -f command_not_found_handle; . "$RV/.claude/scripts/lib/runner-common.sh"; RUNNER_UNAME=MINGW64_NT-10.0 AGENT_BIN="$FAKE"
-    memory_override "$RV" "$TMP/memovr-nocyg-state" "$TMP/memovr-nocyg-work" "$TMP/memovr-nocyg.log" )
-  mo_rc=$?
-  if [ "$mo_rc" -eq 1 ] && grep -F -- "cygpath could not convert a path for the memory override" "$TMP/memovr-nocyg.log" 2>/dev/null | grep -q '^\[[^]]*\] ERROR: ' \
-     && [ ! -e "$TMP/memovr-nocyg-state/pass-settings.json" ] && [ ! -e "$TMP/memovr-nocyg-work/pass-settings.json" ]; then
-    ok "memory_override with a Git Bash platform name and no cygpath -> refused (1), an ERROR: line says why, nothing written"
-  else
-    bad "memory_override with a Git Bash platform name and no cygpath was not refused for it -- got $mo_rc: $(cat "$TMP/memovr-nocyg.log" 2>/dev/null)"
-  fi
+  for mo_u in MINGW64_NT-10.0 MSYS_NT-10.0 CYGWIN_NT-10.0; do
+    rm -rf "$TMP/memovr-nocyg-state" "$TMP/memovr-nocyg-work" "$TMP/memovr-nocyg.log"
+    mkdir -p "$TMP/memovr-nocyg-state" "$TMP/memovr-nocyg-work"
+    ( unset -f command_not_found_handle; . "$RV/.claude/scripts/lib/runner-common.sh"; RUNNER_UNAME="$mo_u" AGENT_BIN="$FAKE"
+      AGENT_SETTINGS_FILE="$TMP/memovr-nocyg-planted.json"
+      memory_override "$RV" "$TMP/memovr-nocyg-state" "$TMP/memovr-nocyg-work" "$TMP/memovr-nocyg.log"
+      mo_r=$?; [ "$mo_r" -ne 0 ] && [ -n "${AGENT_SETTINGS_FILE+x}" ] && mo_r=9; exit "$mo_r" )
+    mo_rc=$?
+    if [ "$mo_rc" -eq 1 ] && grep -F -- "cygpath could not convert a path for the memory override" "$TMP/memovr-nocyg.log" 2>/dev/null | grep -q '^\[[^]]*\] ERROR: ' \
+       && [ ! -e "$TMP/memovr-nocyg-state/pass-settings.json" ] && [ ! -e "$TMP/memovr-nocyg-work/pass-settings.json" ]; then
+      ok "memory_override with the platform name $mo_u and no cygpath -> refused (1), an ERROR: line says why, nothing written, no settings file named"
+    else
+      bad "memory_override with the platform name $mo_u and no cygpath was not refused for it, or left a settings file named (9) -- got $mo_rc: $(cat "$TMP/memovr-nocyg.log" 2>/dev/null)"
+    fi
+  done
   rm -rf "$TMP/memovr-nocyg-state" "$TMP/memovr-nocyg-work" "$TMP/memovr-nocyg.log"
 fi
 # Only memory_override sets AGENT_SETTINGS_FILE, and a runner from an earlier
