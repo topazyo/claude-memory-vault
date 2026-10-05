@@ -80,6 +80,7 @@ cleanup() {
     fi
     chmod 755 "$RET_LOCKED_DIR" 2>/dev/null
   fi
+  [ -n "${MO_RB_TMP:-}" ] && rm -rf "$MO_RB_TMP" 2>/dev/null
   [ -n "${TMP:-}" ] && rm -rf "$TMP" 2>/dev/null
 }
 trap cleanup EXIT
@@ -2503,17 +2504,25 @@ fi
 # there on every host, because the pass removes its own folder when it ends and
 # only a folder the twin keeps can show the refusal wrote nothing.
 MO_WORK="and the memory override's settings file there can name hooks Claude Code runs"
-mo_tmpdir_steers() {  # mo_tmpdir_steers <dir> - true when mktemp -d under TMPDIR=<dir> makes its folder there
+mo_tmpdir_steers() {  # mo_tmpdir_steers <dir> - 0 when mktemp -d under TMPDIR=<dir> makes its folder there, 1 when elsewhere, 2 when mktemp fails
   local d
-  d="$(TMPDIR="$1" mktemp -d 2>/dev/null)" || return 1
+  d="$(TMPDIR="$1" mktemp -d 2>/dev/null)" || return 2
   rmdir "$d" 2>/dev/null
   case "$d" in "$1"/*) return 0 ;; *) return 1 ;; esac
 }
-# mo_steers <dir> - mo_tmpdir_steers, and a FAIL where it is false off macOS, whose
-# mktemp alone ignores TMPDIR, so a twin's pass leg cannot drop out unseen
+# mo_steers <dir> - mo_tmpdir_steers, and a FAIL where mktemp fails in a folder
+# that exists, or makes its folder elsewhere off macOS, whose mktemp alone
+# ignores TMPDIR, so a twin's pass leg cannot drop out unseen
 mo_steers() {
-  mo_tmpdir_steers "$1" && return 0
-  [ "$(uname -s)" = Darwin ] || bad "mktemp -d did not make its folder under TMPDIR=$1 on this host, so a twin's pass leg with that TMPDIR could not run"
+  local rc
+  mo_tmpdir_steers "$1"
+  rc=$?
+  [ "$rc" -eq 0 ] && return 0
+  if [ "$rc" -eq 2 ] && [ -d "$1" ]; then
+    bad "mktemp -d failed under TMPDIR=$1, a folder that exists, so a twin's pass leg with that TMPDIR could not run"
+  elif [ "$rc" -eq 1 ] && [ "$(uname -s)" != Darwin ]; then
+    bad "mktemp -d did not make its folder under TMPDIR=$1 on this host, so a twin's pass leg with that TMPDIR could not run"
+  fi
   return 1
 }
 # mo_direct <vault> <work> <log> - memory_override as the runners call it; its status
@@ -2610,8 +2619,12 @@ rm -rf "$MO_CU" "$MO_CL" "$TMP/memovr-case.log"
 # walk up its Git Bash path does not reach the drive.
 if is_windows_host; then
   mo_rb="$(mktemp -d /tmp/memovr-root.XXXXXX 2>/dev/null)" || mo_rb=
-  mo_dr="$(cygpath -m "${mo_rb:-/tmp}")"
-  mo_dr="$(cygpath -u "${mo_dr%%:*}:/")"
+  MO_RB_TMP="$mo_rb"
+  # The drive of the folder as the library takes it: its resolved path, converted.
+  mo_dr="$(cd "${mo_rb:-/tmp}" 2>/dev/null && pwd -P)"
+  mo_dr="$(cygpath -m "${mo_dr:-/tmp}")"
+  mo_dr="$(cygpath -u "${mo_dr%%:*}:/" 2>/dev/null)"
+  case "$mo_dr" in /?/) ;; *) mo_dr= ;; esac
 else
   mo_rb="$TMP/memovr-root"
   mo_dr=/
@@ -2625,10 +2638,12 @@ rm -f "$TMP/memovr-root.log"
 mo_root_why() {
   local up
   { [ -n "$mo_rb" ] && [ -d "$mo_rb/w" ]; } || { echo "its folder could not be made"; return; }
+  [ -n "$mo_dr" ] || { echo "the drive of its folder could not be found"; return; }
   . "$RV/.claude/scripts/lib/runner-common.sh"
   state_dir_ready "$mo_rb/w" "$mo_dr" >/dev/null || { echo "the name check alone refuses a folder under a vault at $mo_dr here (code $?)"; return; }
   is_windows_host || return
   up="$(cd "$mo_rb/w" && pwd -P)"
+  [ -n "$up" ] || { echo "its folder could not be resolved"; return; }
   while [ -n "$up" ]; do
     [ "$up" -ef "$mo_dr" ] && { echo "the walk up the folder's Git Bash path, $(cd "$mo_rb/w" && pwd -P), already reaches $mo_dr at $up here"; return; }
     case "$up" in
@@ -2654,6 +2669,7 @@ else
   fi
 fi
 [ -n "$mo_rb" ] && rm -rf "$mo_rb"
+MO_RB_TMP=
 rm -f "$TMP/memovr-root.log"
 # cygpath failing on either path the override needs refuses the pass, rather
 # than passing an empty value, and so does cygpath succeeding with a path that
@@ -5527,6 +5543,7 @@ rm -rf "$TMP/memovr-real" "$TMP/memovr-link" "$TMP/memovr-rl-vault"
 mkdir -p "$TMP/memovr-real"
 if ! mo_link "$TMP/memovr-real" "$TMP/memovr-link" || ! [ "$TMP/memovr-link" -ef "$TMP/memovr-real" ]; then
   skip mem-override-work-resolved 'TMPDIR spelled through a link: a link to a folder could not be made here'
+  skip mem-override-work-made 'a folder for the pass made through a link: a link to a folder could not be made here'
 else
   make_runner_vault "$TMP/memovr-rl-vault" 2>/dev/null
   CASE_STATE="$TMP/state-memovr-resolved"
@@ -5539,16 +5556,17 @@ else
       mo_accepts "dream-pass: TMPDIR spelled through a link" "$TMP/memovr-rl-vault" "$MO_TM/memovr-rl-vault" \
         "$MO_TMR/memovr-real" TMPDIR="$TMP/memovr-link"
     elif [ "$(uname -s)" = Darwin ]; then
-      skip mem-override-work-resolved "a pass with TMPDIR spelled through a link: Apple's mktemp takes its per-user folder whatever TMPDIR says (the direct call with a folder made through the link still runs)"
+      skip mem-override-work-resolved "a pass with TMPDIR spelled through a link: Apple's mktemp takes its per-user folder whatever TMPDIR says (mem-override-work-made, the direct call, still runs)"
     fi
+    ran mem-override-work-made
     # A folder that does not exist yet, spelled through the link: the checks
     # make it, through the link, and must then refuse it, since it is not the
-    # path it resolves to. The folder must be there, and empty, so the refusal
-    # is not mkdir failing through the link, which gives the same reason.
+    # path it resolves to. The folder must be there, and empty, and the reason
+    # this case's own, so the refusal is not mkdir failing through the link.
     rm -rf "$TMP/memovr-real/new" "$TMP/memovr-made.log"
     mo_direct "$TMP/memovr-rl-vault" "$TMP/memovr-link/new" "$TMP/memovr-made.log"
     mo_rc=$?
-    if [ "$mo_rc" -eq 1 ] && grep -F -- "could not be created, or cannot be entered, $MO_WORK" "$TMP/memovr-made.log" 2>/dev/null | grep -q '^\[[^]]*\] ERROR: ' \
+    if [ "$mo_rc" -eq 1 ] && grep -F -- "is not the path it resolves to, as when it is made through a link, $MO_WORK" "$TMP/memovr-made.log" 2>/dev/null | grep -q '^\[[^]]*\] ERROR: ' \
        && [ -d "$TMP/memovr-real/new" ] && [ -z "$(ls -A "$TMP/memovr-real/new" 2>/dev/null)" ] \
        && [ ! -e "$CASE_STATE/pass-settings.json" ]; then
       ok "claude mode: a folder for the pass that does not exist yet, spelled through a link -> memory_override, called directly, refused (1), an ERROR: line says why, nothing written"

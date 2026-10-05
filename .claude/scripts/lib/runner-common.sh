@@ -1109,6 +1109,7 @@ state_dir_problem() {
     5) printf 'is a symlink in a folder every account can write' ;;
     6) printf 'could not be checked for write access by other accounts' ;;
     7) printf 'is inside a folder every account can write that has no sticky bit' ;;
+    8) printf 'is not the path it resolves to, as when it is made through a link' ;;
     *) printf 'could not be created, or cannot be entered' ;;
   esac
 }
@@ -3207,9 +3208,9 @@ note_tripwire() {
 # <work-dir> that fails the state directory's checks (state_dir_ready, under a
 # UTF-8 locale on Windows) or lies inside the vault by file identity, walked as
 # Git Bash spells it and, on Windows, as a drive path (a subst or mapped drive,
-# or a mount, whose root lies inside the vault is not seen). They write nothing, apart from the
-# folder state_dir_ready makes for a <work-dir> that did not exist, which must
-# then be the path it resolves to. They must run after the pass's "before"
+# or a mount, whose root lies inside the vault is not seen, reasoned). They
+# write nothing, apart from the folder state_dir_ready makes for a <work-dir>
+# that did not exist, which must then be the path it resolves to. They must run after the pass's "before"
 # snapshot, so that anything planted after them is still a change the fence
 # sees. <work-dir> is taken by its resolved path (pwd -P) first, so the
 # conversions, the UTF-8 check, these checks and the write all see one folder.
@@ -3331,14 +3332,15 @@ memory_override() {
   p=$?
   # A folder that could not be entered above, which that check then made, must
   # be the path it resolves to, or the file would go through another spelling.
-  [ "$p" -eq 0 ] && [ "$up" != "$work" ] && p=1
+  [ "$p" -eq 0 ] && [ "$up" != "$work" ] && p=8
   # That check compares the two paths by name, and on Windows and macOS a letter
-  # outside ASCII in another case, an 8.3 name or a drive-root vault spells the
-  # same folder another way, so neither the folder nor any folder above it may be
-  # the vault itself, walked as Git Bash spells it and, on Windows, as a drive
-  # path, since a folder under Git Bash's /tmp mount walks up to / and not to the
-  # drive. A subst or mapped drive, or a mount, whose root lies inside the vault
-  # is not seen.
+  # outside ASCII in another case or an 8.3 name spells the same folder another
+  # way, and on every platform path_key gives a vault at a drive or file-system
+  # root a trailing slash the name never matches, so neither the folder nor any
+  # folder above it may be the vault itself, walked as Git Bash spells it and,
+  # on Windows, as a drive path, since a folder under Git Bash's /tmp mount
+  # walks up to / and not to the drive. A subst or mapped drive, or a mount,
+  # whose root lies inside the vault is not seen (reasoned).
   if [ "$p" -eq 0 ]; then
     if path_under_by_identity "$work" "$root" \
        || { [ "$win" = 1 ] && path_under_by_identity "${arg%/*}" "$root"; }; then
@@ -3346,7 +3348,7 @@ memory_override() {
     fi
   fi
   if [ "$p" -ne 0 ]; then
-    printf '[%s] ERROR: the runner'"'"'s folder for the pass, %s, %s, and the memory override'"'"'s settings file there can name hooks Claude Code runs. Point TMPDIR at a folder outside the vault that only this account can change, or, on Windows, leave it unset. Refusing to run.\n' "$(ts)" "$work" "$(state_dir_problem "$p")" >> "$log"
+    printf '[%s] ERROR: the runner'"'"'s folder for the pass, %s, %s, and the memory override'"'"'s settings file there can name hooks Claude Code runs. Point TMPDIR at a folder outside the vault that only this account can change, or, on Windows, leave it unset; a vault that holds the temporary folder itself, as one at a drive root does, must move into a folder of its own. Refusing to run.\n' "$(ts)" "$work" "$(state_dir_problem "$p")" >> "$log"
     return 1
   fi
   # Nothing reads a copy an earlier build left in the state directory.

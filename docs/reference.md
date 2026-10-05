@@ -787,26 +787,27 @@ Around that call, each runner does several things an exit code cannot:
   cannot read; when the runner's folder for the pass fails the checks the state directory gets
   (below), or lies inside the vault by file identity, a check the state directory does not get,
   because the file can name hooks Claude Code runs: inside the vault (by name, then by identity, so
-  a letter in another case, an 8.3 name or a vault at a drive root does not hide it; a `subst` or
-  mapped drive, or a mount, whose root lies inside the vault is not seen), where the agent could
-  change it, or, off Windows, under a folder every account can write that has no sticky bit; when
-  the file cannot be written (off Windows readable by the runner's account only, in a folder only it
-  can enter; on Windows it carries the temporary folder's permissions, which under the per-user
-  default give it to the account, SYSTEM and Administrators only, measured); and when it does not
-  read back byte for byte, because Claude Code 2.1.287 reads an empty or invalid settings file as if
-  there were none and grants the folders outside the vault again (measured). The file covers memory
-  only. A folder a settings file grants through `additionalDirectories` stays outside the fence.
-  Inside `.git/`, only the files that make git run code are fenced: `config`, `config.worktree`,
-  `commondir`, `hooks/`, `info/attributes`, `info/grafts` and `objects/info/alternates`, and
-  `info/`, `objects/` or `objects/info/` when one of them is a symlink. The same files, and every
-  symlink, are fenced in every linked worktree's git directory under `.git/worktrees/` and every
-  submodule's under `.git/modules/`, except under the ref folders `heads`, `tags`, `remotes`,
-  `prefetch`, `notes` and `rewritten` inside `refs/`, where a ref may be named `config`. Git reads
-  config and hooks from the directory `commondir` names. The rest of `info/` is not fenced, because
-  `git gc --auto` after an ordinary commit rewrites `info/refs`. For a vault that is a linked
-  worktree, the same files in the shared git directory are fenced too, and appear in logs under
-  `.git-common/`. HEAD and refs are not fenced, because you or a sync plugin may commit while a pass
-  runs.
+  a letter in another case, an 8.3 name or a vault at a drive or file-system root does not hide it;
+  a `subst` or mapped drive, or a mount, whose root lies inside the vault is not seen, reasoned),
+  where the agent could change it, or, off Windows, under a folder every account can write that has
+  no sticky bit, or when it did not exist and was made through a link, so that it is not the path it
+  resolves to; when the file cannot be written (off Windows readable by the runner's account only,
+  in a folder only it can enter; on Windows it carries the temporary folder's permissions, which
+  under the per-user default give it to the account, SYSTEM and Administrators only, measured); and
+  when it does not read back byte for byte, because Claude Code 2.1.287 reads an empty or invalid
+  settings file as if there were none and grants the folders outside the vault again (measured). The
+  file covers memory only. A folder a settings file grants through `additionalDirectories` stays
+  outside the fence. Inside `.git/`, only the files that make git run code are fenced: `config`,
+  `config.worktree`, `commondir`, `hooks/`, `info/attributes`, `info/grafts` and
+  `objects/info/alternates`, and `info/`, `objects/` or `objects/info/` when one of them is a
+  symlink. The same files, and every symlink, are fenced in every linked worktree's git directory
+  under `.git/worktrees/` and every submodule's under `.git/modules/`, except under the ref folders
+  `heads`, `tags`, `remotes`, `prefetch`, `notes` and `rewritten` inside `refs/`, where a ref may be
+  named `config`. Git reads config and hooks from the directory `commondir` names. The rest of
+  `info/` is not fenced, because `git gc --auto` after an ordinary commit rewrites `info/refs`. For
+  a vault that is a linked worktree, the same files in the shared git directory are fenced too, and
+  appear in logs under `.git-common/`. HEAD and refs are not fenced, because you or a sync plugin
+  may commit while a pass runs.
 - **Containment.** A fence that only reports leaves a planted file in place, where it runs the next
   time something opens the vault. So when the changed paths include a *steering or execution
   surface*, the runner contains it before anything else, including before it looks at the agent's
@@ -924,17 +925,18 @@ Around that call, each runner does several things an exit code cannot:
     allowed, and a member of that group could rename the folder and put their own in its place; so
     is a folder above it that another account owns, whose owner could do the same; and the checks
     read mode bits only, so an access control list that lets another account change the folder is
-    not seen: keep `TMPDIR`, and every folder above it, owned and writable by your account only, or
-    by root, as `/tmp` is. On Windows it carries the temporary folder's permissions and the runner
-    cannot read them, so leave `TMPDIR` unset there unless the `//?/` limit below needs a shorter
-    folder: the folder is then made in Git Bash's `/tmp`, this account's temporary folder, which
-    only the account, SYSTEM and Administrators can change (measured; on the one host measured,
-    setting `TEMP` and `TMP` for the `.cmd` did not move `/tmp`). The same folder has held the
-    pass's snapshots, its steering backup and the folder git takes hooks from since 1.4.0, reached
-    through `TMPDIR` as spelled, so name the folder itself rather than a link to it; only a
-    claude-mode pass checks it, and command mode does not, as in 1.4.0. The settings file adds a
-    file there whose hooks Claude Code would run as your account at every claude-mode pass, whether
-    or not the vault is a git repository.
+    not seen: keep `TMPDIR`, and every folder above it, owned by your account or by root, and
+    writable by no other account unless it has the sticky bit, as `/tmp` has. On Windows it carries
+    the temporary folder's permissions and the runner cannot read them, so leave `TMPDIR` unset
+    there unless the `//?/` limit below needs a shorter folder: the folder is then made in Git
+    Bash's `/tmp`, this account's temporary folder, which only the account, SYSTEM and
+    Administrators can change (measured; on the one host measured, setting `TEMP` and `TMP` for the
+    `.cmd` did not move `/tmp`, and a Git Bash login shell sets `TMPDIR` to the same folder, spelled
+    `C:/...`). The same folder has held the pass's snapshots, its steering backup and the folder git
+    takes hooks from since 1.4.0, reached through `TMPDIR` as spelled, so name the folder itself
+    rather than a link to it; only a claude-mode pass checks it, and command mode does not, as in
+    1.4.0. The settings file adds a file there whose hooks Claude Code would run as your account at
+    every claude-mode pass, whether or not the vault is a git repository.
   - The runner removes the settings file with its folder when the pass ends. After a stop that
     leaves Claude Code running (`KILL_FAILED`, which sets the tripwire), the file is gone while the
     process may still be at work; whether Claude Code would then grant its default memory folder
@@ -1440,7 +1442,7 @@ Known limits, each failing in the quiet direction:
 | Exit | Meaning (dream and promotion runners) |
 | --- | --- |
 | `0` | OK: the artifact assertion held, nothing outside the fence changed, and the pass's files were committed, HEAD already held them, git ignores them, or the vault is not a repository of its own |
-| `1` | NO-ARTIFACT, the runner could not create its temporary directory, use its state directory, write its in-flight marker or (promotion pass) its git state file, run `git status` or back up the steering surfaces, git cannot read the vault's repository, or (command mode) the agent definition file is missing. Also, in claude mode, the memory override refused the pass before the agent started: `90-auto-memory/.pass-agent/` holds anything but a regular `.DS_Store` file with no other hard link, or cannot be listed ("the memory override folder already held a file"), it or `90-auto-memory` is a symlink or junction ("the memory override folder is a link"), either is not a folder ("is not a folder, so the memory override folder cannot be made there"), the vault's path holds a `"`, a `\` or a control character ("the vault's path holds a character the settings file cannot carry"), the vault's path or the settings file's holds bytes that do not come back unchanged from UTF-8 to UTF-16LE and back ("is not valid UTF-8, or iconv could not check it"), the runner's folder for the pass fails the state directory's checks or lies inside the vault by file identity ("the runner's folder for the pass", then the check, then "and the memory override's settings file there can name hooks Claude Code runs"), `pass-settings.json` could not be written ("could not write the memory override") or does not read back as written ("does not hold what was written to it"), or, on Windows, `cygpath` could not convert a path it needs ("cygpath could not convert a path for the memory override"), gave one that is not a drive path, a network path among them ("which is not a Windows drive path") or gave one that names another folder or file ("which is not the same folder or file"), or, outside Git Bash, the agent binary looks like a Windows program ("looks like a Windows program, but this runner is not running under Git Bash") or is not a file it can check ("is not a file the runner can check"). Claude Code's own exit 1, for example on a settings file it cannot use, also ends the run with 1: the log then says `dream-agent exited with code 1` (or `promotion-agent`) and the run log holds Claude Code's message. So does a claude-mode start for which no override was written, as when the runner and `lib/runner-common.sh` come from different releases: the run log then says "no memory override was written for this pass" and Claude Code was never started |
+| `1` | NO-ARTIFACT, the runner could not create its temporary directory, use its state directory, write its in-flight marker or (promotion pass) its git state file, run `git status` or back up the steering surfaces, git cannot read the vault's repository, or (command mode) the agent definition file is missing. Also, in claude mode, the memory override refused the pass before the agent started: `90-auto-memory/.pass-agent/` holds anything but a regular `.DS_Store` file with no other hard link, or cannot be listed ("the memory override folder already held a file"), it or `90-auto-memory` is a symlink or junction ("the memory override folder is a link"), either is not a folder ("is not a folder, so the memory override folder cannot be made there"), the vault's path holds a `"`, a `\` or a control character ("the vault's path holds a character the settings file cannot carry"), the vault's path or the settings file's holds bytes that do not come back unchanged from UTF-8 to UTF-16LE and back ("is not valid UTF-8, or iconv could not check it"), the runner's folder for the pass fails the state directory's checks, lies inside the vault by file identity or is not the path it resolves to ("the runner's folder for the pass", then the check, then "and the memory override's settings file there can name hooks Claude Code runs"), `pass-settings.json` could not be written ("could not write the memory override") or does not read back as written ("does not hold what was written to it"), or, on Windows, `cygpath` could not convert a path it needs ("cygpath could not convert a path for the memory override"), gave one that is not a drive path, a network path among them ("which is not a Windows drive path") or gave one that names another folder or file ("which is not the same folder or file"), or, outside Git Bash, the agent binary looks like a Windows program ("looks like a Windows program, but this runner is not running under Git Bash") or is not a file it can check ("is not a file the runner can check"). Claude Code's own exit 1, for example on a settings file it cannot use, also ends the run with 1: the log then says `dream-agent exited with code 1` (or `promotion-agent`) and the run log holds Claude Code's message. So does a claude-mode start for which no override was written, as when the runner and `lib/runner-common.sh` come from different releases: the run log then says "no memory override was written for this pass" and Claude Code was never started |
 | `2` | VIOLATION: a file outside the allowed write areas changed during the run. When steering surfaces are among them they are contained and the tripwire is set. Also when the pass changed a file it owns that already had uncommitted changes before it started, or a file it owns and changed is no longer a regular file, or (promotion pass) it changed a long-tier note that was there before it started. The runner commits nothing. Those last three reasons give exit 2 even when the agent failed, timed out or (promotion pass) gave no summary, and nothing is recorded for the next run. The promotion pass also puts back its notes, as for exit 5, except one that already had uncommitted changes |
 | `3` | REFUSED: `VAULT_AGENT=command` without `VAULT_ALLOW_UNENFORCED_TOOLS=1`; the agent was not started |
 | `4` | COMMIT-FAILED: staging or committing the pass's files failed, ran longer than `RUNNER_GIT_TIMEOUT`, or a file changed while it was checked. The files are left in place and uncommitted, and the log says whether they could be unstaged. Also a commit that was made but does not hold the checked content, which the log names |

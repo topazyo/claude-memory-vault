@@ -176,14 +176,15 @@ What that covers, and what it does not:
     is not a file at all, such as an exported shell function, and a file whose first bytes the
     runner cannot read refuse too, with `is not a file the runner can check`. A wrapper script
     that starts a Windows program is not recognised.
-  - The runner's folder for the pass, under `TMPDIR`, fails the checks the state directory gets, or
-    one it does not get: it lies inside the vault, by name or by identity, the check only this
-    folder gets (a letter in another case, an 8.3 name or a vault at a drive root does not hide it;
-    a `subst` or mapped drive, or a mount, whose root lies inside the vault does), where the agent
-    could change the file (and under `.claude/logs`, `.obsidian` or `.git` the fence would not see
-    it), or, off Windows, a folder above it every account can write has no sticky bit. The folder
-    itself, new from `mktemp -d`, is this account's own and private, so the owner and mode checks on
-    it pass.
+  - The runner's folder for the pass, under `TMPDIR`, fails the checks the state directory gets: it
+    lies inside the vault by name, where the agent could change the file (and under `.claude/logs`,
+    `.obsidian` or `.git` the fence would not see it), or, off Windows, a folder above it every
+    account can write has no sticky bit. Or it lies inside the vault by file identity, the check
+    only this folder gets (a letter in another case, an 8.3 name or a vault at a drive or
+    file-system root does not hide it; a `subst` or mapped drive, or a mount, whose root lies inside
+    the vault does, reasoned). Or it did not exist and was made through a link, so it is not the
+    path it resolves to. The folder itself, new from `mktemp -d`, is this account's own and private,
+    so the owner and mode checks on it pass.
   - The settings file could not be written, or does not read back exactly as written.
   - No settings file was written for the pass, which happens only when the runner and
     `runner-common.sh` come from different releases (Adopting 1). This refusal comes from the
@@ -205,33 +206,33 @@ What that covers, and what it does not:
   except `mem-override-sink-contained`: it holds the unchanged fence to containing a write in
   `.pass-agent/`, and was seen failing against a runner that exempts that folder;
   `mem-override-utf8-lax-host` and `mem-override-utf16-lax-host`, which record what the host's
-  `iconv` does rather than holding a refusal; `mem-override-work-root`, which calls
-  `memory_override` directly and so fails against 1.4.0, which has none, for that alone, and was
-  seen failing against an earlier build of this release that had it (on Linux); and
+  `iconv` does rather than holding a refusal; `mem-override-work-root` and `mem-override-work-made`,
+  which call `memory_override` directly and so fail against 1.4.0, which has none, for that alone,
+  and were seen failing against an earlier build of this release that had it (on Linux); and
   `mem-override-cygpath-refused` and `mem-override-work-case`, which run only on Windows or macOS,
   where no run of 1.4.0 was made, and call `memory_override` directly. `mem-override-flag`,
   `mem-override-sink-refused`, `mem-override-sink-link`, `mem-override-sink-hardlink`,
   `mem-override-sink-contained`, `mem-override-sink-fifo`, `mem-override-path-refused`,
   `mem-override-nonascii`, `mem-override-order`, `mem-override-mixed-release`,
   `mem-override-unc-refused`, `mem-override-work-refused`, `mem-override-work-root`,
-  `mem-override-no-iconv` and `dream-agent-tools` are required on every CI job.
-  `mem-override-sink-unreadable`, `mem-override-sink-filelink`, `mem-override-file-mode`,
-  `mem-override-utf8-refused`, `mem-override-winbin`, `mem-override-winbin-unreadable`,
-  `mem-override-stray-cygpath`, `mem-override-no-cygpath` and `mem-override-work-open` are required
-  on the Linux and macOS jobs and not on Windows, where they skip or may skip; the two unreadable
-  ones also skip as root. `mem-override-cygpath-refused` is required on the Windows job, the only
-  one with `cygpath`. `mem-override-work-case`, `memory_override` called directly with its folder
-  inside the vault, spelled with a letter in the other case, is required on the Windows and macOS
-  jobs, whose file systems ignore case, and not on ubuntu. `mem-override-work-resolved`, a `TMPDIR`
-  spelled through a link and a folder for the pass that does not exist yet, is required on the
-  ubuntu and Windows jobs, where `mktemp` takes `TMPDIR`, and not on macOS.
-  `mem-override-utf8-lax-host`, required on the ubuntu job only, is recorded where `iconv`'s
-  conversion to UTF-8 lets a sequence above U+10FFFF through, as glibc's does, so that job shows its
-  UTF-8 twins can tell the round trip from a conversion to UTF-8 alone.
-  `mem-override-utf16-lax-host`, required on the two macOS jobs only, is recorded where the
-  conversion to UTF-16LE, asked under the C locale as the runners ask it, takes that sequence
-  without an error, as macOS's does, so those jobs show the same against a conversion to UTF-16LE
-  alone.
+  `mem-override-work-made` (`memory_override` called directly with a folder for the pass that does
+  not exist yet, spelled through a link), `mem-override-no-iconv` and `dream-agent-tools` are
+  required on every suite job. `mem-override-sink-unreadable`, `mem-override-sink-filelink`,
+  `mem-override-file-mode`, `mem-override-utf8-refused`, `mem-override-winbin`,
+  `mem-override-winbin-unreadable`, `mem-override-stray-cygpath`, `mem-override-no-cygpath` and
+  `mem-override-work-open` are required on the Linux and macOS jobs and not on Windows, where they
+  skip or may skip; the two unreadable ones also skip as root. `mem-override-cygpath-refused` is
+  required on the Windows job, the only one with `cygpath`. `mem-override-work-case`,
+  `memory_override` called directly with its folder inside the vault, spelled with a letter in the
+  other case, is required on the Windows and macOS jobs, whose file systems ignore case, and not on
+  ubuntu. `mem-override-work-resolved`, a `TMPDIR` spelled through a link, is required on the ubuntu
+  and Windows jobs, where `mktemp` takes `TMPDIR`, and not on macOS. `mem-override-utf8-lax-host`,
+  required on the ubuntu job only, is recorded where `iconv`'s conversion to UTF-8 lets a sequence
+  above U+10FFFF through, as glibc's does, so that job shows its UTF-8 twins can tell the round trip
+  from a conversion to UTF-8 alone. `mem-override-utf16-lax-host`, required on the two macOS jobs
+  only, is recorded where the conversion to UTF-16LE, asked under the C locale as the runners ask
+  it, takes that sequence without an error, as macOS's does, so those jobs show the same against a
+  conversion to UTF-16LE alone.
 
 ### Adopting this
 
@@ -353,19 +354,22 @@ What that covers, and what it does not:
     cannot start a vault from a `//` path (`CMD does not support UNC paths as current directories`,
     measured on this release).
 15. **A claude-mode pass refuses to start when its folder under `TMPDIR` fails the state directory's
-    checks, or lies inside the vault by file identity.** The log says `the runner's folder for the
-    pass, ...`, then why (`resolves into the vault`, `is inside a folder every account can write
-    that has no sticky bit`, and so on), `and the memory override's settings file there can name
-    hooks Claude Code runs`. The default temporary folder passes on Linux (`/tmp`, sticky), macOS (a
-    per-user folder) and Windows (Git Bash's `/tmp`, this account's temporary folder), measured on
-    CI's three platforms. If you set `TMPDIR` for the passes, point it at a folder outside the vault
-    that only your account can change, named directly rather than through a link: the settings file
-    is reached through the folder's resolved path, but the snapshots, the steering backup and git's
-    hooks folder there are reached through `TMPDIR` as spelled, as in 1.4.0. On Windows the runner
-    cannot read a folder's permissions, so leave `TMPDIR` unset there unless item 9's `//?/` refusal
-    needs a shorter folder (on the one host measured, setting `TEMP` and `TMP` for the `.cmd` did
-    not move Git Bash's `/tmp`). On macOS `TMPDIR` does not move the folder: Apple's `mktemp` takes
-    the per-user one (measured on CI).
+    checks, lies inside the vault by file identity, or is not the path it resolves to.** The log
+    says `the runner's folder for the pass, ...`, then why (`resolves into the vault`, `is inside a
+    folder every account can write that has no sticky bit`, `is not the path it resolves to`, and so
+    on), `and the memory override's settings file there can name hooks Claude Code runs`. A vault
+    that holds the temporary folder itself, as one at a drive root does, must move into a folder of
+    its own. The default temporary folder passes on Linux (`/tmp`, sticky), macOS (a per-user
+    folder) and Windows (Git Bash's `/tmp`, this account's temporary folder), measured on CI's three
+    platforms. If you set `TMPDIR` for the passes, point it at a folder outside the vault that only
+    your account can change, named directly rather than through a link: the settings file is reached
+    through the folder's resolved path, but the snapshots, the steering backup and git's hooks
+    folder there are reached through `TMPDIR` as spelled, as in 1.4.0. On Windows the runner cannot
+    read a folder's permissions, so leave `TMPDIR` unset there unless item 9's `//?/` refusal needs
+    a shorter folder (on the one host measured, setting `TEMP` and `TMP` for the `.cmd` did not move
+    Git Bash's `/tmp`, and a Git Bash login shell sets `TMPDIR` to this account's temporary folder,
+    the same folder). On macOS `TMPDIR` does not move the folder: Apple's `mktemp` takes the
+    per-user one (measured on CI).
 
 `--check` will list `.claude/scripts/lib/runner-common.sh`, `.claude/scripts/dream-pass.sh`,
 `.claude/scripts/promotion-pass.sh`, `.claude/scripts/run-tests.sh`,
