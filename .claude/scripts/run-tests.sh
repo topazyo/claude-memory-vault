@@ -5298,14 +5298,17 @@ done
 # code page and turned an e-acute into the one byte 0xE9, so the override named
 # a folder outside the vault, or a settings file that is not there (1.4.1 before
 # its fix). The settings file is written in the runner's own folder under
-# TMPDIR, as it is under a profile folder named outside ASCII. The names are
+# TMPDIR, so for an account whose profile folder is named outside ASCII its
+# path is not ASCII either; the tmp twins stand in for that. The names are
 # built from octal escapes, their bytes checked, and the expected values built
 # from parts no conversion touches. On Windows each twin first shows that
 # conversion would happen on this host, so a pass cannot come from a fixture
 # that never exercised it. Elsewhere the twins show a valid UTF-8 path is
 # accepted, a character above U+FFFF among them, so a check that refused those
-# would not pass. Where the file system refuses a name, memory_override is
-# called as the runners call it, and must write the file.
+# would not pass. Where the file system refuses a name (APFS refuses U+10FFFF),
+# no vault can have it, so memory_override, called as the runners call it, must
+# pass the name through its UTF-8 check and stop only at the work folder's
+# check, which cannot enter that vault.
 mo_hex() {  # mo_hex <string> - its bytes in hex, no spaces
   printf '%s' "$1" | od -An -tx1 | tr -d ' \n'
 }
@@ -5347,10 +5350,12 @@ for mo_i in e-acute cyrillic cjk emoji top tmp tmp-emoji; do
       ( LC_ALL=C; export LC_ALL; . "$RV/.claude/scripts/lib/runner-common.sh"; AGENT_BIN="$FAKE"
         memory_override "$MO_NV" "$CASE_STATE" "$TMP/memovr-na-work" "$TMP/memovr-na.log" )
       mo_rc=$?
-      if [ "$mo_rc" -eq 0 ] && [ "$(cat "$TMP/memovr-na-work/pass-settings.json" 2>/dev/null)" = "{\"autoMemoryDirectory\":\"$MO_NV/90-auto-memory/.pass-agent\"}" ]; then
-        ok "memory_override, called directly where the file system refuses the name: $mo_say -> accepted (0), the file names that vault's own 90-auto-memory/.pass-agent"
+      if [ "$mo_rc" -eq 1 ] && ! grep -q 'not valid UTF-8' "$TMP/memovr-na.log" 2>/dev/null \
+         && grep -q "ERROR: the runner's folder for the pass, .*, could not be created, or cannot be entered" "$TMP/memovr-na.log" 2>/dev/null \
+         && [ ! -e "$TMP/memovr-na-work/pass-settings.json" ]; then
+        ok "memory_override, called directly where the file system refuses the name: $mo_say -> its UTF-8 check passes the name, and the call stops only at the work folder's check, which cannot enter a vault that cannot exist"
       else
-        bad "memory_override, called directly, did not accept $mo_say -- got $mo_rc: $(cat "$TMP/memovr-na.log" 2>/dev/null)"
+        bad "memory_override, called directly where the file system refuses the name, did not take $mo_say past its UTF-8 check to the work folder's check -- got $mo_rc: $(cat "$TMP/memovr-na.log" 2>/dev/null)"
       fi
       rm -rf "$TMP/memovr-na-work" "$TMP/memovr-na.log"
     fi
