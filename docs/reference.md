@@ -460,9 +460,10 @@ a lint that does nothing and a lint that found nothing wrong print the same thin
   folder's file system or drive) or, off Windows, under a folder every account can write that has no
   sticky bit, when that folder is not there (spelled through a link or not), when it already holds
   `pass-settings.json`, `pass-settings.new` or the temporary name the file is written through
-  (off Windows also as a link to a file or a folder outside it), when the file
-  cannot be written or does not read back as written, on Windows when `cygpath` fails, prints
-  nothing, gives back a Git Bash path, a `//?/` or `//./` device path or a network path
+  (`pass-settings.json` also as an empty folder, and off Windows also as a link to a file or a
+  folder outside it, a dangling link or a FIFO), when
+  the file cannot be written or does not read back as written, on Windows when `cygpath` fails,
+  prints nothing, gives back a Git Bash path, a `//?/` or `//./` device path or a network path
   (`//host/share/...`), or gives a path naming something else, when a Git Bash platform name comes
   with no `cygpath`, when the vault's path or the settings file's holds bytes that do not come back
   unchanged from UTF-8 to UTF-16LE and back (a lone `0xFF`, a lone continuation byte, a surrogate,
@@ -773,10 +774,10 @@ Around that call, each runner does several things an exit code cannot:
   build), a Write to the folder a `C`-locale conversion named landed with that conversion's file and
   was refused with the runner's. Any other version is unmeasured. For a vault reached as a network
   path (`//server/share/...` or `//wsl.localhost/...`) and started from Git Bash, Claude Code 2.1.289
-  and 2.1.292 ignored the file and a Write
-  to the default folder landed with it as without it (measured), so on Windows the runner accepts
-  only a drive path. Edit was not probed, and Linux and macOS are unverified. On Windows the runner
-  converts the vault's path and the file's with `cygpath` under a UTF-8 locale, because under the
+  and 2.1.292 ignored the file and a Write to the default folder landed with it as without it
+  (measured), so on Windows the runner accepts only a drive path. Edit was not probed, and Linux
+  and macOS are unverified. On Windows the runner converts the vault's path and the file's with
+  `cygpath` under a UTF-8 locale, because under the
   runners' `LC_ALL=C` it cuts a path at its first character outside the ANSI code page, which made
   the file name a folder outside the vault, and a Write there landed (measured). Each converted path
   must then name, converted back, the folder or file it came from. A folder named in project or user
@@ -813,8 +814,11 @@ Around that call, each runner does several things an exit code cannot:
   write that has no sticky bit; when it is not there as a folder, because the runner makes it before
   the pass's "before" snapshot and keeps the snapshot in it, so one that went away may have taken the
   snapshot with it and the fence would compare the pass with nothing (it is refused, never made
-  again; a folder emptied, or removed and made again by someone else, is not seen, reasoned); when
-  it was replaced by a link during the checks, so that it is not the path it resolves to; when
+  again; a folder emptied, removed and made again, or replaced by a link, before the checks by
+  another process of your account, or on Windows of any account that can change the temporary
+  folder, is not seen, reasoned, since it is resolved and checked like the runner's own, while off
+  Windows another account's folder fails the owner check); when it was replaced by a link during
+  the checks, so that it is not the path it resolves to; when
   `pass-settings.json`, `pass-settings.new`, or the temporary name ending in the runner's process id
   that the file is written through, is already there, since a link there would carry the write
   elsewhere, a folder would take it in and a FIFO would hold the pass (only a name there when the
@@ -822,11 +826,10 @@ Around that call, each runner does several things an exit code cannot:
   that no other account can change keeps the file safe); when the file cannot be written (off
   Windows readable by the runner's account only, in a folder only it can enter; on Windows it
   carries the temporary folder's permissions, which under the per-user default give it to the
-  account, SYSTEM and Administrators only,
-  measured); and when it does not read back byte for byte, because Claude Code 2.1.287 reads an empty
-  or invalid settings file as if there were none and grants the folders outside the vault again
-  (measured on 2.1.287; not re-run on a later version). The
-  file covers memory only. A folder a settings file grants through `additionalDirectories` stays
+  account, SYSTEM and Administrators only, measured); and when it does not read back byte for byte,
+  because Claude Code 2.1.287 reads an empty or invalid settings file as if there were none and
+  grants the folders outside the vault again (measured on 2.1.287; not re-run on a later version).
+  The file covers memory only. A folder a settings file grants through `additionalDirectories` stays
   outside the fence. Inside `.git/`, only the files that make git run code are fenced: `config`,
   `config.worktree`, `commondir`, `hooks/`, `info/attributes`, `info/grafts` and
   `objects/info/alternates`, and `info/`, `objects/` or `objects/info/` when one of them is a
@@ -972,13 +975,14 @@ Around that call, each runner does several things an exit code cannot:
     1.4.0. The settings file adds a file there whose hooks Claude Code would run as your account at
     every claude-mode pass, whether or not the vault is a git repository.
   - The runner's folder for the pass also holds the pass's "before" snapshot. A folder that is gone
-    when the override is written is refused (exit 1), but one emptied, or removed and made again by
-    someone else, before then is not seen (reasoned), and one removed while the agent runs, or after
-    it ran, takes the snapshot with it, and the fence then compares the pass with nothing: writes the
-    agent made under `90-auto-memory/` and to `AGENTS.md` stayed in the vault and no tripwire was
-    set (measured on 1.4.0 and on this release with a stand-in agent; other steering surfaces are
-    reasoned to behave the same). Keep anything that cleans the temporary folder from removing a
-    pass's folder while it runs.
+    when the override is written is refused (exit 1), but one emptied, removed and made again, or
+    replaced by a link, before then by another process of your account, or on Windows of any
+    account that can change the temporary folder, is not seen (reasoned), and one removed while
+    the agent runs, or after it ran, takes the snapshot with it, and the fence then compares the
+    pass with nothing: writes the agent made under `90-auto-memory/` and to `AGENTS.md` stayed in
+    the vault and no tripwire was set (measured on 1.4.0 and on this release with a stand-in agent;
+    other steering surfaces are reasoned to behave the same). Keep anything that cleans the
+    temporary folder from removing a pass's folder while it runs.
   - The runner removes the settings file with its folder when the pass ends. After a stop that
     leaves Claude Code running (`KILL_FAILED`, which sets the tripwire), the file is gone while the
     process may still be at work; whether Claude Code would then grant its default memory folder
@@ -1002,10 +1006,10 @@ Around that call, each runner does several things an exit code cannot:
     under Git Bash's `/tmp` keeps that spelling only where the temporary folder's path holds no 8.3
     name; on CI's Windows image, whose `TEMP` is spelled `RUNNER~1`, it resolves to the long drive
     path (`/c/Users/runneradmin/...`), while a vault there under `/tmp`, as the suite's are, is
-    named with `RUNNER~1` (`TEMP`'s spelling was seen on CI, and that `cygpath -m` keeps an 8.3 name
-    was measured on a development host, with another short name; no CI log prints either path). The
-    suite's claude-mode passes, whose vaults lie there, pass the identity checks on CI; real Claude
-    Code has not been measured with a short-name value.
+    named with `RUNNER~1` (reasoned: `TEMP`'s spelling was seen on CI, and that `cygpath -m` keeps an
+    8.3 name was measured on a development host, with another short name; no CI log prints either
+    path). The suite's claude-mode passes, whose vaults lie there, pass the identity checks on CI;
+    real Claude Code has not been measured with a short-name value.
   - On Windows, `cygpath -m` gives a `//?/` device path for a path of about 260 characters or more
     (254 converted normally, 309 did not, measured), so a vault, or a temporary folder, that deep is
     refused with `which is not a Windows drive path`. Move the vault nearer a drive root, or point
@@ -1016,14 +1020,14 @@ Around that call, each runner does several things an exit code cannot:
     one reached as `//server/share/...` or `//wsl.localhost/...` and started from Git Bash, Claude
     Code 2.1.289 and 2.1.292 ignored the settings file and kept granting the default memory folder
     outside the vault (measured). The `.cmd` wrappers cannot start such a vault at all (`CMD does
-    not support UNC paths as current directories`). A mapped drive gives a drive path and runs: for one drive
-    mapped to the measuring host's own administrative share (`\\localhost\c$`), a Write to the
-    default folder was refused with the file (2.1.289 and 2.1.292, measured through
+    not support UNC paths as current directories`). A mapped drive gives a drive path and runs:
+    for one drive mapped to the measuring host's own administrative share (`\\localhost\c$`), a
+    Write to the default folder was refused with the file (2.1.289 and 2.1.292, measured through
     `dream-pass.cmd`). A drive mapped to another server is unmeasured, and where that server reports
     no file IDs the runner's identity checks could refuse it (reasoned). For the vault, any other
-    drive letter whose target is a
-    network path is accepted too and unmeasured: DFS, WebDAV and other redirectors, a local link to
-    a share, `subst` onto one, and a drive mapped to `\\wsl.localhost\...`. The temporary folder is
+    drive letter whose target is a network path is accepted too and unmeasured: DFS, WebDAV and
+    other redirectors, a local link to a share, `subst` onto one, and a drive mapped to
+    `\\wsl.localhost\...`. The temporary folder is
     taken by its resolved path, so one reached through a local link to a share should be refused as
     a network path (reasoned; not measured).
   - When `VAULT_STATE_DIR` is rejected, or there is no per-user state folder to use, the state

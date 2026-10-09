@@ -64,7 +64,7 @@ worth taking.
 
 - plain markdown in git as the only store, with no services or API keys
 - automation that proposes changes instead of rewriting notes, with every unattended write inside
-  the vault fenced and revertible
+  the vault fenced and revertible, within the limits `docs/reference.md` lists
 - refuted beliefs kept as linked, superseded notes rather than deleted
 - a small long-term tier that has to be earned
 - native Windows support

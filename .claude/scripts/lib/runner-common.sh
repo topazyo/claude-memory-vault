@@ -3225,12 +3225,16 @@ note_tripwire() {
 # the write would go through (only names there at the check: one planted after
 # it is still written through). The runner makes <work-dir> before the pass's
 # "before" snapshot and keeps the snapshot there, so one that is not there may
-# have taken the snapshot with it: it is refused, never made again (a folder
-# emptied, or removed and made again by someone else, is not seen). The checks
-# write nothing. They must run after that
-# snapshot, so that anything planted after them is still a change the fence
-# sees. <work-dir> is taken by its resolved path (pwd -P) first, so the
-# conversions, the UTF-8 check, these checks and the write all see one folder.
+# have taken the snapshot with it: it is refused, never made again. A folder
+# emptied, removed and made again, or replaced by a link, by another process of
+# this account, or on Windows of any account that can change the temporary
+# folder, is not seen: it is resolved and checked like the runner's own (off
+# Windows another account's folder fails the owner check). Apart from removing
+# the copy of the file an earlier build left in the state directory (below),
+# the checks write nothing. They must run after that snapshot, so that anything
+# planted after them is still a change the fence sees. <work-dir> is taken by
+# its resolved path (pwd -P) first, so the conversions, the UTF-8 check, these
+# checks and the write all see one folder.
 # Then the file is written as pass-settings.json in <work-dir>, the runner's own
 # folder for the pass, and must read back byte for byte, because Claude Code
 # reads an empty or invalid settings file as if there were none. The read-back,

@@ -69,6 +69,8 @@ WORK="$TMP/some one/my vault"
 # Set by the work-root twin on Windows, and removed by cleanup, so never taken
 # from the environment.
 MO_RB_TMP=
+# The background job mo_bounded is polling, if any, for cleanup to stop.
+MO_BOUNDED_PID=
 
 # Cleanup must also EXIT on a signal. A cleanup-only trap on INT/TERM deletes
 # the fixtures and then lets the script keep running against a directory that
@@ -84,6 +86,8 @@ cleanup() {
     fi
     chmod 755 "$RET_LOCKED_DIR" 2>/dev/null
   fi
+  # A bounded job still running (mo_bounded) is stopped with the suite.
+  [ -n "${MO_BOUNDED_PID:-}" ] && kill -KILL "$MO_BOUNDED_PID" 2>/dev/null
   [ -n "${MO_RB_TMP:-}" ] && rm -rf "$MO_RB_TMP" 2>/dev/null
   [ -n "${TMP:-}" ] && rm -rf "$TMP" 2>/dev/null
 }
@@ -2077,55 +2081,66 @@ runner() {  # runner <script> <mode> [extra env...]
 # the function when it loops in that shell, as the identity walk does; a hang in
 # a command substitution or a command it starts (state_dir_ready's subshell,
 # cygpath, iconv) is reported the same, but that child is left running. KILL,
-# because a library that trapped TERM would otherwise leave the wait hanging; a
-# job that ended in the last second is waited for, not reported as stopped.
+# because a library that trapped TERM would otherwise leave the wait hanging.
+# The job leaves a marker when the function returns, and the polling stops on
+# it, so a function that returned is never reported as stopped and a pid reused
+# after the job ended is never killed; a job gone without it is waited for. The
+# pid is kept for cleanup, so a suite stopped meanwhile stops the job too.
 mo_bounded() {
-  local secs="$1" pid n=0
+  local secs="$1" pid n=0 mk="$TMP/mo-bounded.done"
   shift
-  ( LC_ALL=C; export LC_ALL; . "$RV/.claude/scripts/lib/runner-common.sh"; AGENT_BIN="$FAKE"; "$@" ) &
+  rm -f "$mk"
+  ( LC_ALL=C; export LC_ALL; . "$RV/.claude/scripts/lib/runner-common.sh"; AGENT_BIN="$FAKE"; "$@"
+    mo_r=$?; : > "$mk"; exit "$mo_r" ) &
   pid=$!
-  while kill -0 "$pid" 2>/dev/null; do
+  MO_BOUNDED_PID=$pid
+  while [ ! -e "$mk" ] && kill -0 "$pid" 2>/dev/null; do
     if [ "$n" -ge "$secs" ]; then
-      kill -KILL "$pid" 2>/dev/null || { wait "$pid"; return; }
+      [ -e "$mk" ] && break
+      kill -KILL "$pid" 2>/dev/null || break
       wait "$pid" 2>/dev/null
+      MO_BOUNDED_PID=
       return 124
     fi
     sleep 1
     n=$((n + 1))
   done
+  MO_BOUNDED_PID=
   wait "$pid"
 }
 # memory_override walks up the runner's folder for the pass, and a walk that
 # never returns would hang every claude-mode pass below with no line to say why,
-# so one walk runs here first, bounded: up a folder whose name ends in a colon,
-# the case that once never returned, to the root, and also up a drive path to
+# so two walks run here first, each bounded: up a folder whose name ends in a
+# colon, the case that once never returned, to the root, and up a drive path to
 # the drive, the second walk every claude-mode pass makes on Windows. Off
 # Windows a stray cygpath on PATH gives drive paths too (a stand-in below does),
 # and there such a path is relative, so its walk also ends at a drive letter. If
 # one does not return, the passes below cannot run without hanging, so the suite
-# ends here and fails.
+# ends here and fails. Either walk that cannot be set up is a failure, and the
+# other still runs.
+mo_sentinel() {  # mo_sentinel <path> - one bounded walk up <path>; ends the suite if it does not return
+  mo_bounded 30 path_under_by_identity "$1" "$RV"
+  if [ "$?" -eq 124 ]; then
+    bad "mem-override-work-colon: the identity walk up $1 did not return within 30s, so every claude-mode pass would hang; the rest of the suite is not run"
+    printf '\n=== %s passed, %s failed ===\n' "$pass" "$fail"
+    exit 1
+  fi
+}
 MO_COLON="$TMP/memovr-colon:"
 rm -rf "$MO_COLON"
 ( umask 077 && mkdir -p "$MO_COLON/c:/w" ) 2>/dev/null
-if is_windows_host; then
-  mo_walks="$MO_COLON/c:/w|$(cygpath -m "$TMP")/memovr-sentinel"
-else
-  mo_walks="$MO_COLON/c:/w|C:$TMP/memovr-sentinel"
-fi
 case "$(cd "$MO_COLON/c:/w" 2>/dev/null && pwd -P)" in
-  */memovr-colon:/c:/w)
-    mo_ifs="$IFS"; IFS='|'
-    for mo_walk in $mo_walks; do
-      IFS="$mo_ifs"
-      mo_bounded 30 path_under_by_identity "$mo_walk" "$RV"
-      if [ "$?" -eq 124 ]; then
-        bad "mem-override-work-colon: the identity walk up $mo_walk did not return within 30s, so every claude-mode pass would hang; the rest of the suite is not run"
-        printf '\n=== %s passed, %s failed ===\n' "$pass" "$fail"
-        exit 1
-      fi
-    done
-    IFS="$mo_ifs" ;;
-  *) bad "mem-override-work-colon: a folder whose name ends in a colon could not be made under $TMP, so the walk could not be bounded before the claude-mode passes" ;;
+  */memovr-colon:/c:/w) mo_sentinel "$MO_COLON/c:/w" ;;
+  *) bad "mem-override-work-colon: a folder whose name ends in a colon could not be made under $TMP, so the walk up it could not be bounded before the claude-mode passes" ;;
+esac
+if is_windows_host; then
+  mo_walk="$(cygpath -m "$TMP")/memovr-sentinel"
+else
+  mo_walk="C:$TMP/memovr-sentinel"
+fi
+case "$mo_walk" in
+  [ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]:/*) mo_sentinel "$mo_walk" ;;
+  *) bad "mem-override-work-colon: no drive path could be made for $TMP (got $mo_walk), so the walk up a drive path could not be bounded before the claude-mode passes" ;;
 esac
 rm -rf "$MO_COLON"
 # A tripwire and an in-flight marker live in the vault AND in the state
@@ -2877,21 +2892,23 @@ rm -rf "$MO_COLON" "$TMP/memovr-colon.log" "$RV/90-auto-memory"
 # folder that holds no w, and must refuse with its own reason, leave w absent
 # and leave AGENT_SETTINGS_FILE unset (a refusal that leaves it set exits 9);
 # then w is made, and the same call runs and writes the file, through the
-# temporary name the planted-name check guards: a stand-in cp records where it
-# copies to, so a write that moved to another name fails here.
+# staging and temporary names the planted-name check guards: a stand-in cp
+# records what it copies from and to, and the one copy must be from
+# pass-settings.new to pass-settings.json.tmp.<pid>, so a write that moved to
+# another name, or went through a second copy, fails here.
 MO_GONE="is not there as a folder, though the runner made it before the pass's snapshot"
 rm -rf "$TMP/memovr-gone" "$TMP/memovr-gone.log" "$TMP/memovr-cp" "$TMP/memovr-cp.rec" "$RV/90-auto-memory"
 rm -f "${CASE_STATE:-$TMP/state}/pass-settings.json"
 ( umask 077 && mkdir -p "$TMP/memovr-gone" )
 mkdir -p "$TMP/memovr-cp"
-printf '#!/usr/bin/env bash\neval "last=\\${$#}"\nprintf "%%s\\n" "$last" >> %q\nexec %q "$@"\n' "$TMP/memovr-cp.rec" "$(command -v cp)" > "$TMP/memovr-cp/cp"
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> %q\nexec %q "$@"\n' "$TMP/memovr-cp.rec" "$(command -v cp)" > "$TMP/memovr-cp/cp"
 chmod +x "$TMP/memovr-cp/cp"
 printf 'x\n' > "$TMP/memovr-cp-probe"
 PATH="$TMP/memovr-cp:$PATH" cp "$TMP/memovr-cp-probe" "$TMP/memovr-cp-probe.to" 2>/dev/null
 mo_cpok=no
-[ "$(cat "$TMP/memovr-cp.rec" 2>/dev/null)" = "$TMP/memovr-cp-probe.to" ] && [ -f "$TMP/memovr-cp-probe.to" ] && mo_cpok=yes
+[ "$(cat "$TMP/memovr-cp.rec" 2>/dev/null)" = "$TMP/memovr-cp-probe $TMP/memovr-cp-probe.to" ] && [ -f "$TMP/memovr-cp-probe.to" ] && mo_cpok=yes
 rm -f "$TMP/memovr-cp.rec" "$TMP/memovr-cp-probe" "$TMP/memovr-cp-probe.to"
-[ "$mo_cpok" = yes ] || bad "mem-override-work-gone: the cp stand-in does not record its destination, so the written-through name cannot be checked"
+[ "$mo_cpok" = yes ] || bad "mem-override-work-gone: the cp stand-in does not record what it copies, so the written-through names cannot be checked"
 mo_gp="$(cd "$TMP/memovr-gone" 2>/dev/null && pwd -P)"
 if [ -z "$mo_gp" ] || [ ! -d "$mo_gp" ] || [ -e "$mo_gp/w" ] || [ -L "$mo_gp/w" ] \
    || [ -e "${CASE_STATE:-$TMP/state}/pass-settings.json" ]; then
@@ -2916,10 +2933,10 @@ else
     memory_override "$RV" "${CASE_STATE:-$TMP/state}" "$mo_gp/w" "$TMP/memovr-gone.log" )
   mo_rc=$?
   if [ "$mo_rc" -eq 0 ] && [ "$(cat "$mo_gp/w/pass-settings.json" 2>/dev/null)" = "{\"autoMemoryDirectory\":\"$MO_WANT\"}" ] \
-     && grep -qxF -- "$mo_gp/w/pass-settings.json.tmp.$$" "$TMP/memovr-cp.rec" 2>/dev/null; then
-    ok "claude mode: the same folder for the pass, once it is there -> memory_override returns 0, the settings file reads back, and it was written through pass-settings.json.tmp.<pid>"
+     && [ "$(cat "$TMP/memovr-cp.rec" 2>/dev/null)" = "$mo_gp/w/pass-settings.new $mo_gp/w/pass-settings.json.tmp.$$" ]; then
+    ok "claude mode: the same folder for the pass, once it is there -> memory_override returns 0, the settings file reads back, and it was written in one copy from pass-settings.new through pass-settings.json.tmp.<pid>"
   else
-    bad "claude mode: the same folder for the pass, once it is there, did not get its settings file through pass-settings.json.tmp.$$ -- got $mo_rc, cp wrote to: $(tr '\n' ' ' < "$TMP/memovr-cp.rec" 2>/dev/null): $(cat "$TMP/memovr-gone.log" 2>/dev/null)"
+    bad "claude mode: the same folder for the pass, once it is there, did not get its settings file in one copy from pass-settings.new through pass-settings.json.tmp.$$ -- got $mo_rc, cp copied: $(tr '\n' '|' < "$TMP/memovr-cp.rec" 2>/dev/null): $(cat "$TMP/memovr-gone.log" 2>/dev/null)"
   fi
 fi
 rm -rf "$TMP/memovr-gone" "$TMP/memovr-gone.log" "$TMP/memovr-gone-planted.json" "$TMP/memovr-cp" "$TMP/memovr-cp.rec"
@@ -2929,7 +2946,8 @@ rm -rf "$TMP/memovr-gone" "$TMP/memovr-gone.log" "$TMP/memovr-gone-planted.json"
 # process: a link would carry the write elsewhere, a folder would take it in, and
 # a FIFO would hold the pass forever. Each is planted in turn, as a regular file
 # holding a marker, and the call must refuse with the reason, leave the marker as
-# it was and write no pass-settings.json. Off Windows the new name is also
+# it was and write no pass-settings.json; pass-settings.json is also planted as
+# an empty folder, which must stay empty. Off Windows the new name is also
 # planted as a link to a file outside the folder, as a link to a file that does
 # not exist (which must still not exist), and as a FIFO (the call is bounded, so
 # a write that blocks on it fails here rather than hanging the suite), and
@@ -2942,7 +2960,16 @@ if [ -z "$mo_np" ] || [ -n "$(ls -A "$mo_np" 2>/dev/null)" ]; then
   bad "mem-override-work-names: an empty folder for the twin could not be made"
 else
   ran mem-override-work-names
-  mo_legs="new tmp json"
+  # The bounded leg's call: a refusal that leaves AGENT_SETTINGS_FILE set is 9,
+  # as in the direct calls below.
+  mo_override_unset() {
+    local mo_r
+    memory_override "$@"
+    mo_r=$?
+    [ "$mo_r" -ne 0 ] && [ -n "${AGENT_SETTINGS_FILE+x}" ] && mo_r=9
+    return "$mo_r"
+  }
+  mo_legs="new tmp json jsonfolder"
   is_windows_host || mo_legs="$mo_legs link dangle fifo jsondir"
   for mo_leg in $mo_legs; do
     rm -rf "$mo_np"/* "$mo_np"/.[!.]* "$TMP/memovr-names.log" "$TMP/memovr-names-target" "$TMP/memovr-names-dir" "$TMP/memovr-names-absent"
@@ -2952,6 +2979,7 @@ else
       new) mo_name="$mo_np/pass-settings.new"; printf 'planted\n' > "$mo_name" ;;
       tmp) mo_name="$mo_np/pass-settings.json.tmp.$$"; printf 'planted\n' > "$mo_name" ;;
       json) mo_name="$mo_np/pass-settings.json"; printf 'planted\n' > "$mo_name" ;;
+      jsonfolder) mo_name="$mo_np/pass-settings.json"; mkdir "$mo_name" 2>/dev/null ;;
       link) mo_name="$mo_np/pass-settings.new"; ln -s "$TMP/memovr-names-target" "$mo_name" 2>/dev/null ;;
       dangle) mo_name="$mo_np/pass-settings.new"; ln -s "$TMP/memovr-names-absent" "$mo_name" 2>/dev/null ;;
       fifo) mo_name="$mo_np/pass-settings.new"; mkfifo "$mo_name" 2>/dev/null ;;
@@ -2962,16 +2990,16 @@ else
       continue
     fi
     if [ "$mo_leg" = fifo ]; then
-      mo_bounded 30 memory_override "$RV" "${CASE_STATE:-$TMP/state}" "$mo_np" "$TMP/memovr-names.log"
+      mo_bounded 30 mo_override_unset "$RV" "${CASE_STATE:-$TMP/state}" "$mo_np" "$TMP/memovr-names.log"
       mo_rc=$?
       # A write that blocked on the FIFO is still waiting in a child the bound
-      # could not reach: a reader opened for a moment lets it finish.
+      # could not reach: the FIFO held open for a moment lets it finish. Opened
+      # for reading and writing, which does not block on Linux or macOS, so the
+      # reader is there before the moment starts.
       if [ "$mo_rc" -eq 124 ]; then
-        cat "$mo_name" > /dev/null 2>&1 &
-        mo_cat=$!
+        exec 8<>"$mo_name"
         sleep 1
-        kill "$mo_cat" 2>/dev/null
-        wait "$mo_cat" 2>/dev/null
+        exec 8<&-
       fi
     else
       ( LC_ALL=C; export LC_ALL; . "$RV/.claude/scripts/lib/runner-common.sh"; AGENT_BIN="$FAKE"
@@ -2986,6 +3014,7 @@ else
     case "$mo_leg" in
       jsondir) [ -L "$mo_name" ] && [ -d "$TMP/memovr-names-dir" ] && [ -z "$(ls -A "$TMP/memovr-names-dir" 2>/dev/null)" ] && mo_kept=yes ;;
       json) [ "$(cat "$mo_name" 2>/dev/null)" = planted ] && mo_kept=yes ;;
+      jsonfolder) [ -d "$mo_name" ] && [ ! -L "$mo_name" ] && [ -z "$(ls -A "$mo_name" 2>/dev/null)" ] && mo_kept=yes ;;
       dangle) [ -L "$mo_name" ] && [ ! -e "$TMP/memovr-names-absent" ] && [ ! -e "$mo_np/pass-settings.json" ] && mo_kept=yes ;;
       fifo) [ -p "$mo_name" ] && [ ! -e "$mo_np/pass-settings.json" ] && mo_kept=yes ;;
       *) [ "$(cat "$mo_name" 2>/dev/null)" = planted ] && [ "$(cat "$TMP/memovr-names-target" 2>/dev/null)" = planted ] \
@@ -2995,7 +3024,7 @@ else
        && [ "$mo_kept" = yes ]; then
       ok "claude mode: ${mo_name##*/} already in the folder for the pass ($mo_leg) -> memory_override, called directly, refused (1), an ERROR: line says why, nothing written through it"
     else
-      bad "claude mode: ${mo_name##*/} already in the folder for the pass ($mo_leg) -- memory_override, called directly, was not refused for it, or wrote through it -- got $mo_rc, planted now: $(if [ -p "$mo_name" ]; then echo a FIFO; else cat "$mo_name" 2>/dev/null; fi), target now: $(cat "$TMP/memovr-names-target" 2>/dev/null), outside folder holds: $(ls -A "$TMP/memovr-names-dir" 2>/dev/null | tr '\n' ' '): $(cat "$TMP/memovr-names.log" 2>/dev/null)"
+      bad "claude mode: ${mo_name##*/} already in the folder for the pass ($mo_leg) -- memory_override, called directly, was not refused for it, or wrote through it -- got $mo_rc, planted now: $(if [ -p "$mo_name" ]; then echo a FIFO; elif [ -d "$mo_name" ] && [ ! -L "$mo_name" ]; then echo "a folder holding: $(ls -A "$mo_name" 2>/dev/null | tr '\n' ' ')"; else cat "$mo_name" 2>/dev/null; fi), target now: $(cat "$TMP/memovr-names-target" 2>/dev/null), outside folder holds: $(ls -A "$TMP/memovr-names-dir" 2>/dev/null | tr '\n' ' '): $(cat "$TMP/memovr-names.log" 2>/dev/null)"
     fi
   done
 fi
