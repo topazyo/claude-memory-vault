@@ -192,13 +192,13 @@ What that covers, and what it does not:
     not hide it, nor, reasoned, an 8.3 name; a `subst` or mapped drive, or a mount, whose root lies
     inside the vault does, reasoned). The walk up its path goes on past a folder whose name ends in
     `:`, where an earlier build of this release looped for ever, holding the run lock and logging
-    nothing (measured on Linux and in Git Bash). Or it is a link, which the runner's own folder
-    never is, or was replaced while it was checked, so it is not the path it resolves to (an earlier
-    build of this release resolved such a link and wrote where it led, measured on Linux; off
-    Windows one in a folder every account can write is refused as such, reasoned). Off Windows the
-    folder itself, new from `mktemp -d`, is this account's own with mode 0700, so the owner and mode
-    checks on it pass; on Windows those checks do not apply, and the folder carries the temporary
-    folder's permissions.
+    nothing (measured on Linux and in Git Bash). Or it, or a folder above it, is a link when the
+    checks resolve it, which the runner's own folder never is, so it is not the path it resolves to
+    (an earlier build of this release resolved such a link and wrote where it led, measured on
+    Linux; off Windows one in a folder every account can write is refused as such, reasoned). Off
+    Windows the folder itself, new from `mktemp -d`, is this account's own with mode 0700, so the
+    owner and mode checks on it pass; on Windows those checks do not apply, and the folder carries
+    the temporary folder's permissions.
   - The runner's folder for the pass is not there as a folder. The runner makes it before the pass's
     "before" snapshot and keeps the snapshot in it, so a folder that went away may have taken the
     snapshot with it, and the fence would compare the pass with nothing. It is refused, never made
@@ -208,11 +208,11 @@ What that covers, and what it does not:
     process of your account, by root, or on Windows by any account that can change the temporary
     folder, is not caught (reasoned; off Windows a folder another account owns fails the owner
     check), nor, off Windows, another folder of yours moved into its place by an account that can
-    rename entries in `TMPDIR`, nor one replaced after the checks and before the settings file is
-    written, which is written through (both reasoned), and one removed while the agent runs, or
-    after it ran, is not caught either, as in 1.4.0 (measured on 1.4.0 and on this release, with a
-    stand-in agent writing under `90-auto-memory/` and to `AGENTS.md`): the fence then contains
-    nothing.
+    rename entries in `TMPDIR`, nor one replaced once the checks have resolved it and before Claude
+    Code has read the settings file, which is then written into, or read from, whatever took its
+    place (both reasoned), and one removed while the agent runs, or after it ran, is not caught
+    either, as in 1.4.0 (measured on 1.4.0 and on this release, with a stand-in agent writing under
+    `90-auto-memory/` and to `AGENTS.md`): the fence then contains nothing.
   - `pass-settings.json`, `pass-settings.new`, or the temporary name ending in the runner's process
     id that the file is written through, is already in that folder, which only another process
     could have put there: a link would carry the write elsewhere, a folder would take it in, and a

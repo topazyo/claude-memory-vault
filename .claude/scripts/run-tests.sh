@@ -2126,7 +2126,7 @@ mo_bounded() {
 }
 # Git Bash keeps a ':' in a file name as U+F03A, and pwd -P gives that character
 # back, not ':', where it expands an 8.3 name on the way (CI's Windows TEMP is
-# C:\Users\RUNNER~1\...), so a folder named with ':' resolves to either spelling.
+# spelled with RUNNER~1), so a folder named with ':' resolves to either spelling.
 MO_PUA="$(printf '\357\200\272')"
 # memory_override walks up the runner's folder for the pass, and a walk that
 # never returns would hang every claude-mode pass below with no line to say why,

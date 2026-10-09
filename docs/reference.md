@@ -817,11 +817,12 @@ Around that call, each runner does several things an exit code cannot:
   account, by root, or on Windows by any account that can change the temporary folder, is not seen,
   reasoned, since it is checked like the runner's own, while off Windows a folder another account
   owns fails the owner check, but not another folder of yours moved into its place by an account
-  that can rename entries in `TMPDIR`; one replaced after the checks and before the write is written
-  through, reasoned); when it is a link, which the runner's own folder never is, or was replaced
-  during the checks, so that it is not the path it resolves to (off Windows a link in a folder every
-  account can write is refused as one, reasoned); when `pass-settings.json`, `pass-settings.new`, or
-  the temporary name ending in the runner's process id that the file is written through, is already
+  that can rename entries in `TMPDIR`; one replaced once the checks have resolved it and before
+  Claude Code has read the file is written into, or read from, whatever took its place, reasoned);
+  when it, or a folder above it, is a link when the checks resolve it, which the runner's own folder
+  never is, so that it is not the path it resolves to (off Windows a link in a folder every account
+  can write is refused as one, reasoned); when `pass-settings.json`, `pass-settings.new`, or the
+  temporary name ending in the runner's process id that the file is written through, is already
   there, since a link there would carry the write elsewhere, a folder would take it in and a FIFO
   would hold the pass (only a name there when the runner checks is seen: one planted after the check
   is still written through, so only a `TMPDIR` that no other account can change keeps the file
@@ -977,17 +978,17 @@ Around that call, each runner does several things an exit code cannot:
     1.4.0. The settings file adds a file there whose hooks Claude Code would run as your account at
     every claude-mode pass, whether or not the vault is a git repository.
   - The runner's folder for the pass also holds the pass's "before" snapshot. A folder that is gone
-    when the override is written is refused (exit 1), and so is a link put in its place, but one
-    emptied, or removed and made again, before then by another process of your account, by root,
-    or on Windows by any account that can change the temporary folder, is not seen (reasoned), nor,
-    off Windows, another folder of yours moved into its place by an account that can rename
-    entries in `TMPDIR`, nor one replaced after the checks and before the settings file is written,
-    and one removed while
-    the agent runs, or after it ran, takes the snapshot with it, and the fence then compares the
-    pass with nothing: writes the agent made under `90-auto-memory/` and to `AGENTS.md` stayed in
-    the vault and no tripwire was set (measured on 1.4.0 and on this release with a stand-in agent;
-    other steering surfaces are reasoned to behave the same). Keep anything that cleans the
-    temporary folder from removing a pass's folder while it runs.
+    when the override is written is refused (exit 1), and so is a link put in its place before the
+    checks resolve it, but one emptied, or removed and made again, before then by another process of
+    your account, by root, or on Windows by any account that can change the temporary folder, is not
+    seen (reasoned), nor, off Windows, another folder of yours moved into its place by an account
+    that can rename entries in `TMPDIR`, nor one replaced once the checks have resolved it and
+    before Claude Code has read the settings file, and one removed while the agent runs, or after it
+    ran, takes the snapshot with it, and the fence then compares the pass with nothing: writes the
+    agent made under `90-auto-memory/` and to `AGENTS.md` stayed in the vault and no tripwire was
+    set (measured on 1.4.0 and on this release with a stand-in agent; other steering surfaces are
+    reasoned to behave the same). Keep anything that cleans the temporary folder from removing a
+    pass's folder while it runs.
   - The runner removes the settings file with its folder when the pass ends. After a stop that
     leaves Claude Code running (`KILL_FAILED`, which sets the tripwire), the file is gone while the
     process may still be at work; whether Claude Code would then grant its default memory folder
