@@ -1071,6 +1071,8 @@ vault_state_dir() {
 # it resolves into the vault, 5 when it is a symlink in a world-writable folder,
 # 6 when find could not check the mode, and 7 when a folder above it is
 # world-writable with no sticky bit. state_dir_problem turns the code into words.
+# With nocreate as a third argument, a <dir> that is not a folder is not made,
+# and the code is 9; the caller says what that means.
 state_dir_ready() {
   local name parent real kroot open up
   name="$(printf '%s' "$1" | sed 's|//*$||')"
@@ -1082,6 +1084,7 @@ state_dir_ready() {
     [ -z "$open" ] || return 5
   fi
   if [ ! -d "$1" ]; then
+    [ "${3:-}" = nocreate ] && return 9
     ( umask 077 && mkdir -p "$1" ) 2>/dev/null || return 1
   fi
   real="$(cd "$1" 2>/dev/null && pwd -P)" || return 1
@@ -1111,7 +1114,7 @@ state_dir_problem() {
     5) printf 'is a symlink in a folder every account can write' ;;
     6) printf 'could not be checked for write access by other accounts' ;;
     7) printf 'is inside a folder every account can write that has no sticky bit' ;;
-    8) printf 'is not the path it resolves to, as when it is made through a link' ;;
+    8) printf 'is not the path it resolves to, as when it is replaced by a link during the checks' ;;
     *) printf 'could not be created, or cannot be entered' ;;
   esac
 }
@@ -1120,7 +1123,10 @@ state_dir_problem() {
 # True when <dir>, or a folder above it, is <root> itself by file identity
 # (test -ef), however either is spelled. <dir> is an absolute Git Bash or POSIX
 # path, or on Windows a drive path (C:/...), which Git Bash's test compares
-# with its own spelling of the same folder. A relative <dir> is never under.
+# with its own spelling of the same folder. <dir> must be absolute: a relative
+# one is compared from the current folder. Only a drive letter alone gets its
+# slash back, so a folder whose name ends in a colon (a:) is walked past, not
+# turned into a:/ and back again forever.
 path_under_by_identity() {
   local up="$1"
   while [ -n "$up" ]; do
@@ -1131,7 +1137,7 @@ path_under_by_identity() {
         up="${up%/*}"
         case "$up" in
           '') up=/ ;;
-          *:) up="$up/" ;;
+          [ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]:) up="$up/" ;;
         esac ;;
       *) return 1 ;;
     esac
@@ -3206,15 +3212,18 @@ note_tripwire() {
 # folder link that was there before the pass only as a link, so writes through
 # it would not be seen) or is not a folder; and a .pass-agent holding anything
 # but a regular .DS_Store file with no other hard link, since anything else could
-# be read into the pass as memory or let a write leave the vault; and a
-# <work-dir> that fails the state directory's checks (state_dir_ready, under a
-# UTF-8 locale on Windows) or lies inside the vault by file identity, walked as
-# Git Bash spells it and, on Windows, as a drive path (a subst or mapped drive,
-# or a mount, whose root lies inside the vault is not seen, reasoned). They
-# write nothing, apart from the folder state_dir_ready makes for a <work-dir>
-# that did not exist, which must then be the path it resolves to. They must run
-# after the pass's "before" snapshot, so that anything planted after them is
-# still a change the fence sees. <work-dir> is taken by its resolved path (pwd -P) first, so the
+# be read into the pass as memory or let a write leave the vault; a <work-dir>
+# that is not there, that fails the state directory's checks (state_dir_ready,
+# under a UTF-8 locale on Windows) or that lies inside the vault by file
+# identity, walked as Git Bash spells it and, on Windows, as a drive path (a
+# subst or mapped drive, or a mount, whose root lies inside the vault is not
+# seen, reasoned); and a pass-settings.new or pass-settings.json.tmp.<pid>
+# already in <work-dir>, which the write would go through. The runner makes
+# <work-dir> before the pass's "before" snapshot and keeps the snapshot there,
+# so one that is not there may have taken the snapshot with it: it is refused,
+# never made again. The checks write nothing. They must run after that
+# snapshot, so that anything planted after them is still a change the fence
+# sees. <work-dir> is taken by its resolved path (pwd -P) first, so the
 # conversions, the UTF-8 check, these checks and the write all see one folder.
 # Then the file is written as pass-settings.json in <work-dir>, the runner's own
 # folder for the pass, and must read back byte for byte, because Claude Code
@@ -3236,8 +3245,7 @@ memory_override() {
   # The file is written, checked and handed to Claude Code through the folder's
   # resolved path, so a link or a relative part in TMPDIR's spelling cannot be
   # pointed at another folder after the checks below. A folder that cannot be
-  # entered is left as given: the checks below refuse it, or make it and then
-  # require it to be the path it resolves to.
+  # entered is left as given, and the checks below refuse it.
   p="$(cd "$work" 2>/dev/null && pwd -P)" && [ -n "$p" ] && work="$p"
   file="$work/pass-settings.json" arg="$work/pass-settings.json"
   # On Windows a path left in Git Bash form is read by Claude Code as a folder
@@ -3326,14 +3334,22 @@ memory_override() {
   # directory's checks. On Windows they run under a UTF-8 locale, as the
   # conversions above do: under C, cygpath cut the vault's path and the folder's
   # at a folder above both named outside the ANSI code page, a profile folder
-  # among them, and the folder looked as if it lay inside the vault.
+  # among them, and the folder looked as if it lay inside the vault. The check
+  # never makes the folder: the runner made it before the "before" snapshot,
+  # which it holds, so a folder that is not there now may have taken the
+  # snapshot with it, and the fence would compare the pass with nothing.
   case "$RUNNER_UNAME" in
-    MINGW*|MSYS*|CYGWIN*) up="$( LC_ALL=C.UTF-8; export LC_ALL; state_dir_ready "$work" "$root" )" ;;
-    *) up="$(state_dir_ready "$work" "$root")" ;;
+    MINGW*|MSYS*|CYGWIN*) up="$( LC_ALL=C.UTF-8; export LC_ALL; state_dir_ready "$work" "$root" nocreate )" ;;
+    *) up="$(state_dir_ready "$work" "$root" nocreate)" ;;
   esac
   p=$?
-  # A folder that could not be entered above, which that check then made, must
-  # be the path it resolves to, or the file would go through another spelling.
+  if [ "$p" -eq 9 ]; then
+    printf '[%s] ERROR: the runner'"'"'s folder for the pass, %s, is not there, though the runner made it before the pass'"'"'s snapshot and keeps the snapshot in it, so the fence could not see what the pass changes. Refusing to run.\n' "$(ts)" "$work" >> "$log"
+    return 1
+  fi
+  # The folder was resolved above, so the path that check resolves it to must
+  # be the same, or it was replaced, by a link say, in between, and the file
+  # would go through another spelling.
   [ "$p" -eq 0 ] && [ "$up" != "$work" ] && p=8
   # That check compares the two paths by name, and on Windows and macOS a letter
   # outside ASCII in another case or an 8.3 name spells the same folder another
@@ -3356,6 +3372,15 @@ memory_override() {
   fi
   # Nothing reads a copy an earlier build left in the state directory.
   rm -f "$state/pass-settings.json" 2>/dev/null
+  # The file is written through these two names, and the runner never leaves
+  # either behind, so one already there was put there by another process: a
+  # link would carry the write elsewhere, and a FIFO would hold the pass.
+  for p in "$work/pass-settings.new" "$file.tmp.$$"; do
+    if [ -e "$p" ] || [ -L "$p" ]; then
+      printf '[%s] ERROR: %s was already there, and the memory override is written through it, so the write could go elsewhere or never end. Refusing to run.\n' "$(ts)" "$p" >> "$log"
+      return 1
+    fi
+  done
   line="{\"autoMemoryDirectory\":\"$vault/90-auto-memory/.pass-agent\"}"
   # Readable by this account only on POSIX hosts, whatever the umask, because
   # Claude Code runs the hooks a settings file names.
