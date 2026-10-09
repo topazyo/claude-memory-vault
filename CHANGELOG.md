@@ -25,7 +25,7 @@ bash .claude/scripts/vault-update.sh --check --from ../template-new
 
 ---
 
-## 1.4.1 — 2026-10-05
+## 1.4.1 — 2026-10-09
 
 A security fix for the dream and promotion passes in claude mode. Claude Code's memory folder for
 a pass is now pointed inside the vault, where the write fence sees it. On Windows that holds for a
