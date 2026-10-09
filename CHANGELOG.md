@@ -58,11 +58,12 @@ What that covers, and what it does not:
   `dream-pass.cmd`: a Write there landed without the runner's file and was refused with it.
 - **A vault on a `//` network path is refused, because the file does not protect it.** For a vault
   reached as `//server/share/...` or `//wsl.localhost/...` and started from Git Bash, Claude Code
-  2.1.289 and 2.1.292 ignored the runner's file: a Write to the default memory folder landed with it
-  as without it (measured). On Windows the runner now accepts only a drive path for the vault and for its
-  settings file, and refuses any other with exit 1. The `.cmd` wrappers could not start such a vault
-  before either. A mapped drive was measured for one mapping only, to the measuring host's own
-  administrative share; a drive mapped to another server is unmeasured, and for the vault, any
+  2.1.289 and 2.1.292 ignored the runner's file: a Write to the default memory folder landed with
+  it as without it (measured). On Windows the runner now accepts only a drive path for the vault
+  and for its settings file, and refuses any other with exit 1. The `.cmd` wrappers could not
+  start such a vault before either. A mapped drive was measured for one mapping only, to the
+  measuring host's own administrative share; a drive mapped to another server is unmeasured, and
+  for the vault, any
   other drive letter whose target is a network path (DFS, WebDAV, a local link to a share, `subst`
   onto one, a drive mapped to `\\wsl.localhost\...`) is accepted too and unmeasured.
 - **A vault path that is not ASCII is converted faithfully.** On Windows the runner converts the
@@ -71,7 +72,8 @@ What that covers, and what it does not:
   byte, so the file would name a folder outside the vault, and a Write there landed (measured). The
   conversions now run under a UTF-8 locale, and the pass refuses unless each converted path names,
   converted back, the folder or file it came from. Measured with real Claude Code for vaults under
-  a folder named in Cyrillic and one holding a Git Bash `"` (2.1.287 and 2.1.289), and, in one run
+  a folder named in Cyrillic and one holding a Git Bash `"` (2.1.287, 2.1.289, 2.1.292 and
+  2.1.295), and, in one run
   on 2.1.287 against an earlier build, one named `José`: a Write to the folder the C-locale
   conversion named landed with that conversion's file and was refused with the new one.
 - **A memory folder named in your user settings is unmeasured.** Measuring it would have meant
@@ -85,7 +87,7 @@ What that covers, and what it does not:
   the same folder by the same setting.
 - **An empty or invalid settings file fails open in Claude Code.** Claude Code 2.1.287 reads one as
   if there were none, with exit 0 and nothing on stderr, and grants the folders outside the vault
-  again (measured; not re-run on 2.1.289). The runner reads its file back byte for byte before it
+  again (measured; not re-run after 2.1.287). The runner reads its file back byte for byte before it
   starts the agent and refuses on any difference, but a change made between that read and Claude
   Code's is not seen, nor one Claude Code might read later in the pass (whether it re-reads the file
   is unmeasured). So the file is not kept in the state directory, which may be shared or, on
@@ -108,17 +110,18 @@ What that covers, and what it does not:
   2.43) with a stand-in agent; the round trip, for the vault's path and the settings file's, is held
   by the suite's twins on CI's Linux and macOS jobs. glibc 2.43's conversion to UTF-8, which an
   earlier build of this release used, let code points above U+10FFFF and 5- and 6-byte forms
-  through (on CI's glibc 2.39 the one form its job asks about, a code point above U+10FFFF, went
+  through (on CI's ubuntu-latest the one form its job asks about, a code point above U+10FFFF, went
   through too), and macOS's `iconv`, under the C locale the runners set, takes them to UTF-16LE
   without an error (measured on CI), which is why the result must also convert back.
 - **Measured on Claude Code 2.1.284 (a named folder), 2.1.285 and 2.1.287 (a named folder and the
   default one, and on 2.1.287 the non-ASCII paths), 2.1.289 (the named and default folders,
   the Cyrillic and `"` vaults, glob and trailing-dot names, a drive root (on an earlier build of
-  this release), a mapped network drive, and the network paths it does not honour), 2.1.292 and
-  2.1.293 (the same again on an earlier build of this release, and a settings file under a
-  non-ASCII temporary folder), and 2.1.295 (the named and default folders, the Cyrillic and `"`
-  vaults and a settings file under a Cyrillic `TMPDIR`, with this release's runner).** No other
-  version was measured.
+  this release), a drive mapped to the host's own administrative share, and the network paths it
+  does not honour), 2.1.292 (the named and default folders, the Cyrillic and `"` vaults, glob and
+  trailing-dot names, that mapped drive and the network paths, on an earlier build of this
+  release), 2.1.293 (a settings file under a non-ASCII temporary folder, on that build), and
+  2.1.295 (the named and default folders, the Cyrillic and `"` vaults and a settings file under a
+  Cyrillic `TMPDIR`, with this release's runner).** No other version was measured.
 - **Memory only.** A folder a settings file grants through `additionalDirectories` stays outside
   the fence, as in 1.4.0.
 
@@ -194,16 +197,21 @@ What that covers, and what it does not:
     so it is not the path it resolves to. Off Windows the folder itself, new from `mktemp -d`, is
     this account's own with mode 0700, so the owner and mode checks on it pass; on Windows those
     checks do not apply, and the folder carries the temporary folder's permissions.
-  - The runner's folder for the pass is not there. The runner makes it before the pass's "before"
-    snapshot and keeps the snapshot in it, so a folder that went away may have taken the snapshot
-    with it, and the fence would compare the pass with nothing. It is refused, never made again: an
-    earlier build of this release made it again, and an agent's write under `90-auto-memory/` then
-    stayed in the vault with no tripwire (measured on Linux), where 1.4.0 failed closed. A folder
-    removed while the agent runs is still not caught, as in 1.4.0 (measured): the fence then
-    contains nothing.
-  - `pass-settings.new`, or the temporary name ending in the runner's process id that the file is
-    written through, is already in that folder, which only another process could have put there:
-    a link would carry the write elsewhere, and a FIFO would hold the pass.
+  - The runner's folder for the pass is not there as a folder. The runner makes it before the
+    pass's "before" snapshot and keeps the snapshot in it, so a folder that went away may have taken
+    the snapshot with it, and the fence would compare the pass with nothing. It is refused, never
+    made again: an earlier build of this release made it again, and an agent's write under
+    `90-auto-memory/` then stayed in the vault with no tripwire (measured on Linux), where 1.4.0
+    failed closed. A folder emptied, or removed and made again by someone else, before the override
+    is not caught (reasoned), and one removed while the agent runs, or after it ran, is not caught
+    either, as in 1.4.0 (measured on 1.4.0 and on this release, with a stand-in agent writing under
+    `90-auto-memory/` and to `AGENTS.md`): the fence then contains nothing.
+  - `pass-settings.json`, `pass-settings.new`, or the temporary name ending in the runner's process
+    id that the file is written through, is already in that folder, which only another process
+    could have put there: a link would carry the write elsewhere, a folder would take it in, and a
+    FIFO would hold the pass. Only a name there when the runner checks is seen; one planted after
+    the check is still written through, so only a `TMPDIR` that no other account can change keeps
+    the file safe.
   - The settings file could not be written, or does not read back exactly as written.
   - No settings file was written for the pass, which happens only when the runner and
     `runner-common.sh` come from different releases (Adopting 1). This refusal comes from the
@@ -247,10 +255,11 @@ What that covers, and what it does not:
   not exist, spelled through a link), `mem-override-no-iconv`, `mem-override-work-colon` (a folder
   for the pass under folders whose names end in `:`, every call bounded),
   `mem-override-work-gone` (a folder for the pass that is not there), `mem-override-work-names`
-  (`pass-settings.new` or the temporary name planted in that folder),
+  (`pass-settings.json`, `pass-settings.new` or the temporary name planted in that folder),
   `mem-override-settings-space` (a settings path holding a space, handed over as one argument) and
   `dream-agent-tools` are required on every suite job. `mem-override-work-root-drive`, a vault at
-  the drive root refused by the drive-path walk alone, is required on the Windows job only. `mem-override-sink-unreadable`, `mem-override-sink-filelink`,
+  the drive root refused by the drive-path walk alone, is required on the Windows job only.
+  `mem-override-sink-unreadable`, `mem-override-sink-filelink`,
   `mem-override-file-mode`, `mem-override-utf8-refused`, `mem-override-winbin`,
   `mem-override-winbin-unreadable`, `mem-override-stray-cygpath`, `mem-override-no-cygpath` and
   `mem-override-work-open` are required on the Linux and macOS jobs and not on Windows, where they
@@ -373,10 +382,13 @@ What that covers, and what it does not:
     2.1.293 and 2.1.295 only.** 2.1.284 for a named folder, 2.1.285 for the default folder too,
     2.1.287 for both again, the non-ASCII paths and the fail-open on an empty or invalid file,
     2.1.289 for the named and default folders, the Cyrillic and `"` vaults, glob and trailing-dot
-    names, a drive root (on an earlier build of this release), a mapped network drive and the
-    network paths it does not honour, 2.1.292 and 2.1.293 for the same again on an earlier build of
-    this release, and 2.1.295 for the named and default folders, the Cyrillic and `"` vaults and a
-    settings file under a Cyrillic `TMPDIR`, with this release's runner. The fail-open was not
+    names, a drive root (on an earlier build of this release), a drive mapped to the host's own
+    administrative share and the network paths it does not honour, 2.1.292 for the named and
+    default folders, the Cyrillic and `"` vaults, glob and trailing-dot names, that mapped drive and
+    the network paths (on an earlier build of this release), 2.1.293 for a settings file under a
+    non-ASCII temporary folder (on that build), and 2.1.295 for the named and default folders, the
+    Cyrillic and `"` vaults and a settings file under a Cyrillic `TMPDIR`, with this release's
+    runner. The fail-open was not
     re-run after 2.1.287. Any other version, older or newer, is unmeasured, and a native install
     updates itself: `claude --version` says which one a pass will run.
 13. **Remove `Skill` from your `dream-agent.md`'s `tools:` line if it still names it.** Keeping it
@@ -393,22 +405,23 @@ What that covers, and what it does not:
     host's own administrative share (`\\localhost\c$`), where a memory Write to the default folder
     was refused (Claude Code 2.1.289 and 2.1.292, through `dream-pass.cmd`). A drive mapped to a NAS
     or another server is unmeasured, and where that server reports no file IDs the runner's
-    identity checks could refuse it (reasoned). The `.cmd` wrappers
-    cannot start a vault from a `//` path (`CMD does not support UNC paths as current directories`,
-    measured on this release).
+    identity checks could refuse it (reasoned). A share other accounts can write gives them the
+    vault's `.claude/` too, hooks among it, so map only one that no other account can change. The
+    `.cmd` wrappers cannot start a vault from a `//` path (`CMD does not support UNC paths as
+    current directories`, measured on this release).
 15. **A claude-mode pass refuses to start when its folder under `TMPDIR` fails the state directory's
     checks, lies inside the vault by file identity, is not the path it resolves to, is not there,
     or already holds a name the settings file is written through.** The log
     says `the runner's folder for the pass, ...`, then why (`resolves into the vault`, `is inside a
     folder every account can write that has no sticky bit`, `is not the path it resolves to`, and so
     on), `and the memory override's settings file there can name hooks Claude Code runs`. A folder
-    that is not there gives `is not there, though the runner made it before the pass's snapshot`:
-    something removed it during the pass, so find what cleans the temporary folder and stop it. A
-    planted name gives `was already there, and the memory override is written through it`:
-    something else writes in that temporary folder, so point `TMPDIR` at one only your account can
-    change. A vault
-    that holds the default temporary folder, as one at a drive root does, must move into a folder of
-    its own, or `TMPDIR` must point outside it. The default temporary folder passes on Linux
+    that is not there gives `is not there as a folder, though the runner made it before the pass's
+    snapshot`: something removed it during the pass (you, root, or on Windows another account under
+    a `TMPDIR` it can change; a cleaning tool is unlikely to pick a folder that new), so find what
+    and stop it. A planted name gives `was already there, and the memory override is written
+    through it`: something else writes in that temporary folder, so point `TMPDIR` at one only
+    your account can change. A vault that holds the default temporary folder, as one at a drive
+    root does, must move into a folder of its own, or `TMPDIR` must point outside it. The default temporary folder passes on Linux
     (`/tmp`, sticky), macOS (a per-user folder) and Windows (Git Bash's `/tmp`, this account's
     temporary folder), measured on CI's three platforms. If you set `TMPDIR` for the passes, point
     it at a folder outside the vault that only your account can change, named directly rather than

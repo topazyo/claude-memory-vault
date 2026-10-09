@@ -349,7 +349,9 @@ jobs:
       # suite records with ran must be on at least one list, or be named in
       # NOT_REQUIRED. Those were recorded and required by no job when this step
       # was added (1.4.1), and each predates it. A ran call must name its id
-      # literally, or this step could not see it. The bash 3.2 job and the
+      # literally, or this step could not see it; the one exception is the line
+      # that relays the Pi driver's own "ran <id>" lines, whose ids are read
+      # from its say("ran <id>") calls instead. The bash 3.2 job and the
       # macos-latest job run on the same image, so their lists must hold the
       # same ids, or one drifts from the other unseen.
       - name: Every recorded control is required somewhere
@@ -361,9 +363,13 @@ jobs:
         run: |
           awk '/^[ \t]*#/ { next }
             { s = $0
-              while (match(s, /(^[ \t]*|[;&|({][ \t]*|(then|else|do)[ \t]+)ran[ \t]+[^ \t;)|&]+/)) {
+              while (match(s, /(^[ \t]*|[;&|(){][ \t]*|(then|else|do)[ \t]+)ran[ \t]+[^ \t;)|&]+/)) {
                 a = substr(s, RSTART, RLENGTH); sub(/^.*ran[ \t]+/, "", a); gsub(/"/, "", a)
-                if (a ~ /^[a-z0-9][a-z0-9-]*$/) print a; else print "?" FNR ": " a
+                if (a ~ /^[a-z0-9][a-z0-9-]*$/) print a; else if (a != "${pi_line#ran") print "?" FNR ": " a
+                s = substr(s, RSTART + RLENGTH) }
+              s = $0
+              while (match(s, /say\("ran [a-z0-9][a-z0-9-]*"\)/)) {
+                a = substr(s, RSTART + 9, RLENGTH - 11); print a
                 s = substr(s, RSTART + RLENGTH) } }' .claude/scripts/run-tests.sh | sort -u > /tmp/ran.ids
           awk '/^[ \t]*RUN_TESTS_REQUIRED:/ {
               if (index($0, "matrix.os")) {
@@ -396,6 +402,9 @@ jobs:
           fi
           echo "checked $(wc -l < /tmp/ran.ids) recorded id(s) against $(wc -l < /tmp/req.ids) required, macos-latest $(wc -l < /tmp/l3.ids) and bash 3.2 $(wc -l < /tmp/l4.ids); $bad problem(s)"
           [ "$(wc -l < /tmp/ran.ids)" -gt 0 ] || { echo "::error title=Nothing was checked::run-tests.sh records no control with ran, which this repository never does."; exit 1; }
+          for id in mem-override-flag pi-extension-behaviour; do
+            grep -qx -- "$id" /tmp/ran.ids || { echo "::error title=The ids were misread::$id is recorded by run-tests.sh but was not found, so the reading above is broken."; exit 1; }
+          done
           [ "$bad" -eq 0 ]
 
       - name: Every shell script parses

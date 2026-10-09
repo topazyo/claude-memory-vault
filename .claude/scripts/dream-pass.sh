@@ -32,9 +32,11 @@
 #                       %LOCALAPPDATA% or ~/.local/state)
 #   TMPDIR              where the runner makes its own folder for the pass:
 #                       snapshots, backup, git's hooks folder and, in claude
-#                       mode, pass-settings.json, which can name hooks. Keep it
+#                       mode, pass-settings.json, which Claude Code reads as
+#                       settings, hooks and other commands among them. Keep it
 #                       a folder only this account can change; on Windows leave
-#                       it unset (docs/reference.md, Known limits)
+#                       it unset unless a long path needs a shorter folder
+#                       (docs/reference.md, Known limits)
 #   RUN_LOCK_WAIT       seconds to wait for another pass's run lock (default 1800)
 #   RUN_LOCK_POLL       seconds between checks while waiting (default 30)
 #   RUNNER_GIT_TIMEOUT  seconds each git step of the journal commit may take
@@ -100,8 +102,8 @@ set -u
 # cygpath, which under C cuts a path at its first character outside the ANSI
 # code page, so on Windows memory_override runs its cygpath calls, and
 # state_dir_ready's check of its own folder, under C.UTF-8 and checks what they
-# give; its pwd -P and its identity walks run under C, as do the state
-# directory's and path_key's checks elsewhere.
+# give; memory_override's own pwd -P and both identity walks run under C, as do
+# the state directory's and path_key's checks elsewhere.
 LC_ALL=C
 export LC_ALL
 

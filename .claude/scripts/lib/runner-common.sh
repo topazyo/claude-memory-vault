@@ -1071,8 +1071,9 @@ vault_state_dir() {
 # it resolves into the vault, 5 when it is a symlink in a world-writable folder,
 # 6 when find could not check the mode, and 7 when a folder above it is
 # world-writable with no sticky bit. state_dir_problem turns the code into words.
-# With nocreate as a third argument, a <dir> that is not a folder is not made,
-# and the code is 9; the caller says what that means.
+# With nocreate as a third argument, a <dir> that is not a folder (once the link
+# check above has passed) is not made, and the code is 9; the caller says what
+# that means.
 state_dir_ready() {
   local name parent real kroot open up
   name="$(printf '%s' "$1" | sed 's|//*$||')"
@@ -3208,23 +3209,25 @@ note_tripwire() {
 # The checks refuse a pass the file would not protect: outside Git Bash where
 # no cygpath is found, an agent binary that is a Windows program, which would
 # read the POSIX paths as other folders; a converted path that names something
-# else; a vault path the
-# JSON would have to escape; a vault or settings-file path that does not come
-# back unchanged from UTF-8 to UTF-16LE and back, which Claude Code could read as
-# another folder; a 90-auto-memory or .pass-agent that is a link (the fence sees a
-# folder link that was there before the pass only as a link, so writes through
-# it would not be seen) or is not a folder; and a .pass-agent holding anything
-# but a regular .DS_Store file with no other hard link, since anything else could
-# be read into the pass as memory or let a write leave the vault; a <work-dir>
-# that is not there, that fails the state directory's checks (state_dir_ready,
-# under a UTF-8 locale on Windows) or that lies inside the vault by file
-# identity, walked as Git Bash spells it and, on Windows, as a drive path (a
-# subst or mapped drive, or a mount, whose root lies inside the vault is not
-# seen, reasoned); and a pass-settings.new or pass-settings.json.tmp.<pid>
-# already in <work-dir>, which the write would go through. The runner makes
-# <work-dir> before the pass's "before" snapshot and keeps the snapshot there,
-# so one that is not there may have taken the snapshot with it: it is refused,
-# never made again. The checks write nothing. They must run after that
+# else; a vault path the JSON would have to escape; a vault or settings-file
+# path that does not come back unchanged from UTF-8 to UTF-16LE and back, which
+# Claude Code could read as another folder; a 90-auto-memory or .pass-agent that
+# is a link (the fence sees a folder link that was there before the pass only as
+# a link, so writes through it would not be seen) or is not a folder; and a
+# .pass-agent holding anything but a regular .DS_Store file with no other hard
+# link, since anything else could be read into the pass as memory or let a write
+# leave the vault; a <work-dir> that is not there as a folder, that fails the
+# state directory's checks (state_dir_ready, under a UTF-8 locale on Windows) or
+# that lies inside the vault by file identity, walked as Git Bash spells it and,
+# on Windows, as a drive path (a subst or mapped drive, or a mount, whose root
+# lies inside the vault is not seen, reasoned); and a pass-settings.json,
+# pass-settings.new or pass-settings.json.tmp.<pid> already in <work-dir>, which
+# the write would go through (only names there at the check: one planted after
+# it is still written through). The runner makes <work-dir> before the pass's
+# "before" snapshot and keeps the snapshot there, so one that is not there may
+# have taken the snapshot with it: it is refused, never made again (a folder
+# emptied, or removed and made again by someone else, is not seen). The checks
+# write nothing. They must run after that
 # snapshot, so that anything planted after them is still a change the fence
 # sees. <work-dir> is taken by its resolved path (pwd -P) first, so the
 # conversions, the UTF-8 check, these checks and the write all see one folder.
@@ -3347,7 +3350,7 @@ memory_override() {
   esac
   p=$?
   if [ "$p" -eq 9 ]; then
-    printf '[%s] ERROR: the runner'"'"'s folder for the pass, %s, is not there, though the runner made it before the pass'"'"'s snapshot and keeps the snapshot in it, so the fence could not see what the pass changes. Refusing to run.\n' "$(ts)" "$work" >> "$log"
+    printf '[%s] ERROR: the runner'"'"'s folder for the pass, %s, is not there as a folder, though the runner made it before the pass'"'"'s snapshot and keeps the snapshot in it, so the fence could not see what the pass changes. Refusing to run.\n' "$(ts)" "$work" >> "$log"
     return 1
   fi
   # The folder was resolved above, so the path that check resolves it to must
@@ -3375,10 +3378,12 @@ memory_override() {
   fi
   # Nothing reads a copy an earlier build left in the state directory.
   rm -f "$state/pass-settings.json" 2>/dev/null
-  # The file is written through these two names, and the runner never leaves
-  # either behind, so one already there was put there by another process: a
-  # link would carry the write elsewhere, and a FIFO would hold the pass.
-  for p in "$work/pass-settings.new" "$file.tmp.$$"; do
+  # The file is written through these names, and none of them is in the folder
+  # the runner made for the pass before this write, so one already there was put
+  # there by another process: a link would carry the write elsewhere, a folder
+  # would take it in, and a FIFO would hold the pass. Only names there now are
+  # seen; one planted after this check is still written through.
+  for p in "$file" "$work/pass-settings.new" "$file.tmp.$$"; do
     if [ -e "$p" ] || [ -L "$p" ]; then
       printf '[%s] ERROR: %s was already there, and the memory override is written through it, so the write could go elsewhere or never end. Refusing to run.\n' "$(ts)" "$p" >> "$log"
       return 1
