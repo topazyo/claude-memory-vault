@@ -139,9 +139,9 @@ What that covers, and what it does not:
   can name hooks Claude Code runs; on Windows it carries the temporary folder's permissions. The
   folder gets the state directory's checks first, and a check that it is not inside the vault by
   file identity (Adopting 15). A `pass-settings.json` that an earlier build of this release left in
-  the state directory is removed by the next claude-mode pass that reaches the write. The runner
-  never creates `.pass-agent/` itself. Command mode is unchanged, apart from `AGENT_SETTINGS_FILE`
-  being unset when the runners' library loads.
+  the state directory is removed by the next claude-mode pass whose folder passes its checks, just
+  before the check for names planted there. The runner never creates `.pass-agent/` itself. Command
+  mode is unchanged, apart from `AGENT_SETTINGS_FILE` being unset when the runners' library loads.
 - **A claude-mode pass now needs `cmp`, and `iconv` for a vault or settings-file path with a byte
   outside printable ASCII.** It reads the file back with the first and checks the path with the
   second, and refuses to start without them. Git for Windows and macOS ship both.
@@ -192,21 +192,25 @@ What that covers, and what it does not:
     not hide it, nor, reasoned, an 8.3 name; a `subst` or mapped drive, or a mount, whose root lies
     inside the vault does, reasoned). The walk up its path goes on past a folder whose name ends in
     `:`, where an earlier build of this release looped for ever, holding the run lock and logging
-    nothing (measured on Linux and in Git Bash). Or it was replaced by a link while it was checked,
-    so it is not the path it resolves to. Off Windows the folder itself, new from `mktemp -d`, is
-    this account's own with mode 0700, so the owner and mode checks on it pass; on Windows those
-    checks do not apply, and the folder carries the temporary folder's permissions.
+    nothing (measured on Linux and in Git Bash). Or it is a link, which the runner's own folder never
+    is, or was replaced by one while it was checked, so it is not the path it resolves to (an
+    earlier build of this release resolved such a link and wrote where it led, measured on Linux;
+    one in a folder every account can write is refused as such, reasoned). Off Windows the folder
+    itself, new from `mktemp -d`, is this account's own with mode 0700, so the owner and mode checks
+    on it pass; on Windows those checks do not apply, and the folder carries the temporary folder's
+    permissions.
   - The runner's folder for the pass is not there as a folder. The runner makes it before the
     pass's "before" snapshot and keeps the snapshot in it, so a folder that went away may have taken
     the snapshot with it, and the fence would compare the pass with nothing. It is refused, never
     made again: an earlier build of this release made it again, and an agent's write under
     `90-auto-memory/` then stayed in the vault with no tripwire (measured on Linux), where 1.4.0
-    failed closed. A folder emptied, removed and made again, or replaced by a link, before the
-    override by another process of your account, or on Windows of any account that can change the
-    temporary folder, is not caught (reasoned; off Windows another account's folder fails the owner
-    check), and one removed while the agent runs, or after it ran, is not caught either, as in 1.4.0
-    (measured on 1.4.0 and on this release, with a stand-in agent writing under `90-auto-memory/`
-    and to `AGENTS.md`): the fence then contains nothing.
+    failed closed. A folder emptied, or removed and made again, before the override by another
+    process of your account, by root, or on Windows by any account that can change the temporary
+    folder, is not caught (reasoned; off Windows a folder another account owns fails the owner
+    check), nor is one replaced after the checks and before the settings file is written, which is
+    written through (reasoned), and one removed while the agent runs, or after it ran, is not caught
+    either, as in 1.4.0 (measured on 1.4.0 and on this release, with a stand-in agent writing under
+    `90-auto-memory/` and to `AGENTS.md`): the fence then contains nothing.
   - `pass-settings.json`, `pass-settings.new`, or the temporary name ending in the runner's process
     id that the file is written through, is already in that folder, which only another process
     could have put there: a link would carry the write elsewhere, a folder would take it in, and a
@@ -223,14 +227,13 @@ What that covers, and what it does not:
   what the pass may use.
 - `docs/reference.md` states what the memory override covers, its limits, the new exit-1 reasons,
   `pass-settings.json`, the agent's argv and its tools. `AGENTS.md` lets an agent empty
-  `90-auto-memory/.pass-agent/` only when you ask, and only once you have cleared the tripwire,
-  the one exception to "never by hand" there.
-  `docs/setup.md` has a troubleshooting row for each refusal and lists `cmp` and `iconv`,
-  `docs/customizing.md` and the `onboard-project` skill say to keep `90-auto-memory` a plain folder
-  (the skill also its `<slug>` folder, since a link there is not refused),
-  `docs/harnesses/claude-code.md` describes the override, `README.md` scopes "any unattended write
-  fenced and revertible" to writes inside the vault, within the limits `docs/reference.md` lists,
-  and the runners' comments no longer credit
+  `90-auto-memory/.pass-agent/` only when you ask, and only once you have cleared the tripwire, the
+  one exception to "never by hand" there. `docs/setup.md` has a troubleshooting row for each refusal
+  and lists `cmp` and `iconv`, `docs/customizing.md` and the `onboard-project` skill say to keep
+  `90-auto-memory` a plain folder (the skill also its `<slug>` folder, since a link there is not
+  refused), `docs/harnesses/claude-code.md` describes the override, `README.md` scopes "any
+  unattended write fenced and revertible" to writes inside the vault, within the limits
+  `docs/reference.md` lists, and the runners' comments no longer credit
   `CLAUDE_CODE_DISABLE_AUTO_MEMORY` with keeping memory in, and name `TMPDIR` among their settings.
   `docs/setup.md` says that a command-mode wrapper that starts Claude Code gets no memory override.
 - The control suite holds each of these. Each new control id was seen failing against 1.4.0 first,
@@ -254,7 +257,8 @@ What that covers, and what it does not:
   `mem-override-nonascii`, `mem-override-order`, `mem-override-mixed-release`,
   `mem-override-unc-refused`, `mem-override-work-refused`, `mem-override-work-root`,
   `mem-override-work-made` (`memory_override` called directly with a folder for the pass that does
-  not exist, spelled through a link), `mem-override-no-iconv`, `mem-override-work-colon` (a folder
+  not exist, spelled through a link, and with one that is a link to a folder of yours),
+  `mem-override-no-iconv`, `mem-override-work-colon` (a folder
   for the pass under folders whose names end in `:`, every call bounded),
   `mem-override-work-gone` (a folder for the pass that is not there), `mem-override-work-names`
   (`pass-settings.json`, `pass-settings.new` or the temporary name planted in that folder),
@@ -412,32 +416,31 @@ What that covers, and what it does not:
     `.cmd` wrappers cannot start a vault from a `//` path (`CMD does not support UNC paths as
     current directories`, measured on this release).
 15. **A claude-mode pass refuses to start when its folder under `TMPDIR` fails the state directory's
-    checks, lies inside the vault by file identity, is not the path it resolves to, is not there,
-    or already holds a name the settings file is written through.** The log says `the runner's
-    folder for the pass, ...`, then why (`resolves into the vault`, `is inside a folder every
-    account can write that has no sticky bit`, `is not the path it resolves to`, and so on), `and
-    the memory override's settings file there can name hooks Claude Code runs`. A folder that is
-    not there gives `is not there as a folder, though the runner made it before the pass's
-    snapshot`: something removed it during the pass (you, root, an account that owns a folder above
-    it, or on Windows another account under a `TMPDIR` it can change; a cleaning tool is unlikely to
-    pick a folder that new), so find what and stop it. A planted name gives `was already there, and
-    the memory override is written through it`: something else writes in that temporary folder, so
-    point `TMPDIR` at one only your account can change. A vault that holds the default temporary
-    folder, as one at a drive root does, must move into a folder of its own, or `TMPDIR` must point
-    outside it. The default temporary folder passes on Linux (`/tmp`, sticky), macOS (a per-user
-    folder) and Windows (Git Bash's `/tmp`, this account's temporary folder), measured on CI's three
-    platforms. If you set `TMPDIR` for the passes, point it at a folder outside the vault that only
-    your account can change, named directly rather than through a link: the settings file is
-    reached through the folder's resolved path, but the snapshots, the steering backup and git's
-    hooks folder there are reached through `TMPDIR` as spelled, as in 1.4.0. On Windows the runner
-    cannot read a folder's permissions, so leave
-    `TMPDIR` unset there unless item 9's `//?/` refusal needs a shorter folder (on the one host
-    measured, setting `TEMP` and `TMP` for the `.cmd` did not move Git Bash's `/tmp`, and a Git Bash
-    login shell sets `TMPDIR` to this account's temporary folder, the same folder). That advice
-    assumes the task runs as your own account, whose `TEMP` is a folder of its own: a task run as
-    SYSTEM gets `C:\Windows\Temp` instead (unmeasured), so schedule the passes as your account. On
-    macOS `TMPDIR` does not move the folder: Apple's `mktemp` takes the per-user one (measured on
-    CI).
+    checks, lies inside the vault by file identity, is not the path it resolves to, is not there, or
+    already holds a name the settings file is written through.** The log says `the runner's folder
+    for the pass, ...`, then why (`resolves into the vault`, `is inside a folder every account can
+    write that has no sticky bit`, `is not the path it resolves to`, and so on), `and the memory
+    override's settings file there can name hooks Claude Code runs`. A folder that is not there
+    gives `is not there as a folder, though the runner made it before the pass's snapshot`:
+    something removed it during the pass (you, root, an account that owns a folder above it, or on
+    Windows another account under a `TMPDIR` it can change; a cleaning tool is unlikely to pick a
+    folder that new), so find what and stop it. A planted name gives `was already there, and the
+    memory override is written through it`: something else writes in that temporary folder, so point
+    `TMPDIR` at one only your account can change. A vault that holds the default temporary folder,
+    as one at a drive root does, must move into a folder of its own, or `TMPDIR` must point outside
+    it. The default temporary folder passes on Linux (`/tmp`, sticky), macOS (a per-user folder) and
+    Windows (Git Bash's `/tmp`, this account's temporary folder), measured on CI's three platforms.
+    If you set `TMPDIR` for the passes, point it at a folder outside the vault that only your
+    account can change, named directly rather than through a link: the settings file is reached
+    through the folder's resolved path, but the snapshots, the steering backup and git's hooks
+    folder there are reached through `TMPDIR` as spelled, as in 1.4.0. On Windows the runner cannot
+    read a folder's permissions, so leave `TMPDIR` unset there unless item 9's `//?/` refusal needs
+    a shorter folder (on the one host measured, setting `TEMP` and `TMP` for the `.cmd` did not move
+    Git Bash's `/tmp`, and a Git Bash login shell sets `TMPDIR` to this account's temporary folder,
+    the same folder). That advice assumes the task runs as your own account, whose `TEMP` is a
+    folder of its own: a task run as SYSTEM gets `C:\Windows\Temp` instead (unmeasured), so schedule
+    the passes as your account. On macOS `TMPDIR` does not move the folder: Apple's `mktemp` takes
+    the per-user one (measured on CI).
 
 `--check` will list `.claude/scripts/lib/runner-common.sh`, `.claude/scripts/dream-pass.sh`,
 `.claude/scripts/promotion-pass.sh`, `.claude/scripts/run-tests.sh`,

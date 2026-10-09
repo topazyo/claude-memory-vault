@@ -161,8 +161,9 @@ jobs:
           # mem-override-work-resolved runs where mktemp
           # takes TMPDIR, so it is off the two macOS lists, and
           # mem-override-work-made, a missing folder spelled through a
-          # link, which must be refused and not made, runs wherever a link
-          # can be made, so it is on all four.
+          # link, which must be refused and not made, and a folder for the
+          # pass that is a link itself, which must be refused, runs wherever
+          # a link can be made, so it is on all four.
           # mem-override-no-iconv
           # runs everywhere: a failing iconv stand-in comes first on PATH, and,
           # off Windows, a pass also runs with a PATH that holds no iconv.
@@ -407,7 +408,7 @@ jobs:
           # and by the Pi relay's say("ran ID"): a reading that misses any of
           # those forms fails here.
           for id in mem-override-flag mem-override-path-refused mem-override-utf8-lax-host pi-extension-behaviour; do
-            grep -qx -- "$id" /tmp/ran.ids || { echo "::error title=The ids were misread::$id is recorded by run-tests.sh but was not found, so the reading above is broken."; exit 1; }
+            grep -qx -- "$id" /tmp/ran.ids || { echo "::error title=The ids were misread::$id is recorded by run-tests.sh but was not found, so the reading above is broken, or the line recording it no longer uses the form this id was chosen to pin (named in the comment above); then pick another id recorded that way."; exit 1; }
           done
           [ "$bad" -eq 0 ]
 

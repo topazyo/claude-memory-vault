@@ -71,6 +71,10 @@ WORK="$TMP/some one/my vault"
 MO_RB_TMP=
 # The background job mo_bounded is polling, if any, for cleanup to stop.
 MO_BOUNDED_PID=
+# The state folder of the case running now (new_case_state); until the first
+# case it is $TMP/state, never one named in the environment, which the memory
+# override's controls would remove a settings file from.
+CASE_STATE=
 
 # Cleanup must also EXIT on a signal. A cleanup-only trap on INT/TERM deletes
 # the fixtures and then lets the script keep running against a directory that
@@ -86,8 +90,13 @@ cleanup() {
     fi
     chmod 755 "$RET_LOCKED_DIR" 2>/dev/null
   fi
-  # A bounded job still running (mo_bounded) is stopped with the suite.
-  [ -n "${MO_BOUNDED_PID:-}" ] && kill -KILL "$MO_BOUNDED_PID" 2>/dev/null
+  # A bounded job still running (mo_bounded) is stopped with the suite, once:
+  # a signal runs this and then the EXIT trap runs it again, by when the pid
+  # may be another process's. A job that left its marker has ended.
+  if [ -n "${MO_BOUNDED_PID:-}" ]; then
+    [ -e "${TMP:-}/mo-bounded.done" ] || kill -KILL "$MO_BOUNDED_PID" 2>/dev/null
+    MO_BOUNDED_PID=
+  fi
   [ -n "${MO_RB_TMP:-}" ] && rm -rf "$MO_RB_TMP" 2>/dev/null
   [ -n "${TMP:-}" ] && rm -rf "$TMP" 2>/dev/null
 }
@@ -2082,16 +2091,23 @@ runner() {  # runner <script> <mode> [extra env...]
 # a command substitution or a command it starts (state_dir_ready's subshell,
 # cygpath, iconv) is reported the same, but that child is left running. KILL,
 # because a library that trapped TERM would otherwise leave the wait hanging.
-# The job leaves a marker when the function returns, and the polling stops on
-# it, so a function that returned is never reported as stopped and a pid reused
-# after the job ended is never killed; a job gone without it is waited for. The
-# pid is kept for cleanup, so a suite stopped meanwhile stops the job too.
+# The job leaves a marker whenever it ends by itself (an EXIT trap of its own: a
+# function that returns, calls exit or aborts on an unset variable), and the
+# polling stops on it, so a job that ended is not reported as stopped, but for
+# one that ends at the bound itself, and a pid reused after a job ended by
+# itself is never killed. The pid is kept for cleanup, so a suite stopped
+# meanwhile stops the job too. A marker left from before that cannot be removed
+# would end the polling at once, so it fails the call (125).
 mo_bounded() {
   local secs="$1" pid n=0 mk="$TMP/mo-bounded.done"
   shift
   rm -f "$mk"
-  ( LC_ALL=C; export LC_ALL; . "$RV/.claude/scripts/lib/runner-common.sh"; AGENT_BIN="$FAKE"; "$@"
-    mo_r=$?; : > "$mk"; exit "$mo_r" ) &
+  if [ -e "$mk" ]; then
+    bad "mo_bounded: its marker $mk could not be removed, so a call could not be bounded"
+    return 125
+  fi
+  ( trap ': > "$mk"' EXIT
+    LC_ALL=C; export LC_ALL; . "$RV/.claude/scripts/lib/runner-common.sh"; AGENT_BIN="$FAKE"; "$@" ) &
   pid=$!
   MO_BOUNDED_PID=$pid
   while [ ! -e "$mk" ] && kill -0 "$pid" 2>/dev/null; do
@@ -2796,6 +2812,10 @@ else
   # walk is logged, so on every Windows host only the drive-path walk can refuse.
   if is_windows_host; then
     ran mem-override-work-root-drive
+    # A fresh folder, so a file the call above wrote there under a defect cannot
+    # decide how this one ends.
+    rm -rf "$mo_rb/w"
+    ( umask 077 && mkdir "$mo_rb/w" )
     rm -f "$TMP/memovr-root.log" "$TMP/memovr-root.walks"
     ( LC_ALL=C; export LC_ALL; . "$RV/.claude/scripts/lib/runner-common.sh"; AGENT_BIN="$FAKE"
       eval "mo_orig_$(declare -f path_under_by_identity)"
@@ -2961,9 +2981,11 @@ if [ -z "$mo_np" ] || [ -n "$(ls -A "$mo_np" 2>/dev/null)" ]; then
 else
   ran mem-override-work-names
   # The bounded leg's call: a refusal that leaves AGENT_SETTINGS_FILE set is 9,
-  # as in the direct calls below.
+  # as in the direct calls below, which set it first to a value of their own, so
+  # one the override fails to unset is seen.
   mo_override_unset() {
     local mo_r
+    AGENT_SETTINGS_FILE="$TMP/memovr-names-planted.json"
     memory_override "$@"
     mo_r=$?
     [ "$mo_r" -ne 0 ] && [ -n "${AGENT_SETTINGS_FILE+x}" ] && mo_r=9
@@ -2994,8 +3016,9 @@ else
       mo_rc=$?
       # A write that blocked on the FIFO is still waiting in a child the bound
       # could not reach: the FIFO held open for a moment lets it finish. Opened
-      # for reading and writing, which does not block on Linux or macOS, so the
-      # reader is there before the moment starts.
+      # for reading and writing, which does not block on Linux (and, reasoned,
+      # macOS), so the reader is there before the moment starts. A suite stopped
+      # during this leg leaves that writer blocked until it is killed.
       if [ "$mo_rc" -eq 124 ]; then
         exec 8<>"$mo_name"
         sleep 1
@@ -3003,6 +3026,7 @@ else
       fi
     else
       ( LC_ALL=C; export LC_ALL; . "$RV/.claude/scripts/lib/runner-common.sh"; AGENT_BIN="$FAKE"
+        AGENT_SETTINGS_FILE="$TMP/memovr-names-planted.json"
         memory_override "$RV" "${CASE_STATE:-$TMP/state}" "$mo_np" "$TMP/memovr-names.log"
         mo_r=$?; [ "$mo_r" -ne 0 ] && [ -n "${AGENT_SETTINGS_FILE+x}" ] && mo_r=9; exit "$mo_r" )
       mo_rc=$?
@@ -5956,6 +5980,20 @@ else
       bad "claude mode: a folder for the pass that does not exist, spelled through a link -- memory_override, called directly, was not refused for it, or made it -- got $mo_rc, folder $([ -e "$TMP/memovr-real/new" ] && echo made || echo absent): $(cat "$TMP/memovr-made.log" 2>/dev/null)"
     fi
     rm -f "$TMP/memovr-made.log"
+    # The folder for the pass a link itself, to a folder of this account: the
+    # runner's own is never one (mktemp -d), so it was put in that place, and
+    # resolving it would check, and write in, the folder it leads to. It is
+    # refused as not the path it resolves to, and nothing is written there.
+    mo_direct "$TMP/memovr-rl-vault" "$TMP/memovr-link" "$TMP/memovr-made.log"
+    mo_rc=$?
+    if [ "$mo_rc" -eq 1 ] && grep -F -- "is not the path it resolves to" "$TMP/memovr-made.log" 2>/dev/null | grep -q '^\[[^]]*\] ERROR: ' \
+       && [ -z "$(ls -A "$TMP/memovr-real" 2>/dev/null | grep '^pass-settings')" ] \
+       && [ ! -e "$CASE_STATE/pass-settings.json" ]; then
+      ok "claude mode: a folder for the pass that is a link to a folder of this account -> memory_override, called directly, refused (1) as not the path it resolves to, nothing written where it leads"
+    else
+      bad "claude mode: a folder for the pass that is a link to a folder of this account -- memory_override, called directly, was not refused as not the path it resolves to, or wrote where it leads -- got $mo_rc, that folder holds: $(ls -A "$TMP/memovr-real" 2>/dev/null | tr '\n' ' '): $(cat "$TMP/memovr-made.log" 2>/dev/null)"
+    fi
+    rm -f "$TMP/memovr-made.log" "$TMP/memovr-real/pass-settings.json" "$TMP/memovr-real/pass-settings.new"
   fi
   rm -rf "$CASE_STATE" "$TMP/memovr-rl-vault"
 fi

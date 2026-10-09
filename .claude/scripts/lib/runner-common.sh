@@ -1115,7 +1115,7 @@ state_dir_problem() {
     5) printf 'is a symlink in a folder every account can write' ;;
     6) printf 'could not be checked for write access by other accounts' ;;
     7) printf 'is inside a folder every account can write that has no sticky bit' ;;
-    8) printf 'is not the path it resolves to, as when it is replaced by a link during the checks' ;;
+    8) printf 'is not the path it resolves to: it is a link, or was replaced by one during the checks' ;;
     *) printf 'could not be created, or cannot be entered' ;;
   esac
 }
@@ -3225,16 +3225,21 @@ note_tripwire() {
 # the write would go through (only names there at the check: one planted after
 # it is still written through). The runner makes <work-dir> before the pass's
 # "before" snapshot and keeps the snapshot there, so one that is not there may
-# have taken the snapshot with it: it is refused, never made again. A folder
-# emptied, removed and made again, or replaced by a link, by another process of
-# this account, or on Windows of any account that can change the temporary
-# folder, is not seen: it is resolved and checked like the runner's own (off
-# Windows another account's folder fails the owner check). Apart from removing
-# the copy of the file an earlier build left in the state directory (below),
-# the checks write nothing. They must run after that snapshot, so that anything
-# planted after them is still a change the fence sees. <work-dir> is taken by
-# its resolved path (pwd -P) first, so the conversions, the UTF-8 check, these
-# checks and the write all see one folder.
+# have taken the snapshot with it: it is refused, never made again. mktemp -d
+# never makes a link, so a <work-dir> that is a link itself was put in its
+# place: it is not resolved, so the state directory's checks see the link (one
+# in a folder every account can write is refused there) and the comparison
+# below finds it is not the path it resolves to. A folder emptied, or removed
+# and made again, by another process of this account, by root, or on Windows by
+# any account that can change the temporary folder, is not seen: it is checked
+# like the runner's own (off Windows a folder another account owns fails the
+# owner check); nor is one replaced after the checks and before the write, which
+# is written through. Apart from removing the copy of the file an earlier build
+# left in the state directory (below), the checks write nothing. They must run
+# after that snapshot, so that anything planted after them is still a change the
+# fence sees. <work-dir> is otherwise taken by its resolved path (pwd -P) first,
+# so the conversions, the UTF-8 check, these checks and the write all see one
+# folder.
 # Then the file is written as pass-settings.json in <work-dir>, the runner's own
 # folder for the pass, and must read back byte for byte, because Claude Code
 # reads an empty or invalid settings file as if there were none. The read-back,
@@ -3255,8 +3260,9 @@ memory_override() {
   # The file is written, checked and handed to Claude Code through the folder's
   # resolved path, so a link or a relative part in TMPDIR's spelling cannot be
   # pointed at another folder after the checks below. A folder that cannot be
-  # entered is left as given, and the checks below refuse it.
-  p="$(cd "$work" 2>/dev/null && pwd -P)" && [ -n "$p" ] && work="$p"
+  # entered is left as given, and the checks below refuse it, and so is one that
+  # is a link itself, which mktemp -d never makes (codes 5 and 8 below).
+  [ -L "${work%/}" ] || { p="$(cd "$work" 2>/dev/null && pwd -P)" && [ -n "$p" ] && work="$p"; }
   file="$work/pass-settings.json" arg="$work/pass-settings.json"
   # On Windows a path left in Git Bash form is read by Claude Code as a folder
   # under the drive root, so either the platform or cygpath picks this branch.
@@ -3357,9 +3363,9 @@ memory_override() {
     printf '[%s] ERROR: the runner'"'"'s folder for the pass, %s, is not there as a folder, though the runner made it before the pass'"'"'s snapshot and keeps the snapshot in it, so the fence could not see what the pass changes. Refusing to run.\n' "$(ts)" "$work" >> "$log"
     return 1
   fi
-  # The folder was resolved above, so the path that check resolves it to must
-  # be the same, or it was replaced, by a link say, in between, and the file
-  # would go through another spelling.
+  # The folder was resolved above unless it is a link itself, so the path that
+  # check resolves it to must be the same, or it is a link, or was replaced by
+  # one in between, and the file would go through another folder.
   [ "$p" -eq 0 ] && [ "$up" != "$work" ] && p=8
   # That check compares the two paths by name, and on Windows and macOS a letter
   # outside ASCII in another case or an 8.3 name spells the same folder another
