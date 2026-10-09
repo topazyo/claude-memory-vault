@@ -2124,6 +2124,10 @@ mo_bounded() {
   MO_BOUNDED_PID=
   wait "$pid"
 }
+# Git Bash keeps a ':' in a file name as U+F03A, and pwd -P gives that character
+# back, not ':', where it expands an 8.3 name on the way (CI's Windows TEMP is
+# C:\Users\RUNNER~1\...), so a folder named with ':' resolves to either spelling.
+MO_PUA="$(printf '\357\200\272')"
 # memory_override walks up the runner's folder for the pass, and a walk that
 # never returns would hang every claude-mode pass below with no line to say why,
 # so two walks run here first, each bounded: up a folder whose name ends in a
@@ -2146,7 +2150,7 @@ MO_COLON="$TMP/memovr-colon:"
 rm -rf "$MO_COLON"
 ( umask 077 && mkdir -p "$MO_COLON/c:/w" ) 2>/dev/null
 case "$(cd "$MO_COLON/c:/w" 2>/dev/null && pwd -P)" in
-  */memovr-colon:/c:/w) mo_sentinel "$MO_COLON/c:/w" ;;
+  */memovr-colon:/c:/w|*/memovr-colon"$MO_PUA"/c"$MO_PUA"/w) mo_sentinel "$MO_COLON/c:/w" ;;
   *) bad "mem-override-work-colon: a folder whose name ends in a colon could not be made under $TMP, so the walk up it could not be bounded before the claude-mode passes" ;;
 esac
 if is_windows_host; then
@@ -2863,7 +2867,7 @@ rm -f "$TMP/memovr-root.log"
 rm -rf "$MO_COLON" "$TMP/memovr-colon.log" "$RV/90-auto-memory"
 ( umask 077 && mkdir -p "$MO_COLON/c:/w" ) 2>/dev/null
 case "$(cd "$MO_COLON/c:/w" 2>/dev/null && pwd -P)" in
-  */memovr-colon:/c:/w)
+  */memovr-colon:/c:/w|*/memovr-colon"$MO_PUA"/c"$MO_PUA"/w)
     ran mem-override-work-colon
     mo_bounded 30 path_under_by_identity "$MO_COLON/c:/w" "$RV"
     case "$?" in
