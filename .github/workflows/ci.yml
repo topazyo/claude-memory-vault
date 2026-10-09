@@ -163,7 +163,8 @@ jobs:
           # mem-override-work-made, a folder made through a link, runs
           # wherever a link can be made, so it is on all four.
           # mem-override-no-iconv
-          # runs everywhere: a failing iconv stand-in comes first on PATH.
+          # runs everywhere: a failing iconv stand-in comes first on PATH, and,
+          # off Windows, a pass also runs with a PATH that holds no iconv.
           # mem-override-sink-link uses
           # junctions on Windows and runs everywhere.
           # mem-override-cygpath-refused needs cygpath, so it is on the Windows

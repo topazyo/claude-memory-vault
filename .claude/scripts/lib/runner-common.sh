@@ -3193,19 +3193,22 @@ note_tripwire() {
 # own settings file, passed with --settings, points the memory folder at
 # 90-auto-memory/.pass-agent/ inside the vault instead, where the fence sees a
 # write. With it, a Write to a named folder (Claude Code 2.1.284, 2.1.285,
-# 2.1.287 and 2.1.289) and one to the default folder (2.1.285, 2.1.287 and
-# 2.1.289) were measured refused, on Windows only, for a vault on a drive path.
+# 2.1.287, 2.1.289, 2.1.292 and 2.1.295) and one to the default folder (2.1.285,
+# 2.1.287, 2.1.289, 2.1.292 and 2.1.295) were measured refused, on Windows only,
+# for a vault on a drive path; other versions are unmeasured.
 #
 # On Windows both paths are converted with cygpath under a UTF-8 locale: under
 # the runners' LC_ALL=C it cuts a path at its first character outside the ANSI
 # code page, which made the file name a folder outside the vault. Each converted
 # path must be a drive path and name, converted back, the very folder or file it
 # came from. A network path is refused: for a vault reached as //host/share,
-# Claude Code 2.1.289 ignored the file and kept granting the default folder.
+# Claude Code 2.1.289 and 2.1.292 ignored the file and kept granting the
+# default folder.
 #
-# The checks refuse a pass the file would not protect: outside Git Bash, an
-# agent binary that is a Windows program, which would read the POSIX paths as
-# other folders; a converted path that names something else; a vault path the
+# The checks refuse a pass the file would not protect: outside Git Bash where
+# no cygpath is found, an agent binary that is a Windows program, which would
+# read the POSIX paths as other folders; a converted path that names something
+# else; a vault path the
 # JSON would have to escape; a vault or settings-file path that does not come
 # back unchanged from UTF-8 to UTF-16LE and back, which Claude Code could read as
 # another folder; a 90-auto-memory or .pass-agent that is a link (the fence sees a
