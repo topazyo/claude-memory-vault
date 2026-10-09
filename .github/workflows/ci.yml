@@ -406,9 +406,11 @@ jobs:
           [ "$(wc -l < /tmp/ran.ids)" -gt 0 ] || { echo "::error title=Nothing was checked::run-tests.sh records no control with ran, which this repository never does."; exit 1; }
           # Ids recorded by a ran at a line's start, after ||, after then,
           # and by the Pi relay's say("ran ID"): a reading that misses any of
-          # those forms fails here.
-          for id in mem-override-flag mem-override-path-refused mem-override-utf8-lax-host pi-extension-behaviour; do
-            grep -qx -- "$id" /tmp/ran.ids || { echo "::error title=The ids were misread::$id is recorded by run-tests.sh but was not found, so the reading above is broken, or the line recording it no longer uses the form this id was chosen to pin (named in the comment above); then pick another id recorded that way."; exit 1; }
+          # those forms fails here. Each pair is an id and the form it pins.
+          for pair in 'mem-override-flag:a ran at the start of a line' 'mem-override-path-refused:a ran after ||' \
+                      'mem-override-utf8-lax-host:a ran after then' 'pi-extension-behaviour:say("ran ID")'; do
+            id="${pair%%:*}"
+            grep -qx -- "$id" /tmp/ran.ids || { echo "::error title=The ids were misread::$id was not found among the ids read from run-tests.sh. Either the reading above is broken, or that control was renamed, removed, or no longer records its id as ${pair#*:}, the form it was chosen to pin; then pick another id recorded that way."; exit 1; }
           done
           [ "$bad" -eq 0 ]
 

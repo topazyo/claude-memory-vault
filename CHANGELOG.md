@@ -192,25 +192,27 @@ What that covers, and what it does not:
     not hide it, nor, reasoned, an 8.3 name; a `subst` or mapped drive, or a mount, whose root lies
     inside the vault does, reasoned). The walk up its path goes on past a folder whose name ends in
     `:`, where an earlier build of this release looped for ever, holding the run lock and logging
-    nothing (measured on Linux and in Git Bash). Or it is a link, which the runner's own folder never
-    is, or was replaced by one while it was checked, so it is not the path it resolves to (an
-    earlier build of this release resolved such a link and wrote where it led, measured on Linux;
-    one in a folder every account can write is refused as such, reasoned). Off Windows the folder
-    itself, new from `mktemp -d`, is this account's own with mode 0700, so the owner and mode checks
-    on it pass; on Windows those checks do not apply, and the folder carries the temporary folder's
-    permissions.
-  - The runner's folder for the pass is not there as a folder. The runner makes it before the
-    pass's "before" snapshot and keeps the snapshot in it, so a folder that went away may have taken
-    the snapshot with it, and the fence would compare the pass with nothing. It is refused, never
-    made again: an earlier build of this release made it again, and an agent's write under
+    nothing (measured on Linux and in Git Bash). Or it is a link, which the runner's own folder
+    never is, or was replaced while it was checked, so it is not the path it resolves to (an earlier
+    build of this release resolved such a link and wrote where it led, measured on Linux; off
+    Windows one in a folder every account can write is refused as such, reasoned). Off Windows the
+    folder itself, new from `mktemp -d`, is this account's own with mode 0700, so the owner and mode
+    checks on it pass; on Windows those checks do not apply, and the folder carries the temporary
+    folder's permissions.
+  - The runner's folder for the pass is not there as a folder. The runner makes it before the pass's
+    "before" snapshot and keeps the snapshot in it, so a folder that went away may have taken the
+    snapshot with it, and the fence would compare the pass with nothing. It is refused, never made
+    again: an earlier build of this release made it again, and an agent's write under
     `90-auto-memory/` then stayed in the vault with no tripwire (measured on Linux), where 1.4.0
     failed closed. A folder emptied, or removed and made again, before the override by another
     process of your account, by root, or on Windows by any account that can change the temporary
     folder, is not caught (reasoned; off Windows a folder another account owns fails the owner
-    check), nor is one replaced after the checks and before the settings file is written, which is
-    written through (reasoned), and one removed while the agent runs, or after it ran, is not caught
-    either, as in 1.4.0 (measured on 1.4.0 and on this release, with a stand-in agent writing under
-    `90-auto-memory/` and to `AGENTS.md`): the fence then contains nothing.
+    check), nor, off Windows, another folder of yours moved into its place by an account that can
+    rename entries in `TMPDIR`, nor one replaced after the checks and before the settings file is
+    written, which is written through (both reasoned), and one removed while the agent runs, or
+    after it ran, is not caught either, as in 1.4.0 (measured on 1.4.0 and on this release, with a
+    stand-in agent writing under `90-auto-memory/` and to `AGENTS.md`): the fence then contains
+    nothing.
   - `pass-settings.json`, `pass-settings.new`, or the temporary name ending in the runner's process
     id that the file is written through, is already in that folder, which only another process
     could have put there: a link would carry the write elsewhere, a folder would take it in, and a
@@ -244,28 +246,26 @@ What that covers, and what it does not:
   which call `memory_override` directly and so fail against 1.4.0, which has none, for that alone,
   and were seen failing against an earlier build of this release that had it (on Linux);
   `mem-override-cygpath-refused` and `mem-override-work-case`, which run only on Windows or macOS,
-  where no run of 1.4.0 was made, and call `memory_override` directly;
-  `mem-override-work-colon`, `mem-override-work-gone` and `mem-override-work-names`, which guard
-  regressions inside this release (1.4.0 has no walk and no override to call) and were seen
-  failing against the earlier build `444ec86` (on Linux): its walk did not return, it made the
-  missing folder again, and it wrote through a planted name; and
-  `mem-override-settings-space` and `mem-override-work-root-drive`, which hold code that was
-  already right and were seen failing against a mutant of it (the `--settings` argument unquoted;
-  on Windows, the drive-path walk removed). `mem-override-flag`,
-  `mem-override-sink-refused`, `mem-override-sink-link`, `mem-override-sink-hardlink`,
-  `mem-override-sink-contained`, `mem-override-sink-fifo`, `mem-override-path-refused`,
-  `mem-override-nonascii`, `mem-override-order`, `mem-override-mixed-release`,
-  `mem-override-unc-refused`, `mem-override-work-refused`, `mem-override-work-root`,
-  `mem-override-work-made` (`memory_override` called directly with a folder for the pass that does
-  not exist, spelled through a link, and with one that is a link to a folder of yours),
-  `mem-override-no-iconv`, `mem-override-work-colon` (a folder
-  for the pass under folders whose names end in `:`, every call bounded),
-  `mem-override-work-gone` (a folder for the pass that is not there), `mem-override-work-names`
-  (`pass-settings.json`, `pass-settings.new` or the temporary name planted in that folder),
-  `mem-override-settings-space` (a settings path holding a space, handed over as one argument) and
-  `dream-agent-tools` are required on every suite job. `mem-override-work-root-drive`, a vault at
-  the drive root refused by the drive-path walk alone, is required on the Windows job only.
-  `mem-override-sink-unreadable`, `mem-override-sink-filelink`,
+  where no run of 1.4.0 was made, and call `memory_override` directly; `mem-override-work-colon`,
+  `mem-override-work-gone` and `mem-override-work-names`, which guard regressions inside this
+  release (1.4.0 has no walk and no override to call) and were seen failing against the earlier
+  build `444ec86` (on Linux): its walk did not return, it made the missing folder again, and it
+  wrote through a planted name; and `mem-override-settings-space` and
+  `mem-override-work-root-drive`, which hold code that was already right and were seen failing
+  against a mutant of it (the `--settings` argument unquoted; on Windows, the drive-path walk
+  removed). `mem-override-flag`, `mem-override-sink-refused`, `mem-override-sink-link`,
+  `mem-override-sink-hardlink`, `mem-override-sink-contained`, `mem-override-sink-fifo`,
+  `mem-override-path-refused`, `mem-override-nonascii`, `mem-override-order`,
+  `mem-override-mixed-release`, `mem-override-unc-refused`, `mem-override-work-refused`,
+  `mem-override-work-root`, `mem-override-work-made` (`memory_override` called directly with a
+  folder for the pass that does not exist, spelled through a link, and with one that is a link to a
+  folder of yours), `mem-override-no-iconv`, `mem-override-work-colon` (a folder for the pass under
+  folders whose names end in `:`, every call bounded), `mem-override-work-gone` (a folder for the
+  pass that is not there), `mem-override-work-names` (`pass-settings.json`, `pass-settings.new` or
+  the temporary name planted in that folder), `mem-override-settings-space` (a settings path holding
+  a space, handed over as one argument) and `dream-agent-tools` are required on every suite job.
+  `mem-override-work-root-drive`, a vault at the drive root refused by the drive-path walk alone, is
+  required on the Windows job only. `mem-override-sink-unreadable`, `mem-override-sink-filelink`,
   `mem-override-file-mode`, `mem-override-utf8-refused`, `mem-override-winbin`,
   `mem-override-winbin-unreadable`, `mem-override-stray-cygpath`, `mem-override-no-cygpath` and
   `mem-override-work-open` are required on the Linux and macOS jobs and not on Windows, where they

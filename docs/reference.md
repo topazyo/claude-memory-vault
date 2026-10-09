@@ -811,25 +811,26 @@ Around that call, each runner does several things an exit code cannot:
   an 8.3 name; a `subst` or mapped drive, or a mount, whose root lies inside the vault is not seen,
   reasoned), where the agent could change it, or, off Windows, under a folder every account can
   write that has no sticky bit; when it is not there as a folder, because the runner makes it before
-  the pass's "before" snapshot and keeps the snapshot in it, so one that went away may have taken the
-  snapshot with it and the fence would compare the pass with nothing (it is refused, never made
+  the pass's "before" snapshot and keeps the snapshot in it, so one that went away may have taken
+  the snapshot with it and the fence would compare the pass with nothing (it is refused, never made
   again; a folder emptied, or removed and made again, before the checks by another process of your
-  account, by root, or on Windows by any account that can change the temporary folder, is not
-  seen, reasoned, since it is checked like the runner's own, while off Windows a folder another
-  account owns fails the owner check; one replaced after the checks and before the write is
-  written through, reasoned); when it is a link, which the runner's own folder never is, or was
-  replaced by one during the checks, so that it is not the path it resolves to (a link in a folder
-  every account can write is refused as one); when `pass-settings.json`,
-  `pass-settings.new`, or the temporary name ending in the runner's process id
-  that the file is written through, is already there, since a link there would carry the write
-  elsewhere, a folder would take it in and a FIFO would hold the pass (only a name there when the
-  runner checks is seen: one planted after the check is still written through, so only a `TMPDIR`
-  that no other account can change keeps the file safe); when the file cannot be written (off
-  Windows readable by the runner's account only, in a folder only it can enter; on Windows it
-  carries the temporary folder's permissions, which under the per-user default give it to the
-  account, SYSTEM and Administrators only, measured); and when it does not read back byte for byte,
-  because Claude Code 2.1.287 reads an empty or invalid settings file as if there were none and
-  grants the folders outside the vault again (measured on 2.1.287; not re-run on a later version).
+  account, by root, or on Windows by any account that can change the temporary folder, is not seen,
+  reasoned, since it is checked like the runner's own, while off Windows a folder another account
+  owns fails the owner check, but not another folder of yours moved into its place by an account
+  that can rename entries in `TMPDIR`; one replaced after the checks and before the write is written
+  through, reasoned); when it is a link, which the runner's own folder never is, or was replaced
+  during the checks, so that it is not the path it resolves to (off Windows a link in a folder every
+  account can write is refused as one, reasoned); when `pass-settings.json`, `pass-settings.new`, or
+  the temporary name ending in the runner's process id that the file is written through, is already
+  there, since a link there would carry the write elsewhere, a folder would take it in and a FIFO
+  would hold the pass (only a name there when the runner checks is seen: one planted after the check
+  is still written through, so only a `TMPDIR` that no other account can change keeps the file
+  safe); when the file cannot be written (off Windows readable by the runner's account only, in a
+  folder only it can enter; on Windows it carries the temporary folder's permissions, which under
+  the per-user default give it to the account, SYSTEM and Administrators only, measured); and when
+  it does not read back byte for byte, because Claude Code 2.1.287 reads an empty or invalid
+  settings file as if there were none and grants the folders outside the vault again (measured on
+  2.1.287; not re-run on a later version).
   The file covers memory only. A folder a settings file grants through `additionalDirectories` stays
   outside the fence. Inside `.git/`, only the files that make git run code are fenced: `config`,
   `config.worktree`, `commondir`, `hooks/`, `info/attributes`, `info/grafts` and
@@ -978,8 +979,10 @@ Around that call, each runner does several things an exit code cannot:
   - The runner's folder for the pass also holds the pass's "before" snapshot. A folder that is gone
     when the override is written is refused (exit 1), and so is a link put in its place, but one
     emptied, or removed and made again, before then by another process of your account, by root,
-    or on Windows by any account that can change the temporary folder, is not seen (reasoned), nor
-    one replaced after the checks and before the settings file is written, and one removed while
+    or on Windows by any account that can change the temporary folder, is not seen (reasoned), nor,
+    off Windows, another folder of yours moved into its place by an account that can rename
+    entries in `TMPDIR`, nor one replaced after the checks and before the settings file is written,
+    and one removed while
     the agent runs, or after it ran, takes the snapshot with it, and the fence then compares the
     pass with nothing: writes the agent made under `90-auto-memory/` and to `AGENTS.md` stayed in
     the vault and no tripwire was set (measured on 1.4.0 and on this release with a stand-in agent;

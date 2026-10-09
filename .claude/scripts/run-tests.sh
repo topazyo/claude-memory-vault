@@ -2106,7 +2106,7 @@ mo_bounded() {
     bad "mo_bounded: its marker $mk could not be removed, so a call could not be bounded"
     return 125
   fi
-  ( trap ': > "$mk"' EXIT
+  ( trap ": > $(printf '%q' "$mk")" EXIT
     LC_ALL=C; export LC_ALL; . "$RV/.claude/scripts/lib/runner-common.sh"; AGENT_BIN="$FAKE"; "$@" ) &
   pid=$!
   MO_BOUNDED_PID=$pid
@@ -2114,8 +2114,8 @@ mo_bounded() {
     if [ "$n" -ge "$secs" ]; then
       [ -e "$mk" ] && break
       kill -KILL "$pid" 2>/dev/null || break
-      wait "$pid" 2>/dev/null
       MO_BOUNDED_PID=
+      wait "$pid" 2>/dev/null
       return 124
     fi
     sleep 1
@@ -2140,11 +2140,13 @@ MO_PUA="$(printf '\357\200\272')"
 # other still runs.
 mo_sentinel() {  # mo_sentinel <path> - one bounded walk up <path>; ends the suite if it does not return
   mo_bounded 30 path_under_by_identity "$1" "$RV"
-  if [ "$?" -eq 124 ]; then
-    bad "mem-override-work-colon: the identity walk up $1 did not return within 30s, so every claude-mode pass would hang; the rest of the suite is not run"
-    printf '\n=== %s passed, %s failed ===\n' "$pass" "$fail"
-    exit 1
-  fi
+  case "$?" in
+    124) bad "mem-override-work-colon: the identity walk up $1 did not return within 30s, so every claude-mode pass would hang; the rest of the suite is not run" ;;
+    125) bad "mem-override-work-colon: the identity walk up $1 could not be bounded, so the claude-mode passes below could hang; the rest of the suite is not run" ;;
+    *) return 0 ;;
+  esac
+  printf '\n=== %s passed, %s failed ===\n' "$pass" "$fail"
+  exit 1
 }
 MO_COLON="$TMP/memovr-colon:"
 rm -rf "$MO_COLON"
