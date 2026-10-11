@@ -3242,9 +3242,10 @@ temp_dir_spelling_ok() {
 # own settings file, passed with --settings, points the memory folder at
 # 90-auto-memory/.pass-agent/ inside the vault instead, where the fence sees a
 # write. With it, a Write to a named folder (Claude Code 2.1.284, 2.1.285,
-# 2.1.287, 2.1.289, 2.1.292 and 2.1.295) and one to the default folder (2.1.285,
-# 2.1.287, 2.1.289, 2.1.292 and 2.1.295) were measured refused, on Windows only,
-# for a vault on a drive path; other versions are unmeasured.
+# 2.1.287, 2.1.289, 2.1.292, 2.1.295 and 2.1.296) and one to the default folder
+# (2.1.285, 2.1.287, 2.1.289, 2.1.292, 2.1.295 and 2.1.296) were measured
+# refused, on Windows only, for a vault on a drive path; other versions are
+# unmeasured.
 #
 # On Windows both paths are converted with cygpath under a UTF-8 locale: under
 # the runners' LC_ALL=C it cuts a path at its first character outside the ANSI

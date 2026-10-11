@@ -25,7 +25,7 @@ bash .claude/scripts/vault-update.sh --check --from ../template-new
 
 ---
 
-## 1.4.1 — 2026-10-09
+## 1.4.1 — 2026-10-11
 
 A security fix for the dream and promotion passes in claude mode. Claude Code's memory folder for
 a pass is now pointed inside the vault, where the write fence sees it. On Windows that holds for a
@@ -75,8 +75,8 @@ What that covers, and what it does not:
   byte, so the file would name a folder outside the vault, and a Write there landed (measured). The
   conversions now run under a UTF-8 locale, and the pass refuses unless each converted path names,
   converted back, the folder or file it came from. Measured with real Claude Code for vaults under
-  a folder named in Cyrillic and one holding a Git Bash `"` (2.1.287, 2.1.289, 2.1.292 and
-  2.1.295), and, in one run on 2.1.287 against an earlier build, one named `José`: a Write to the
+  a folder named in Cyrillic and one holding a Git Bash `"` (2.1.287, 2.1.289, 2.1.292, 2.1.295 and
+  2.1.296), and, in one run on 2.1.287 against an earlier build, one named `José`: a Write to the
   folder the C-locale conversion named landed with that conversion's file and was refused with the
   new one.
 - **A memory folder named in your user settings is unmeasured.** Measuring it would have meant
@@ -132,14 +132,14 @@ What that covers, and what it does not:
   and retention runners now refuse a temporary folder spelled with a `..` or with a part ending in a
   dot, in either spelling, right after `mktemp`, before their first git call, in every mode, command
   mode included (measured in Git Bash, where no hook placed there ran: for a dream pass with a
-  stand-in agent, and with the suite's twin for the dream runner in claude and command mode, the
-  promotion runner in claude mode and the retention runner). The retention runner takes `TMPDIR`
-  only when it starts with `/`, so for a `C:/...` spelling it makes its folder under `/tmp` instead,
-  as in 1.4.0, and has nothing to refuse (reasoned from the code). A part that is `.` alone is not
-  refused: Win32 and Git Bash both read it as the folder it is in (reasoned). Claude Code itself
-  keeps the dot: handed `--settings <folder>/x./s.json`, 2.1.296 read that file, not
-  `<folder>/x/s.json` (measured); its memory folder is reached the same way (reasoned; not measured
-  for the Write tool).
+  stand-in agent, and with the suite's twin, on the measuring host and on CI's windows-latest, for
+  the dream and promotion runners in claude and command mode and the retention runner). The
+  retention runner takes `TMPDIR` only when it starts with `/`, so for a `C:/...` spelling it makes
+  its folder under `/tmp` instead, as in 1.4.0, and has nothing to refuse (reasoned from the code).
+  A part that is `.` alone is not refused: Win32 and Git Bash both read it as the folder it is in
+  (reasoned). Claude Code itself keeps the dot: handed `--settings <folder>/x./s.json`, 2.1.296 read
+  that file, not `<folder>/x/s.json` (measured); its memory folder is reached the same way
+  (reasoned; not measured for the Write tool).
 - **Linux and macOS are unverified.** No Claude Code run has measured the grant on either. There the
   runner refuses a vault or settings-file path that does not come back byte for byte when `iconv`
   converts it from UTF-8 to UTF-16LE and back, which Claude Code could read as another folder:
@@ -159,9 +159,9 @@ What that covers, and what it does not:
   trailing-dot names, that mapped drive and the network paths, on an earlier build of this
   release), 2.1.293 (starting with a settings file under a non-ASCII temporary folder, on that
   build), 2.1.295 (the named and default folders, the Cyrillic and `"` vaults and starting with
-  a settings file under a Cyrillic `TMPDIR`, with this release's runner), and 2.1.296 (which file a
-  `--settings` path through a folder ending in a dot names, Claude Code started on its own).** No
-  other version was measured.
+  a settings file under a Cyrillic `TMPDIR`, on the earlier build `53b728b`), and 2.1.296 (the
+  same, with this release's runner, and which file a `--settings` path through a folder ending in a
+  dot names, Claude Code started on its own).** No other version was measured.
 - **Memory only.** A folder a settings file grants through `additionalDirectories` stays outside
   the fence, as in 1.4.0.
 
@@ -517,10 +517,11 @@ What that covers, and what it does not:
     administrative share and the network paths it does not honour, 2.1.292 for the named and default
     folders, the Cyrillic and `"` vaults, glob and trailing-dot names, that mapped drive and the
     network paths (on an earlier build of this release), 2.1.293 for starting with a settings file
-    under a non-ASCII temporary folder (on that build), and 2.1.295 for the named and default
-    folders, the Cyrillic and `"` vaults and starting with a settings file under a Cyrillic
-    `TMPDIR`, with this release's runner, and 2.1.296 for which file a `--settings` path through a
-    folder ending in a dot names, Claude Code started on its own. The fail-open was not re-run after
+    under a non-ASCII temporary folder (on that build), 2.1.295 for the named and default folders,
+    the Cyrillic and `"` vaults and starting with a settings file under a Cyrillic `TMPDIR`, on the
+    earlier build `53b728b`, and 2.1.296 for the same with this release's runner, and for which file
+    a `--settings` path through a folder ending in a dot names, Claude Code started on its own. The
+    fail-open was not re-run after
     2.1.287. Any other version, older or newer, is unmeasured, and a native install updates itself:
     `claude --version` says which one a pass will run.
 13. **Remove `Skill` from your `dream-agent.md`'s `tools:` line if it still names it.** Keeping it

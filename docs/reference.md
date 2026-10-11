@@ -580,9 +580,9 @@ the run lock, the tripwire, the state directory and the `.cmd` wrapper's Git Bas
   offers `PowerShell` on Windows and accepts a name it does not offer, so the same list works on
   every platform. Checked on Claude Code 2.1.272 (2026-09-15), where a pass's start event lists
   exactly the tools its definition allows; the `--settings` argument was measured on 2.1.284,
-  2.1.285, 2.1.287, 2.1.289, 2.1.292, 2.1.293 and 2.1.295 only, and on 2.1.296 for which file a
-  path through a folder ending in a dot names (Claude Code started on its own), and any other
-  version is unmeasured.
+  2.1.285, 2.1.287, 2.1.289, 2.1.292, 2.1.293, 2.1.295 and 2.1.296 only (on 2.1.296 also for which
+  file a path through a folder ending in a dot names, Claude Code started on its own), and any
+  other version is unmeasured.
 - **`command`**: `$VAULT_AGENT_CMD <prompt-file>`, run from the vault root, where `<prompt-file>` is
   the relative path `.claude/logs/<pass>.prompt.md`. The runner writes that file first: the agent
   definition's body without its frontmatter, then this run's task. A file rather than an argument,
@@ -790,16 +790,16 @@ Around that call, each runner does several things an exit code cannot:
   earlier build left there is removed. It points the memory folder at `90-auto-memory/.pass-agent/`,
   inside the fence. With it, a Write to the folder the vault's local settings name and one to the
   default folder were both refused, where both landed without it. That was measured for the Write
-  tool on Windows with Claude Code 2.1.284, 2.1.285, 2.1.287, 2.1.289, 2.1.292 and 2.1.295 (the
-  default folder from 2.1.285), for an ASCII vault path on a drive, and on 2.1.289 and 2.1.292, for
-  the default folder only, for a vault on a drive mapped to the measuring host's own administrative
-  share; for vaults under folders named in Cyrillic and with a Git Bash double quote (2.1.287,
-  2.1.289, 2.1.292 and 2.1.295), and with an e-acute (one run on 2.1.287, against an earlier
-  build), a Write to the folder a `C`-locale conversion named landed with that conversion's file and
-  was refused with the runner's. Any other version is unmeasured. For a vault reached as a network
-  path, measured as `//localhost/c$/...` (this host's own administrative share) and
-  `//wsl.localhost/...`, and started from Git Bash, Claude Code 2.1.289 and 2.1.292 ignored the file
-  and a Write to the default folder landed with it as without it (measured; a share on another
+  tool on Windows with Claude Code 2.1.284, 2.1.285, 2.1.287, 2.1.289, 2.1.292, 2.1.295 and 2.1.296
+  (the default folder from 2.1.285), for an ASCII vault path on a drive, and on 2.1.289 and
+  2.1.292, for the default folder only, for a vault on a drive mapped to the measuring host's own
+  administrative share; for vaults under folders named in Cyrillic and with a Git Bash double quote
+  (2.1.287, 2.1.289, 2.1.292, 2.1.295 and 2.1.296), and with an e-acute (one run on 2.1.287, against
+  an earlier build), a Write to the folder a `C`-locale conversion named landed with that
+  conversion's file and was refused with the runner's. Any other version is unmeasured. For a vault
+  reached as a network path, measured as `//localhost/c$/...` (this host's own administrative share)
+  and `//wsl.localhost/...`, and started from Git Bash, Claude Code 2.1.289 and 2.1.292 ignored the
+  file and a Write to the default folder landed with it as without it (measured; a share on another
   server is unmeasured, and refused all the same), so on Windows the runner accepts only a drive
   path. Edit was not probed, and Linux
   and macOS are unverified. On Windows the runner converts the vault's path and the file's with
