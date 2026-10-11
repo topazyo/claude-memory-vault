@@ -58,7 +58,9 @@
 #        20-projects/_logs folder
 #   1    setup failure, 20-projects/_logs cannot be listed or entered, git
 #        cannot read the vault, the vault is not the top of its own
-#        repository, a shallow clone, grafts, or a sparse checkout. Also this
+#        repository, a shallow clone, grafts, or a sparse checkout, or on
+#        Windows a TMPDIR whose spelling holds .. or a part ending in a dot
+#        (git there would read it as another folder). Also this
 #        script failing in itself, such as on an unset variable, which bash
 #        ends with 1
 #   2    REPORT-REFUSED: the report was not written by this runner, or changed
@@ -3246,6 +3248,12 @@ main() {
     say "ERROR: could not create a temporary directory"
     return 1
   }
+  # On Windows git reads this folder as TMPDIR spells it, so a spelling it reads
+  # as another folder is refused before the first git call.
+  temp_dir_spelling_ok "$SNAP_DIR" "$LIB_LOG"
+  rc=$?
+  lib_logged
+  [ "$rc" -eq 0 ] || return 1
   mkdir -p "$SNAP_DIR/nohooks"
   HOOKS="$SNAP_DIR/nohooks"
 

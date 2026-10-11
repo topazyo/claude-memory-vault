@@ -105,7 +105,8 @@ What that covers, and what it does not:
   would run as your account at every claude-mode pass (a settings file can name hooks; not probed
   here), whether or not the vault is a git repository.
 - **The settings file goes in the folder `mktemp -d` made, however `TMPDIR` is spelled through
-  links, and on Windows a spelling with a `..` is refused.** An earlier build of this release
+  links, and on Windows a temporary folder spelled with a `..` or with a part ending in a dot is
+  refused before git runs.** An earlier build of this release
   resolved the folder above it with a logical `cd`, which takes a `..` after a link as text. With
   `TMPDIR` spelled `<folder>/<link>/..` it named a folder `mktemp` never made, so the pass was
   refused as if its folder had gone (measured on Linux, and in Git Bash through a junction), and
@@ -116,11 +117,17 @@ What that covers, and what it does not:
   That covers the settings file only: the snapshots, the steering backup and git's hooks folder are
   still reached through `TMPDIR` as spelled, as in 1.4.0. On Windows git reads that spelling as
   text, so with a `..` after a junction in Git Bash's `/c/...` spelling it took its hooks folder and
-  the commit message from a folder of the textual name, the journal commit failed (exit 4), and a
-  pre-commit hook placed in a folder of that name ran (measured in Git Bash, with a stand-in agent,
-  on 1.4.0 and on two earlier builds of this release, `53b728b` and `753e1f9`). A claude-mode pass
-  on Windows now refuses a folder spelled with a `..` before the agent starts. Command mode does
-  not, as in 1.4.0.
+  the commit message from a folder of the textual name: hooks placed in a folder of that name ran,
+  at the pass's first `git status` and at the commit, and the journal commit failed (exit 4)
+  (measured in Git Bash, with a stand-in agent, on 1.4.0 and on earlier builds of this release,
+  `53b728b` and `753e1f9`; `b4d1344`, which refused such a pass in claude mode only, did so after
+  that first `git status` had run one of them). Win32 also drops the dot that ends a part, so with
+  `TMPDIR` spelled `<folder>/x.` git looked for its hooks in `<folder>/x` (measured in Git Bash on
+  1.4.0 and `b4d1344`; spawning the hooks placed there failed, and so did the commit). On Windows
+  the dream, promotion and retention runners now refuse a temporary folder spelled with a `..` or
+  with a part ending in a dot right after `mktemp`, before their first git call, in every mode,
+  command mode included (measured in Git Bash: no hook placed there ran). A part that is `.` alone
+  is not refused: Win32 and Git Bash both read it as the folder it is in (reasoned).
 - **Linux and macOS are unverified.** No Claude Code run has measured the grant on either. There the
   runner refuses a vault or settings-file path that does not come back byte for byte when `iconv`
   converts it from UTF-8 to UTF-16LE and back, which Claude Code could read as another folder:
@@ -161,7 +168,13 @@ What that covers, and what it does not:
   file identity (Adopting 15). A `pass-settings.json` that an earlier build of this release left in
   the state directory is removed by the next claude-mode pass whose folder passes its checks, just
   before the check for names planted there. The runner never creates `.pass-agent/` itself. Command
-  mode is unchanged, apart from `AGENT_SETTINGS_FILE` being unset when the runners' library loads.
+  mode is unchanged, apart from `AGENT_SETTINGS_FILE` being unset when the runners' library loads
+  and, on Windows, the refusal of a temporary folder spelled with a `..` or a part ending in a dot
+  (Security).
+- **On Windows the retention pass, too, refuses a temporary folder spelled with a `..` or with a
+  part ending in a dot**, with exit 1 and the same `ERROR:` line, right after it makes the folder
+  and before its first git call, because git there would read that spelling as another folder
+  (Security). Elsewhere it is unchanged.
 - **A claude-mode pass now needs `cmp`, and `iconv` for a vault or settings-file path with a byte
   outside printable ASCII.** It reads the file back with the first and checks the path with the
   second, and refuses to start without them. Git for Windows and macOS ship both.
@@ -214,16 +227,19 @@ What that covers, and what it does not:
     `:`, where an earlier build of this release looped for ever, holding the run lock and logging
     nothing (measured on Linux and in Git Bash). Or it is a link, which `mktemp -d` never makes, or
     a folder above it became one during the checks (a link above it that is there all along is
-    resolved and accepted), so it is not the path it resolves to (an earlier build of this release
+    resolved and accepted for the settings file, which is reached through the resolved path; the
+    snapshots, the steering backup and git's hooks folder are reached through `TMPDIR` as spelled),
+    so it is not the path it resolves to (an earlier build of this release
     resolved such a link and wrote where it led, measured on Linux; off Windows one in a folder
     every account can write is refused as such, reasoned). Off
     Windows the folder itself, new from `mktemp -d`, is this account's own with mode 0700, so the
     owner and mode checks on it pass; on Windows those checks do not apply, and the folder carries
     the temporary folder's permissions.
-  - On Windows, the runner's folder for the pass is spelled with a `..` in it, because `TMPDIR`
-    holds one. git there reads that spelling as text, so after a junction it took its hooks folder
-    and the commit message from a folder of the textual name (measured in Git Bash). The line says
-    `is spelled with a .. in it`.
+  - On Windows, the runner's temporary folder is spelled with a `..` or with a part ending in a dot,
+    because `TMPDIR` is. git there reads that spelling as text, so it can take its hooks folder and
+    the commit message from a folder of another name (Security). Every runner refuses this in every
+    mode, right after `mktemp`, before its first git call; the override checks it again for any
+    other caller. The line says `is spelled with .. or with a part that ends in a dot`.
   - The runner's folder for the pass cannot be reached: this account cannot enter a folder above it,
     or that folder is not there, so the checks cannot see the folder the runner made. An earlier
     build of this release said the folder was not there, as if something had removed it (measured
@@ -359,15 +375,17 @@ What that covers, and what it does not:
 
 ### Adopting this
 
-1. **Take `.claude/scripts/lib/runner-common.sh`, `dream-pass.sh` and `promotion-pass.sh`
-   together.** Each depends on the others. With the 1.4.1 library and an older runner, every
-   claude-mode pass exits 1 before Claude Code starts, and the run log
-   (`.claude/logs/dream-agent.run.log` or `promotion-agent.run.log`) says `no memory override was
-   written for this pass`; no tripwire is left, also when `AGENT_SETTINGS_FILE` is set in the
+1. **Take `.claude/scripts/lib/runner-common.sh`, `dream-pass.sh`, `promotion-pass.sh` and
+   `vault-retention.sh` together.** Each depends on the others. With the 1.4.1 library and an older
+   dream or promotion runner, every claude-mode pass exits 1 before Claude Code starts, and the run
+   log (`.claude/logs/dream-agent.run.log` or `promotion-agent.run.log`) says `no memory override
+   was written for this pass`; no tripwire is left, also when `AGENT_SETTINGS_FILE` is set in the
    environment (measured on Linux with 1.4.0's `dream-pass.sh` and `promotion-pass.sh`; older
-   releases are unmeasured). With an older library and a 1.4.1 runner, every claude-mode pass exits
-   1 with `memory_override: command not found`, which goes to the runner's stderr, not to its log
-   (measured on Linux). Either way no agent ran: take all three.
+   releases are unmeasured). A command-mode pass and 1.4.0's retention pass run there as in 1.4.0,
+   without the Windows refusal of a `..` or a part ending in a dot (Security; measured on Linux). With an older library and a 1.4.1 runner,
+   every pass of each of the three runners, in either mode, exits 1 with `temp_dir_spelling_ok:
+   command not found`, which goes to the runner's stderr, not to its log (measured on Linux with
+   1.4.0's library). Either way no agent ran in claude mode: take all four.
 2. **Nothing to configure for most vaults.** The override is on in claude mode for every pass.
    Item 11 asks some Windows accounts to set `VAULT_STATE_DIR`, and items 5 and 9 name the tools
    (`iconv`, `cmp`) a pass now needs.
@@ -520,16 +538,18 @@ What that covers, and what it does not:
     folder above it swapped in another folder of yours: point `TMPDIR` at a folder only you can
     change, then find that process. On Windows any account that can change the temporary folder can
     do it: leave `TMPDIR` unset, schedule the task as your own account, and find what wrote there.
-    On Windows `is spelled with a .. in it` means `TMPDIR` holds a `..`, which git there reads as
-    text: point `TMPDIR` at the folder itself, or leave it unset and schedule the task as your own
-    account. A vault the pass cannot
+    On Windows `is spelled with .. or with a part that ends in a dot` means `TMPDIR` holds a `..`, or
+    a part ending in a dot, which git there reads as text; every runner, the retention pass among
+    them, refuses it in every mode before its first git call: point `TMPDIR` at the folder itself,
+    or leave it unset and schedule the task as your own account. A vault the pass cannot
     resolve gives `the vault, ..., cannot be resolved`: check that the vault's folder is there and
     that the task's account can enter it. A vault that holds the default temporary folder,
     as one at a drive root does, must move into a folder of its own, or `TMPDIR` must point outside
     it. The default temporary folder passes on Linux (`/tmp`, sticky), macOS (a per-user folder) and
     Windows (Git Bash's `/tmp`, this account's temporary folder), measured on CI's three platforms.
     If you set `TMPDIR` for the passes, point it at a folder outside the vault that only your
-    account can change, named directly, with no link and no `..`: the settings file is reached
+    account can change, named directly, with no link, no `..` and no part ending in a dot: the
+    settings file is reached
     through the folder's resolved path, but the snapshots, the steering backup and git's hooks
     folder there are reached through `TMPDIR` as spelled, as in 1.4.0. On Windows the runner cannot
     read a folder's permissions, so leave `TMPDIR` unset there, and schedule the task as your own

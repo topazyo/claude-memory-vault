@@ -49,8 +49,9 @@
 #                           pass-settings.json, which Claude Code reads as
 #                           settings, hooks and other commands among them. Keep
 #                           it a folder only this account can change, named with
-#                           no link and no .. (on Windows a claude-mode pass
-#                           refuses a ..); on Windows leave it unset and schedule
+#                           no link and no .. (on Windows a pass refuses a .. or
+#                           a part ending in a dot, in every mode, before its
+#                           first git call); on Windows leave it unset and schedule
 #                           the task as your own account, unless a long path
 #                           needs a shorter folder (docs/reference.md, Known
 #                           limits)
@@ -320,6 +321,9 @@ main() {
     printf '[%s] ERROR: could not create a temporary directory\n' "$(ts)" >> "$LOG"
     exit 1
   }
+  # On Windows git reads this folder as TMPDIR spells it, so a spelling it reads
+  # as another folder is refused before the first git call, in every mode.
+  temp_dir_spelling_ok "$SNAP_DIR" "$LOG" || exit 1
   mkdir -p "$SNAP_DIR/nohooks"
 
   # A git operation in progress or a detached HEAD stops the run before the agent

@@ -3188,6 +3188,46 @@ note_tripwire() {
   return 0
 }
 
+# shown_name <path>
+# Prints <path> with any control character in it shown as ?, for a log line, so
+# a name holding a line break or an escape cannot split a line or forge one.
+shown_name() {
+  case "$1" in
+    *[[:cntrl:]]*) printf '%s' "$1" | LC_ALL=C tr '[:cntrl:]' '?' ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
+# temp_dir_spelling_ok <folder> <log>
+#
+# On Windows git.exe reads a folder as TMPDIR spells it, and Win32 reads that
+# spelling as text: it takes a .. back past a link or junction to the folder
+# above the link, and drops the dot from a part that ends in one, where Git
+# Bash's mktemp and the runners' own checks follow the junction and keep the
+# dot. With a .. after a junction git took its hooks folder from a folder of
+# the textual name and ran a hook there at the pass's first git status, and
+# with a part such as x. it looked for its hooks in the folder x (both measured
+# in Git Bash), folders an account able to make folders there could supply.
+# Each runner calls this right after it makes its temporary folder, before any
+# git call, in every mode, and memory_override calls it again for any other
+# caller. On Windows, decided as memory_override decides it (the platform, or a
+# cygpath found), a folder spelled with a part that ends in a dot, other than
+# . alone, is refused, with / or \ as the separator. Elsewhere it does nothing:
+# git there reaches the folder as mktemp did (measured on Linux with a .. after
+# a link). Returns 1, with the reason in <log>, when the run must not go on.
+temp_dir_spelling_ok() {
+  case "$RUNNER_UNAME" in
+    MINGW*|MSYS*|CYGWIN*) ;;
+    *) command -v cygpath >/dev/null 2>&1 || return 0 ;;
+  esac
+  case "/$1/" in
+    *[!/\\]./*|*[!/\\].\\*) ;;
+    *) return 0 ;;
+  esac
+  printf '[%s] ERROR: the runner'"'"'s temporary folder, %s, is spelled with .. or with a part that ends in a dot, and on Windows git reads that spelling as text, so it can take its hooks folder, and the commit message, from another folder than the one the runner made (measured in Git Bash). Point TMPDIR at the folder itself, with no part ending in a dot, or leave it unset and schedule the task as your own account. Refusing to run.\n' "$(ts)" "$(shown_name "$1")" >> "$2"
+  return 1
+}
+
 # memory_override <root> <state-dir> <work-dir> <log>
 #
 # Claude mode only. Claude Code grants the agent's Write and Edit tools its
@@ -3221,8 +3261,9 @@ note_tripwire() {
 # a link, so writes through it would not be seen) or is not a folder; and a
 # .pass-agent holding anything but a regular .DS_Store file with no other hard
 # link, since anything else could be read into the pass as memory or let a write
-# leave the vault; on Windows a <work-dir> spelled with a .. in it, which git
-# there reads as text; a <work-dir> that is not there as a folder, that cannot be
+# leave the vault; on Windows a <work-dir> spelled with .. or with a part that
+# ends in a dot, which git there reads as text (temp_dir_spelling_ok, which the
+# runners call first); a <work-dir> that is not there as a folder, that cannot be
 # reached because a folder above it cannot be entered, that is not the folder
 # resolving the folder above it led to, that fails the state directory's checks
 # (state_dir_ready, under a UTF-8 locale on Windows), whose walk up gives no
@@ -3338,12 +3379,12 @@ memory_override() {
       case "$p" in
         [ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]:/*) ;;
         *)
-          printf '[%s] ERROR: cygpath gave %s for a path of the memory override, which is not a Windows drive path, so Claude Code would read it as another folder, or ignore the override, as it does for a vault on a network path. Keep the vault and the temporary folder on a drive. Refusing to run.\n' "$(ts)" "$p" >> "$log"
+          printf '[%s] ERROR: cygpath gave %s for a path of the memory override, which is not a Windows drive path, so Claude Code would read it as another folder, or ignore the override, as it does for a vault on a network path. Keep the vault and the temporary folder on a drive. Refusing to run.\n' "$(ts)" "$(shown_name "$p")" >> "$log"
           return 1 ;;
       esac
     done
     if ! [ "$(LC_ALL=C.UTF-8 cygpath -u "$vault" 2>/dev/null)" -ef "$root" ]; then
-      printf '[%s] ERROR: cygpath turned %s into %s, which is not the same folder or file, so the memory override would name a path outside the vault. Refusing to run.\n' "$(ts)" "$root" "$vault" >> "$log"
+      printf '[%s] ERROR: cygpath turned %s into %s, which is not the same folder or file, so the memory override would name a path outside the vault. Refusing to run.\n' "$(ts)" "$(shown_name "$root")" "$(shown_name "$vault")" >> "$log"
       return 1
     fi
   fi
@@ -3384,28 +3425,11 @@ memory_override() {
   fi
   # The lines below name the folder as the runner made it (nm) or as the checks
   # see it (nw), with any control character in its name shown as ?.
-  case "$3" in
-    *[[:cntrl:]]*) nm="$(printf '%s' "$3" | LC_ALL=C tr '[:cntrl:]' '?')" ;;
-    *) nm="$3" ;;
-  esac
-  case "$work" in
-    *[[:cntrl:]]*) nw="$(printf '%s' "$work" | LC_ALL=C tr '[:cntrl:]' '?')" ;;
-    *) nw="$work" ;;
-  esac
-  # On Windows git reads the folder as TMPDIR spells it, and Win32 takes a .. in
-  # it as text. In Git Bash's /c/ spelling mktemp and the checks here follow a
-  # junction before the .., so with a .. after a junction git took its hooks
-  # folder and the commit message from a folder of the textual name, which an
-  # account able to make folders there could supply, and the journal commit
-  # failed (measured in Git Bash); in the C:/ spelling the two agree. On Windows
-  # a spelling with a .. in it is refused either way.
-  if [ "$win" = 1 ]; then
-    case "/$(printf '%s' "$3" | tr '\\' '/')/" in
-      */../*)
-        printf '[%s] ERROR: the runner'"'"'s folder for the pass, %s, is spelled with a .. in it, and on Windows git reads that spelling as text, so after a link or junction it can take its hooks folder and the commit message from another folder than the one the runner made (measured for Git Bash'"'"'s /c/ spelling). Point TMPDIR at the folder itself, with no .. in its spelling, or leave it unset and schedule the task as your own account. Refusing to run.\n' "$(ts)" "$nm" >> "$log"
-        return 1 ;;
-    esac
-  fi
+  nm="$(shown_name "$3")"
+  nw="$(shown_name "$work")"
+  # A spelling git on Windows reads as another folder: the runners refuse it
+  # before their first git call, and this refuses it for any other caller.
+  temp_dir_spelling_ok "$3" "$log" || return 1
   # The file can name hooks Claude Code runs, so its folder must pass the state
   # directory's checks. On Windows they run under a UTF-8 locale, as the
   # conversions above do: under C, cygpath cut the vault's path and the folder's
@@ -3439,7 +3463,11 @@ memory_override() {
   # elsewhere (a link above it changed between cd -P and pwd -P, or a folder's
   # name ends in a line break, which $(...) drops), and the file would go to
   # another folder, one someone else may have made, or the refusal would name it.
-  if { [ "$p" -eq 9 ] && [ -d "$3" ]; } || { [ "$p" -ne 9 ] && [ "$p" -ne 10 ] && ! [ "$work" -ef "$3" ]; }; then
+  # A refusal for a cause of its own where nothing is at either path (a dangling
+  # link, say, which -ef cannot compare) keeps its own line.
+  if { [ "$p" -eq 9 ] && [ -d "$3" ]; } \
+     || { [ "$p" -ne 9 ] && [ "$p" -ne 10 ] && ! [ "$work" -ef "$3" ] \
+          && { [ "$p" -eq 0 ] || [ -e "$work" ] || [ -e "$3" ]; }; }; then
     printf '[%s] ERROR: the runner'"'"'s folder for the pass, %s, is not the folder that resolving the folder above it led to: a folder above it changed while it was resolved, or a folder'"'"'s name ends in a line break, which the resolution drops, so the settings file would go to another folder. Refusing to run.\n' "$(ts)" "$nm" >> "$log"
     return 1
   fi
@@ -3448,7 +3476,7 @@ memory_override() {
     return 1
   fi
   if [ "$p" -eq 10 ]; then
-    printf '[%s] ERROR: the vault, %s, cannot be resolved (this account cannot enter it, or it is not there), so whether the runner'"'"'s folder for the pass lies inside it cannot be checked. Refusing to run.\n' "$(ts)" "$root" >> "$log"
+    printf '[%s] ERROR: the vault, %s, cannot be resolved (this account cannot enter it, or it is not there), so whether the runner'"'"'s folder for the pass lies inside it cannot be checked. Refusing to run.\n' "$(ts)" "$(shown_name "$root")" >> "$log"
     return 1
   fi
   # The state directory's check of the vault compares the two paths by name, and
@@ -3490,7 +3518,7 @@ memory_override() {
   # seen; one planted after this check is still written through.
   for p in "$file" "$work/pass-settings.new" "$file.tmp.$$"; do
     if [ -e "$p" ] || [ -L "$p" ]; then
-      printf '[%s] ERROR: %s was already there, and the memory override is written through it, so the write could go elsewhere or never end. Refusing to run.\n' "$(ts)" "$p" >> "$log"
+      printf '[%s] ERROR: %s was already there, and the memory override is written through it, so the write could go elsewhere or never end. Refusing to run.\n' "$(ts)" "$(shown_name "$p")" >> "$log"
       return 1
     fi
   done
@@ -3499,15 +3527,15 @@ memory_override() {
   # Claude Code runs the hooks a settings file names.
   if ! ( umask 077 && printf '%s\n' "$line" > "$work/pass-settings.new" ) \
      || ! write_file_atomic "$file" "$work/pass-settings.new"; then
-    printf '[%s] ERROR: could not write the memory override %s. Refusing to run.\n' "$(ts)" "$file" >> "$log"
+    printf '[%s] ERROR: could not write the memory override %s. Refusing to run.\n' "$(ts)" "$(shown_name "$file")" >> "$log"
     return 1
   fi
   if [ "$win" = 1 ] && ! [ "$(LC_ALL=C.UTF-8 cygpath -u "$arg" 2>/dev/null)" -ef "$file" ]; then
-    printf '[%s] ERROR: cygpath turned %s into %s, which is not the same folder or file, so Claude Code would be handed another settings file. Refusing to run.\n' "$(ts)" "$file" "$arg" >> "$log"
+    printf '[%s] ERROR: cygpath turned %s into %s, which is not the same folder or file, so Claude Code would be handed another settings file. Refusing to run.\n' "$(ts)" "$(shown_name "$file")" "$(shown_name "$arg")" >> "$log"
     return 1
   fi
   if ! printf '%s\n' "$line" | cmp -s - "$file"; then
-    printf '[%s] ERROR: the memory override %s does not hold what was written to it, or cmp could not compare it, and Claude Code reads an empty or invalid settings file as if there were none. Refusing to run.\n' "$(ts)" "$file" >> "$log"
+    printf '[%s] ERROR: the memory override %s does not hold what was written to it, or cmp could not compare it, and Claude Code reads an empty or invalid settings file as if there were none. Refusing to run.\n' "$(ts)" "$(shown_name "$file")" >> "$log"
     return 1
   fi
   AGENT_SETTINGS_FILE="$arg"

@@ -3085,6 +3085,29 @@ else
   if is_windows_host && [ -L "$mo_np/pass-settings.new" ]; then
     MSYS_NO_PATHCONV=1 cmd /c rmdir "$(cygpath -w "$mo_np/pass-settings.new")" >/dev/null 2>&1
   fi
+  # Off Windows a folder above named with a line break inside passes every check,
+  # so the refusal for a name planted there must show the break as ?, on one
+  # line, which a raw name would split. NTFS names hold no line break.
+  if is_windows_host; then
+    printf '  INFO  [mem-override-work-names] the leg with a line break in a folder above runs off Windows only: NTFS names hold none (not counted)\n'
+  else
+    rm -rf "$TMP/memovr-names-a${NL}b" "$TMP/memovr-names.log"
+    ( umask 077 && mkdir -p "$TMP/memovr-names-a${NL}b/w" ) && printf 'planted\n' > "$TMP/memovr-names-a${NL}b/w/pass-settings.new"
+    mo_nlr="$(cd "$TMP/memovr-names-a${NL}b" 2>/dev/null && pwd -P)"
+    if [ -z "$mo_nlr" ] || [ ! -f "$TMP/memovr-names-a${NL}b/w/pass-settings.new" ]; then
+      bad "mem-override-work-names: a folder named with a line break inside could not be made"
+    else
+      mo_direct "$RV" "$TMP/memovr-names-a${NL}b/w" "$TMP/memovr-names.log"
+      mo_rc=$?
+      if [ "$mo_rc" -eq 1 ] && [ "$(grep -c '' "$TMP/memovr-names.log" 2>/dev/null)" = 1 ] \
+         && grep -F -- "ERROR: $(printf '%s' "$mo_nlr" | tr '\n' '?')/w/pass-settings.new $MO_NAMES" "$TMP/memovr-names.log" 2>/dev/null | grep -q '^\[[^]]*\] ERROR: '; then
+        ok "claude mode: pass-settings.new planted in a folder for the pass under a folder named with a line break inside -> memory_override, called directly, refused (1) on one line, the break shown as ?"
+      else
+        bad "claude mode: pass-settings.new planted in a folder for the pass under a folder named with a line break inside -- memory_override, called directly, did not refuse on one line showing the break as ? -- got $mo_rc: $(tr '\n' '|' < "$TMP/memovr-names.log" 2>/dev/null)"
+      fi
+    fi
+    rm -rf "$TMP/memovr-names-a${NL}b"
+  fi
 fi
 rm -rf "$TMP/memovr-names" "$TMP/memovr-names.log" "$TMP/memovr-names-target" "$TMP/memovr-names-dir" "$TMP/memovr-names-absent"
 # A pass-settings.json an earlier build left in the state directory is removed
@@ -6202,16 +6225,17 @@ rm -rf "$TMP/memovr-link" "$TMP/memovr-real"
 # file in <b>/tgt/tmp.dd and leave <b>/base as it was. On Windows, where git
 # reads the folder as TMPDIR spells it and Win32 takes the .. as text, so git
 # would take its hooks folder and commit message from <b>/base/tmp.dd, each must
-# be refused for the .. in the spelling, with nothing written in either folder.
-# There the junction is spelled in Git Bash's POSIX form, the one that splits:
-# Win32 takes .. out of a drive path as text, mktemp's included. Where mktemp
-# takes TMPDIR (not macOS), a dream pass with TMPDIR=<b>/base/lnk/.. must also
-# run with the file under <b>/tgt, or on Windows be refused for the .. before the
-# agent starts. On Windows the folders cd and cd -P, each then pwd -P, resolve
-# /tmp, $TMP and a folder named with a colon to are printed (not counted): the
-# runner's own folder for the pass is resolved with cd -P, and the state
-# directory's check of it with cd.
-MO_DOTWIN="is spelled with a .. in it, and on Windows git reads that spelling as text"
+# be refused for the .. in the spelling (temp_dir_spelling_ok, which
+# memory_override calls again for any caller the runners do not cover), with
+# nothing written in either folder. There the junction is spelled in Git Bash's
+# POSIX form, the one that splits: Win32 takes .. out of a drive path as text,
+# mktemp's included. Where mktemp takes TMPDIR (not macOS), a dream pass with
+# TMPDIR=<b>/base/lnk/.. must also run with the file under <b>/tgt, or on
+# Windows be refused for the .. before the agent starts. On Windows the folders
+# cd and cd -P, each then pwd -P, resolve /tmp, $TMP and a folder named with a
+# colon to are printed (not counted): the runner's own folder for the pass is
+# resolved with cd -P, and the state directory's check of it with cd.
+MO_DOTWIN="is spelled with .. or with a part that ends in a dot, and on Windows git reads that spelling as text"
 MO_DD="$TMP/memovr-dd"
 mo_dd_clean() {
   if is_windows_host && [ -L "$MO_DD/base/lnk" ]; then
@@ -6315,6 +6339,185 @@ else
   fi
 fi
 mo_dd_clean
+# temp_dir_spelling_ok: on Windows git.exe reads the runner's temporary folder
+# as TMPDIR spells it, and Win32 takes a .. back past a link or junction as text
+# and drops a dot that ends a part, so git could take its hooks folder, and run
+# a hook from it at the pass's first git status, from a folder of another name
+# (measured in Git Bash). Each runner refuses such a spelling right after
+# mktemp, before its first git call, in every mode. First the pattern, on every
+# host, with the platform given as Windows: each spelling below with a part that
+# ends in a dot, other than . alone, must be refused on one ERROR: line naming
+# it, a line break shown as ?, and each other one accepted with nothing logged.
+# Off Windows, with no cygpath on PATH, it must do nothing.
+mo_spell() {  # mo_spell <uname> <spelling> - temp_dir_spelling_ok's status, with RUNNER_UNAME as given
+  rm -f "$TMP/memovr-spell.log"
+  ( LC_ALL=C; export LC_ALL; . "$RV/.claude/scripts/lib/runner-common.sh"; RUNNER_UNAME="$1"
+    temp_dir_spelling_ok "$2" "$TMP/memovr-spell.log" )
+}
+ran temp-dir-spelling
+mo_sp_bad=0 mo_sp_n=0
+for mo_sp in '/b/lnk/../tmp.X' '/b/lnk/..' '../tmp.X' 'C:\b\lnk\..\tmp.X' '/b\lnk\..\tmp.X' 'C:/b/lnk/../tmp.X' \
+  '/b//..//tmp.X' '/b/x./tmp.X' '/b/x.' 'C:\b\x.\tmp.X' '/b/x../tmp.X' '/b/.../tmp.X' "/b/x${NL}./tmp.X"; do
+  mo_sp_n=$((mo_sp_n + 1))
+  mo_spell MINGW64_NT-10.0 "$mo_sp"
+  mo_rc=$?
+  mo_sp_shown="$(printf '%s' "$mo_sp" | LC_ALL=C tr '[:cntrl:]' '?')"
+  if ! { [ "$mo_rc" -eq 1 ] && [ "$(grep -c '' "$TMP/memovr-spell.log" 2>/dev/null)" = 1 ] \
+         && grep -F -- "$MO_DOTWIN" "$TMP/memovr-spell.log" | grep -F -- "folder, $mo_sp_shown, is spelled" | grep -q '^\[[^]]*\] ERROR: '; }; then
+    mo_sp_bad=$((mo_sp_bad + 1))
+    bad "temp_dir_spelling_ok, the platform given as Windows, did not refuse [$mo_sp_shown] on one ERROR: line naming it -- got $mo_rc: $(tr '\n' '|' < "$TMP/memovr-spell.log" 2>/dev/null)"
+  fi
+done
+for mo_sp in '/b/./tmp.X' './tmp.X' '.' '/b/.x/tmp.X' '/b/..x/tmp.X' '/b/x..y/tmp.X' 'C:\Users\me\AppData\Local\Temp\tmp.Ab12' \
+  'C:/Users/me/AppData/Local/Temp/tmp.Ab12' '/tmp/tmp.Ab12' '/b/a b/tmp.X'; do
+  mo_sp_n=$((mo_sp_n + 1))
+  mo_spell MINGW64_NT-10.0 "$mo_sp"
+  mo_rc=$?
+  if [ "$mo_rc" -ne 0 ] || [ -s "$TMP/memovr-spell.log" ]; then
+    mo_sp_bad=$((mo_sp_bad + 1))
+    bad "temp_dir_spelling_ok, the platform given as Windows, refused [$mo_sp] or logged -- got $mo_rc: $(cat "$TMP/memovr-spell.log" 2>/dev/null)"
+  fi
+done
+[ "$mo_sp_bad" -eq 0 ] && ok "temp_dir_spelling_ok, the platform given as Windows -> the 13 spellings with a part ending in a dot refused, each on one ERROR: line naming it (a line break shown as ?), and the $((mo_sp_n - 13)) others accepted with nothing logged"
+if is_windows_host || command -v cygpath >/dev/null 2>&1; then
+  printf '  INFO  [temp-dir-spelling] the leg where it must do nothing runs off Windows only, with no cygpath on PATH (not counted)\n'
+else
+  mo_spell "$(uname -s)" '/b/lnk/../tmp.X'
+  mo_rc=$?
+  if [ "$mo_rc" -eq 0 ] && [ ! -s "$TMP/memovr-spell.log" ]; then
+    ok "temp_dir_spelling_ok off Windows, with no cygpath on PATH -> does nothing (0, nothing logged) for a spelling with a .."
+  else
+    bad "temp_dir_spelling_ok off Windows, with no cygpath on PATH, did not leave a spelling with a .. alone -- got $mo_rc: $(cat "$TMP/memovr-spell.log" 2>/dev/null)"
+  fi
+fi
+rm -f "$TMP/memovr-spell.log"
+# Then the three runners. A mktemp stand-in makes the folder where the real one
+# would (<b>/tgt, or <b>/x.) and hands the runner a spelling of it with .. after
+# a link, or with a part ending in a dot; every other mktemp call goes to the
+# real one. A git stand-in records each call and runs the real git. Off Windows
+# a cygpath stand-in, which gives each path back, makes the platform read as
+# Windows, as a stray one does. A control pass in command mode, its folder
+# spelled plainly, must run and call git with that folder's nohooks folder,
+# which shows both stand-ins are used; so must the retention runner. Each other
+# leg must be refused (1) with the line before any git call names the nohooks
+# folder, and the agent must never start: the dream runner in claude and in
+# command mode, the promotion runner in claude mode, and the retention runner,
+# with .., and the dream runner with a part ending in a dot. On Windows a folder
+# of the textual name also holds every client hook git may run, each leaving a
+# marker, and a tracked note is touched first, so a git status would write the
+# index: no hook may run.
+MO_K4="$TMP/memovr-k4"
+mo_k4_clean() {
+  if is_windows_host && [ -L "$MO_K4/base/lnk" ]; then
+    MSYS_NO_PATHCONV=1 cmd /c rmdir "$(cygpath -w "$MO_K4/base/lnk")" >/dev/null 2>&1
+  fi
+  rm -rf "$MO_K4"
+}
+mo_k4_clean
+mkdir -p "$MO_K4/shim" "$MO_K4/base" "$MO_K4/tgt/in" "$MO_K4/x." "$MO_K4/x"
+cat > "$MO_K4/shim/mktemp" <<'MO_K4_EOF'
+#!/usr/bin/env bash
+case "$#:$*" in
+  1:-d|2:-d\ */vaultretention.XXXXXXXX) ;;
+  *) exec "$MO_K4_MKTEMP" "$@" ;;
+esac
+d="$("$MO_K4_MKTEMP" -d "$MO_K4_REAL/tmp.XXXXXXXXXX")" || exit 1
+if [ -n "${MO_K4_DECOY:-}" ]; then
+  mkdir -p "$MO_K4_DECOY/${d##*/}/nohooks"
+  for h in post-index-change pre-commit prepare-commit-msg commit-msg post-commit post-checkout reference-transaction pre-auto-gc; do
+    printf '#!/bin/sh\necho %s >> "%s"\nexit 0\n' "$h" "$MO_K4_MARK" > "$MO_K4_DECOY/${d##*/}/nohooks/$h"
+    chmod +x "$MO_K4_DECOY/${d##*/}/nohooks/$h"
+  done
+fi
+printf '%s\n' "$MO_K4_SPELL/${d##*/}"
+MO_K4_EOF
+cat > "$MO_K4/shim/git" <<'MO_K4_EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$MO_K4_GITLOG"
+exec "$MO_K4_GIT" "$@"
+MO_K4_EOF
+if ! is_windows_host; then
+  printf '#!/usr/bin/env bash\nfor a; do :; done\nprintf "%%s\\n" "$a"\n' > "$MO_K4/shim/cygpath"
+fi
+chmod +x "$MO_K4/shim/"*
+MO_K4_MT="$(command -v mktemp)"
+MO_K4_G="$(command -v git)"
+# A retention vault: the runner, its library and vault-check, one note, committed.
+MO_K4_RV="$MO_K4/rvault"
+mkdir -p "$MO_K4_RV/.claude/scripts/lib" "$MO_K4_RV/20-projects/_logs" "$MO_K4_RV/99-archive" "$MO_K4_RV/10-daily"
+cp "$RV/.claude/scripts/vault-check.sh" "$ROOT/.claude/scripts/vault-retention.sh" "$MO_K4_RV/.claude/scripts/" 2>/dev/null
+cp "$RV/.claude/scripts/lib/runner-common.sh" "$MO_K4_RV/.claude/scripts/lib/" 2>/dev/null
+: > "$MO_K4_RV/99-archive/.gitkeep"
+printf -- '---\ntier: short\ntype: daily\n---\n\nday\n' > "$MO_K4_RV/10-daily/day.md"
+printf '.claude/logs/\n' > "$MO_K4_RV/.gitignore"
+( cd "$MO_K4_RV" && git init -q . && git config user.name suite && git config user.email suite@example.invalid \
+  && git config commit.gpgsign false && git add -A && git commit -q -m init ) >/dev/null 2>&1
+# mo_k4_run <runner> <spelling> <real folder> <decoy base, or empty> [NAME=value...] - the runner's status
+mo_k4_run() {
+  local script="$1" spell="$2" real="$3" decoy="$4" rc
+  shift 4
+  rm -f "$MO_K4/git.log" "$MO_K4/fired" "$REC.argv"
+  if is_windows_host && [ -n "$decoy" ]; then
+    touch "$RV/CLAUDE.md" "$MO_K4_RV/10-daily/day.md"
+  else
+    decoy=
+  fi
+  if [ "$script" = vault-retention.sh ]; then
+    env VAULT_STATE_DIR="$MO_K4/rstate" RUN_LOCK_WAIT=0 RUN_LOCK_POLL=1 WATCHDOG_POLL=1 WATCHDOG_GRACE=2 \
+      PATH="$MO_K4/shim:$PATH" MO_K4_MKTEMP="$MO_K4_MT" MO_K4_GIT="$MO_K4_G" MO_K4_GITLOG="$MO_K4/git.log" \
+      MO_K4_MARK="$MO_K4/fired" MO_K4_SPELL="$spell" MO_K4_REAL="$real" MO_K4_DECOY="$decoy" "$@" \
+      bash "$MO_K4_RV/.claude/scripts/vault-retention.sh" >/dev/null 2>&1
+    rc=$?
+    echo "$rc"
+  else
+    runner "$script" journal FAKE_RECORD="$REC" PATH="$MO_K4/shim:$PATH" MO_K4_MKTEMP="$MO_K4_MT" MO_K4_GIT="$MO_K4_G" \
+      MO_K4_GITLOG="$MO_K4/git.log" MO_K4_MARK="$MO_K4/fired" MO_K4_SPELL="$spell" MO_K4_REAL="$real" MO_K4_DECOY="$decoy" "$@"
+  fi
+}
+mo_k4_nohooks() {  # how many recorded git calls name a nohooks folder
+  grep -c 'nohooks' "$MO_K4/git.log" 2>/dev/null | tr -d ' '
+}
+if ! mo_link "$MO_K4/tgt/in" "$MO_K4/base/lnk" || [ ! -x "$MO_K4/shim/mktemp" ] || [ -z "$MO_K4_MT" ] || [ -z "$MO_K4_G" ] \
+   || ! git -C "$MO_K4_RV" rev-parse --verify -q HEAD >/dev/null 2>&1; then
+  bad "temp-dir-spelling: its link, stand-ins or retention vault could not be made, so the runner legs cannot run"
+else
+  mo_rc="$(mo_k4_run dream-pass.sh "$MO_K4/tgt" "$MO_K4/tgt" "" VAULT_AGENT=command VAULT_AGENT_CMD="$FAKE" VAULT_ALLOW_UNENFORCED_TOOLS=1)"
+  mo_n="$(mo_k4_nohooks)"
+  mo_rc2="$(mo_k4_run vault-retention.sh "$MO_K4/tgt" "$MO_K4/tgt" "")"
+  mo_n2="$(mo_k4_nohooks)"
+  if [ "$mo_rc" -ne 0 ] || [ "${mo_n:-0}" -lt 1 ] || [ "$mo_rc2" -ne 0 ] || [ "${mo_n2:-0}" -lt 1 ]; then
+    bad "temp-dir-spelling: the control runs, with the folder spelled plainly, did not run through both stand-ins (dream in command mode exit $mo_rc with ${mo_n:-0} git call(s) naming nohooks, retention exit $mo_rc2 with ${mo_n2:-0}), so the runner legs cannot show anything"
+  else
+    ok "temp-dir-spelling: the control runs, with the folder spelled plainly -> the dream runner in command mode and the retention runner ran (0) and called git with the nohooks folder through the stand-ins"
+    for mo_leg in dream-claude dream-command promotion-claude retention dream-dot; do
+      mo_log="$MO_LOG" mo_sp="$MO_K4/base/lnk/.." mo_real="$MO_K4/tgt" mo_dec="$MO_K4/base"
+      mo_agent=claude mo_cmd= mo_allow=
+      case "$mo_leg" in
+        dream-claude) mo_s=dream-pass.sh ;;
+        dream-command) mo_s=dream-pass.sh mo_agent=command mo_cmd="$FAKE" mo_allow=1 ;;
+        promotion-claude) mo_s=promotion-pass.sh mo_log="$RV/.claude/logs/promotion-agent.log" ;;
+        retention) mo_s=vault-retention.sh mo_log="$MO_K4_RV/.claude/logs/vault-retention.log" ;;
+        dream-dot) mo_s=dream-pass.sh mo_sp="$MO_K4/x." mo_real="$MO_K4/x." mo_dec="$MO_K4/x" ;;
+      esac
+      mo_before="$(mo_lines "$mo_log")"
+      mo_rc="$(mo_k4_run "$mo_s" "$mo_sp" "$mo_real" "$mo_dec" VAULT_AGENT="$mo_agent" VAULT_AGENT_CMD="$mo_cmd" VAULT_ALLOW_UNENFORCED_TOOLS="$mo_allow")"
+      mo_n="$(mo_k4_nohooks)"
+      mo_said=absent
+      tail -n +"$((mo_before + 1))" "$mo_log" 2>/dev/null | grep -F -- "$MO_DOTWIN" | grep -q '^\[[^]]*\] ERROR: ' && mo_said=present
+      mo_fired=none
+      [ -s "$MO_K4/fired" ] && mo_fired="$(tr '\n' ' ' < "$MO_K4/fired")"
+      mo_started=no
+      [ -e "$REC.argv" ] && mo_started=yes
+      if [ "$mo_rc" -eq 1 ] && [ "$mo_said" = present ] && [ "${mo_n:-0}" -eq 0 ] && [ "$mo_fired" = none ] && [ "$mo_started" = no ]; then
+        ok "temp-dir-spelling: $mo_leg, the folder spelled ${mo_sp#"$MO_K4"/}/tmp.* -> refused (1) on an ERROR: line before any git call named its nohooks folder, no hook ran and no agent started"
+      else
+        bad "temp-dir-spelling: $mo_leg, the folder spelled ${mo_sp#"$MO_K4"/}/tmp.* -- expected exit 1, the line, no git call naming nohooks, no hook and no agent; got exit $mo_rc, line $mo_said, git calls naming nohooks ${mo_n:-0}, hooks run: $mo_fired, agent started: $mo_started"
+      fi
+      tripwire_clear
+    done
+  fi
+fi
+mo_k4_clean
 # A folder above the runner's folder for the pass whose name ends in a line
 # break is cut by $(...), so resolving it gives another path, which the checks
 # would look at. That path is compared with the folder as given, by file
@@ -6328,6 +6531,9 @@ mo_dd_clean
 # folder repointed between cd -P and pwd -P, which a shell cannot stage: pwd is
 # replaced by one that reports the folder above as <b>/decoy, a folder of this
 # account that holds w too, so only the comparison by file identity refuses it.
+# Leg E, off Windows: a dangling link at the folder's name in a folder every
+# account can write, where nothing is at either path, keeps the state
+# directory's own line.
 MO_BACKSTOP="is not the folder that resolving the folder above it led to"
 CASE_STATE="$TMP/state-memovr-bsd"
 rm -rf "$CASE_STATE" "$TMP/memovr-bsd" "$TMP/memovr-bsd.log"
@@ -6391,6 +6597,26 @@ else
     done
   fi
   rm -rf "$CASE_STATE" "$TMP/memovr-nl$NL" "$TMP/memovr-nl" "$TMP/memovr-nl.log"
+  # Leg E: a dangling link at the folder's name, in a folder every account can
+  # write. Nothing is at either path, so the comparison by file identity cannot
+  # be made, and the refusal is the state directory's own, with its line.
+  CASE_STATE="$TMP/state-memovr-dl"
+  rm -rf "$CASE_STATE" "$TMP/memovr-dl" "$TMP/memovr-dl.log"
+  mkdir -p "$TMP/memovr-dl" && chmod 777 "$TMP/memovr-dl" && ln -s "$TMP/memovr-dl-none" "$TMP/memovr-dl/w" 2>/dev/null
+  mo_dlr="$(cd "$TMP/memovr-dl" 2>/dev/null && pwd -P)"
+  if [ -z "$mo_dlr" ] || [ ! -L "$TMP/memovr-dl/w" ] || [ -e "$TMP/memovr-dl/w" ]; then
+    bad "mem-override-work-backstop: leg E's dangling link in a folder every account can write could not be made"
+  else
+    mo_direct "$RV" "$TMP/memovr-dl/w" "$TMP/memovr-dl.log"
+    mo_rc=$?
+    if [ "$mo_rc" -eq 1 ] && grep -F -- "ERROR: the runner's folder for the pass, $mo_dlr/w, is a symlink in a folder every account can write, and the memory override" "$TMP/memovr-dl.log" 2>/dev/null | grep -q '^\[[^]]*\] ERROR: ' \
+       && ! grep -qF -- "$MO_BACKSTOP" "$TMP/memovr-dl.log" 2>/dev/null && [ ! -e "$TMP/memovr-dl-none" ] && [ ! -e "$CASE_STATE/pass-settings.json" ]; then
+      ok "claude mode: a dangling link at the folder for the pass, in a folder every account can write (leg E) -> memory_override, called directly, refused (1) with the state directory's own line, not the comparison's, nothing written"
+    else
+      bad "claude mode: a dangling link at the folder for the pass, in a folder every account can write (leg E) -- memory_override, called directly, was not refused with the state directory's own line, or wrote -- got $mo_rc: $(cat "$TMP/memovr-dl.log" 2>/dev/null)"
+    fi
+  fi
+  rm -rf "$CASE_STATE" "$TMP/memovr-dl" "$TMP/memovr-dl-none" "$TMP/memovr-dl.log"
 fi
 # A TMPDIR holding a space, as TEMP does under a Windows profile named with
 # one: a whole claude-mode pass runs, Claude Code is handed one --settings, and
