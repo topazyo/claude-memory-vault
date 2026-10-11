@@ -29,8 +29,8 @@ bash .claude/scripts/vault-update.sh --check --from ../template-new
 
 A security fix for the dream and promotion passes in claude mode. Claude Code's memory folder for
 a pass is now pointed inside the vault, where the write fence sees it. On Windows that holds for a
-vault on a drive path, and a vault reached as `//server/share/...` or `//wsl.localhost/...` is
-refused instead. Measured for the Write tool on Windows, with ASCII and non-ASCII vault paths;
+vault on a drive path, and a vault on a `//` network path is refused instead. Measured for the
+Write tool on Windows, with ASCII and non-ASCII vault paths;
 Linux and macOS are unverified.
 
 ### Security
@@ -104,23 +104,23 @@ What that covers, and what it does not:
   vault, the folder git takes hooks from. The settings file adds one there whose hooks Claude Code
   would run as your account at every claude-mode pass (a settings file can name hooks; not probed
   here), whether or not the vault is a git repository.
-- **The settings file goes in the folder `mktemp -d` made, however `TMPDIR` is spelled, and on
-  Windows a spelling with a `..` is refused.** An earlier build of this release resolved the folder
-  above it with a logical `cd`, which takes a `..` after a link as text. With `TMPDIR` spelled
-  `<folder>/<link>/..` it named a folder `mktemp` never made, so the pass was refused as if its
-  folder had gone (measured on Linux, and in Git Bash through a junction), and where a folder of
-  that name had been made beforehand in the link's own folder it checked that folder instead and
-  wrote the settings file there (measured on Linux; in Git Bash such a pass ran on to the commit).
-  The folder above is now
-  resolved as `mktemp` resolves it (`cd -P`), and the pass is refused when the path so resolved is
-  not the folder as given, compared by file identity. That covers the settings file only: the
-  snapshots, the steering backup and git's hooks folder are still reached through `TMPDIR` as
-  spelled, as in 1.4.0. On Windows git reads that spelling as text, so with a `..` after a junction
-  it took its hooks folder and the commit message from a folder of the textual name, the journal
-  commit failed (exit 4), and a pre-commit hook placed in a folder of that name ran (measured in
-  Git Bash on 1.4.0, an earlier build of this release and this one, with a stand-in agent). A
-  claude-mode pass on Windows now refuses a folder spelled with a `..` before the agent starts.
-  Command mode does not, as in 1.4.0.
+- **The settings file goes in the folder `mktemp -d` made, however `TMPDIR` is spelled through
+  links, and on Windows a spelling with a `..` is refused.** An earlier build of this release
+  resolved the folder above it with a logical `cd`, which takes a `..` after a link as text. With
+  `TMPDIR` spelled `<folder>/<link>/..` it named a folder `mktemp` never made, so the pass was
+  refused as if its folder had gone (measured on Linux, and in Git Bash through a junction), and
+  where a folder of that name had been made beforehand in the link's own folder it checked that
+  folder instead and wrote the settings file there (measured on Linux; in Git Bash such a pass ran
+  on to the commit). The folder above is now resolved as `mktemp` resolves it (`cd -P`), and the
+  pass is refused when the path so resolved is not the folder as given, compared by file identity.
+  That covers the settings file only: the snapshots, the steering backup and git's hooks folder are
+  still reached through `TMPDIR` as spelled, as in 1.4.0. On Windows git reads that spelling as
+  text, so with a `..` after a junction in Git Bash's `/c/...` spelling it took its hooks folder and
+  the commit message from a folder of the textual name, the journal commit failed (exit 4), and a
+  pre-commit hook placed in a folder of that name ran (measured in Git Bash, with a stand-in agent,
+  on 1.4.0 and on two earlier builds of this release, `53b728b` and `753e1f9`). A claude-mode pass
+  on Windows now refuses a folder spelled with a `..` before the agent starts. Command mode does
+  not, as in 1.4.0.
 - **Linux and macOS are unverified.** No Claude Code run has measured the grant on either. There the
   runner refuses a vault or settings-file path that does not come back byte for byte when `iconv`
   converts it from UTF-8 to UTF-16LE and back, which Claude Code could read as another folder:
@@ -323,18 +323,21 @@ What that covers, and what it does not:
   directly with its folder spelled with `..` after a link, a junction on Windows, with and without a
   folder of the same name in the link's own folder, and where `mktemp` takes `TMPDIR` a dream pass
   with that `TMPDIR`: off Windows each runs with the file in the folder `mktemp` made, and on
-  Windows each is refused for the `..`), `mem-override-state-copy` (a copy an earlier build left in
-  the state directory kept when the folder fails its checks, and gone when a planted name is refused
-  after them), `mem-override-walk-status` (a walk that ends with no answer; on Windows also the
-  drive-path walk after the first answered "not under") and `dream-agent-tools` are
-  required on every suite job. `mem-override-work-space`, a pass with a `TMPDIR` holding a space, is
-  required on the ubuntu and Windows jobs, where `mktemp` takes `TMPDIR`, and not on macOS.
-  `mem-override-work-backstop` (a folder above named with a line break at its end, with nothing, a
-  folder of yours, or one every account can write at the path its resolution gives),
-  `mem-override-work-unreachable` (a folder above that this account cannot enter) and
-  `mem-override-vault-unresolved` (a vault that is not there) are required on the Linux and macOS
-  jobs and not on Windows, where NTFS names hold no line break, Git Bash's mode bits are not
-  permissions, and `cygpath`'s round trip refuses a vault that is not there first.
+  Windows each is refused for the `..`, also spelled with backslashes; and a folder for the pass
+  given relative to the current folder, under a folder named `-`), `mem-override-state-copy` (a
+  copy an earlier build left in the state directory kept when the folder fails the last of its
+  checks, and gone when a planted name is refused after them), `mem-override-walk-status` (a walk
+  that ends with no answer; on Windows also the drive-path walk after the first answered "not
+  under"), `mem-override-work-backstop` (the folder above reported as another folder of yours
+  while it is resolved, by a stand-in `pwd`; off Windows also a folder above named with a line break
+  at its end, with nothing, a folder of yours, or one every account can write at the path its
+  resolution gives) and `dream-agent-tools` are required on every suite job.
+  `mem-override-work-space`, a pass with a `TMPDIR` holding a space, is required on the ubuntu and
+  Windows jobs, where `mktemp` takes `TMPDIR`, and not on macOS. `mem-override-work-unreachable` (a
+  folder above that this account cannot enter; skipped as root) and `mem-override-vault-unresolved`
+  (a vault that is not there) are required on the Linux and macOS jobs and not on Windows, where
+  Git Bash's mode bits are not permissions and `cygpath`'s round trip refuses a vault that is not
+  there first.
   `mem-override-work-root-drive`, a vault at the drive root refused by the drive-path walk alone, is
   required on the Windows job only. `mem-override-sink-unreadable`, `mem-override-sink-filelink`,
   `mem-override-file-mode`, `mem-override-utf8-refused`, `mem-override-winbin`,
@@ -501,19 +504,25 @@ What that covers, and what it does not:
     an account that owns a folder above it, or on Windows another account under a `TMPDIR` it can
     change; a cleaning tool is unlikely to pick a folder that new), so find what and stop it. If
     `TMPDIR` was already unset, or already named a folder only your account can change, a process
-    running as you, as root or as an administrator did it: find that process before the next pass.
-    A folder above it that your account cannot enter gives `cannot be reached: this account cannot
-    enter the folder above it`: give your account back its access, or point `TMPDIR` at a folder it
-    can enter. `is not the folder that resolving the folder above it led to` means a folder above it
-    is named with a line break at its end, or a link above it changed during the pass: rename the
-    folder, or find what changed the link. A planted name gives `was already there, and the memory
+    running as you, as root or as an administrator, or on Windows a task run as another account,
+    did it: find that process before the next pass. A folder above it that your account cannot
+    enter gives `cannot be reached: this account cannot enter the folder above it`: give your
+    account back its access, or point `TMPDIR` at a folder outside the vault that your account can
+    enter and only it can change (on Windows, leave it unset and schedule the task as your own
+    account). `is not the folder that resolving the folder above it led to` means a folder above it
+    is named with a line break at its end, or a link above it changed while the runner resolved it:
+    rename the folder, or find what changed the link. `which is not an answer, so the folder cannot
+    be shown to lie outside the vault` means the check that walks up the folder ended with an error:
+    take `runner-common.sh` and the runners from the same release. A planted name gives `was
+    already there, and the memory
     override is written through it`. Off Windows the folder is yours with mode 0700, so a process of
     your account or root wrote there, unless an account that can rename entries in `TMPDIR` or in a
     folder above it swapped in another folder of yours: point `TMPDIR` at a folder only you can
     change, then find that process. On Windows any account that can change the temporary folder can
     do it: leave `TMPDIR` unset, schedule the task as your own account, and find what wrote there.
     On Windows `is spelled with a .. in it` means `TMPDIR` holds a `..`, which git there reads as
-    text: point `TMPDIR` at the folder itself, or leave it unset. A vault the pass cannot
+    text: point `TMPDIR` at the folder itself, or leave it unset and schedule the task as your own
+    account. A vault the pass cannot
     resolve gives `the vault, ..., cannot be resolved`: check that the vault's folder is there and
     that the task's account can enter it. A vault that holds the default temporary folder,
     as one at a drive root does, must move into a folder of its own, or `TMPDIR` must point outside
@@ -525,9 +534,11 @@ What that covers, and what it does not:
     folder there are reached through `TMPDIR` as spelled, as in 1.4.0. On Windows the runner cannot
     read a folder's permissions, so leave `TMPDIR` unset there, and schedule the task as your own
     account, unless item 9's `//?/` refusal needs a shorter folder (on the one host measured,
-    setting `TEMP` and `TMP` for the `.cmd` did not move
-    Git Bash's `/tmp`, and a Git Bash login shell sets `TMPDIR` to this account's temporary folder,
-    the same folder). That advice assumes the task runs as your own account, whose `TEMP` is a
+    setting `TEMP` and `TMP` for the `.cmd` did not move Git Bash's `/tmp`). A Git Bash login shell,
+    as a Git Bash terminal starts one, sets `TMPDIR` from `TMP`, spelled `C:/...`, and a pass started
+    from it fails at its steering backup, as in 1.4.0, because `tar` reads `C:` as a host name
+    (measured on 1.4.0 and this release): start passes with the `.cmd` wrappers, or unset `TMPDIR`
+    first. That advice assumes the task runs as your own account, whose `TEMP` is a
     folder of its own: a task run as SYSTEM gets `C:\Windows\Temp` instead (unmeasured), so schedule
     the passes as your account. On macOS `TMPDIR` does not move the folder: Apple's `mktemp` takes
     the per-user one (measured on CI).

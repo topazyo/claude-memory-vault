@@ -2139,7 +2139,8 @@ MO_PUA="$(printf '\357\200\272')"
 # ends here and fails. Either walk that cannot be set up is a failure, and the
 # other still runs. A walk that returns with neither of its answers (0 under, 1
 # not under), as one whose function is missing does (127), fails here by name,
-# and the suite goes on, since nothing hangs.
+# and the suite goes on, since nothing hangs. One that aborts with status 1, as
+# an unset variable under set -u would end it, cannot be told from "not under".
 mo_sentinel() {  # mo_sentinel <path> - one bounded walk up <path>; ends the suite if it does not return
   local rc
   mo_bounded 30 path_under_by_identity "$1" "$RV"
@@ -3037,6 +3038,10 @@ else
       bad "mem-override-work-names: $mo_name could not be planted"
       continue
     fi
+    if [ "$mo_leg" = junction ] && ! { [ -L "$mo_name" ] && [ ! -e "$mo_name" ] && [ ! -e "$TMP/memovr-names-absent" ]; }; then
+      bad "mem-override-work-names: the junction at $mo_name could not be left dangling, so this leg would not hold the -L half of the check"
+      continue
+    fi
     if [ "$mo_leg" = fifo ]; then
       mo_bounded 30 mo_override_unset "$RV" "${CASE_STATE:-$TMP/state}" "$mo_np" "$TMP/memovr-names.log"
       mo_rc=$?
@@ -3086,27 +3091,30 @@ rm -rf "$TMP/memovr-names" "$TMP/memovr-names.log" "$TMP/memovr-names-target" "$
 # by the next claude-mode pass whose folder for the pass passes its checks, just
 # before the check for names planted in that folder. Two direct calls hold that
 # order, each with a copy planted in the state directory first: one whose folder
-# fails its checks (it lies inside the vault) must leave the copy as it was, and
-# one whose folder holds a planted pass-settings.new, which the names check
-# refuses after the removal, must leave it gone.
+# fails the last of its checks (a stand-in identity walk answers that it lies
+# inside the vault) must leave the copy as it was, so a removal moved above any
+# check fails here, and one whose folder holds a planted pass-settings.new, which
+# the names check refuses after the removal, must leave it gone.
 MO_SC="${CASE_STATE:-$TMP/state}"
-rm -rf "$RV/.claude/logs/memovr-sc" "$TMP/memovr-sc" "$TMP/memovr-sc.log" "$RV/90-auto-memory"
+rm -rf "$TMP/memovr-sc1" "$TMP/memovr-sc" "$TMP/memovr-sc.log" "$RV/90-auto-memory"
 mkdir -p "$MO_SC"
-( umask 077 && mkdir -p "$RV/.claude/logs/memovr-sc/w" "$TMP/memovr-sc/w" )
+( umask 077 && mkdir -p "$TMP/memovr-sc1/w" "$TMP/memovr-sc/w" )
 printf 'planted\n' > "$TMP/memovr-sc/w/pass-settings.new"
 printf 'x' > "$MO_SC/pass-settings.json"
-if [ ! -d "$RV/.claude/logs/memovr-sc/w" ] || [ "$(cat "$TMP/memovr-sc/w/pass-settings.new" 2>/dev/null)" != planted ] \
+if [ ! -d "$TMP/memovr-sc1/w" ] || [ "$(cat "$TMP/memovr-sc/w/pass-settings.new" 2>/dev/null)" != planted ] \
    || [ "$(cat "$MO_SC/pass-settings.json" 2>/dev/null)" != x ]; then
   bad "mem-override-state-copy: the folders for the pass, the planted name or the copy in the state directory could not be made"
 else
   ran mem-override-state-copy
-  mo_direct "$RV" "$RV/.claude/logs/memovr-sc/w" "$TMP/memovr-sc.log"
+  ( LC_ALL=C; export LC_ALL; . "$RV/.claude/scripts/lib/runner-common.sh"; AGENT_BIN="$FAKE"
+    path_under_by_identity() { return 0; }
+    memory_override "$RV" "$MO_SC" "$TMP/memovr-sc1/w" "$TMP/memovr-sc.log" )
   mo_rc=$?
   if [ "$mo_rc" -eq 1 ] && grep -F -- "resolves into the vault, $MO_WORK" "$TMP/memovr-sc.log" 2>/dev/null | grep -q '^\[[^]]*\] ERROR: ' \
-     && [ "$(cat "$MO_SC/pass-settings.json" 2>/dev/null)" = x ] && [ -z "$(ls -A "$RV/.claude/logs/memovr-sc/w" 2>/dev/null)" ]; then
-    ok "claude mode: a copy of the settings file in the state directory, and a folder for the pass that fails its checks -> memory_override, called directly, refused (1) and left the copy as it was"
+     && [ "$(cat "$MO_SC/pass-settings.json" 2>/dev/null)" = x ] && [ -z "$(ls -A "$TMP/memovr-sc1/w" 2>/dev/null)" ]; then
+    ok "claude mode: a copy of the settings file in the state directory, and a folder for the pass that fails the last of its checks -> memory_override, called directly, refused (1) and left the copy as it was"
   else
-    bad "claude mode: a copy of the settings file in the state directory, and a folder for the pass that fails its checks -- memory_override, called directly, was not refused for the folder, or did not leave the copy -- got $mo_rc, copy $(if [ -e "$MO_SC/pass-settings.json" ]; then echo "holding: $(cat "$MO_SC/pass-settings.json")"; else echo removed; fi): $(cat "$TMP/memovr-sc.log" 2>/dev/null)"
+    bad "claude mode: a copy of the settings file in the state directory, and a folder for the pass that fails the last of its checks -- memory_override, called directly, was not refused for the folder, or did not leave the copy -- got $mo_rc, copy $(if [ -e "$MO_SC/pass-settings.json" ]; then echo "holding: $(cat "$MO_SC/pass-settings.json")"; else echo removed; fi): $(cat "$TMP/memovr-sc.log" 2>/dev/null)"
   fi
   rm -f "$TMP/memovr-sc.log"
   printf 'x' > "$MO_SC/pass-settings.json"
@@ -3124,7 +3132,7 @@ else
     fi
   fi
 fi
-rm -rf "$RV/.claude/logs/memovr-sc" "$TMP/memovr-sc" "$TMP/memovr-sc.log" "$MO_SC/pass-settings.json"
+rm -rf "$TMP/memovr-sc1" "$TMP/memovr-sc" "$TMP/memovr-sc.log" "$MO_SC/pass-settings.json"
 # A folder above the runner's folder for the pass that this account cannot
 # enter hides the folder from the checks, which is not the folder having gone:
 # the refusal says that it cannot be reached, not that something removed it.
@@ -3133,6 +3141,8 @@ rm -rf "$RV/.claude/logs/memovr-sc" "$TMP/memovr-sc" "$TMP/memovr-sc.log" "$MO_S
 MO_UNREACH="cannot be reached: this account cannot enter the folder above it, or that folder is not there"
 if is_windows_host; then
   skip mem-override-work-unreachable 'a folder above the one for the pass that this account cannot enter: Git Bash mode bits are not Windows permissions'
+elif [ "$(id -u 2>/dev/null)" = 0 ]; then
+  skip mem-override-work-unreachable 'a folder above the one for the pass that this account cannot enter: root can enter any folder'
 else
   rm -rf "$TMP/memovr-ur" "$TMP/memovr-ur.log"
   ( umask 077 && mkdir -p "$TMP/memovr-ur/p/w" )
@@ -6055,9 +6065,9 @@ for mo_i in e-acute cyrillic cjk emoji top tmp tmp-emoji; do
         memory_override "$MO_NV" "$CASE_STATE" "$TMP/memovr-na-work" "$TMP/memovr-na.log" )
       mo_rc=$?
       # The vault's path holds the name's bytes, so the line is matched as bytes.
-      if [ "$mo_rc" -eq 1 ] && ! grep -q 'not valid UTF-8' "$TMP/memovr-na.log" 2>/dev/null \
+      if [ "$mo_rc" -eq 1 ] && ! LC_ALL=C grep -q 'not valid UTF-8' "$TMP/memovr-na.log" 2>/dev/null \
          && LC_ALL=C grep -F -- "$MO_VAULTRES" "$TMP/memovr-na.log" 2>/dev/null | LC_ALL=C grep -q '^\[[^]]*\] ERROR: the vault, ' \
-         && ! grep -q 'TMPDIR' "$TMP/memovr-na.log" 2>/dev/null \
+         && ! LC_ALL=C grep -q 'TMPDIR' "$TMP/memovr-na.log" 2>/dev/null \
          && [ ! -e "$TMP/memovr-na-work/pass-settings.json" ]; then
         ok "memory_override, called directly where the file system refuses the name: $mo_say -> its UTF-8 check passes the name, and the call stops only at the work folder's check, which cannot resolve a vault that cannot exist and says so"
       else
@@ -6218,25 +6228,34 @@ else
   ran mem-override-work-dotdot
   CASE_STATE="$TMP/state-memovr-dd"
   rm -rf "$CASE_STATE"
-  for mo_leg in A B; do
+  # On Windows leg W spells leg A's folder with backslashes, as Windows does,
+  # which the check for a .. must read too.
+  mo_legs="A B"
+  is_windows_host && mo_legs="A B W"
+  for mo_leg in $mo_legs; do
     rm -rf "$MO_DD/tgt/tmp.dd" "$MO_DD/base/tmp.dd" "$TMP/memovr-dd.log"
     ( umask 077 && mkdir "$MO_DD/tgt/tmp.dd" )
     [ "$mo_leg" = B ] && ( umask 077 && mkdir "$MO_DD/base/tmp.dd" )
     if ! [ "$MO_DD/base/lnk/../tmp.dd" -ef "$MO_DD/tgt/tmp.dd" ] \
-       || { [ "$mo_leg" = A ] && [ -e "$MO_DD/base/tmp.dd" ]; } || { [ "$mo_leg" = B ] && [ ! -d "$MO_DD/base/tmp.dd" ]; }; then
+       || { [ "$mo_leg" != B ] && [ -e "$MO_DD/base/tmp.dd" ]; } || { [ "$mo_leg" = B ] && [ ! -d "$MO_DD/base/tmp.dd" ]; }; then
       bad "mem-override-work-dotdot: leg $mo_leg's folders could not be made as the twin needs them"
       continue
     fi
-    if [ "$mo_leg" = A ]; then mo_say='nothing else there'; else mo_say="a folder of the same name in the link's own folder"; fi
-    mo_direct "$RV" "$MO_DD/base/lnk/../tmp.dd" "$TMP/memovr-dd.log"
+    mo_wp="$MO_DD/base/lnk/../tmp.dd"
+    case "$mo_leg" in
+      A) mo_say='nothing else there' ;;
+      B) mo_say="a folder of the same name in the link's own folder" ;;
+      W) mo_say='nothing else there, spelled with backslashes'; mo_wp="$(cygpath -w "$MO_DD/base/lnk")\\..\\tmp.dd" ;;
+    esac
+    mo_direct "$RV" "$mo_wp" "$TMP/memovr-dd.log"
     mo_rc=$?
-    if [ "$mo_leg" = A ]; then
+    if [ "$mo_leg" != B ]; then
       mo_dc=absent; [ -e "$MO_DD/base/tmp.dd" ] && mo_dc=made
     else
       mo_dc="$(ls -A "$MO_DD/base/tmp.dd" 2>/dev/null | tr '\n' ' ')"; [ -n "$mo_dc" ] || mo_dc=empty
     fi
     mo_dk=no
-    { { [ "$mo_leg" = A ] && [ "$mo_dc" = absent ]; } || { [ "$mo_leg" = B ] && [ "$mo_dc" = empty ]; }; } && mo_dk=yes
+    { { [ "$mo_leg" != B ] && [ "$mo_dc" = absent ]; } || { [ "$mo_leg" = B ] && [ "$mo_dc" = empty ]; }; } && mo_dk=yes
     if is_windows_host; then
       if [ "$mo_rc" -eq 1 ] && grep -F -- "$MO_DOTWIN" "$TMP/memovr-dd.log" 2>/dev/null | grep -q '^\[[^]]*\] ERROR: ' \
          && [ -z "$(ls -A "$MO_DD/tgt/tmp.dd" 2>/dev/null)" ] && [ "$mo_dk" = yes ] && [ ! -e "$CASE_STATE/pass-settings.json" ]; then
@@ -6252,6 +6271,25 @@ else
     fi
   done
   rm -rf "$MO_DD/tgt/tmp.dd" "$MO_DD/base/tmp.dd" "$CASE_STATE"
+  # Leg R, on every host: a folder for the pass given relative to the current
+  # folder, under a folder named -, which cd would read as $OLDPWD unless it is
+  # spelled ./- first. The call must return 0 with the file in that folder.
+  ( umask 077 && mkdir -p "$MO_DD/rel/-/tmp.dd" )
+  if [ ! -d "$MO_DD/rel/-/tmp.dd" ]; then
+    bad "mem-override-work-dotdot: leg R's folder, under a folder named -, could not be made"
+  else
+    rm -f "$TMP/memovr-dd.log"
+    ( cd "$MO_DD/rel" || exit 9
+      LC_ALL=C; export LC_ALL; . "$RV/.claude/scripts/lib/runner-common.sh"; AGENT_BIN="$FAKE"
+      memory_override "$RV" "$TMP/state-memovr-dd" "-/tmp.dd" "$TMP/memovr-dd.log" )
+    mo_rc=$?
+    if [ "$mo_rc" -eq 0 ] && [ "$(cat "$MO_DD/rel/-/tmp.dd/pass-settings.json" 2>/dev/null)" = "{\"autoMemoryDirectory\":\"$MO_WANT\"}" ]; then
+      ok "claude mode: a folder for the pass given relative to the current folder, under a folder named - -> memory_override, called directly, returns 0 with the settings file there"
+    else
+      bad "claude mode: a folder for the pass given relative to the current folder, under a folder named - -- memory_override, called directly, did not write the settings file there -- got $mo_rc, file there: $(cat "$MO_DD/rel/-/tmp.dd/pass-settings.json" 2>/dev/null): $(cat "$TMP/memovr-dd.log" 2>/dev/null)"
+    fi
+  fi
+  rm -rf "$MO_DD/rel" "$TMP/state-memovr-dd"
   make_runner_vault "$TMP/memovr-dd-vault" 2>/dev/null
   if [ ! -f "$TMP/memovr-dd-vault/.claude/scripts/dream-pass.sh" ]; then
     bad "mem-override-work-dotdot: a vault for the dream-pass leg could not be made"
@@ -6284,11 +6322,41 @@ mo_dd_clean
 # a folder of this account is, which passes every other check (leg B), or one
 # that fails a check of its own (leg C: every account can write it), whose
 # refusal would otherwise name that folder, which the runner never made; and
-# nothing is written in either. Off Windows only: NTFS names hold no line break.
-# The refusal names the folder as given, its line break shown as ?, on one line.
+# nothing is written in either. Those three run off Windows only: NTFS names
+# hold no line break. The refusal names the folder as given, its line break
+# shown as ?, on one line. Leg D, on every host, stands in for a link above the
+# folder repointed between cd -P and pwd -P, which a shell cannot stage: pwd is
+# replaced by one that reports the folder above as <b>/decoy, a folder of this
+# account that holds w too, so only the comparison by file identity refuses it.
 MO_BACKSTOP="is not the folder that resolving the folder above it led to"
+CASE_STATE="$TMP/state-memovr-bsd"
+rm -rf "$CASE_STATE" "$TMP/memovr-bsd" "$TMP/memovr-bsd.log"
+( umask 077 && mkdir -p "$TMP/memovr-bsd/real/w" "$TMP/memovr-bsd/decoy/w" )
+mo_bsr="$(cd "$TMP/memovr-bsd" 2>/dev/null && pwd -P)"
+if [ -z "$mo_bsr" ] || [ ! -d "$TMP/memovr-bsd/real/w" ] || [ ! -d "$TMP/memovr-bsd/decoy/w" ]; then
+  bad "mem-override-work-backstop: leg D's folders could not be made"
+else
+  ran mem-override-work-backstop
+  ( LC_ALL=C; export LC_ALL; . "$RV/.claude/scripts/lib/runner-common.sh"; AGENT_BIN="$FAKE"
+    pwd() {
+      local o
+      o="$(builtin pwd "$@")"
+      case "$o" in "$mo_bsr/real"|"$mo_bsr/real/"*) o="$mo_bsr/decoy${o#"$mo_bsr/real"}" ;; esac
+      printf '%s\n' "$o"
+    }
+    memory_override "$RV" "$CASE_STATE" "$mo_bsr/real/w" "$TMP/memovr-bsd.log" )
+  mo_rc=$?
+  if [ "$mo_rc" -eq 1 ] && grep -F -- "ERROR: the runner's folder for the pass, $mo_bsr/real/w, $MO_BACKSTOP" "$TMP/memovr-bsd.log" 2>/dev/null | grep -q '^\[[^]]*\] ERROR: ' \
+     && [ -z "$(ls -A "$TMP/memovr-bsd/real/w" 2>/dev/null)" ] && [ -z "$(ls -A "$TMP/memovr-bsd/decoy/w" 2>/dev/null)" ] \
+     && [ ! -e "$CASE_STATE/pass-settings.json" ]; then
+    ok "claude mode: a folder above the one for the pass that resolves, while it is resolved, to another folder of this account (leg D) -> memory_override, called directly, refused (1) as not the folder its resolution led to, nothing written"
+  else
+    bad "claude mode: a folder above the one for the pass that resolves, while it is resolved, to another folder of this account (leg D) -- memory_override, called directly, was not refused as not the folder its resolution led to, or wrote -- got $mo_rc, the other folder holds: $(ls -A "$TMP/memovr-bsd/decoy/w" 2>/dev/null | tr '\n' ' '): $(cat "$TMP/memovr-bsd.log" 2>/dev/null)"
+  fi
+fi
+rm -rf "$CASE_STATE" "$TMP/memovr-bsd" "$TMP/memovr-bsd.log"
 if is_windows_host; then
-  skip mem-override-work-backstop 'a folder named with a line break at its end: NTFS names hold none'
+  printf '  INFO  [mem-override-work-backstop] legs A, B and C, a folder above named with a line break at its end, run off Windows only: NTFS names hold none (not counted)\n'
 else
   CASE_STATE="$TMP/state-memovr-nl"
   rm -rf "$CASE_STATE" "$TMP/memovr-nl$NL" "$TMP/memovr-nl" "$TMP/memovr-nl.log"
@@ -6296,7 +6364,7 @@ else
   if [ ! -d "$TMP/memovr-nl$NL/w" ] || [ -e "$TMP/memovr-nl" ]; then
     bad "mem-override-work-backstop: a folder whose name ends in a line break could not be made here, so this twin cannot show the refusal"
   else
-    ran mem-override-work-backstop
+    grep -qx mem-override-work-backstop "$RAN_CONTROLS" || ran mem-override-work-backstop
     for mo_leg in A B C; do
       rm -rf "$TMP/memovr-nl" "$TMP/memovr-nl.log"
       case "$mo_leg" in

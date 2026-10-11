@@ -480,11 +480,13 @@ a lint that does nothing and a lint that found nothing wrong print the same thin
   readable by the runner's account only, in a folder only it can enter. A refusal of the runner's
   folder, or (on Linux and macOS) of a path's bytes, with `memory_override` called directly, leaves
   nothing in that folder or the state directory, and a folder that is not there is not made again.
-  A `TMPDIR` spelled through a link (where `mktemp` takes `TMPDIR`), or holding a `..` after one
-  (called directly on every platform, and as a pass where `mktemp` takes `TMPDIR`), runs with the
-  file in the folder `mktemp -d` made, and never in a folder of the same name in the link's own
-  folder; on Windows one holding a `..` after a junction is refused for the `..`, the direct calls
-  and the pass alike, with nothing written. A folder above the runner's folder that this account
+  A `TMPDIR` spelled through a link (where `mktemp` takes `TMPDIR`), or off Windows holding a `..`
+  after one (called directly, and as a pass where `mktemp` takes `TMPDIR`), runs with the file in
+  the folder `mktemp -d` made, and never in a folder of the same name in the link's own folder; on
+  Windows one holding a `..` after a junction, in Git Bash's `/c/...` or Windows' own spelling, is
+  refused for the `..`, the direct calls and the pass alike, with nothing written. A folder for the
+  pass given relative to the current folder, under a folder named `-`, runs on every platform. A
+  folder above the runner's folder that this account
   cannot enter, a vault that cannot be
   resolved (both off Windows), an identity walk that ends without an answer, and, off Windows, a
   folder whose resolved path is not the folder itself (a folder above it named with a line break at
@@ -833,8 +835,9 @@ Around that call, each runner does several things an exit code cannot:
   that can rename entries in `TMPDIR`; one replaced once the checks have resolved it and before
   Claude Code has read the file is written into, or read from, whatever took its place, reasoned);
   on Windows when its spelling holds a `..`, because git there reads the folder as `TMPDIR` spells
-  it and takes the `..` as text, so after a junction it took its hooks folder and the commit
-  message from a folder of the textual name (measured in Git Bash); when this account cannot enter
+  it and takes the `..` as text, so after a junction in Git Bash's `/c/...` spelling it took its
+  hooks folder and the commit message from a folder of the textual name (measured in Git Bash);
+  when this account cannot enter
   a folder above it, so the checks cannot reach it (a line of its
   own, not the one for a folder that is not there); when the path resolving the folder above it
   gives is not the folder itself, compared by file identity, because the file would then go to
@@ -997,8 +1000,11 @@ Around that call, each runner does several things an exit code cannot:
     there, and schedule the task as your own account, unless the `//?/` limit below needs a shorter
     folder: the folder is then made in Git Bash's `/tmp`, this account's temporary folder, which only
     the account, SYSTEM and Administrators can change (measured; on the one host measured, setting
-    `TEMP` and `TMP` for the `.cmd` did not move `/tmp`, and a Git Bash login shell sets `TMPDIR` to
-    the same folder, spelled `C:/...`). That advice assumes the task runs as your own account, whose
+    `TEMP` and `TMP` for the `.cmd` did not move `/tmp`). A Git Bash login shell, as a Git Bash
+    terminal starts one, sets `TMPDIR` from `TMP`, spelled `C:/...`, and a pass started from it fails
+    at its steering backup, as in 1.4.0, because `tar` reads `C:` as a host name (measured on 1.4.0
+    and this release): start passes with the `.cmd` wrappers, or unset `TMPDIR` first, and never
+    spell `TMPDIR` in that form. That advice assumes the task runs as your own account, whose
     `TEMP` is a folder of its own: a task run as SYSTEM gets `C:\Windows\Temp` instead (unmeasured),
     whose permissions the per-user default does not describe. The same folder has held the pass's
     snapshots, its steering backup and the folder git
@@ -1055,8 +1061,10 @@ Around that call, each runner does several things an exit code cannot:
     (`docs/setup.md`, Troubleshooting).
   - On a volume where Git Bash gets no file IDs (FAT32, exFAT, some network shares), it builds a
     file's identity from its spelled path, so the identity checks the runner's folder for the pass
-    gets could take one folder spelled two ways (an 8.3 name and its long name, say) for two, and
-    refuse every claude-mode pass whose `TMPDIR` lies there (reasoned; no such volume was measured).
+    gets could take one folder spelled two ways (an 8.3 name and its long name, say) for two: they
+    could refuse a pass whose `TMPDIR` lies there spelled otherwise than `pwd -P` spells it, and
+    could miss a vault spelled with an 8.3 name that holds such a folder (reasoned; no such volume
+    was measured).
   - On Windows a vault on a network path is refused with `which is not a Windows drive path`. For
     one reached as `//localhost/c$/...` (this host's own administrative share) or
     `//wsl.localhost/...` and started from Git Bash, Claude Code 2.1.289 and 2.1.292 ignored the

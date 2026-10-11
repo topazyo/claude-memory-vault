@@ -3243,8 +3243,9 @@ note_tripwire() {
 # last part pwd -P spells another way (. or .., and on Windows an 8.3 name, which
 # pwd -P expands; a letter in another case it keeps, so that spelling of the
 # same folder passes, measured in Git Bash), which no runner passes. A link
-# above it that is there all along is resolved and accepted. A folder emptied, or removed and made again,
-# by another process of this account, by root, or on Windows by any account
+# above it that is there all along is resolved and accepted. A folder emptied,
+# or removed and made again, by another process of this account, by root, or on
+# Windows by any account
 # that can change the temporary folder, is not seen: it is checked like the
 # runner's own (off Windows a folder another account owns fails the owner
 # check), nor, off Windows, is another folder of this account's moved into its
@@ -3272,7 +3273,7 @@ note_tripwire() {
 # when the pass must not start.
 memory_override() {
   local root="$1" state="$2" work="$3" log="$4" vault="$1" file="$3/pass-settings.json" arg="$3/pass-settings.json"
-  local dir="$1/90-auto-memory/.pass-agent" list line p h= up win=0 exe=0 pd pu= q nm
+  local dir="$1/90-auto-memory/.pass-agent" list line p h= up win=0 exe=0 pd pu= q nm nw
   # Set only on success below, so no value from the environment can stand in.
   unset AGENT_SETTINGS_FILE
   # The file is written, checked and handed to Claude Code through the folder's
@@ -3381,22 +3382,27 @@ memory_override() {
       return 1
     fi
   fi
-  # The lines below name the folder as the runner made it, with any control
-  # character in its name shown as ?.
+  # The lines below name the folder as the runner made it (nm) or as the checks
+  # see it (nw), with any control character in its name shown as ?.
   case "$3" in
     *[[:cntrl:]]*) nm="$(printf '%s' "$3" | LC_ALL=C tr '[:cntrl:]' '?')" ;;
     *) nm="$3" ;;
   esac
+  case "$work" in
+    *[[:cntrl:]]*) nw="$(printf '%s' "$work" | LC_ALL=C tr '[:cntrl:]' '?')" ;;
+    *) nw="$work" ;;
+  esac
   # On Windows git reads the folder as TMPDIR spells it, and Win32 takes a .. in
-  # it as text, while mktemp and the checks here follow a link or junction
-  # before the ..: with a .. after a junction, git took its hooks folder and the
-  # commit message from a folder of the textual name, which an account able to
-  # make folders there could supply, and the journal commit failed (measured in
-  # Git Bash). So on Windows a spelling with a .. in it is refused.
+  # it as text. In Git Bash's /c/ spelling mktemp and the checks here follow a
+  # junction before the .., so with a .. after a junction git took its hooks
+  # folder and the commit message from a folder of the textual name, which an
+  # account able to make folders there could supply, and the journal commit
+  # failed (measured in Git Bash); in the C:/ spelling the two agree. On Windows
+  # a spelling with a .. in it is refused either way.
   if [ "$win" = 1 ]; then
     case "/$(printf '%s' "$3" | tr '\\' '/')/" in
       */../*)
-        printf '[%s] ERROR: the runner'"'"'s folder for the pass, %s, is spelled with a .. in it, and on Windows git reads that spelling as text, so after a link or junction it would take its hooks folder and the commit message from another folder than the one the runner made. Point TMPDIR at the folder itself, with no .. in its spelling. Refusing to run.\n' "$(ts)" "$nm" >> "$log"
+        printf '[%s] ERROR: the runner'"'"'s folder for the pass, %s, is spelled with a .. in it, and on Windows git reads that spelling as text, so after a link or junction it can take its hooks folder and the commit message from another folder than the one the runner made (measured for Git Bash'"'"'s /c/ spelling). Point TMPDIR at the folder itself, with no .. in its spelling, or leave it unset and schedule the task as your own account. Refusing to run.\n' "$(ts)" "$nm" >> "$log"
         return 1 ;;
     esac
   fi
@@ -3418,7 +3424,7 @@ memory_override() {
   # made it. Where the folder above could not be entered, the checks cannot see
   # the folder at all.
   if [ "$p" -eq 9 ] && [ -n "$pu" ]; then
-    printf '[%s] ERROR: the runner'"'"'s folder for the pass, %s, cannot be reached: this account cannot enter the folder above it, or that folder is not there, so the checks cannot see the folder the runner made. If that folder was removed, the pass'"'"'s snapshot went with it: find what removed it. Otherwise give this account back its access to that folder, or point TMPDIR at a folder it can enter. Refusing to run.\n' "$(ts)" "$nm" >> "$log"
+    printf '[%s] ERROR: the runner'"'"'s folder for the pass, %s, cannot be reached: this account cannot enter the folder above it, or that folder is not there, so the checks cannot see the folder the runner made. If that folder was removed, the pass'"'"'s snapshot went with it: find what removed it. Otherwise give this account back its access to that folder, or point TMPDIR at a folder outside the vault that this account can enter and only it can change (on Windows, leave it unset and schedule the task as your own account). Refusing to run.\n' "$(ts)" "$nm" >> "$log"
     return 1
   fi
   # The folder above was resolved above, where it could be entered, and the
@@ -3467,12 +3473,12 @@ memory_override() {
       0) p=4 ;;
       1) ;;
       *)
-        printf '[%s] ERROR: the walk that checks whether the runner'"'"'s folder for the pass, %s, lies inside the vault ended with status %s, which is not an answer, so the folder cannot be shown to lie outside the vault. Refusing to run.\n' "$(ts)" "$work" "$q" >> "$log"
+        printf '[%s] ERROR: the walk that checks whether the runner'"'"'s folder for the pass, %s, lies inside the vault ended with status %s, which is not an answer, so the folder cannot be shown to lie outside the vault. Refusing to run.\n' "$(ts)" "$nw" "$q" >> "$log"
         return 1 ;;
     esac
   fi
   if [ "$p" -ne 0 ]; then
-    printf '[%s] ERROR: the runner'"'"'s folder for the pass, %s, %s, and the memory override'"'"'s settings file there can name hooks Claude Code runs. Point TMPDIR at a folder outside the vault that only this account can change (on macOS Apple'"'"'s mktemp does not take TMPDIR), or, on Windows, leave it unset and schedule the task as your own account; if the vault holds the default temporary folder, as one at a drive root does, move the vault into a folder of its own, or point TMPDIR outside it. Refusing to run.\n' "$(ts)" "$work" "$(state_dir_problem "$p")" >> "$log"
+    printf '[%s] ERROR: the runner'"'"'s folder for the pass, %s, %s, and the memory override'"'"'s settings file there can name hooks Claude Code runs. Point TMPDIR at a folder outside the vault that only this account can change (on macOS Apple'"'"'s mktemp does not take TMPDIR), or, on Windows, leave it unset and schedule the task as your own account; if the vault holds the default temporary folder, as one at a drive root does, move the vault into a folder of its own, or point TMPDIR outside it. Refusing to run.\n' "$(ts)" "$nw" "$(state_dir_problem "$p")" >> "$log"
     return 1
   fi
   # Nothing reads a copy an earlier build left in the state directory.
