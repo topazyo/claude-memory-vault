@@ -2983,7 +2983,11 @@ rm -rf "$TMP/memovr-gone" "$TMP/memovr-gone.log" "$TMP/memovr-gone-planted.json"
 # planted as a link to a file outside the folder, as a link to a file that does
 # not exist (which must still not exist), and as a FIFO (the call is bounded, so
 # a write that blocks on it fails here rather than hanging the suite), and
-# pass-settings.json as a link to an empty folder outside it.
+# pass-settings.json as a link to an empty folder outside it. On Windows, where
+# Git Bash's ln -s makes a link only with a privilege, the new name is planted
+# instead as a junction whose target is then removed, which test -e does not see
+# and a write through it lands at the target (measured), so only the -L half of
+# the check holds it; the legs left out are named on an INFO line.
 MO_NAMES="was already there, and the memory override is written through it"
 rm -rf "$TMP/memovr-names" "$TMP/memovr-names.log" "$TMP/memovr-names-target" "$TMP/memovr-names-dir" "$TMP/memovr-names-absent" "$RV/90-auto-memory"
 ( umask 077 && mkdir -p "$TMP/memovr-names/w" )
@@ -3004,8 +3008,16 @@ else
     return "$mo_r"
   }
   mo_legs="new tmp json jsonfolder"
-  is_windows_host || mo_legs="$mo_legs link dangle fifo jsondir"
+  if is_windows_host; then
+    mo_legs="$mo_legs junction"
+    printf '  INFO  [mem-override-work-names] the link, dangle, fifo and jsondir legs run off Windows only, where ln -s and mkfifo make what they name; here a junction left dangling stands in for the links (not counted)\n'
+  else
+    mo_legs="$mo_legs link dangle fifo jsondir"
+  fi
   for mo_leg in $mo_legs; do
+    if is_windows_host && [ -L "$mo_np/pass-settings.new" ]; then
+      MSYS_NO_PATHCONV=1 cmd /c rmdir "$(cygpath -w "$mo_np/pass-settings.new")" >/dev/null 2>&1
+    fi
     rm -rf "$mo_np"/* "$mo_np"/.[!.]* "$TMP/memovr-names.log" "$TMP/memovr-names-target" "$TMP/memovr-names-dir" "$TMP/memovr-names-absent"
     printf 'planted\n' > "$TMP/memovr-names-target"
     mkdir -p "$TMP/memovr-names-dir"
@@ -3018,6 +3030,8 @@ else
       dangle) mo_name="$mo_np/pass-settings.new"; ln -s "$TMP/memovr-names-absent" "$mo_name" 2>/dev/null ;;
       fifo) mo_name="$mo_np/pass-settings.new"; mkfifo "$mo_name" 2>/dev/null ;;
       jsondir) mo_name="$mo_np/pass-settings.json"; ln -s "$TMP/memovr-names-dir" "$mo_name" 2>/dev/null ;;
+      junction) mo_name="$mo_np/pass-settings.new"; mkdir -p "$TMP/memovr-names-absent"
+        mo_link "$TMP/memovr-names-absent" "$mo_name" && rmdir "$TMP/memovr-names-absent" 2>/dev/null ;;
     esac
     if ! { [ -e "$mo_name" ] || [ -L "$mo_name" ]; }; then
       bad "mem-override-work-names: $mo_name could not be planted"
@@ -3051,7 +3065,7 @@ else
       jsondir) [ -L "$mo_name" ] && [ -d "$TMP/memovr-names-dir" ] && [ -z "$(ls -A "$TMP/memovr-names-dir" 2>/dev/null)" ] && mo_kept=yes ;;
       json) [ "$(cat "$mo_name" 2>/dev/null)" = planted ] && mo_kept=yes ;;
       jsonfolder) [ -d "$mo_name" ] && [ ! -L "$mo_name" ] && [ -z "$(ls -A "$mo_name" 2>/dev/null)" ] && mo_kept=yes ;;
-      dangle) [ -L "$mo_name" ] && [ ! -e "$TMP/memovr-names-absent" ] && [ ! -e "$mo_np/pass-settings.json" ] && mo_kept=yes ;;
+      dangle|junction) [ -L "$mo_name" ] && [ ! -e "$TMP/memovr-names-absent" ] && [ ! -e "$mo_np/pass-settings.json" ] && mo_kept=yes ;;
       fifo) [ -p "$mo_name" ] && [ ! -e "$mo_np/pass-settings.json" ] && mo_kept=yes ;;
       *) [ "$(cat "$mo_name" 2>/dev/null)" = planted ] && [ "$(cat "$TMP/memovr-names-target" 2>/dev/null)" = planted ] \
            && [ ! -e "$mo_np/pass-settings.json" ] && mo_kept=yes ;;
@@ -3063,6 +3077,9 @@ else
       bad "claude mode: ${mo_name##*/} already in the folder for the pass ($mo_leg) -- memory_override, called directly, was not refused for it, or wrote through it -- got $mo_rc, planted now: $(if [ -p "$mo_name" ]; then echo a FIFO; elif [ -d "$mo_name" ] && [ ! -L "$mo_name" ]; then echo "a folder holding: $(ls -A "$mo_name" 2>/dev/null | tr '\n' ' ')"; else cat "$mo_name" 2>/dev/null; fi), target now: $(cat "$TMP/memovr-names-target" 2>/dev/null), outside folder holds: $(ls -A "$TMP/memovr-names-dir" 2>/dev/null | tr '\n' ' '): $(cat "$TMP/memovr-names.log" 2>/dev/null)"
     fi
   done
+  if is_windows_host && [ -L "$mo_np/pass-settings.new" ]; then
+    MSYS_NO_PATHCONV=1 cmd /c rmdir "$(cygpath -w "$mo_np/pass-settings.new")" >/dev/null 2>&1
+  fi
 fi
 rm -rf "$TMP/memovr-names" "$TMP/memovr-names.log" "$TMP/memovr-names-target" "$TMP/memovr-names-dir" "$TMP/memovr-names-absent"
 # A pass-settings.json an earlier build left in the state directory is removed
@@ -3189,6 +3206,26 @@ else
     ok "claude mode: an identity walk that ends with status 2, no answer -> memory_override, called directly, refused (1) with the status in its line, nothing written"
   else
     bad "claude mode: an identity walk that ends with status 2, no answer -- memory_override, called directly, read it as an answer -- got $mo_rc, folder holds: $(ls -A "$mo_ws" 2>/dev/null | tr '\n' ' '): $(cat "$TMP/memovr-ws.log" 2>/dev/null)"
+  fi
+  # On Windows a second walk follows a 1 from the first, up the drive path: a
+  # stand-in that answers 1 for the walk up the folder's own path and 2 for the
+  # drive-path walk must see the same refusal.
+  if is_windows_host; then
+    rm -f "$TMP/memovr-ws.log"
+    ( LC_ALL=C; export LC_ALL; . "$RV/.claude/scripts/lib/runner-common.sh"; AGENT_BIN="$FAKE"
+      path_under_by_identity() {
+        case "$1" in [ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]:/*) return 2 ;; *) return 1 ;; esac
+      }
+      memory_override "$RV" "${CASE_STATE:-$TMP/state}" "$mo_ws" "$TMP/memovr-ws.log" )
+    mo_rc=$?
+    if [ "$mo_rc" -eq 1 ] && grep -F -- "ended with status 2, $MO_WALKST" "$TMP/memovr-ws.log" 2>/dev/null | grep -q '^\[[^]]*\] ERROR: ' \
+       && [ -z "$(ls -A "$mo_ws" 2>/dev/null)" ] && [ ! -e "${CASE_STATE:-$TMP/state}/pass-settings.json" ]; then
+      ok "claude mode: the drive-path walk ends with status 2 after the first walk answers not under -> memory_override, called directly, refused (1) with the status in its line, nothing written"
+    else
+      bad "claude mode: the drive-path walk ends with status 2 after the first walk answers not under -- memory_override, called directly, read it as an answer -- got $mo_rc, folder holds: $(ls -A "$mo_ws" 2>/dev/null | tr '\n' ' '): $(cat "$TMP/memovr-ws.log" 2>/dev/null)"
+    fi
+  else
+    printf '  INFO  [mem-override-walk-status] the drive-path walk leg runs on Windows only, where memory_override makes that second walk (not counted)\n'
   fi
 fi
 rm -rf "$TMP/memovr-ws" "$TMP/memovr-ws.log"
@@ -6151,15 +6188,20 @@ rm -rf "$TMP/memovr-link" "$TMP/memovr-real"
 # which someone else could have made there. Two direct calls, on every host, on
 # a folder made where mktemp would make it and spelled <b>/base/lnk/../tmp.dd,
 # with lnk leading to <b>/tgt/in: leg A with nothing else there, and leg B with
-# a folder of the same name in <b>/base. Each must return 0 with the file in
-# <b>/tgt/tmp.dd and leave <b>/base as it was. On Windows the junction is spelled
-# in Git Bash's POSIX form: Win32 takes .. out of a drive path as text, mktemp's
-# included, so that spelling cannot split. Where mktemp takes TMPDIR (not
-# macOS), a dream pass with TMPDIR=<b>/base/lnk/.. must also run with the file
-# under <b>/tgt. On Windows the folders cd and cd -P, each then pwd -P, resolve
+# a folder of the same name in <b>/base. Off Windows each must return 0 with the
+# file in <b>/tgt/tmp.dd and leave <b>/base as it was. On Windows, where git
+# reads the folder as TMPDIR spells it and Win32 takes the .. as text, so git
+# would take its hooks folder and commit message from <b>/base/tmp.dd, each must
+# be refused for the .. in the spelling, with nothing written in either folder.
+# There the junction is spelled in Git Bash's POSIX form, the one that splits:
+# Win32 takes .. out of a drive path as text, mktemp's included. Where mktemp
+# takes TMPDIR (not macOS), a dream pass with TMPDIR=<b>/base/lnk/.. must also
+# run with the file under <b>/tgt, or on Windows be refused for the .. before the
+# agent starts. On Windows the folders cd and cd -P, each then pwd -P, resolve
 # /tmp, $TMP and a folder named with a colon to are printed (not counted): the
 # runner's own folder for the pass is resolved with cd -P, and the state
 # directory's check of it with cd.
+MO_DOTWIN="is spelled with a .. in it, and on Windows git reads that spelling as text"
 MO_DD="$TMP/memovr-dd"
 mo_dd_clean() {
   if is_windows_host && [ -L "$MO_DD/base/lnk" ]; then
@@ -6193,8 +6235,17 @@ else
     else
       mo_dc="$(ls -A "$MO_DD/base/tmp.dd" 2>/dev/null | tr '\n' ' ')"; [ -n "$mo_dc" ] || mo_dc=empty
     fi
-    if [ "$mo_rc" -eq 0 ] && [ "$(cat "$MO_DD/tgt/tmp.dd/pass-settings.json" 2>/dev/null)" = "{\"autoMemoryDirectory\":\"$MO_WANT\"}" ] \
-       && { { [ "$mo_leg" = A ] && [ "$mo_dc" = absent ]; } || { [ "$mo_leg" = B ] && [ "$mo_dc" = empty ]; }; }; then
+    mo_dk=no
+    { { [ "$mo_leg" = A ] && [ "$mo_dc" = absent ]; } || { [ "$mo_leg" = B ] && [ "$mo_dc" = empty ]; }; } && mo_dk=yes
+    if is_windows_host; then
+      if [ "$mo_rc" -eq 1 ] && grep -F -- "$MO_DOTWIN" "$TMP/memovr-dd.log" 2>/dev/null | grep -q '^\[[^]]*\] ERROR: ' \
+         && [ -z "$(ls -A "$MO_DD/tgt/tmp.dd" 2>/dev/null)" ] && [ "$mo_dk" = yes ] && [ ! -e "$CASE_STATE/pass-settings.json" ]; then
+        ok "claude mode: TMPDIR holding .. after a junction, leg $mo_leg ($mo_say) -> memory_override, called directly, refused (1) for the .. that git on Windows reads as text, nothing written in either folder"
+      else
+        bad "claude mode: TMPDIR holding .. after a junction, leg $mo_leg ($mo_say) -- memory_override, called directly, was not refused for the .. that git on Windows reads as text, or wrote -- got $mo_rc, the folder mktemp makes there holds: $(ls -A "$MO_DD/tgt/tmp.dd" 2>/dev/null | tr '\n' ' '), the folder of that name in the junction's own folder: $mo_dc: $(cat "$TMP/memovr-dd.log" 2>/dev/null)"
+      fi
+    elif [ "$mo_rc" -eq 0 ] && [ "$(cat "$MO_DD/tgt/tmp.dd/pass-settings.json" 2>/dev/null)" = "{\"autoMemoryDirectory\":\"$MO_WANT\"}" ] \
+       && [ "$mo_dk" = yes ]; then
       ok "claude mode: TMPDIR holding .. after a link, leg $mo_leg ($mo_say) -> memory_override, called directly, returns 0 with the settings file in the folder mktemp makes there"
     else
       bad "claude mode: TMPDIR holding .. after a link, leg $mo_leg ($mo_say) -- memory_override, called directly, did not write the settings file in the folder mktemp makes there alone -- got $mo_rc, file there: $(cat "$MO_DD/tgt/tmp.dd/pass-settings.json" 2>/dev/null), the folder of that name in the link's own folder: $mo_dc: $(cat "$TMP/memovr-dd.log" 2>/dev/null)"
@@ -6205,8 +6256,13 @@ else
   if [ ! -f "$TMP/memovr-dd-vault/.claude/scripts/dream-pass.sh" ]; then
     bad "mem-override-work-dotdot: a vault for the dream-pass leg could not be made"
   elif mo_steers "$MO_DD/base/lnk/.."; then
-    mo_accepts "dream-pass: TMPDIR holding .. after a link" "$TMP/memovr-dd-vault" "$MO_TM/memovr-dd-vault" \
-      "$MO_TMR/memovr-dd/tgt" TMPDIR="$MO_DD/base/lnk/.."
+    if is_windows_host; then
+      RUNNER_VAULT="$TMP/memovr-dd-vault" mo_refused "dream-pass: TMPDIR holding .. after a junction, on Windows" "$MO_DOTWIN" \
+        dream-pass.sh journal "$TMP/memovr-dd-vault/.claude/logs/dream-agent.log" TMPDIR="$MO_DD/base/lnk/.."
+    else
+      mo_accepts "dream-pass: TMPDIR holding .. after a link" "$TMP/memovr-dd-vault" "$MO_TM/memovr-dd-vault" \
+        "$MO_TMR/memovr-dd/tgt" TMPDIR="$MO_DD/base/lnk/.."
+    fi
   elif [ "$MO_STEER_RC" -eq 1 ] && [ "$(uname -s)" = Darwin ]; then
     printf '  INFO  [mem-override-work-dotdot] the dream-pass leg is left out here: Apple'"'"'s mktemp takes its per-user folder whatever TMPDIR says; the direct legs ran (not counted)\n'
   fi
@@ -6224,11 +6280,12 @@ mo_dd_clean
 # A folder above the runner's folder for the pass whose name ends in a line
 # break is cut by $(...), so resolving it gives another path, which the checks
 # would look at. That path is compared with the folder as given, by file
-# identity, and the pass refused, whether nothing is at the other path (leg A)
-# or a folder of this account is, which passes every other check (leg B), and
+# identity, and the pass refused, whether nothing is at the other path (leg A),
+# a folder of this account is, which passes every other check (leg B), or one
+# that fails a check of its own (leg C: every account can write it), whose
+# refusal would otherwise name that folder, which the runner never made; and
 # nothing is written in either. Off Windows only: NTFS names hold no line break.
-# The refusal names the folder as given, line break included, so its words are
-# matched apart from the line that starts it.
+# The refusal names the folder as given, its line break shown as ?, on one line.
 MO_BACKSTOP="is not the folder that resolving the folder above it led to"
 if is_windows_host; then
   skip mem-override-work-backstop 'a folder named with a line break at its end: NTFS names hold none'
@@ -6240,14 +6297,15 @@ else
     bad "mem-override-work-backstop: a folder whose name ends in a line break could not be made here, so this twin cannot show the refusal"
   else
     ran mem-override-work-backstop
-    for mo_leg in A B; do
+    for mo_leg in A B C; do
       rm -rf "$TMP/memovr-nl" "$TMP/memovr-nl.log"
-      if [ "$mo_leg" = A ]; then
-        mo_say='nothing at the path its resolution gives'
-      else
-        mo_say='a folder of this account at the path its resolution gives'
-        ( umask 077 && mkdir -p "$TMP/memovr-nl/w" )
-      fi
+      case "$mo_leg" in
+        A) mo_say='nothing at the path its resolution gives' ;;
+        B) mo_say='a folder of this account at the path its resolution gives'
+           ( umask 077 && mkdir -p "$TMP/memovr-nl/w" ) ;;
+        C) mo_say='a folder every account can write at the path its resolution gives'
+           mkdir -p "$TMP/memovr-nl/w"; chmod 777 "$TMP/memovr-nl/w" ;;
+      esac
       mo_direct "$RV" "$TMP/memovr-nl$NL/w" "$TMP/memovr-nl.log"
       mo_rc=$?
       if [ "$mo_leg" = A ]; then
@@ -6255,10 +6313,9 @@ else
       else
         mo_dc="$(ls -A "$TMP/memovr-nl/w" 2>/dev/null | tr '\n' ' ')"; [ -n "$mo_dc" ] || mo_dc=empty
       fi
-      if [ "$mo_rc" -eq 1 ] && grep -q '^\[[^]]*\] ERROR: the runner'"'"'s folder for the pass, ' "$TMP/memovr-nl.log" 2>/dev/null \
-         && grep -qF -- "$MO_BACKSTOP" "$TMP/memovr-nl.log" 2>/dev/null \
+      if [ "$mo_rc" -eq 1 ] && grep -F -- "ERROR: the runner's folder for the pass, $TMP/memovr-nl?/w, $MO_BACKSTOP" "$TMP/memovr-nl.log" 2>/dev/null | grep -q '^\[[^]]*\] ERROR: ' \
          && [ -z "$(ls -A "$TMP/memovr-nl$NL/w" 2>/dev/null)" ] && [ ! -e "$CASE_STATE/pass-settings.json" ] \
-         && { { [ "$mo_leg" = A ] && [ "$mo_dc" = absent ]; } || { [ "$mo_leg" = B ] && [ "$mo_dc" = empty ]; }; }; then
+         && { { [ "$mo_leg" = A ] && [ "$mo_dc" = absent ]; } || { [ "$mo_leg" != A ] && [ "$mo_dc" = empty ]; }; }; then
         ok "claude mode: a folder for the pass under a folder whose name ends in a line break, leg $mo_leg ($mo_say) -> memory_override, called directly, refused (1) as not the folder its resolution led to, nothing written"
       else
         bad "claude mode: a folder for the pass under a folder whose name ends in a line break, leg $mo_leg ($mo_say) -- memory_override, called directly, was not refused as not the folder its resolution led to, or wrote -- got $mo_rc, the other path: $mo_dc: $(tr '\n' '|' 2>/dev/null < "$TMP/memovr-nl.log")"

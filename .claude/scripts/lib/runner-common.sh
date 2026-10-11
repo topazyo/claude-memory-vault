@@ -1119,7 +1119,7 @@ state_dir_problem() {
     5) printf 'is a symlink in a folder every account can write' ;;
     6) printf 'could not be checked for write access by other accounts' ;;
     7) printf 'is inside a folder every account can write that has no sticky bit' ;;
-    8) printf 'is not the path it resolves to: it is a link, or a folder above it changed during the checks, or pwd -P spells its last part another way (. or .., or on Windows another case or an 8.3 name)' ;;
+    8) printf 'is not the path it resolves to: it is a link, or a folder above it changed during the checks, or pwd -P spells its last part another way (. or .., or on Windows an 8.3 name)' ;;
     *) printf 'could not be created, or cannot be entered' ;;
   esac
 }
@@ -3221,7 +3221,8 @@ note_tripwire() {
 # a link, so writes through it would not be seen) or is not a folder; and a
 # .pass-agent holding anything but a regular .DS_Store file with no other hard
 # link, since anything else could be read into the pass as memory or let a write
-# leave the vault; a <work-dir> that is not there as a folder, that cannot be
+# leave the vault; on Windows a <work-dir> spelled with a .. in it, which git
+# there reads as text; a <work-dir> that is not there as a folder, that cannot be
 # reached because a folder above it cannot be entered, that is not the folder
 # resolving the folder above it led to, that fails the state directory's checks
 # (state_dir_ready, under a UTF-8 locale on Windows), whose walk up gives no
@@ -3239,9 +3240,10 @@ note_tripwire() {
 # when they resolve it, and a link there, or one put above it after that folder
 # was resolved, is not the path it resolves to (the comparison below; off
 # Windows one in a folder every account can write is refused as such). So is a
-# last part pwd -P spells another way (. or .., and on Windows another case or
-# an 8.3 name), which no runner passes. A link above it that is there all along
-# is resolved and accepted. A folder emptied, or removed and made again,
+# last part pwd -P spells another way (. or .., and on Windows an 8.3 name, which
+# pwd -P expands; a letter in another case it keeps, so that spelling of the
+# same folder passes, measured in Git Bash), which no runner passes. A link
+# above it that is there all along is resolved and accepted. A folder emptied, or removed and made again,
 # by another process of this account, by root, or on Windows by any account
 # that can change the temporary folder, is not seen: it is checked like the
 # runner's own (off Windows a folder another account owns fails the owner
@@ -3270,7 +3272,7 @@ note_tripwire() {
 # when the pass must not start.
 memory_override() {
   local root="$1" state="$2" work="$3" log="$4" vault="$1" file="$3/pass-settings.json" arg="$3/pass-settings.json"
-  local dir="$1/90-auto-memory/.pass-agent" list line p h= up win=0 exe=0 pd pu= q
+  local dir="$1/90-auto-memory/.pass-agent" list line p h= up win=0 exe=0 pd pu= q nm
   # Set only on success below, so no value from the environment can stand in.
   unset AGENT_SETTINGS_FILE
   # The file is written, checked and handed to Claude Code through the folder's
@@ -3379,6 +3381,25 @@ memory_override() {
       return 1
     fi
   fi
+  # The lines below name the folder as the runner made it, with any control
+  # character in its name shown as ?.
+  case "$3" in
+    *[[:cntrl:]]*) nm="$(printf '%s' "$3" | LC_ALL=C tr '[:cntrl:]' '?')" ;;
+    *) nm="$3" ;;
+  esac
+  # On Windows git reads the folder as TMPDIR spells it, and Win32 takes a .. in
+  # it as text, while mktemp and the checks here follow a link or junction
+  # before the ..: with a .. after a junction, git took its hooks folder and the
+  # commit message from a folder of the textual name, which an account able to
+  # make folders there could supply, and the journal commit failed (measured in
+  # Git Bash). So on Windows a spelling with a .. in it is refused.
+  if [ "$win" = 1 ]; then
+    case "/$(printf '%s' "$3" | tr '\\' '/')/" in
+      */../*)
+        printf '[%s] ERROR: the runner'"'"'s folder for the pass, %s, is spelled with a .. in it, and on Windows git reads that spelling as text, so after a link or junction it would take its hooks folder and the commit message from another folder than the one the runner made. Point TMPDIR at the folder itself, with no .. in its spelling. Refusing to run.\n' "$(ts)" "$nm" >> "$log"
+        return 1 ;;
+    esac
+  fi
   # The file can name hooks Claude Code runs, so its folder must pass the state
   # directory's checks. On Windows they run under a UTF-8 locale, as the
   # conversions above do: under C, cygpath cut the vault's path and the folder's
@@ -3397,7 +3418,7 @@ memory_override() {
   # made it. Where the folder above could not be entered, the checks cannot see
   # the folder at all.
   if [ "$p" -eq 9 ] && [ -n "$pu" ]; then
-    printf '[%s] ERROR: the runner'"'"'s folder for the pass, %s, cannot be reached: this account cannot enter the folder above it, or that folder is not there, so the checks cannot see the folder the runner made. Give this account back its access to that folder, or point TMPDIR at a folder it can enter. Refusing to run.\n' "$(ts)" "$3" >> "$log"
+    printf '[%s] ERROR: the runner'"'"'s folder for the pass, %s, cannot be reached: this account cannot enter the folder above it, or that folder is not there, so the checks cannot see the folder the runner made. If that folder was removed, the pass'"'"'s snapshot went with it: find what removed it. Otherwise give this account back its access to that folder, or point TMPDIR at a folder it can enter. Refusing to run.\n' "$(ts)" "$nm" >> "$log"
     return 1
   fi
   # The folder above was resolved above, where it could be entered, and the
@@ -3407,16 +3428,17 @@ memory_override() {
   [ "$p" -eq 0 ] && [ "$up" != "$work" ] && p=8
   # And the path the checks looked at must be the folder as given, compared by
   # file identity: where the folder as given is there and that path is not, or
-  # where the checks passed a folder that is not it, resolving the folder above
-  # led elsewhere (a link above it changed between cd -P and pwd -P, or a
-  # folder's name ends in a line break, which $(...) drops), and the file would
-  # go to another folder, one someone else may have made.
-  if { [ "$p" -eq 9 ] && [ -d "$3" ]; } || { [ "$p" -eq 0 ] && ! [ "$work" -ef "$3" ]; }; then
-    printf '[%s] ERROR: the runner'"'"'s folder for the pass, %s, is not the folder that resolving the folder above it led to: a folder above it changed while it was resolved, or a folder'"'"'s name ends in a line break, which the resolution drops, so the settings file would go to another folder. Refusing to run.\n' "$(ts)" "$3" >> "$log"
+  # where the checks answered for a path that is not it, whether they passed it
+  # or refused it for a cause of its own, resolving the folder above led
+  # elsewhere (a link above it changed between cd -P and pwd -P, or a folder's
+  # name ends in a line break, which $(...) drops), and the file would go to
+  # another folder, one someone else may have made, or the refusal would name it.
+  if { [ "$p" -eq 9 ] && [ -d "$3" ]; } || { [ "$p" -ne 9 ] && [ "$p" -ne 10 ] && ! [ "$work" -ef "$3" ]; }; then
+    printf '[%s] ERROR: the runner'"'"'s folder for the pass, %s, is not the folder that resolving the folder above it led to: a folder above it changed while it was resolved, or a folder'"'"'s name ends in a line break, which the resolution drops, so the settings file would go to another folder. Refusing to run.\n' "$(ts)" "$nm" >> "$log"
     return 1
   fi
   if [ "$p" -eq 9 ]; then
-    printf '[%s] ERROR: the runner'"'"'s folder for the pass, %s, is not there as a folder, though the runner made it before the pass'"'"'s snapshot and keeps the snapshot in it, so the fence could not see what the pass changes. Refusing to run.\n' "$(ts)" "$3" >> "$log"
+    printf '[%s] ERROR: the runner'"'"'s folder for the pass, %s, is not there as a folder, though the runner made it before the pass'"'"'s snapshot and keeps the snapshot in it, so the fence could not see what the pass changes. Refusing to run.\n' "$(ts)" "$nm" >> "$log"
     return 1
   fi
   if [ "$p" -eq 10 ]; then
@@ -3450,7 +3472,7 @@ memory_override() {
     esac
   fi
   if [ "$p" -ne 0 ]; then
-    printf '[%s] ERROR: the runner'"'"'s folder for the pass, %s, %s, and the memory override'"'"'s settings file there can name hooks Claude Code runs. Point TMPDIR at a folder outside the vault that only this account can change (on macOS TMPDIR does not move it), or, on Windows, leave it unset and schedule the task as your own account; if the vault holds the default temporary folder, as one at a drive root does, move the vault into a folder of its own, or point TMPDIR outside it. Refusing to run.\n' "$(ts)" "$work" "$(state_dir_problem "$p")" >> "$log"
+    printf '[%s] ERROR: the runner'"'"'s folder for the pass, %s, %s, and the memory override'"'"'s settings file there can name hooks Claude Code runs. Point TMPDIR at a folder outside the vault that only this account can change (on macOS Apple'"'"'s mktemp does not take TMPDIR), or, on Windows, leave it unset and schedule the task as your own account; if the vault holds the default temporary folder, as one at a drive root does, move the vault into a folder of its own, or point TMPDIR outside it. Refusing to run.\n' "$(ts)" "$work" "$(state_dir_problem "$p")" >> "$log"
     return 1
   fi
   # Nothing reads a copy an earlier build left in the state directory.
