@@ -6446,7 +6446,7 @@ for mo_sp in '/b/lnk/../tmp.X' '/b/lnk/..' '../tmp.X' 'C:\b\lnk\..\tmp.X' '/b\ln
   fi
 done
 for mo_sp in '/b/./tmp.X' './tmp.X' '.' 'C:\b\.\tmp.X' '/b/.x/tmp.X' '/b/..x/tmp.X' '/b/x..y/tmp.X' \
-  'C:\Users\me\AppData\Local\Temp\tmp.Ab12' 'C:/Users/me/AppData/Local/Temp/tmp.Ab12' '/tmp/tmp.Ab12' '/b/a b/tmp.X' \
+  'C:\Users\Some One\AppData\Local\Temp\tmp.Ab12' 'C:/Users/Some One/AppData/Local/Temp/tmp.Ab12' '/tmp/tmp.Ab12' '/b/a b/tmp.X' \
   '/b/x. /tmp.X'; do
   mo_sp_n=$((mo_sp_n + 1))
   mo_spell MINGW64_NT-10.0 "$mo_sp"
