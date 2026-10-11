@@ -51,10 +51,10 @@
 #                           it a folder only this account can change, named with
 #                           no link and no .. (on Windows a pass refuses a .. or
 #                           a part ending in a dot, in every mode, before its
-#                           first git call); on Windows leave it unset and schedule
-#                           the task as your own account, unless a long path
-#                           needs a shorter folder (docs/reference.md, Known
-#                           limits)
+#                           first git call); on Windows leave it unset and
+#                           schedule the task as your own account, unless a
+#                           long path needs a shorter folder (docs/reference.md,
+#                           Known limits)
 #   RUN_LOCK_WAIT           seconds to wait for another pass's run lock (default 1800)
 #   RUN_LOCK_POLL           seconds between checks while waiting (default 30)
 #   RUNNER_GIT_TIMEOUT      seconds each git step of the commit may take (default 120)

@@ -490,8 +490,17 @@ a lint that does nothing and a lint that found nothing wrong print the same thin
   cannot enter, a vault that cannot be
   resolved (both off Windows), an identity walk that ends without an answer, and, off Windows, a
   folder whose resolved path is not the folder itself (a folder above it named with a line break at
-  its end) are each refused with a line of their own. A copy of the file an earlier build left in
-  the state directory stays when the folder fails its checks and is gone when a planted name is
+  its end) are each refused with a line of their own; off Windows a dangling link at the folder's
+  name, in a folder every account can write, keeps the state directory's own line, and a name
+  planted under a folder named with a line break inside, or a folder for the pass under one that
+  every account can write, is refused on one line showing the break as `?`. The check of the temporary folder's spelling refuses, with the platform given as Windows,
+  each of 14 spellings with a part ending in a dot and accepts 11 others, and off Windows (with no
+  `cygpath`) leaves a `..` and an `x.` alone; handed a `..` or `x.` spelling by a stand-in `mktemp`,
+  with their git calls recorded and, off Windows, a stand-in `cygpath`, the dream and promotion
+  runners in claude and command mode and the retention runner each refuse before any git call
+  names the hooks folder, and on Windows hooks placed in a folder of the textual name do not run. A copy of
+  the file an earlier build left in the state directory stays when the folder fails its checks and
+  is gone when a planted name is
   refused after them. Where `mktemp` takes `TMPDIR`, a pass with a `TMPDIR` holding a space runs and
   hands Claude Code one `--settings`, its path whole. A folder for the
   pass under folders whose names end in `:` runs, and the identity walk still finds a vault above
@@ -1015,10 +1024,10 @@ Around that call, each runner does several things an exit code cannot:
     takes hooks from since 1.4.0, reached through `TMPDIR` as spelled, so name the folder itself,
     with no link, no `..` and no part ending in a dot in its spelling. On Windows every runner, the
     retention pass's included, refuses a `..` or a part ending in a dot in every mode, before its
-    first git call; a link it does not see, and only a claude-mode pass checks the folder itself,
-    as in 1.4.0 for command mode. The settings file adds a file there whose hooks Claude Code would run
-    as your account at
-    every claude-mode pass, whether or not the vault is a git repository.
+    first git call. That check reads the spelling only, so it does not see a link; only a
+    claude-mode pass checks the folder itself, and command mode, as in 1.4.0, does not. The
+    settings file adds a file there whose hooks Claude Code would run as your account at every
+    claude-mode pass, whether or not the vault is a git repository.
   - The runner's folder for the pass also holds the pass's "before" snapshot. A folder that is gone
     when the override is written is refused (exit 1), and so is a link put in its place before the
     checks resolve it, but one emptied, or removed and made again, before then by another process of
@@ -1585,7 +1594,7 @@ Known limits, each failing in the quiet direction:
 | `RUNNER_RUN_LOG_MAX_BYTES` | `10000000` | both runners: the size above which a pass's run log in `.claude/logs` is cut to its newest part after the pass |
 | `RUNNER_GIT_TIMEOUT` | `120` seconds | all three runners: how long each git step of the runner commit (staging, then the commit and its signing) may take before it is stopped and the run exits 4. In `vault-retention.sh` it bounds the history walk and the move as well, and a step it stops there gives 75 before any move or 71 after one |
 | `VAULT_STATE_DIR` | per-vault directory under `%LOCALAPPDATA%` or `~/.local/state` | all three runners: the run lock, the quarantine, the tripwire and in-flight copies, the pre-pass backup of a running pass, and the retention runner's legacy reports and its `retention-inflight` recovery file, all outside the vault, and `vault-check.sh`, which looks for the tripwire copy there. An absolute path is required, and a Windows path is converted. A relative one, one containing `..`, or one inside the vault is replaced with a directory under the system temp folder, and the runner logs a warning. A state directory the runner's account does not own or cannot write stops the run with exit 1. Give each vault its own value |
-| `TMPDIR` | unset (`/tmp`; on macOS Apple's `mktemp` takes the per-user temporary folder, whatever `TMPDIR` says) | the dream and promotion runners: where each makes its own folder for the pass with `mktemp -d`, holding the snapshots, the steering backup, git's hooks folder and, in claude mode, `pass-settings.json`, which Claude Code reads as settings, hooks and other commands among them; the retention runner, when it is an absolute path, for its own folders and git's hooks folder. Keep it a folder only your account can change, named with no link, no `..` and no part ending in a dot (on Windows every runner refuses a `..` or a part ending in a dot, in every mode, before its first git call, because git there reads the spelling as text); on Windows leave it unset and schedule the task as your own account, unless a path near 260 characters needs a shorter folder (§ 4.3, Known limits) |
+| `TMPDIR` | unset (`/tmp`; for the dream and promotion runners on macOS Apple's `mktemp` takes the per-user temporary folder, whatever `TMPDIR` says) | the dream and promotion runners: where each makes its own folder for the pass with `mktemp -d`, holding the snapshots, the steering backup, git's hooks folder and, in claude mode, `pass-settings.json`, which Claude Code reads as settings, hooks and other commands among them; the retention runner, when it starts with `/`, for its own folders and git's hooks folder, which it names by a template, so macOS honours it too (otherwise `/tmp`). Keep it a folder only your account can change, named with no link, no `..` and no part ending in a dot (on Windows every runner refuses a `..` or a part ending in a dot, in every mode, before its first git call, because git there reads the spelling as text); on Windows leave it unset and schedule the task as your own account, unless a path near 260 characters needs a shorter folder (§ 4.3, Known limits) |
 | `BASH_EXE` | standard Git for Windows paths | all three `.cmd` wrappers |
 | `VAULT_FORCE_NO_JQ` | unset | `vault-lint.sh` and `postcompact-wrap-up.sh`: take the no-jq branch even when `jq` is installed |
 

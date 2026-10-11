@@ -1110,7 +1110,8 @@ state_dir_ready() {
 # which only memory_override gives: a folder that is not the path it resolves to,
 # because it is a link, a folder above it changed between memory_override's
 # resolution and the check's, or pwd -P spells its last part another way. A link
-# above it that is there all along is resolved and accepted.
+# above it that is there all along is resolved and accepted for the settings
+# file; the snapshots, the backup and git's hooks folder use TMPDIR as spelled.
 state_dir_problem() {
   case "$1" in
     2) printf 'is not owned by this account, or this account cannot write it' ;;
@@ -3202,12 +3203,14 @@ shown_name() {
 #
 # On Windows git.exe reads a folder as TMPDIR spells it, and Win32 reads that
 # spelling as text: it takes a .. back past a link or junction to the folder
-# above the link, and drops the dot from a part that ends in one, where Git
-# Bash's mktemp and the runners' own checks follow the junction and keep the
-# dot. With a .. after a junction git took its hooks folder from a folder of
-# the textual name and ran a hook there at the pass's first git status, and
-# with a part such as x. it looked for its hooks in the folder x (both measured
-# in Git Bash), folders an account able to make folders there could supply.
+# above the link, and drops the dot from a part that ends in one, where in Git
+# Bash's /c/ spelling mktemp and the runners' own checks follow the junction
+# and keep the dot. With a .. after a junction git took its hooks folder from a
+# folder of the textual name and ran a hook there at the pass's first git
+# status, and with a part such as x. it looked for its hooks in the folder x
+# (both measured in Git Bash's /c/ spelling), folders an account able to make
+# folders there could supply. In the C:/ spelling Win32 reduces the .. for
+# mktemp too, and the two agreed (measured); it is refused all the same.
 # Each runner calls this right after it makes its temporary folder, before any
 # git call, in every mode, and memory_override calls it again for any other
 # caller. On Windows, decided as memory_override decides it (the platform, or a
@@ -3224,7 +3227,7 @@ temp_dir_spelling_ok() {
     *[!/\\]./*|*[!/\\].\\*) ;;
     *) return 0 ;;
   esac
-  printf '[%s] ERROR: the runner'"'"'s temporary folder, %s, is spelled with .. or with a part that ends in a dot, and on Windows git reads that spelling as text, so it can take its hooks folder, and the commit message, from another folder than the one the runner made (measured in Git Bash). Point TMPDIR at the folder itself, with no part ending in a dot, or leave it unset and schedule the task as your own account. Refusing to run.\n' "$(ts)" "$(shown_name "$1")" >> "$2"
+  printf '[%s] ERROR: the runner'"'"'s temporary folder, %s, is spelled with .. or with a part that ends in a dot, and on Windows git reads that spelling as text, so in Git Bash'"'"'s /c/ spelling it can take its hooks folder, and the commit message, from another folder than the one the runner made (measured in Git Bash). Point TMPDIR at the folder itself, with no part ending in a dot, or leave it unset and schedule the task as your own account. Refusing to run.\n' "$(ts)" "$(shown_name "$1")" >> "$2"
   return 1
 }
 
@@ -3284,7 +3287,9 @@ temp_dir_spelling_ok() {
 # last part pwd -P spells another way (. or .., and on Windows an 8.3 name, which
 # pwd -P expands; a letter in another case it keeps, so that spelling of the
 # same folder passes, measured in Git Bash), which no runner passes. A link
-# above it that is there all along is resolved and accepted. A folder emptied,
+# above it that is there all along is resolved and accepted for the settings
+# file (the snapshots, the backup and git's hooks folder use TMPDIR as
+# spelled). A folder emptied,
 # or removed and made again, by another process of this account, by root, or on
 # Windows by any account
 # that can change the temporary folder, is not seen: it is checked like the
