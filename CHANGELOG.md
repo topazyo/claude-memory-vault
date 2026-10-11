@@ -129,9 +129,13 @@ What that covers, and what it does not:
   failed, and so did the commit). On Windows (and wherever a `cygpath` is found on `PATH`, as for
   the override) the dream, promotion and retention runners now refuse a temporary folder spelled
   with a `..` or with a part ending in a dot, in either spelling, right after `mktemp`, before
-  their first git call, in every mode, command mode included (measured in Git Bash: no hook placed
-  there ran). A part that is `.` alone is not refused: Win32 and Git Bash both read it as the
-  folder it is in (reasoned).
+  their first git call, in every mode, command mode included (measured in Git Bash, where no hook
+  placed there ran: for a dream pass with a stand-in agent, and with the suite's twin for the dream
+  runner in claude and command mode, the promotion runner in claude mode and the retention runner).
+  A part that is `.` alone is not refused: Win32 and Git Bash both read it as the folder it is in
+  (reasoned). Claude Code itself keeps the dot: handed `--settings <folder>/x./s.json`, 2.1.296 read
+  that file, not `<folder>/x/s.json` (measured); its memory folder is reached the same way
+  (reasoned; not measured for the Write tool).
 - **Linux and macOS are unverified.** No Claude Code run has measured the grant on either. There the
   runner refuses a vault or settings-file path that does not come back byte for byte when `iconv`
   converts it from UTF-8 to UTF-16LE and back, which Claude Code could read as another folder:
@@ -359,11 +363,12 @@ What that covers, and what it does not:
   under"), `mem-override-work-backstop` (the folder above reported as another folder of yours
   while it is resolved, by a stand-in `pwd`; off Windows also a folder above named with a line break
   at its end, with nothing, a folder of yours, or one every account can write at the path its
-  resolution gives, a dangling link there with the folder as given in place, or the folder as given
-  gone with a folder every account can write there; and a dangling link at the folder's name in a
+  resolution gives, a dangling link there with the folder as given in place, the folder as given
+  gone with a folder every account can write there, or gone with a dangling link there; and a
+  dangling link at the folder's name in a
   folder every account can write, which keeps the state directory's own line), `temp-dir-spelling`
-  (`temp_dir_spelling_ok` with the platform given as Windows, over 14 spellings it must refuse and
-  11 it must accept; off Windows, with no `cygpath`, a `..` and an `x.` left alone; and each runner
+  (`temp_dir_spelling_ok` with the platform given as Windows, over 17 spellings it must refuse and
+  12 it must accept; off Windows, with no `cygpath`, a `..` and an `x.` left alone; and each runner
   handed a `..` or `x.` spelling by a `mktemp` stand-in, its git calls recorded and, off Windows, a
   `cygpath` stand-in making the platform read as Windows: the dream and promotion runners in
   claude and command mode and the retention runner must refuse before any git call names the

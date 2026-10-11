@@ -3443,6 +3443,20 @@ else
   else
     bad "mem-override-winbin: the dd stand-in does not fail, or the agent binary cannot be read"
   fi
+  # The agent's name is shown with a control character as ?, on one line.
+  rm -rf "$TMP/memovr-bin-w" "$TMP/memovr-bin.log"
+  ( umask 077 && mkdir -p "$TMP/memovr-bin-w" )
+  ( LC_ALL=C; export LC_ALL; . "$RV/.claude/scripts/lib/runner-common.sh"; AGENT_BIN="no${NL}such-claude"
+    memory_override "$RV" "${CASE_STATE:-$TMP/state}" "$TMP/memovr-bin-w" "$TMP/memovr-bin.log" )
+  mo_rc=$?
+  if [ "$mo_rc" -eq 1 ] && [ "$(grep -c '' "$TMP/memovr-bin.log" 2>/dev/null)" = 1 ] \
+     && grep -F -- "Claude Code here (no?such-claude) $MO_NOTFILE" "$TMP/memovr-bin.log" 2>/dev/null | grep -q '^\[[^]]*\] ERROR: ' \
+     && [ -z "$(ls -A "$TMP/memovr-bin-w" 2>/dev/null)" ]; then
+    ok "claude mode outside Git Bash: an agent name holding a line break -> memory_override, called directly, refused (1) on one line, the break shown as ?"
+  else
+    bad "claude mode outside Git Bash: an agent name holding a line break -- memory_override, called directly, did not refuse on one line showing the break as ? -- got $mo_rc: $(tr '\n' '|' < "$TMP/memovr-bin.log" 2>/dev/null)"
+  fi
+  rm -rf "$TMP/memovr-bin-w" "$TMP/memovr-bin.log"
   chmod 755 "$MO_MZ/bin/claude" 2>/dev/null
   rm -rf "$MO_MZ"
 fi
@@ -6380,7 +6394,7 @@ ran temp-dir-spelling
 mo_sp_bad=0 mo_sp_n=0 mo_sp_r=0
 for mo_sp in '/b/lnk/../tmp.X' '/b/lnk/..' '../tmp.X' 'C:\b\lnk\..\tmp.X' '/b\lnk\..\tmp.X' 'C:/b/lnk/../tmp.X' \
   '/b//..//tmp.X' '/b/x./tmp.X' '/b/x.' 'C:\b\x.\tmp.X' '/b/x../tmp.X' '/b/.../tmp.X' "/b/x${NL}./tmp.X" \
-  "/b/x$(printf '\033')./tmp.X"; do
+  "/b/x$(printf '\033')./tmp.X" 'C:../tmp.X' '..\tmp.X' '/b/x./'; do
   mo_sp_n=$((mo_sp_n + 1)) mo_sp_r=$((mo_sp_r + 1))
   mo_spell MINGW64_NT-10.0 "$mo_sp"
   mo_rc=$?
@@ -6392,7 +6406,8 @@ for mo_sp in '/b/lnk/../tmp.X' '/b/lnk/..' '../tmp.X' 'C:\b\lnk\..\tmp.X' '/b\ln
   fi
 done
 for mo_sp in '/b/./tmp.X' './tmp.X' '.' 'C:\b\.\tmp.X' '/b/.x/tmp.X' '/b/..x/tmp.X' '/b/x..y/tmp.X' \
-  'C:\Users\me\AppData\Local\Temp\tmp.Ab12' 'C:/Users/me/AppData/Local/Temp/tmp.Ab12' '/tmp/tmp.Ab12' '/b/a b/tmp.X'; do
+  'C:\Users\me\AppData\Local\Temp\tmp.Ab12' 'C:/Users/me/AppData/Local/Temp/tmp.Ab12' '/tmp/tmp.Ab12' '/b/a b/tmp.X' \
+  '/b/x. /tmp.X'; do
   mo_sp_n=$((mo_sp_n + 1))
   mo_spell MINGW64_NT-10.0 "$mo_sp"
   mo_rc=$?
@@ -6566,8 +6581,9 @@ mo_k4_clean
 # refusal would otherwise name that folder, which the runner never made, or
 # where only one of the two paths is there (leg C2: a dangling link at the other
 # path, in a folder every account can write; leg C3: the folder as given gone,
-# a folder every account can write at the other path); and nothing is written
-# in either. Those five run off Windows only: they are not
+# a folder every account can write at the other path), or where neither is
+# (leg C4: the folder as given gone, a dangling link at the other path); and
+# nothing is written in either. Those six run off Windows only: they are not
 # attempted on Windows, where Git Bash keeps a line break in a name as a
 # private-use character. The refusal names the folder as given, its line break
 # shown as ?, on one line. Leg D, on every host, stands in for a link above the
@@ -6605,7 +6621,7 @@ else
 fi
 rm -rf "$CASE_STATE" "$TMP/memovr-bsd" "$TMP/memovr-bsd.log"
 if is_windows_host; then
-  printf '  INFO  [mem-override-work-backstop] legs A, B, C, C2 and C3, a folder above named with a line break at its end, and leg E, a dangling link, run off Windows only: the first five are not attempted here, where Git Bash keeps a line break in a name as a private-use character, and ln -s makes no link here without a privilege (not counted)\n'
+  printf '  INFO  [mem-override-work-backstop] legs A, B, C, C2, C3 and C4, a folder above named with a line break at its end, and leg E, a dangling link, run off Windows only: the first six are not attempted here, where Git Bash keeps a line break in a name as a private-use character, and ln -s makes no link here without a privilege (not counted)\n'
 else
   CASE_STATE="$TMP/state-memovr-nl"
   rm -rf "$CASE_STATE" "$TMP/memovr-nl$NL" "$TMP/memovr-nl" "$TMP/memovr-nl.log"
@@ -6614,7 +6630,7 @@ else
     bad "mem-override-work-backstop: a folder whose name ends in a line break could not be made here, so this twin cannot show the refusal"
   else
     grep -qx mem-override-work-backstop "$RAN_CONTROLS" || ran mem-override-work-backstop
-    for mo_leg in A B C C2 C3; do
+    for mo_leg in A B C C2 C3 C4; do
       rm -rf "$TMP/memovr-nl" "$TMP/memovr-nl.log" "$TMP/memovr-nl-none"
       ( umask 077 && mkdir -p "$TMP/memovr-nl$NL/w" )
       case "$mo_leg" in
@@ -6625,14 +6641,19 @@ else
            mkdir -p "$TMP/memovr-nl/w"; chmod 777 "$TMP/memovr-nl/w" ;;
         # The folder as given is there and the path its resolution gives is a
         # dangling link (C2), or the folder as given is gone and that path is a
-        # folder (C3): only one of the two paths is there, so each of the
-        # backstop's two tests of it is held alone.
+        # folder (C3): only one of the two paths is there, and only the
+        # comparison of the folders above them refuses it as the backstop.
         C2) mo_say='a dangling link at the path its resolution gives, in a folder every account can write'
             mkdir -p "$TMP/memovr-nl"; chmod 777 "$TMP/memovr-nl"; ln -s "$TMP/memovr-nl-none" "$TMP/memovr-nl/w" ;;
         C3) mo_say='the folder as given gone, and a folder every account can write at the path its resolution gives'
             mkdir -p "$TMP/memovr-nl/w"; chmod 777 "$TMP/memovr-nl/w"; rmdir "$TMP/memovr-nl$NL/w" ;;
+        # Neither path is there (C4): the folder as given gone, a dangling link at
+        # the other path, so only the folders above them tell the two apart.
+        C4) mo_say='the folder as given gone, and a dangling link at the path its resolution gives, in a folder every account can write'
+            mkdir -p "$TMP/memovr-nl"; chmod 777 "$TMP/memovr-nl"; ln -s "$TMP/memovr-nl-none" "$TMP/memovr-nl/w"; rmdir "$TMP/memovr-nl$NL/w" ;;
       esac
-      if { [ "$mo_leg" = C2 ] && ! [ -L "$TMP/memovr-nl/w" ]; } || { [ "$mo_leg" = C3 ] && [ -e "$TMP/memovr-nl$NL/w" ]; }; then
+      if { [ "$mo_leg" = C2 ] && ! [ -L "$TMP/memovr-nl/w" ]; } || { [ "$mo_leg" = C3 ] && [ -e "$TMP/memovr-nl$NL/w" ]; } \
+         || { [ "$mo_leg" = C4 ] && { ! [ -L "$TMP/memovr-nl/w" ] || [ -e "$TMP/memovr-nl$NL/w" ]; }; }; then
         bad "mem-override-work-backstop: leg $mo_leg's paths could not be made as the twin needs them"
         continue
       fi
@@ -6640,12 +6661,12 @@ else
       mo_rc=$?
       if [ "$mo_leg" = A ]; then
         mo_dc=absent; [ -e "$TMP/memovr-nl" ] && mo_dc=made
-      elif [ "$mo_leg" = C2 ]; then
+      elif [ "$mo_leg" = C2 ] || [ "$mo_leg" = C4 ]; then
         mo_dc=empty; [ -e "$TMP/memovr-nl-none" ] && mo_dc=made
       else
         mo_dc="$(ls -A "$TMP/memovr-nl/w" 2>/dev/null | tr '\n' ' ')"; [ -n "$mo_dc" ] || mo_dc=empty
       fi
-      [ "$mo_leg" = C3 ] && [ -e "$TMP/memovr-nl$NL/w" ] && mo_dc="$mo_dc, the folder as given made again"
+      { [ "$mo_leg" = C3 ] || [ "$mo_leg" = C4 ]; } && [ -e "$TMP/memovr-nl$NL/w" ] && mo_dc="$mo_dc, the folder as given made again"
       if [ "$mo_rc" -eq 1 ] && grep -F -- "ERROR: the runner's folder for the pass, $TMP/memovr-nl?/w, $MO_BACKSTOP" "$TMP/memovr-nl.log" 2>/dev/null | grep -q '^\[[^]]*\] ERROR: ' \
          && [ -z "$(ls -A "$TMP/memovr-nl$NL/w" 2>/dev/null)" ] && [ ! -e "$CASE_STATE/pass-settings.json" ] \
          && { { [ "$mo_leg" = A ] && [ "$mo_dc" = absent ]; } || { [ "$mo_leg" != A ] && [ "$mo_dc" = empty ]; }; }; then

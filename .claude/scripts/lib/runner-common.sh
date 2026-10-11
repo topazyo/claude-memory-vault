@@ -3319,7 +3319,7 @@ temp_dir_spelling_ok() {
 # when the pass must not start.
 memory_override() {
   local root="$1" state="$2" work="$3" log="$4" vault="$1" file="$3/pass-settings.json" arg="$3/pass-settings.json"
-  local dir="$1/90-auto-memory/.pass-agent" list line p h= up win=0 exe=0 pd pu= q nm nw
+  local dir="$1/90-auto-memory/.pass-agent" list line p h= up win=0 exe=0 pd pu= q nm nw tp=/
   # Set only on success below, so no value from the environment can stand in.
   unset AGENT_SETTINGS_FILE
   # The file is written, checked and handed to Claude Code through the folder's
@@ -3339,6 +3339,7 @@ memory_override() {
   if [ -n "$p" ]; then
     case "$p" in */*) pd="${p%/*}"; [ -n "$pd" ] || pd=/ ;; *) pd=. ;; esac
     case "$pd" in /*|[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]:*) ;; *) pd="./$pd" ;; esac
+    tp="$pd"
     if pd="$(CDPATH= cd -P -- "$pd" 2>/dev/null && pwd -P)" && [ -n "$pd" ]; then
       work="${pd%/}/${p##*/}"
     else
@@ -3364,13 +3365,13 @@ memory_override() {
     case "$p" in */*) ;; *) p= ;; esac
     if [ -f "$p" ] && ! h="$(LC_ALL=C dd if="$p" bs=2 count=1 2>/dev/null)"; then p=; fi
     if [ -z "$p" ]; then
-      printf '[%s] ERROR: Claude Code here (%s) is not a file the runner can check, so it could be a Windows program that would read the memory override'"'"'s paths as other folders. Refusing to run.\n' "$(ts)" "${AGENT_BIN:-}" >> "$log"
+      printf '[%s] ERROR: Claude Code here (%s) is not a file the runner can check, so it could be a Windows program that would read the memory override'"'"'s paths as other folders. Refusing to run.\n' "$(ts)" "$(shown_name "${AGENT_BIN:-}")" >> "$log"
       return 1
     fi
     case "$p" in *.[eE][xX][eE]) exe=1 ;; esac
     if [ -f "$p" ] && [ "$h" = MZ ]; then exe=1; fi
     if [ "$exe" = 1 ]; then
-      printf '[%s] ERROR: Claude Code here (%s) looks like a Windows program, but this runner is not running under Git Bash, so Claude Code would read the memory override'"'"'s paths as other folders. Run the .cmd runner on Windows instead. Refusing to run.\n' "$(ts)" "$p" >> "$log"
+      printf '[%s] ERROR: Claude Code here (%s) looks like a Windows program, but this runner is not running under Git Bash, so Claude Code would read the memory override'"'"'s paths as other folders. Run the .cmd runner on Windows instead. Refusing to run.\n' "$(ts)" "$(shown_name "$p")" >> "$log"
       return 1
     fi
   fi
@@ -3468,11 +3469,14 @@ memory_override() {
   # elsewhere (a link above it changed between cd -P and pwd -P, or a folder's
   # name ends in a line break, which $(...) drops), and the file would go to
   # another folder, one someone else may have made, or the refusal would name it.
-  # A refusal for a cause of its own where nothing is at either path (a dangling
-  # link, say, which -ef cannot compare) keeps its own line.
+  # A refusal for a cause of its own keeps its own line where the folder above,
+  # as resolved, is the folder above as given (tp): the two paths then name the
+  # same entry, and -ef fails only where nothing is there to compare (a dangling
+  # link, say). Where the checks passed (p=0) the line is the backstop's either
+  # way, for a folder replaced in between, a race no control can stage.
   if { [ "$p" -eq 9 ] && [ -d "$3" ]; } \
      || { [ "$p" -ne 9 ] && [ "$p" -ne 10 ] && ! [ "$work" -ef "$3" ] \
-          && { [ "$p" -eq 0 ] || [ -e "$work" ] || [ -e "$3" ]; }; }; then
+          && { [ "$p" -eq 0 ] || ! [ "${work%/*}/." -ef "$tp/." ]; }; }; then
     printf '[%s] ERROR: the runner'"'"'s folder for the pass, %s, is not the folder that resolving the folder above it led to: a folder above it changed while it was resolved, or a folder'"'"'s name ends in a line break, which the resolution drops, so the settings file would go to another folder. Refusing to run.\n' "$(ts)" "$nm" >> "$log"
     return 1
   fi

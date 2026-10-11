@@ -494,7 +494,7 @@ a lint that does nothing and a lint that found nothing wrong print the same thin
   name, in a folder every account can write, keeps the state directory's own line, and a name
   planted under a folder named with a line break inside, or a folder for the pass under one that
   every account can write, is refused on one line showing the break as `?`. The check of the temporary folder's spelling refuses, with the platform given as Windows,
-  each of 14 spellings with a part ending in a dot and accepts 11 others, and off Windows (with no
+  each of 17 spellings with a part ending in a dot and accepts 12 others, and off Windows (with no
   `cygpath`) leaves a `..` and an `x.` alone; handed a `..` or `x.` spelling by a stand-in `mktemp`,
   with their git calls recorded and, off Windows, a stand-in `cygpath`, the dream and promotion
   runners in claude and command mode and the retention runner each refuse before any git call
