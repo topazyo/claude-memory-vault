@@ -1073,7 +1073,8 @@ vault_state_dir() {
 # world-writable with no sticky bit. state_dir_problem turns the code into words.
 # With nocreate as a third argument, a <dir> that is not a folder (once the link
 # check above has passed) is not made, and the code is 9; the caller says what
-# that means.
+# that means. A <root> that cannot be resolved is 10, which state_dir_problem
+# words as 1, so only a caller that says what it means tells the two apart.
 state_dir_ready() {
   local name parent real kroot open up
   name="$(printf '%s' "$1" | sed 's|//*$||')"
@@ -1101,12 +1102,15 @@ state_dir_ready() {
     [ -z "$open" ] || return 7
   done
   kroot="$(path_key "$(cd "$2" 2>/dev/null && pwd -P)")"
-  [ -n "$kroot" ] || return 1
+  [ -n "$kroot" ] || return 10
   case "$(path_key "$real")" in "$kroot"|"$kroot"/*) return 4 ;; esac
   printf '%s\n' "$real"
 }
 # state_dir_problem <code> - the words for a state_dir_ready code, and for 8,
-# which only memory_override gives: a folder that is not the path it resolves to.
+# which only memory_override gives: a folder that is not the path it resolves to,
+# because it is a link, a folder above it changed between memory_override's
+# resolution and the check's, or pwd -P spells its last part another way. A link
+# above it that is there all along is resolved and accepted.
 state_dir_problem() {
   case "$1" in
     2) printf 'is not owned by this account, or this account cannot write it' ;;
@@ -1115,7 +1119,7 @@ state_dir_problem() {
     5) printf 'is a symlink in a folder every account can write' ;;
     6) printf 'could not be checked for write access by other accounts' ;;
     7) printf 'is inside a folder every account can write that has no sticky bit' ;;
-    8) printf 'is not the path it resolves to: it, or a folder above it, is a link' ;;
+    8) printf 'is not the path it resolves to: it is a link, or a folder above it changed during the checks, or pwd -P spells its last part another way (. or .., or on Windows another case or an 8.3 name)' ;;
     *) printf 'could not be created, or cannot be entered' ;;
   esac
 }
@@ -3216,23 +3220,27 @@ note_tripwire() {
 # a link, so writes through it would not be seen) or is not a folder; and a
 # .pass-agent holding anything but a regular .DS_Store file with no other hard
 # link, since anything else could be read into the pass as memory or let a write
-# leave the vault; a <work-dir> that is not there as a folder, that fails the
-# state directory's checks (state_dir_ready, under a UTF-8 locale on Windows) or
-# that lies inside the vault by file identity, walked as Git Bash spells it and,
-# on Windows, as a drive path (a subst or mapped drive, or a mount, whose root
-# lies inside the vault is not seen, reasoned); and a pass-settings.json,
-# pass-settings.new or pass-settings.json.tmp.<pid> already in <work-dir>, which
-# the write would go through (only names there at the check: one planted after
-# it is still written through). The runner makes <work-dir> before the pass's
-# "before" snapshot and keeps the snapshot there, so one that is not there may
-# have taken the snapshot with it: it is refused, never made again. mktemp -d
-# never makes a link, so a <work-dir> that is a link itself was put in its
-# place: its own name is never resolved here, so the state directory's checks
-# see whatever is there when they resolve it, and a link, there or at a folder
-# above it, is not the path it resolves to (the comparison below; off Windows
-# one in a folder every account can write is refused as such). So is a last
-# part pwd -P spells another way (. or .., and on Windows another case or an 8.3
-# name), which no runner passes. A folder emptied, or removed and made again,
+# leave the vault; a <work-dir> that is not there as a folder, that cannot be
+# reached because a folder above it cannot be entered, that is not the folder
+# resolving the folder above it led to, that fails the state directory's checks
+# (state_dir_ready, under a UTF-8 locale on Windows), whose walk up gives no
+# answer, or that lies inside the vault by file identity, walked as Git Bash
+# spells it and, on Windows, as a drive path (a subst or mapped drive, or a
+# mount, whose root lies inside the vault is not seen, reasoned); a vault that
+# cannot be resolved; and a pass-settings.json, pass-settings.new or
+# pass-settings.json.tmp.<pid> already in <work-dir>, which the write would go
+# through (only names there at the check: one planted after it is still written
+# through). The runner makes <work-dir> before the pass's "before" snapshot and
+# keeps the snapshot there, so one that is not there may have taken the
+# snapshot with it: it is refused, never made again. mktemp -d never makes a
+# link, so a <work-dir> that is a link itself was put in its place: its own name
+# is never resolved here, so the state directory's checks see whatever is there
+# when they resolve it, and a link there, or one put above it after that folder
+# was resolved, is not the path it resolves to (the comparison below; off
+# Windows one in a folder every account can write is refused as such). So is a
+# last part pwd -P spells another way (. or .., and on Windows another case or
+# an 8.3 name), which no runner passes. A link above it that is there all along
+# is resolved and accepted. A folder emptied, or removed and made again,
 # by another process of this account, by root, or on Windows by any account
 # that can change the temporary folder, is not seen: it is checked like the
 # runner's own (off Windows a folder another account owns fails the owner
@@ -3243,11 +3251,13 @@ note_tripwire() {
 # the copy of the file an earlier build left in the state directory (below), the
 # checks write nothing. They must run after that snapshot, so that anything
 # planted after them is still a change the fence sees. <work-dir> is taken as
-# the resolved path (pwd -P) of the folder above it and its own name, so the
-# conversions, the UTF-8 check, these checks and the write all see one folder.
-# Then the file is written as pass-settings.json in <work-dir>, the runner's own
-# folder for the pass, and must read back byte for byte, because Claude Code
-# reads an empty or invalid settings file as if there were none. The read-back,
+# the physical path (cd -P, then pwd -P) of the folder above it, as mktemp -d
+# resolved it, and its own name, and must still be the folder as given, by file
+# identity, so the conversions, the UTF-8 check, these checks and the write all
+# see the folder mktemp made. Then the file is written as pass-settings.json in
+# <work-dir>, the runner's own folder for the pass, and must read back byte for
+# byte, because Claude Code reads an empty or invalid settings file as if there
+# were none. The read-back,
 # and the check that the converted settings path names that file, need the
 # file, so a refusal at either leaves it in <work-dir>, which the runner removes
 # with the folder. The state directory may be shared or take its parent's
@@ -3259,21 +3269,31 @@ note_tripwire() {
 # when the pass must not start.
 memory_override() {
   local root="$1" state="$2" work="$3" log="$4" vault="$1" file="$3/pass-settings.json" arg="$3/pass-settings.json"
-  local dir="$1/90-auto-memory/.pass-agent" list line p h= up win=0 exe=0 pd
+  local dir="$1/90-auto-memory/.pass-agent" list line p h= up win=0 exe=0 pd pu= q
   # Set only on success below, so no value from the environment can stand in.
   unset AGENT_SETTINGS_FILE
   # The file is written, checked and handed to Claude Code through the folder's
-  # resolved path, so a link or a relative part in TMPDIR's spelling cannot be
-  # pointed at another folder after the checks below. Only the folder above it
+  # resolved path, so a link, a .. or a relative part in TMPDIR's spelling cannot
+  # be pointed at another folder after the checks below. Only the folder above it
   # is resolved here, and its own name kept, so a link put in its place before
   # the state directory's checks resolve it is refused there (code 8, or off
-  # Windows code 5 in a folder every account can write). A folder above that
-  # cannot be entered leaves the path as given, and the checks below refuse it.
+  # Windows code 5 in a folder every account can write). It is resolved
+  # physically (cd -P), as mktemp -d resolved it when it made the folder: a
+  # logical cd takes a .. after a link as text, and so named a folder mktemp
+  # never made, or one of the same name someone else had made. A relative folder
+  # above it is spelled ./ first, so one named - is not taken for $OLDPWD. A
+  # folder above that cannot be entered leaves the path as given, and the checks
+  # below refuse it, with a line of their own.
   p="$work"
   while :; do case "$p" in ?*/) p="${p%/}" ;; *) break ;; esac; done
   if [ -n "$p" ]; then
     case "$p" in */*) pd="${p%/*}"; [ -n "$pd" ] || pd=/ ;; *) pd=. ;; esac
-    pd="$(CDPATH= cd "$pd" 2>/dev/null && pwd -P)" && [ -n "$pd" ] && work="${pd%/}/${p##*/}"
+    case "$pd" in /*|[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]:*) ;; *) pd="./$pd" ;; esac
+    if pd="$(CDPATH= cd -P -- "$pd" 2>/dev/null && pwd -P)" && [ -n "$pd" ]; then
+      work="${pd%/}/${p##*/}"
+    else
+      pu=1
+    fi
   fi
   file="$work/pass-settings.json" arg="$work/pass-settings.json"
   # On Windows a path left in Git Bash form is read by Claude Code as a folder
@@ -3371,32 +3391,65 @@ memory_override() {
     *) up="$(state_dir_ready "$work" "$root" nocreate)" ;;
   esac
   p=$?
-  if [ "$p" -eq 9 ]; then
-    printf '[%s] ERROR: the runner'"'"'s folder for the pass, %s, is not there as a folder, though the runner made it before the pass'"'"'s snapshot and keeps the snapshot in it, so the fence could not see what the pass changes. Refusing to run.\n' "$(ts)" "$work" >> "$log"
+  # Code 9 says the folder is not there as the checks spell it, which is so for
+  # three causes, and each gets its own line, naming the folder as the runner
+  # made it. Where the folder above could not be entered, the checks cannot see
+  # the folder at all.
+  if [ "$p" -eq 9 ] && [ -n "$pu" ]; then
+    printf '[%s] ERROR: the runner'"'"'s folder for the pass, %s, cannot be reached: this account cannot enter the folder above it, or that folder is not there, so the checks cannot see the folder the runner made. Give this account back its access to that folder, or point TMPDIR at a folder it can enter. Refusing to run.\n' "$(ts)" "$3" >> "$log"
     return 1
   fi
   # The folder above was resolved above, where it could be entered, and the
   # folder's own name kept, so the path that check resolves it to must be the
-  # same, or the folder, or one above it, is a link (put there in between, or
-  # never resolved), and the file would go through another folder.
+  # same, or the folder is a link, or one above it changed in between, and the
+  # file would go through another folder.
   [ "$p" -eq 0 ] && [ "$up" != "$work" ] && p=8
-  # That check compares the two paths by name, and on Windows and macOS a letter
-  # outside ASCII in another case or an 8.3 name spells the same folder another
-  # way, and on every platform path_key gives a vault at a drive or file-system
-  # root a trailing slash the name never matches, so neither the folder nor any
-  # folder above it may be the vault itself, walked as Git Bash spells it and,
-  # on Windows, as a drive path, since a folder under Git Bash's /tmp mount,
-  # where pwd -P keeps that spelling, walks up to / and not to the drive. A
-  # subst or mapped drive, or a mount, whose root lies inside the vault is not
-  # seen (reasoned).
+  # And the path the checks looked at must be the folder as given, compared by
+  # file identity: where the folder as given is there and that path is not, or
+  # where the checks passed a folder that is not it, resolving the folder above
+  # led elsewhere (a link above it changed between cd -P and pwd -P, or a
+  # folder's name ends in a line break, which $(...) drops), and the file would
+  # go to another folder, one someone else may have made.
+  if { [ "$p" -eq 9 ] && [ -d "$3" ]; } || { [ "$p" -eq 0 ] && ! [ "$work" -ef "$3" ]; }; then
+    printf '[%s] ERROR: the runner'"'"'s folder for the pass, %s, is not the folder that resolving the folder above it led to: a folder above it changed while it was resolved, or a folder'"'"'s name ends in a line break, which the resolution drops, so the settings file would go to another folder. Refusing to run.\n' "$(ts)" "$3" >> "$log"
+    return 1
+  fi
+  if [ "$p" -eq 9 ]; then
+    printf '[%s] ERROR: the runner'"'"'s folder for the pass, %s, is not there as a folder, though the runner made it before the pass'"'"'s snapshot and keeps the snapshot in it, so the fence could not see what the pass changes. Refusing to run.\n' "$(ts)" "$3" >> "$log"
+    return 1
+  fi
+  if [ "$p" -eq 10 ]; then
+    printf '[%s] ERROR: the vault, %s, cannot be resolved (this account cannot enter it, or it is not there), so whether the runner'"'"'s folder for the pass lies inside it cannot be checked. Refusing to run.\n' "$(ts)" "$root" >> "$log"
+    return 1
+  fi
+  # The state directory's check of the vault compares the two paths by name, and
+  # on Windows and macOS a letter outside ASCII in another case or an 8.3 name
+  # spells the same folder another way, and on every platform path_key gives a
+  # vault at a drive or file-system root a trailing slash the name never
+  # matches, so neither the folder nor any folder above it may be the vault
+  # itself, walked as Git Bash spells it and, on Windows, as a drive path, since
+  # a folder under Git Bash's /tmp mount, where pwd -P keeps that spelling,
+  # walks up to / and not to the drive. A subst or mapped drive, or a mount,
+  # whose root lies inside the vault is not seen (reasoned). A walk answers 0
+  # (under) or 1 (not under); any other status is no answer, so it refuses
+  # rather than pass as "not under".
   if [ "$p" -eq 0 ]; then
-    if path_under_by_identity "$work" "$root" \
-       || { [ "$win" = 1 ] && path_under_by_identity "${arg%/*}" "$root"; }; then
-      p=4
+    path_under_by_identity "$work" "$root"
+    q=$?
+    if [ "$q" -eq 1 ] && [ "$win" = 1 ]; then
+      path_under_by_identity "${arg%/*}" "$root"
+      q=$?
     fi
+    case "$q" in
+      0) p=4 ;;
+      1) ;;
+      *)
+        printf '[%s] ERROR: the walk that checks whether the runner'"'"'s folder for the pass, %s, lies inside the vault ended with status %s, which is not an answer, so the folder cannot be shown to lie outside the vault. Refusing to run.\n' "$(ts)" "$work" "$q" >> "$log"
+        return 1 ;;
+    esac
   fi
   if [ "$p" -ne 0 ]; then
-    printf '[%s] ERROR: the runner'"'"'s folder for the pass, %s, %s, and the memory override'"'"'s settings file there can name hooks Claude Code runs. Point TMPDIR at a folder outside the vault that only this account can change (on macOS TMPDIR does not move it), or, on Windows, leave it unset; if the vault holds the default temporary folder, as one at a drive root does, move the vault into a folder of its own, or point TMPDIR outside it. Refusing to run.\n' "$(ts)" "$work" "$(state_dir_problem "$p")" >> "$log"
+    printf '[%s] ERROR: the runner'"'"'s folder for the pass, %s, %s, and the memory override'"'"'s settings file there can name hooks Claude Code runs. Point TMPDIR at a folder outside the vault that only this account can change (on macOS TMPDIR does not move it), or, on Windows, leave it unset and schedule the task as your own account; if the vault holds the default temporary folder, as one at a drive root does, move the vault into a folder of its own, or point TMPDIR outside it. Refusing to run.\n' "$(ts)" "$work" "$(state_dir_problem "$p")" >> "$log"
     return 1
   fi
   # Nothing reads a copy an earlier build left in the state directory.
