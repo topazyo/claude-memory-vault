@@ -479,8 +479,17 @@ a lint that does nothing and a lint that found nothing wrong print the same thin
   one "starting" line a refused pass must not. Off Windows, under umask 002, the file is still
   readable by the runner's account only, in a folder only it can enter. A refusal of the runner's
   folder, or (on Linux and macOS) of a path's bytes, with `memory_override` called directly, leaves
-  nothing in that folder or the state directory, a folder that is not there is not made again, and a
-  `TMPDIR` spelled through a link runs with the file in the folder it resolves to. A folder for the
+  nothing in that folder or the state directory, and a folder that is not there is not made again.
+  A `TMPDIR` spelled through a link (where `mktemp` takes `TMPDIR`), or holding a `..` after one
+  (called directly on every platform, and as a pass where `mktemp` takes `TMPDIR`), runs with the
+  file in the folder `mktemp -d` made, and never in a folder of the same name in the link's own
+  folder. A folder above the runner's folder that this account cannot enter, a vault that cannot be
+  resolved (both off Windows), an identity walk that ends without an answer, and, off Windows, a
+  folder whose resolved path is not the folder itself (a folder above it named with a line break at
+  its end) are each refused with a line of their own. A copy of the file an earlier build left in
+  the state directory stays when the folder fails its checks and is gone when a planted name is
+  refused after them. Where `mktemp` takes `TMPDIR`, a pass with a `TMPDIR` holding a space runs and
+  hands Claude Code one `--settings`, its path whole. A folder for the
   pass under folders whose names end in `:` runs, and the identity walk still finds a vault above
   such a folder; every such call is bounded. Before the first claude-mode pass two bounded walks
   run, one up that path and one up a drive path (off Windows, the relative shape a stray `cygpath`
@@ -772,9 +781,11 @@ Around that call, each runner does several things an exit code cannot:
   2.1.289, 2.1.292 and 2.1.295), and with an e-acute (one run on 2.1.287, against an earlier
   build), a Write to the folder a `C`-locale conversion named landed with that conversion's file and
   was refused with the runner's. Any other version is unmeasured. For a vault reached as a network
-  path (`//server/share/...` or `//wsl.localhost/...`) and started from Git Bash, Claude Code
-  2.1.289 and 2.1.292 ignored the file and a Write to the default folder landed with it as without
-  it (measured), so on Windows the runner accepts only a drive path. Edit was not probed, and Linux
+  path, measured as `//localhost/c$/...` (this host's own administrative share) and
+  `//wsl.localhost/...`, and started from Git Bash, Claude Code 2.1.289 and 2.1.292 ignored the file
+  and a Write to the default folder landed with it as without it (measured; a share on another
+  server is unmeasured, and refused all the same), so on Windows the runner accepts only a drive
+  path. Edit was not probed, and Linux
   and macOS are unverified. On Windows the runner converts the vault's path and the file's with
   `cygpath` under a UTF-8 locale, because under the runners' `LC_ALL=C` it cuts a path at its first
   character outside the ANSI code page, which made the file name a folder outside the vault, and a
@@ -819,15 +830,25 @@ Around that call, each runner does several things an exit code cannot:
   owns fails the owner check, but not another folder of yours moved into its place by an account
   that can rename entries in `TMPDIR`; one replaced once the checks have resolved it and before
   Claude Code has read the file is written into, or read from, whatever took its place, reasoned);
-  when it, or a folder above it, is a link when the checks resolve it, which the runner's own folder
-  never is, so that it is not the path it resolves to (off Windows a link in a folder every account
-  can write is refused as one, reasoned); when `pass-settings.json`, `pass-settings.new`, or the
+  when this account cannot enter a folder above it, so the checks cannot reach it (a line of its
+  own, not the one for a folder that is not there); when the path resolving the folder above it
+  gives is not the folder itself, compared by file identity, because the file would then go to
+  another folder (a folder above it named with a line break at its end, which the shell drops,
+  measured with the suite's twin off Windows; a link above it repointed while it is resolved,
+  reasoned); when it is a link, which `mktemp -d` never makes, or a folder above it became one during
+  the checks (a link above it that is there all along is resolved and accepted), so that it is not
+  the path it resolves to (off Windows a link in a folder every account can write is refused as
+  one, reasoned); when the identity walk up its path ends with a status that is no answer, so it
+  cannot be shown to lie outside the vault; when the vault itself cannot be resolved (a line naming
+  the vault); when `pass-settings.json`, `pass-settings.new`, or the
   temporary name ending in the runner's process id that the file is written through, is already
   there, since a link there would carry the write elsewhere, a folder would take it in and a FIFO
   would hold the pass (only a name there when the runner checks is seen: one planted after the check
-  is still written through, so only a `TMPDIR` that no other account can change keeps the file
-  safe); when the file cannot be written (off Windows readable by the runner's account only, in a
-  folder only it can enter; on Windows it carries the temporary folder's permissions, which under
+  is still written through; off Windows the folder is your account's with mode 0700, so only a
+  process of your account or root can plant one there, whatever `TMPDIR` says, and on Windows any
+  account that can change the temporary folder can); when the file cannot be written (off Windows
+  readable by the runner's account only, in a folder only it can enter; on Windows it carries the
+  temporary folder's permissions, which under
   the per-user default give it to the account, SYSTEM and Administrators only, measured); and when
   it does not read back byte for byte, because Claude Code 2.1.287 reads an empty or invalid
   settings file as if there were none and grants the folders outside the vault again (measured on
@@ -955,8 +976,9 @@ Around that call, each runner does several things an exit code cannot:
     pass under `TMPDIR` (or `/tmp`; on macOS in the per-user temporary folder, where Apple's
     `mktemp` makes it even when `TMPDIR` names another folder), which `mktemp -d` makes private off
     Windows and which must pass the state directory's checks and an identity check of its own. The
-    file is written, checked and handed to Claude Code through the folder's resolved path, so a link
-    in `TMPDIR`'s spelling cannot be pointed at another folder after the checks; a link inside the
+    file is written, checked and handed to Claude Code through the folder's resolved path, the
+    folder above it resolved as `mktemp -d` resolved it, so a link in `TMPDIR`'s spelling, or a `..`
+    after one, cannot be pointed at another folder after the checks; a link inside the
     vault that leads to the folder, or to one above it, is not seen, and may put the file within the
     agent's reach (unmeasured). As for the state directory, a group-writable folder above it is
     allowed, and a member of that group could rename the folder and put their own in its place; so
@@ -965,17 +987,18 @@ Around that call, each runner does several things an exit code cannot:
     not seen: keep `TMPDIR`, and every folder above it, owned by your account or by root, and
     writable by no other account unless it has the sticky bit, as `/tmp` has. On Windows it carries
     the temporary folder's permissions and the runner cannot read them, so leave `TMPDIR` unset
-    there unless the `//?/` limit below needs a shorter folder: the folder is then made in Git
-    Bash's `/tmp`, this account's temporary folder, which only the account, SYSTEM and
-    Administrators can change (measured; on the one host measured, setting `TEMP` and `TMP` for the
-    `.cmd` did not move `/tmp`, and a Git Bash login shell sets `TMPDIR` to the same folder, spelled
-    `C:/...`). That advice assumes the task runs as your own account, whose `TEMP` is a folder of its
-    own: a task run as SYSTEM gets `C:\Windows\Temp` instead, which the per-user default does not
-    describe (unmeasured), so schedule the passes as your account. The same folder has held the
-    pass's snapshots, its steering backup and the folder git
-    takes hooks from since 1.4.0, reached through `TMPDIR` as spelled, so name the folder itself
-    rather than a link to it; only a claude-mode pass checks it, and command mode does not, as in
-    1.4.0. The settings file adds a file there whose hooks Claude Code would run as your account at
+    there, and schedule the task as your own account, unless the `//?/` limit below needs a shorter
+    folder: the folder is then made in Git Bash's `/tmp`, this account's temporary folder, which only
+    the account, SYSTEM and Administrators can change (measured; on the one host measured, setting
+    `TEMP` and `TMP` for the `.cmd` did not move `/tmp`, and a Git Bash login shell sets `TMPDIR` to
+    the same folder, spelled `C:/...`). That advice assumes the task runs as your own account, whose
+    `TEMP` is a folder of its own: a task run as SYSTEM gets `C:\Windows\Temp` instead (unmeasured),
+    whose permissions the per-user default does not describe. The same folder has held the pass's
+    snapshots, its steering backup and the folder git
+    takes hooks from since 1.4.0, reached through `TMPDIR` as spelled, so name the folder itself,
+    with no link and no `..` in its spelling; only a claude-mode pass checks it, and command mode
+    does not, as in 1.4.0. The settings file adds a file there whose hooks Claude Code would run
+    as your account at
     every claude-mode pass, whether or not the vault is a git repository.
   - The runner's folder for the pass also holds the pass's "before" snapshot. A folder that is gone
     when the override is written is refused (exit 1), and so is a link put in its place before the
@@ -983,7 +1006,8 @@ Around that call, each runner does several things an exit code cannot:
     your account, by root, or on Windows by any account that can change the temporary folder, is not
     seen (reasoned), nor, off Windows, another folder of yours moved into its place by an account
     that can rename entries in `TMPDIR`, nor one replaced once the checks have resolved it and
-    before Claude Code has read the settings file, and one removed while the agent runs, or after it
+    before Claude Code has read the settings file, which is then written into, or read from,
+    whatever took its place (both reasoned). One removed while the agent runs, or after it
     ran, takes the snapshot with it, and the fence then compares the pass with nothing: writes the
     agent made under `90-auto-memory/` and to `AGENTS.md` stayed in the vault and no tripwire was
     set (measured on 1.4.0 and on this release with a stand-in agent; other steering surfaces are
@@ -1023,10 +1047,12 @@ Around that call, each runner does several things an exit code cannot:
     cannot read its permissions on Windows, so make it private yourself, as for a state directory
     (`docs/setup.md`, Troubleshooting).
   - On Windows a vault on a network path is refused with `which is not a Windows drive path`. For
-    one reached as `//server/share/...` or `//wsl.localhost/...` and started from Git Bash, Claude
-    Code 2.1.289 and 2.1.292 ignored the settings file and kept granting the default memory folder
-    outside the vault (measured). The `.cmd` wrappers cannot start such a vault at all (`CMD does
-    not support UNC paths as current directories`). A mapped drive gives a drive path and runs: for
+    one reached as `//localhost/c$/...` (this host's own administrative share) or
+    `//wsl.localhost/...` and started from Git Bash, Claude Code 2.1.289 and 2.1.292 ignored the
+    settings file and kept granting the default memory folder outside the vault (measured; a share
+    on another server is unmeasured, and refused all the same). The `.cmd` wrappers cannot start
+    such a vault at all (`CMD does not support UNC paths as current directories`). A mapped drive
+    gives a drive path and runs: for
     one drive mapped to the measuring host's own administrative share (`\\localhost\c$`), a Write to
     the default folder was refused with the file (2.1.289 and 2.1.292, measured through
     `dream-pass.cmd`). A drive mapped to another server is unmeasured, and where that server reports
@@ -1534,7 +1560,7 @@ Known limits, each failing in the quiet direction:
 | `RUNNER_RUN_LOG_MAX_BYTES` | `10000000` | both runners: the size above which a pass's run log in `.claude/logs` is cut to its newest part after the pass |
 | `RUNNER_GIT_TIMEOUT` | `120` seconds | all three runners: how long each git step of the runner commit (staging, then the commit and its signing) may take before it is stopped and the run exits 4. In `vault-retention.sh` it bounds the history walk and the move as well, and a step it stops there gives 75 before any move or 71 after one |
 | `VAULT_STATE_DIR` | per-vault directory under `%LOCALAPPDATA%` or `~/.local/state` | all three runners: the run lock, the quarantine, the tripwire and in-flight copies, the pre-pass backup of a running pass, and the retention runner's legacy reports and its `retention-inflight` recovery file, all outside the vault, and `vault-check.sh`, which looks for the tripwire copy there. An absolute path is required, and a Windows path is converted. A relative one, one containing `..`, or one inside the vault is replaced with a directory under the system temp folder, and the runner logs a warning. A state directory the runner's account does not own or cannot write stops the run with exit 1. Give each vault its own value |
-| `TMPDIR` | unset (`/tmp`; on macOS the per-user temporary folder, whatever `TMPDIR` says) | the dream and promotion runners: where each makes its own folder for the pass with `mktemp -d`, holding the snapshots, the steering backup, git's hooks folder and, in claude mode, `pass-settings.json`, which Claude Code reads as settings, hooks and other commands among them. Keep it a folder only your account can change; on Windows leave it unset unless a path near 260 characters needs a shorter folder (§ 4.3, Known limits) |
+| `TMPDIR` | unset (`/tmp`; on macOS the per-user temporary folder, whatever `TMPDIR` says) | the dream and promotion runners: where each makes its own folder for the pass with `mktemp -d`, holding the snapshots, the steering backup, git's hooks folder and, in claude mode, `pass-settings.json`, which Claude Code reads as settings, hooks and other commands among them. Keep it a folder only your account can change, named with no link and no `..`; on Windows leave it unset and schedule the task as your own account, unless a path near 260 characters needs a shorter folder (§ 4.3, Known limits) |
 | `BASH_EXE` | standard Git for Windows paths | all three `.cmd` wrappers |
 | `VAULT_FORCE_NO_JQ` | unset | `vault-lint.sh` and `postcompact-wrap-up.sh`: take the no-jq branch even when `jq` is installed |
 

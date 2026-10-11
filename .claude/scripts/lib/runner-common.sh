@@ -3206,9 +3206,10 @@ note_tripwire() {
 # the runners' LC_ALL=C it cuts a path at its first character outside the ANSI
 # code page, which made the file name a folder outside the vault. Each converted
 # path must be a drive path and name, converted back, the very folder or file it
-# came from. A network path is refused: for a vault reached as //host/share,
-# Claude Code 2.1.289 and 2.1.292 ignored the file and kept granting the
-# default folder.
+# came from. A network path is refused: for a vault reached as //localhost/c$
+# (the host's own administrative share) or //wsl.localhost, Claude Code 2.1.289
+# and 2.1.292 ignored the file and kept granting the default folder; a share on
+# another server is unmeasured.
 #
 # The checks refuse a pass the file would not protect: outside Git Bash where
 # no cygpath is found, an agent binary that is a Windows program, which would

@@ -57,10 +57,11 @@ What that covers, and what it does not:
   `net use` to the measuring host's own administrative share (`\\localhost\c$`), started through
   `dream-pass.cmd`: a Write there landed without the runner's file and was refused with it.
 - **A vault on a `//` network path is refused, because the file does not protect it.** For a vault
-  reached as `//server/share/...` or `//wsl.localhost/...` and started from Git Bash, Claude Code
-  2.1.289 and 2.1.292 ignored the runner's file: a Write to the default memory folder landed with
-  it as without it (measured). On Windows the runner now accepts only a drive path for the vault
-  and for its settings file, and refuses any other with exit 1. The `.cmd` wrappers could not
+  reached as `//localhost/c$/...` (the measuring host's own administrative share) or
+  `//wsl.localhost/...` and started from Git Bash, Claude Code 2.1.289 and 2.1.292 ignored the
+  runner's file: a Write to the default memory folder landed with it as without it (measured; a
+  share on another server is unmeasured, and refused all the same). On Windows the runner now
+  accepts only a drive path for the vault and for its settings file, and refuses any other with exit 1. The `.cmd` wrappers could not
   start such a vault before either. A mapped drive was measured for one mapping only, to the
   measuring host's own administrative share; a drive mapped to another server is unmeasured, and
   for the vault, any other drive letter whose target is a network path (DFS, WebDAV, a local link
@@ -102,6 +103,15 @@ What that covers, and what it does not:
   vault, the folder git takes hooks from. The settings file adds one there whose hooks Claude Code
   would run as your account at every claude-mode pass (a settings file can name hooks; not probed
   here), whether or not the vault is a git repository.
+- **The settings file goes in the folder `mktemp -d` made, however `TMPDIR` is spelled.** An earlier
+  build of this release resolved the folder above it with a logical `cd`, which takes a `..` after a
+  link as text. With `TMPDIR` spelled `<folder>/<link>/..` it named a folder `mktemp` never made, so
+  the pass was refused as if its folder had gone (measured on Linux, and in Git Bash through a
+  junction), and where a folder of that name had been made beforehand in the link's own folder it
+  checked that folder instead and wrote the settings file there (measured on Linux), which on
+  Windows another account able to make folders there could have supplied (reasoned). The folder
+  above is now resolved as `mktemp` resolves it (`cd -P`), and the pass is refused when the path so
+  resolved is not the folder as given, compared by file identity.
 - **Linux and macOS are unverified.** No Claude Code run has measured the grant on either. There the
   runner refuses a vault or settings-file path that does not come back byte for byte when `iconv`
   converts it from UTF-8 to UTF-16LE and back, which Claude Code could read as another folder:
@@ -133,7 +143,8 @@ What that covers, and what it does not:
   (on macOS in the per-user temporary folder, where Apple's `mktemp` makes it even when `TMPDIR`
   names another folder, measured on CI), and removes when the pass ends. They start the agent with
   `--settings <that file>` just before `--disallowedTools`, the file named by its folder's resolved
-  path, so a link in `TMPDIR`'s spelling cannot be pointed elsewhere after the checks. The file
+  path, the folder above it resolved as `mktemp -d` resolves it (`cd -P`), so a link in `TMPDIR`'s
+  spelling, or a `..` after one, cannot be pointed elsewhere after the checks. The file
   holds one key, `autoMemoryDirectory`. On Linux and macOS it is written readable by the runner's
   account only, whatever the umask, in a folder only that account can enter, because a settings file
   can name hooks Claude Code runs; on Windows it carries the temporary folder's permissions. The
@@ -192,13 +203,29 @@ What that covers, and what it does not:
     not hide it, nor, reasoned, an 8.3 name; a `subst` or mapped drive, or a mount, whose root lies
     inside the vault does, reasoned). The walk up its path goes on past a folder whose name ends in
     `:`, where an earlier build of this release looped for ever, holding the run lock and logging
-    nothing (measured on Linux and in Git Bash). Or it, or a folder above it, is a link when the
-    checks resolve it, which the runner's own folder never is, so it is not the path it resolves to
-    (an earlier build of this release resolved such a link and wrote where it led, measured on
-    Linux; off Windows one in a folder every account can write is refused as such, reasoned). Off
+    nothing (measured on Linux and in Git Bash). Or it is a link, which `mktemp -d` never makes, or
+    a folder above it became one during the checks (a link above it that is there all along is
+    resolved and accepted), so it is not the path it resolves to (an earlier build of this release
+    resolved such a link and wrote where it led, measured on Linux; off Windows one in a folder
+    every account can write is refused as such, reasoned). Off
     Windows the folder itself, new from `mktemp -d`, is this account's own with mode 0700, so the
     owner and mode checks on it pass; on Windows those checks do not apply, and the folder carries
     the temporary folder's permissions.
+  - The runner's folder for the pass cannot be reached: this account cannot enter a folder above it,
+    or that folder is not there, so the checks cannot see the folder the runner made. An earlier
+    build of this release said the folder was not there, as if something had removed it (measured
+    on Linux).
+  - The path resolving the folder above the runner's folder gives is not that folder, compared by
+    file identity, so the settings file would go to another folder, one someone else may have made:
+    a folder above it is named with a line break at its end, which the shell drops (measured with
+    the suite's twin, off Windows), or a link above it was repointed while it was resolved
+    (reasoned).
+  - The identity walk up the runner's folder ends with a status that is no answer, so the folder
+    cannot be shown to lie outside the vault. An earlier build of this release read such a status as
+    "not under" (measured on Linux with a stand-in walk).
+  - The vault itself cannot be resolved, so the folder cannot be checked against it. The line names
+    the vault; an earlier build of this release blamed the runner's folder and gave `TMPDIR` advice
+    (measured on Linux).
   - The runner's folder for the pass is not there as a folder. The runner makes it before the pass's
     "before" snapshot and keeps the snapshot in it, so a folder that went away may have taken the
     snapshot with it, and the fence would compare the pass with nothing. It is refused, never made
@@ -217,8 +244,9 @@ What that covers, and what it does not:
     id that the file is written through, is already in that folder, which only another process
     could have put there: a link would carry the write elsewhere, a folder would take it in, and a
     FIFO would hold the pass. Only a name there when the runner checks is seen; one planted after
-    the check is still written through, so only a `TMPDIR` that no other account can change keeps
-    the file safe.
+    the check is still written through. Off Windows the folder is this account's with mode 0700, so
+    only a process of this account or root can plant a name there, whatever `TMPDIR` names; on
+    Windows any account that can change the temporary folder can.
   - The settings file could not be written, or does not read back exactly as written.
   - No settings file was written for the pass, which happens only when the runner and
     `runner-common.sh` come from different releases (Adopting 1). This refusal comes from the
@@ -253,7 +281,18 @@ What that covers, and what it does not:
   wrote through a planted name; and `mem-override-settings-space` and
   `mem-override-work-root-drive`, which hold code that was already right and were seen failing
   against a mutant of it (the `--settings` argument unquoted; on Windows, the drive-path walk
-  removed). `mem-override-flag`, `mem-override-sink-refused`, `mem-override-sink-link`,
+  removed); `mem-override-work-dotdot`, `mem-override-work-backstop`,
+  `mem-override-work-unreachable`, `mem-override-vault-unresolved` and `mem-override-walk-status`,
+  which guard regressions inside this release and were seen failing against the earlier build
+  `53b728b` (on Linux): it refused a folder spelled with `..` after a link, or wrote the file into a
+  folder of the same name in the link's own folder; it took the path a folder name ending in a line
+  break was cut to for the folder; it said a folder it could not reach was gone, and blamed the
+  runner's folder for a vault it could not resolve; and it read a walk's error as "not under"
+  (work-dotdot's second leg and work-backstop failed against `444ec86` as well); and
+  `mem-override-state-copy` and `mem-override-work-space`, which hold code that was already right
+  and were seen failing against mutants of it (the stale copy removed before every check, or after
+  the check for planted names; the folder for the pass unquoted in the off-Windows check).
+  `mem-override-flag`, `mem-override-sink-refused`, `mem-override-sink-link`,
   `mem-override-sink-hardlink`, `mem-override-sink-contained`, `mem-override-sink-fifo`,
   `mem-override-path-refused`, `mem-override-nonascii`, `mem-override-order`,
   `mem-override-mixed-release`, `mem-override-unc-refused`, `mem-override-work-refused`,
@@ -263,7 +302,19 @@ What that covers, and what it does not:
   folders whose names end in `:`, every call bounded), `mem-override-work-gone` (a folder for the
   pass that is not there), `mem-override-work-names` (`pass-settings.json`, `pass-settings.new` or
   the temporary name planted in that folder), `mem-override-settings-space` (a settings path holding
-  a space, handed over as one argument) and `dream-agent-tools` are required on every suite job.
+  a space, handed over as one argument), `mem-override-work-dotdot` (`memory_override` called
+  directly with its folder spelled with `..` after a link, a junction on Windows, with and without a
+  folder of the same name in the link's own folder, and where `mktemp` takes `TMPDIR` a dream pass
+  with that `TMPDIR`), `mem-override-state-copy` (a copy an earlier build left in the state
+  directory kept when the folder fails its checks, and gone when a planted name is refused after
+  them), `mem-override-walk-status` (a walk that ends with no answer) and `dream-agent-tools` are
+  required on every suite job. `mem-override-work-space`, a pass with a `TMPDIR` holding a space, is
+  required on the ubuntu and Windows jobs, where `mktemp` takes `TMPDIR`, and not on macOS.
+  `mem-override-work-backstop` (a folder above named with a line break at its end),
+  `mem-override-work-unreachable` (a folder above that this account cannot enter) and
+  `mem-override-vault-unresolved` (a vault that is not there) are required on the Linux and macOS
+  jobs and not on Windows, where NTFS names hold no line break, Git Bash's mode bits are not
+  permissions, and `cygpath`'s round trip refuses a vault that is not there first.
   `mem-override-work-root-drive`, a vault at the drive root refused by the drive-path walk alone, is
   required on the Windows job only. `mem-override-sink-unreadable`, `mem-override-sink-filelink`,
   `mem-override-file-mode`, `mem-override-utf8-refused`, `mem-override-winbin`,
@@ -273,7 +324,8 @@ What that covers, and what it does not:
   required on the Windows job, the only one with `cygpath`. `mem-override-work-case`,
   `memory_override` called directly with its folder inside the vault, spelled with a letter in the
   other case, is required on the Windows and macOS jobs, whose file systems ignore case, and not on
-  ubuntu. `mem-override-work-resolved`, a `TMPDIR` spelled through a link, is required on the ubuntu
+  ubuntu. `mem-override-work-resolved`, a `TMPDIR` spelled through a link, the link last with no
+  `..` after it, is required on the ubuntu
   and Windows jobs, where `mktemp` takes `TMPDIR`, and not on macOS. `mem-override-utf8-lax-host`,
   required on the ubuntu job only, is recorded where `iconv`'s conversion to UTF-8 lets a sequence
   above U+10FFFF through, as glibc's does, so that job shows its UTF-8 twins can tell the round trip
@@ -401,41 +453,55 @@ What that covers, and what it does not:
     leaves open the route this release closes, which nobody measured; on Claude Code 2.1.284 no
     pass lost anything, because every `Skill` call was already refused under `-p`. In that vault
     `run-tests.sh`'s `dream-agent-tools` control fails until you remove it.
-14. **On Windows a vault on a network path no longer runs from Git Bash.** A vault reached as
-    `//server/share/...` or `//wsl.localhost/...` (a NAS share, the WSL file system, a Documents
-    folder redirected to a server) was accepted from Git Bash by an earlier build of this release,
-    but Claude Code did not honour the memory override for it (measured), so such a pass now exits 1
-    with `cygpath gave //... for a path of the memory override, which is not a Windows drive path`.
-    Move the vault to a local drive. A mapped drive letter (`net use Z: \\server\share`) gives a
-    drive path, which the runner accepts, but it was measured for one mapping only, to the measuring
-    host's own administrative share (`\\localhost\c$`), where a memory Write to the default folder
-    was refused (Claude Code 2.1.289 and 2.1.292, through `dream-pass.cmd`). A drive mapped to a NAS
-    or another server is unmeasured, and where that server reports no file IDs the runner's
-    identity checks could refuse it (reasoned). A share other accounts can write gives them the
+14. **On Windows a vault on a network path no longer runs from Git Bash.** A vault on a `//` path
+    (a NAS share, the WSL file system, a Documents folder redirected to a server) was accepted from
+    Git Bash by an earlier build of this release, but for one reached as `//localhost/c$/...` (the
+    measuring host's own administrative share) or `//wsl.localhost/...` Claude Code did not honour
+    the memory override (measured; a share on another server is unmeasured), so such a pass now
+    exits 1 with `cygpath gave //... for a path of the memory override, which is not a Windows drive
+    path`. Move the vault to a local drive. A mapped drive letter gives a drive path, which the
+    runner accepts, but only one mapped to the measuring host's own administrative share
+    (`\\localhost\c$`) was measured, where a memory Write to the default folder was refused (Claude
+    Code 2.1.289 and 2.1.292, through `dream-pass.cmd`). A drive mapped to a NAS, another server or
+    `\\wsl.localhost\...` is unmeasured, and Claude Code may ignore the file there as it did for the
+    `//` form; where that server reports no file IDs the runner's identity checks could refuse it
+    (reasoned). A share other accounts can write gives them the
     vault's `.claude/` too, hooks among it, so map only one that no other account can change. The
     `.cmd` wrappers cannot start a vault from a `//` path (`CMD does not support UNC paths as
     current directories`, measured on this release).
 15. **A claude-mode pass refuses to start when its folder under `TMPDIR` fails the state directory's
-    checks, lies inside the vault by file identity, is not the path it resolves to, is not there, or
-    already holds a name the settings file is written through.** The log says `the runner's folder
-    for the pass, ...`, then why (`resolves into the vault`, `is inside a folder every account can
-    write that has no sticky bit`, `is not the path it resolves to`, and so on), `and the memory
-    override's settings file there can name hooks Claude Code runs`. A folder that is not there
-    gives `is not there as a folder, though the runner made it before the pass's snapshot`:
-    something removed it during the pass (you, root, an account that owns a folder above it, or on
-    Windows another account under a `TMPDIR` it can change; a cleaning tool is unlikely to pick a
-    folder that new), so find what and stop it. A planted name gives `was already there, and the
-    memory override is written through it`: something else writes in that temporary folder, so point
-    `TMPDIR` at one only your account can change. A vault that holds the default temporary folder,
+    checks, lies inside the vault by file identity, is not the path it resolves to, is not there,
+    cannot be reached, is not the folder its resolution led to, or already holds a name the settings
+    file is written through.** The log says `the runner's folder for the pass, ...`, then why
+    (`resolves into the vault`, `is inside a folder every account can write that has no sticky bit`,
+    `is not the path it resolves to`, and so on), `and the memory override's settings file there can
+    name hooks Claude Code runs`. A folder that is not there gives `is not there as a folder, though
+    the runner made it before the pass's snapshot`: something removed it during the pass (you, root,
+    an account that owns a folder above it, or on Windows another account under a `TMPDIR` it can
+    change; a cleaning tool is unlikely to pick a folder that new), so find what and stop it. If
+    `TMPDIR` was already unset, or already named a folder only your account can change, a process
+    running as you, as root or as an administrator did it: find that process before the next pass.
+    A folder above it that your account cannot enter gives `cannot be reached: this account cannot
+    enter the folder above it`: give your account back its access, or point `TMPDIR` at a folder it
+    can enter. `is not the folder that resolving the folder above it led to` means a folder above it
+    is named with a line break at its end, or a link above it changed during the pass: rename the
+    folder, or find what changed the link. A planted name gives `was already there, and the memory
+    override is written through it`. Off Windows the folder is yours with mode 0700, so a process of
+    your account or root wrote there; another `TMPDIR` does not stop it, so find that process. On
+    Windows any account that can change the temporary folder can do it: leave `TMPDIR` unset,
+    schedule the task as your own account, and find what wrote there. A vault the pass cannot
+    resolve gives `the vault, ..., cannot be resolved`: check that the vault's folder is there and
+    that the task's account can enter it. A vault that holds the default temporary folder,
     as one at a drive root does, must move into a folder of its own, or `TMPDIR` must point outside
     it. The default temporary folder passes on Linux (`/tmp`, sticky), macOS (a per-user folder) and
     Windows (Git Bash's `/tmp`, this account's temporary folder), measured on CI's three platforms.
     If you set `TMPDIR` for the passes, point it at a folder outside the vault that only your
-    account can change, named directly rather than through a link: the settings file is reached
+    account can change, named directly, with no link and no `..`: the settings file is reached
     through the folder's resolved path, but the snapshots, the steering backup and git's hooks
     folder there are reached through `TMPDIR` as spelled, as in 1.4.0. On Windows the runner cannot
-    read a folder's permissions, so leave `TMPDIR` unset there unless item 9's `//?/` refusal needs
-    a shorter folder (on the one host measured, setting `TEMP` and `TMP` for the `.cmd` did not move
+    read a folder's permissions, so leave `TMPDIR` unset there, and schedule the task as your own
+    account, unless item 9's `//?/` refusal needs a shorter folder (on the one host measured,
+    setting `TEMP` and `TMP` for the `.cmd` did not move
     Git Bash's `/tmp`, and a Git Bash login shell sets `TMPDIR` to this account's temporary folder,
     the same folder). That advice assumes the task runs as your own account, whose `TEMP` is a
     folder of its own: a task run as SYSTEM gets `C:\Windows\Temp` instead (unmeasured), so schedule

@@ -65,9 +65,10 @@ runner's own, passed with `--settings`, that points Claude Code's memory folder 
 `90-auto-memory/.pass-agent/` inside the vault, where the write fence sees it. That was measured
 for the Write tool on Windows only, for a vault on a drive path, on the Claude Code versions
 `docs/reference.md` § 4.3 lists; any other version is unmeasured. Claude Code 2.1.289 and 2.1.292
-ignored the file for a vault reached as `//server/share/...` or `//wsl.localhost/...`, so on
-Windows the runner refuses one. Managed settings outrank the file, and a pass refuses to start when
-the folder already holds anything but a plain `.DS_Store` file. `docs/reference.md` § 4.3, in the
+ignored the file for a vault reached as `//localhost/c$/...` (the host's own administrative share)
+or `//wsl.localhost/...`, so on Windows the runner refuses a vault on any `//` network path (a
+share on another server is unmeasured). Managed settings outrank the file, and a pass refuses to
+start when the folder already holds anything but a plain `.DS_Store` file. `docs/reference.md` § 4.3, in the
 dream and promotion runners' **Write fence** item, has the limits.
 
 ## Sources
