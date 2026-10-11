@@ -3110,25 +3110,27 @@ else
     rm -rf "$TMP/memovr-names-a${NL}b"
     # And the line for a folder that fails the state directory's checks names it
     # as the checks see it: here a folder above, named with a line break inside,
-    # that every account can write and that has no sticky bit.
-    rm -rf "$TMP/memovr-names-c${NL}d" "$TMP/memovr-names.log"
+    # that every account can write and that has no sticky bit, reached through a
+    # link, so the folder as given and as the checks see it are spelled apart.
+    rm -rf "$TMP/memovr-names-c${NL}d" "$TMP/memovr-names-lnk" "$TMP/memovr-names.log"
     mkdir -p "$TMP/memovr-names-c${NL}d" && chmod 777 "$TMP/memovr-names-c${NL}d" && ( umask 077 && mkdir "$TMP/memovr-names-c${NL}d/w" )
+    ln -s "$TMP/memovr-names-c${NL}d" "$TMP/memovr-names-lnk" 2>/dev/null
     mo_nlr="$(cd "$TMP/memovr-names-c${NL}d" 2>/dev/null && pwd -P)"
-    if [ -z "$mo_nlr" ] || [ ! -d "$TMP/memovr-names-c${NL}d/w" ]; then
-      bad "mem-override-work-names: a folder every account can write, named with a line break inside, could not be made"
+    if [ -z "$mo_nlr" ] || [ ! -d "$TMP/memovr-names-c${NL}d/w" ] || [ ! -L "$TMP/memovr-names-lnk" ]; then
+      bad "mem-override-work-names: a folder every account can write, named with a line break inside, or the link to it, could not be made"
     else
-      mo_direct "$RV" "$TMP/memovr-names-c${NL}d/w" "$TMP/memovr-names.log"
+      mo_direct "$RV" "$TMP/memovr-names-lnk/w" "$TMP/memovr-names.log"
       mo_rc=$?
       if [ "$mo_rc" -eq 1 ] && [ "$(grep -c '' "$TMP/memovr-names.log" 2>/dev/null)" = 1 ] \
          && grep -F -- "ERROR: the runner's folder for the pass, $(printf '%s' "$mo_nlr" | tr '\n' '?')/w, " "$TMP/memovr-names.log" 2>/dev/null \
             | grep -F -- "and the memory override's settings file there can name hooks Claude Code runs" | grep -q '^\[[^]]*\] ERROR: ' \
          && [ -z "$(ls -A "$TMP/memovr-names-c${NL}d/w" 2>/dev/null)" ]; then
-        ok "claude mode: a folder for the pass under a folder every account can write, named with a line break inside -> memory_override, called directly, refused (1) on one line naming the folder as the checks see it, the break shown as ?, nothing written"
+        ok "claude mode: a folder for the pass under a folder every account can write, named with a line break inside, reached through a link -> memory_override, called directly, refused (1) on one line naming the folder as the checks see it, the break shown as ?, nothing written"
       else
-        bad "claude mode: a folder for the pass under a folder every account can write, named with a line break inside -- memory_override, called directly, did not refuse on one line naming the folder with the break shown as ?, or wrote -- got $mo_rc: $(tr '\n' '|' < "$TMP/memovr-names.log" 2>/dev/null)"
+        bad "claude mode: a folder for the pass under a folder every account can write, named with a line break inside, reached through a link -- memory_override, called directly, did not refuse on one line naming the folder as the checks see it with the break shown as ?, or wrote -- got $mo_rc: $(tr '\n' '|' < "$TMP/memovr-names.log" 2>/dev/null)"
       fi
     fi
-    rm -rf "$TMP/memovr-names-c${NL}d"
+    rm -rf "$TMP/memovr-names-c${NL}d" "$TMP/memovr-names-lnk"
   fi
 fi
 rm -rf "$TMP/memovr-names" "$TMP/memovr-names.log" "$TMP/memovr-names-target" "$TMP/memovr-names-dir" "$TMP/memovr-names-absent"
@@ -3279,11 +3281,30 @@ else
     else
       bad "claude mode: the drive-path walk ends with status 2 after the first walk answers not under -- memory_override, called directly, read it as an answer -- got $mo_rc, folder holds: $(ls -A "$mo_ws" 2>/dev/null | tr '\n' ' '): $(cat "$TMP/memovr-ws.log" 2>/dev/null)"
     fi
+    printf '  INFO  [mem-override-walk-status] the leg with the folder given through a link above runs off Windows only, where ln -s makes a link without a privilege (not counted)\n'
   else
     printf '  INFO  [mem-override-walk-status] the drive-path walk leg runs on Windows only, where memory_override makes that second walk (not counted)\n'
+    # The line names the folder as the checks see it: the same walk, the folder
+    # given through a link above, so the two spellings differ.
+    rm -f "$TMP/memovr-ws.log" "$TMP/memovr-ws-lnk"
+    if ln -s "$TMP/memovr-ws" "$TMP/memovr-ws-lnk" 2>/dev/null && [ -L "$TMP/memovr-ws-lnk" ]; then
+      ( LC_ALL=C; export LC_ALL; . "$RV/.claude/scripts/lib/runner-common.sh"; AGENT_BIN="$FAKE"
+        path_under_by_identity() { return 2; }
+        memory_override "$RV" "${CASE_STATE:-$TMP/state}" "$TMP/memovr-ws-lnk/w" "$TMP/memovr-ws.log" )
+      mo_rc=$?
+      if [ "$mo_rc" -eq 1 ] && grep -F -- "the runner's folder for the pass, $mo_ws, lies inside the vault ended with status 2, $MO_WALKST" "$TMP/memovr-ws.log" 2>/dev/null | grep -q '^\[[^]]*\] ERROR: ' \
+         && [ -z "$(ls -A "$mo_ws" 2>/dev/null)" ] && [ ! -e "${CASE_STATE:-$TMP/state}/pass-settings.json" ]; then
+        ok "claude mode: an identity walk that ends with status 2, the folder given through a link above -> memory_override, called directly, refused (1) naming the folder as the checks see it, nothing written"
+      else
+        bad "claude mode: an identity walk that ends with status 2, the folder given through a link above -- memory_override, called directly, did not refuse naming the folder as the checks see it ($mo_ws), or wrote -- got $mo_rc: $(cat "$TMP/memovr-ws.log" 2>/dev/null)"
+      fi
+    else
+      bad "mem-override-walk-status: the link above the folder could not be made"
+    fi
+    rm -f "$TMP/memovr-ws-lnk"
   fi
 fi
-rm -rf "$TMP/memovr-ws" "$TMP/memovr-ws.log"
+rm -rf "$TMP/memovr-ws" "$TMP/memovr-ws.log" "$TMP/memovr-ws-lnk"
 # cygpath failing on either path the override needs refuses the pass, rather
 # than passing an empty value, and so does cygpath succeeding with a path that
 # names another folder or file, which neither its exit status nor an emptiness
@@ -3456,7 +3477,26 @@ else
   else
     bad "claude mode outside Git Bash: an agent name holding a line break -- memory_override, called directly, did not refuse on one line showing the break as ? -- got $mo_rc: $(tr '\n' '|' < "$TMP/memovr-bin.log" 2>/dev/null)"
   fi
-  rm -rf "$TMP/memovr-bin-w" "$TMP/memovr-bin.log"
+  # And so is the path of one that looks like a Windows program: a .Exe under a
+  # folder named with a line break inside.
+  rm -rf "$TMP/memovr-bin-a${NL}b" "$TMP/memovr-bin.log"
+  mkdir -p "$TMP/memovr-bin-a${NL}b" && cp "$FAKE" "$TMP/memovr-bin-a${NL}b/claude.Exe" 2>/dev/null \
+    && chmod +x "$TMP/memovr-bin-a${NL}b/claude.Exe"
+  if [ ! -x "$TMP/memovr-bin-a${NL}b/claude.Exe" ]; then
+    bad "mem-override-winbin: the .Exe stand-in under a folder named with a line break could not be made"
+  else
+    ( LC_ALL=C; export LC_ALL; . "$RV/.claude/scripts/lib/runner-common.sh"; AGENT_BIN="$TMP/memovr-bin-a${NL}b/claude.Exe"
+      memory_override "$RV" "${CASE_STATE:-$TMP/state}" "$TMP/memovr-bin-w" "$TMP/memovr-bin.log" )
+    mo_rc=$?
+    if [ "$mo_rc" -eq 1 ] && [ "$(grep -c '' "$TMP/memovr-bin.log" 2>/dev/null)" = 1 ] \
+       && grep -F -- "Claude Code here ($TMP/memovr-bin-a?b/claude.Exe) $MO_WINBIN" "$TMP/memovr-bin.log" 2>/dev/null | grep -q '^\[[^]]*\] ERROR: ' \
+       && [ -z "$(ls -A "$TMP/memovr-bin-w" 2>/dev/null)" ]; then
+      ok "claude mode outside Git Bash: a .Exe agent under a folder named with a line break -> memory_override, called directly, refused (1) as a Windows program on one line, the break shown as ?"
+    else
+      bad "claude mode outside Git Bash: a .Exe agent under a folder named with a line break -- memory_override, called directly, did not refuse as a Windows program on one line showing the break as ? -- got $mo_rc: $(tr '\n' '|' < "$TMP/memovr-bin.log" 2>/dev/null)"
+    fi
+  fi
+  rm -rf "$TMP/memovr-bin-w" "$TMP/memovr-bin.log" "$TMP/memovr-bin-a${NL}b"
   chmod 755 "$MO_MZ/bin/claude" 2>/dev/null
   rm -rf "$MO_MZ"
 fi
@@ -6394,7 +6434,7 @@ ran temp-dir-spelling
 mo_sp_bad=0 mo_sp_n=0 mo_sp_r=0
 for mo_sp in '/b/lnk/../tmp.X' '/b/lnk/..' '../tmp.X' 'C:\b\lnk\..\tmp.X' '/b\lnk\..\tmp.X' 'C:/b/lnk/../tmp.X' \
   '/b//..//tmp.X' '/b/x./tmp.X' '/b/x.' 'C:\b\x.\tmp.X' '/b/x../tmp.X' '/b/.../tmp.X' "/b/x${NL}./tmp.X" \
-  "/b/x$(printf '\033')./tmp.X" 'C:../tmp.X' '..\tmp.X' '/b/x./'; do
+  "/b/x$(printf '\033')./tmp.X" "/b/x$(printf '\t\r')./tmp.X" 'C:../tmp.X' '..\tmp.X' '/b/x./'; do
   mo_sp_n=$((mo_sp_n + 1)) mo_sp_r=$((mo_sp_r + 1))
   mo_spell MINGW64_NT-10.0 "$mo_sp"
   mo_rc=$?
@@ -6416,7 +6456,7 @@ for mo_sp in '/b/./tmp.X' './tmp.X' '.' 'C:\b\.\tmp.X' '/b/.x/tmp.X' '/b/..x/tmp
     bad "temp_dir_spelling_ok, the platform given as Windows, refused [$mo_sp] or logged -- got $mo_rc: $(cat "$TMP/memovr-spell.log" 2>/dev/null)"
   fi
 done
-[ "$mo_sp_bad" -eq 0 ] && ok "temp_dir_spelling_ok, the platform given as Windows -> the $mo_sp_r spellings with a part ending in a dot refused, each on one ERROR: line naming it (a line break and an escape shown as ?), and the $((mo_sp_n - mo_sp_r)) others accepted with nothing logged"
+[ "$mo_sp_bad" -eq 0 ] && ok "temp_dir_spelling_ok, the platform given as Windows -> the $mo_sp_r spellings with a part ending in a dot refused, each on one ERROR: line naming it (a line break, an escape, a tab and a carriage return shown as ?), and the $((mo_sp_n - mo_sp_r)) others accepted with nothing logged"
 if is_windows_host || command -v cygpath >/dev/null 2>&1; then
   printf '  INFO  [temp-dir-spelling] the leg where it must do nothing runs off Windows only, with no cygpath on PATH (not counted)\n'
 else
@@ -6438,9 +6478,11 @@ rm -f "$TMP/memovr-spell.log"
 # a cygpath stand-in, which gives each path back, makes the platform read as
 # Windows, as a stray one does. Control passes in command mode, their folder
 # spelled plainly in a folder only the mktemp stand-in makes, must call git with
-# that folder's nohooks folder, which shows both stand-ins are used; so must the
-# retention runner. Each other leg must be refused (1) with the line before any
-# git call names the nohooks folder, and the agent must never start: the dream
+# that folder's nohooks folder, which shows both stand-ins are used, and start
+# their agent, which shows the record of it works; so must the retention runner
+# call git. Each other leg must be refused (1) with the line before any git call
+# names the nohooks folder or a path under the spelling handed over, and the
+# agent must never start: the dream
 # and promotion runners in claude and in command mode, and the retention runner,
 # with .., and the dream runner with a part ending in a dot. On Windows a folder
 # of the textual name also holds every client hook git may run, each leaving a
@@ -6523,6 +6565,9 @@ mo_k4_nohooks() {  # how many recorded git calls name a nohooks folder
 mo_k4_made() {  # how many recorded git calls name the nohooks folder in a folder the mktemp stand-in made
   grep -F -- "$MO_K4/tgt/tmp." "$MO_K4/git.log" 2>/dev/null | grep -c 'nohooks' | tr -d ' '
 }
+mo_k4_spelled() {  # how many recorded git calls name a path under the spelling handed to the runner
+  grep -F -- "$1/" "$MO_K4/git.log" 2>/dev/null | grep -c '' | tr -d ' '
+}
 if ! mo_link "$MO_K4/tgt/in" "$MO_K4/base/lnk" || [ ! -x "$MO_K4/shim/mktemp" ] || [ -z "$MO_K4_MT" ] || [ -z "$MO_K4_G" ] \
    || ! git -C "$MO_K4_RV" rev-parse --verify -q HEAD >/dev/null 2>&1; then
   bad "temp-dir-spelling: its link, stand-ins or retention vault could not be made, so the runner legs cannot run"
@@ -6532,16 +6577,18 @@ else
   # through the git stand-in, and run to 0.
   mo_rc="$(mo_k4_run dream-pass.sh "$MO_K4/tgt" "$MO_K4/tgt" "" VAULT_AGENT=command VAULT_AGENT_CMD="$FAKE" VAULT_ALLOW_UNENFORCED_TOOLS=1)"
   mo_n="$(mo_k4_made)"
+  mo_a=no; [ -e "$REC.argv" ] && mo_a=yes
   mo_rc3="$(mo_k4_run promotion-pass.sh "$MO_K4/tgt" "$MO_K4/tgt" "" VAULT_AGENT=command VAULT_AGENT_CMD="$FAKE" VAULT_ALLOW_UNENFORCED_TOOLS=1)"
   mo_n3="$(mo_k4_made)"
+  mo_a3=no; [ -e "$REC.argv" ] && mo_a3=yes
   tripwire_clear
   mo_rc2="$(mo_k4_run vault-retention.sh "$MO_K4/tgt" "$MO_K4/tgt" "")"
   mo_n2="$(mo_k4_made)"
-  if [ "$mo_rc" -ne 0 ] || [ "${mo_n:-0}" -lt 1 ] || [ "$mo_rc3" -ne 0 ] || [ "${mo_n3:-0}" -lt 1 ] \
-     || [ "$mo_rc2" -ne 0 ] || [ "${mo_n2:-0}" -lt 1 ]; then
-    bad "temp-dir-spelling: the control runs, with the folder spelled plainly, did not run through both stand-ins (dream in command mode exit $mo_rc with ${mo_n:-0} git call(s) naming the stand-in's nohooks folder, promotion in command mode exit $mo_rc3 with ${mo_n3:-0}, retention exit $mo_rc2 with ${mo_n2:-0}), so the runner legs cannot show anything"
+  if [ "$mo_rc" -ne 0 ] || [ "${mo_n:-0}" -lt 1 ] || [ "$mo_a" = no ] || [ "$mo_rc3" -ne 0 ] || [ "${mo_n3:-0}" -lt 1 ] \
+     || [ "$mo_a3" = no ] || [ "$mo_rc2" -ne 0 ] || [ "${mo_n2:-0}" -lt 1 ]; then
+    bad "temp-dir-spelling: the control runs, with the folder spelled plainly, did not run through both stand-ins (dream in command mode exit $mo_rc with ${mo_n:-0} git call(s) naming the stand-in's nohooks folder, agent started: $mo_a; promotion in command mode exit $mo_rc3 with ${mo_n3:-0}, agent started: $mo_a3; retention exit $mo_rc2 with ${mo_n2:-0}), so the runner legs cannot show anything"
   else
-    ok "temp-dir-spelling: the control runs, with the folder spelled plainly -> the dream and promotion runners in command mode and the retention runner ran (0) and called git with the nohooks folder in the folder the mktemp stand-in made"
+    ok "temp-dir-spelling: the control runs, with the folder spelled plainly -> the dream and promotion runners in command mode started their agent, and they and the retention runner ran (0) and called git with the nohooks folder in the folder the mktemp stand-in made"
     for mo_leg in dream-claude dream-command promotion-claude promotion-command retention dream-dot; do
       mo_log="$MO_LOG" mo_sp="$MO_K4/base/lnk/.." mo_real="$MO_K4/tgt" mo_dec="$MO_K4/base"
       mo_agent=claude mo_cmd= mo_allow=
@@ -6556,16 +6603,17 @@ else
       mo_before="$(mo_lines "$mo_log")"
       mo_rc="$(mo_k4_run "$mo_s" "$mo_sp" "$mo_real" "$mo_dec" VAULT_AGENT="$mo_agent" VAULT_AGENT_CMD="$mo_cmd" VAULT_ALLOW_UNENFORCED_TOOLS="$mo_allow")"
       mo_n="$(mo_k4_nohooks)"
+      mo_n4="$(mo_k4_spelled "$mo_sp")"
       mo_said=absent
       tail -n +"$((mo_before + 1))" "$mo_log" 2>/dev/null | grep -F -- "$MO_DOTWIN" | grep -q '^\[[^]]*\] ERROR: ' && mo_said=present
       mo_fired=none
       [ -s "$MO_K4/fired" ] && mo_fired="$(tr '\n' ' ' < "$MO_K4/fired")"
       mo_started=no
       [ -e "$REC.argv" ] && mo_started=yes
-      if [ "$mo_rc" -eq 1 ] && [ "$mo_said" = present ] && [ "${mo_n:-0}" -eq 0 ] && [ "$mo_fired" = none ] && [ "$mo_started" = no ]; then
-        ok "temp-dir-spelling: $mo_leg, the folder spelled ${mo_sp#"$MO_K4"/}/tmp.* -> refused (1) on an ERROR: line before any git call named its nohooks folder, no hook ran and no agent started"
+      if [ "$mo_rc" -eq 1 ] && [ "$mo_said" = present ] && [ "${mo_n:-0}" -eq 0 ] && [ "${mo_n4:-0}" -eq 0 ] && [ "$mo_fired" = none ] && [ "$mo_started" = no ]; then
+        ok "temp-dir-spelling: $mo_leg, the folder spelled ${mo_sp#"$MO_K4"/}/tmp.* -> refused (1) on an ERROR: line before any git call named its nohooks folder or that spelling, no hook ran and no agent started"
       else
-        bad "temp-dir-spelling: $mo_leg, the folder spelled ${mo_sp#"$MO_K4"/}/tmp.* -- expected exit 1, the line, no git call naming nohooks, no hook and no agent; got exit $mo_rc, line $mo_said, git calls naming nohooks ${mo_n:-0}, hooks run: $mo_fired, agent started: $mo_started"
+        bad "temp-dir-spelling: $mo_leg, the folder spelled ${mo_sp#"$MO_K4"/}/tmp.* -- expected exit 1, the line, no git call naming nohooks or the spelling, no hook and no agent; got exit $mo_rc, line $mo_said, git calls naming nohooks ${mo_n:-0}, naming the spelling ${mo_n4:-0}, hooks run: $mo_fired, agent started: $mo_started"
       fi
       tripwire_clear
     done
@@ -6590,15 +6638,20 @@ mo_k4_clean
 # folder repointed between cd -P and pwd -P, which a shell cannot stage: pwd is
 # replaced by one that reports the folder above as <b>/decoy, a folder of this
 # account that holds w too, so only the comparison by file identity refuses it.
-# Leg E, off Windows: a dangling link at the folder's name in a folder every
-# account can write, where nothing is at either path, keeps the state
-# directory's own line.
+# Leg D2, on every host, does the same with the other folder inside the vault,
+# so the checks refuse it with a code of their own and only the comparison of
+# the folders above sends it to the backstop's line. Leg E, off Windows: a
+# dangling link at the folder's name in a folder every account can write keeps
+# the state directory's own line, though nothing is at either path, because the
+# folder above resolves to itself; leg E2 reaches the same link through a link
+# above, so the two spellings of the folder above differ and only their file
+# identity is the same.
 MO_BACKSTOP="is not the folder that resolving the folder above it led to"
 CASE_STATE="$TMP/state-memovr-bsd"
 rm -rf "$CASE_STATE" "$TMP/memovr-bsd" "$TMP/memovr-bsd.log"
-( umask 077 && mkdir -p "$TMP/memovr-bsd/real/w" "$TMP/memovr-bsd/decoy/w" )
+( umask 077 && mkdir -p "$TMP/memovr-bsd/real/w" "$TMP/memovr-bsd/decoy/w" "$TMP/memovr-bsd/vlt/decoy/w" )
 mo_bsr="$(cd "$TMP/memovr-bsd" 2>/dev/null && pwd -P)"
-if [ -z "$mo_bsr" ] || [ ! -d "$TMP/memovr-bsd/real/w" ] || [ ! -d "$TMP/memovr-bsd/decoy/w" ]; then
+if [ -z "$mo_bsr" ] || [ ! -d "$TMP/memovr-bsd/real/w" ] || [ ! -d "$TMP/memovr-bsd/decoy/w" ] || [ ! -d "$TMP/memovr-bsd/vlt/decoy/w" ]; then
   bad "mem-override-work-backstop: leg D's folders could not be made"
 else
   ran mem-override-work-backstop
@@ -6618,10 +6671,32 @@ else
   else
     bad "claude mode: a folder above the one for the pass that resolves, while it is resolved, to another folder of this account (leg D) -- memory_override, called directly, was not refused as not the folder its resolution led to, or wrote -- got $mo_rc, the other folder holds: $(ls -A "$TMP/memovr-bsd/decoy/w" 2>/dev/null | tr '\n' ' '): $(cat "$TMP/memovr-bsd.log" 2>/dev/null)"
   fi
+  # Leg D2: the same, the other folder inside the vault given (<b>/vlt), so the
+  # checks refuse it for a cause of their own (code 4), and only the comparison
+  # of the folders above sends the refusal to the backstop's line, naming the
+  # folder as given, not the other one.
+  rm -f "$TMP/memovr-bsd.log"
+  ( LC_ALL=C; export LC_ALL; . "$RV/.claude/scripts/lib/runner-common.sh"; AGENT_BIN="$FAKE"
+    pwd() {
+      local o
+      o="$(builtin pwd "$@")"
+      case "$o" in "$mo_bsr/real"|"$mo_bsr/real/"*) o="$mo_bsr/vlt/decoy${o#"$mo_bsr/real"}" ;; esac
+      printf '%s\n' "$o"
+    }
+    memory_override "$mo_bsr/vlt" "$CASE_STATE" "$mo_bsr/real/w" "$TMP/memovr-bsd.log" )
+  mo_rc=$?
+  if [ "$mo_rc" -eq 1 ] && [ "$(grep -c '' "$TMP/memovr-bsd.log" 2>/dev/null)" = 1 ] \
+     && grep -F -- "ERROR: the runner's folder for the pass, $mo_bsr/real/w, $MO_BACKSTOP" "$TMP/memovr-bsd.log" 2>/dev/null | grep -q '^\[[^]]*\] ERROR: ' \
+     && [ -z "$(ls -A "$TMP/memovr-bsd/real/w" 2>/dev/null)" ] && [ -z "$(ls -A "$TMP/memovr-bsd/vlt/decoy/w" 2>/dev/null)" ] \
+     && [ ! -e "$CASE_STATE/pass-settings.json" ]; then
+    ok "claude mode: a folder above the one for the pass that resolves, while it is resolved, to a folder inside the vault (leg D2) -> memory_override, called directly, refused (1) on one line as not the folder its resolution led to, naming the folder as given, nothing written"
+  else
+    bad "claude mode: a folder above the one for the pass that resolves, while it is resolved, to a folder inside the vault (leg D2) -- memory_override, called directly, was not refused on one line as not the folder its resolution led to, or wrote -- got $mo_rc, the other folder holds: $(ls -A "$TMP/memovr-bsd/vlt/decoy/w" 2>/dev/null | tr '\n' ' '): $(tr '\n' '|' < "$TMP/memovr-bsd.log" 2>/dev/null)"
+  fi
 fi
 rm -rf "$CASE_STATE" "$TMP/memovr-bsd" "$TMP/memovr-bsd.log"
 if is_windows_host; then
-  printf '  INFO  [mem-override-work-backstop] legs A, B, C, C2, C3 and C4, a folder above named with a line break at its end, and leg E, a dangling link, run off Windows only: the first six are not attempted here, where Git Bash keeps a line break in a name as a private-use character, and ln -s makes no link here without a privilege (not counted)\n'
+  printf '  INFO  [mem-override-work-backstop] legs A, B, C, C2, C3 and C4, a folder above named with a line break at its end, and legs E and E2, a dangling link, run off Windows only: the first six are not attempted here, where Git Bash keeps a line break in a name as a private-use character, and ln -s makes no link here without a privilege (not counted)\n'
 else
   CASE_STATE="$TMP/state-memovr-nl"
   rm -rf "$CASE_STATE" "$TMP/memovr-nl$NL" "$TMP/memovr-nl" "$TMP/memovr-nl.log"
@@ -6678,25 +6753,34 @@ else
   fi
   rm -rf "$CASE_STATE" "$TMP/memovr-nl$NL" "$TMP/memovr-nl" "$TMP/memovr-nl.log"
   # Leg E: a dangling link at the folder's name, in a folder every account can
-  # write. Nothing is at either path, so the comparison by file identity cannot
-  # be made, and the refusal is the state directory's own, with its line.
+  # write. Nothing is at either path, but the folder above resolves to itself,
+  # so the two paths name the same entry, and the refusal is the state
+  # directory's own, with its line. Leg E2 reaches it through a link above: the
+  # folder above as given and as resolved are spelled apart, the same folder by
+  # file identity, and the line names the folder as the checks see it.
   CASE_STATE="$TMP/state-memovr-dl"
-  rm -rf "$CASE_STATE" "$TMP/memovr-dl" "$TMP/memovr-dl.log"
+  rm -rf "$CASE_STATE" "$TMP/memovr-dl" "$TMP/memovr-dl-lnk" "$TMP/memovr-dl.log"
   mkdir -p "$TMP/memovr-dl" && chmod 777 "$TMP/memovr-dl" && ln -s "$TMP/memovr-dl-none" "$TMP/memovr-dl/w" 2>/dev/null
+  ln -s "$TMP/memovr-dl" "$TMP/memovr-dl-lnk" 2>/dev/null
   mo_dlr="$(cd "$TMP/memovr-dl" 2>/dev/null && pwd -P)"
-  if [ -z "$mo_dlr" ] || [ ! -L "$TMP/memovr-dl/w" ] || [ -e "$TMP/memovr-dl/w" ]; then
-    bad "mem-override-work-backstop: leg E's dangling link in a folder every account can write could not be made"
+  if [ -z "$mo_dlr" ] || [ ! -L "$TMP/memovr-dl/w" ] || [ -e "$TMP/memovr-dl/w" ] || [ ! -L "$TMP/memovr-dl-lnk" ]; then
+    bad "mem-override-work-backstop: leg E's dangling link in a folder every account can write, or the link above it, could not be made"
   else
-    mo_direct "$RV" "$TMP/memovr-dl/w" "$TMP/memovr-dl.log"
-    mo_rc=$?
-    if [ "$mo_rc" -eq 1 ] && grep -F -- "ERROR: the runner's folder for the pass, $mo_dlr/w, is a symlink in a folder every account can write, and the memory override" "$TMP/memovr-dl.log" 2>/dev/null | grep -q '^\[[^]]*\] ERROR: ' \
-       && ! grep -qF -- "$MO_BACKSTOP" "$TMP/memovr-dl.log" 2>/dev/null && [ ! -e "$TMP/memovr-dl-none" ] && [ ! -e "$CASE_STATE/pass-settings.json" ]; then
-      ok "claude mode: a dangling link at the folder for the pass, in a folder every account can write (leg E) -> memory_override, called directly, refused (1) with the state directory's own line, not the comparison's, nothing written"
-    else
-      bad "claude mode: a dangling link at the folder for the pass, in a folder every account can write (leg E) -- memory_override, called directly, was not refused with the state directory's own line, or wrote -- got $mo_rc: $(cat "$TMP/memovr-dl.log" 2>/dev/null)"
-    fi
+    for mo_leg in E E2; do
+      mo_w="$TMP/memovr-dl/w"
+      [ "$mo_leg" = E2 ] && mo_w="$TMP/memovr-dl-lnk/w"
+      rm -f "$TMP/memovr-dl.log"
+      mo_direct "$RV" "$mo_w" "$TMP/memovr-dl.log"
+      mo_rc=$?
+      if [ "$mo_rc" -eq 1 ] && grep -F -- "ERROR: the runner's folder for the pass, $mo_dlr/w, is a symlink in a folder every account can write, and the memory override" "$TMP/memovr-dl.log" 2>/dev/null | grep -q '^\[[^]]*\] ERROR: ' \
+         && ! grep -qF -- "$MO_BACKSTOP" "$TMP/memovr-dl.log" 2>/dev/null && [ ! -e "$TMP/memovr-dl-none" ] && [ ! -e "$CASE_STATE/pass-settings.json" ]; then
+        ok "claude mode: a dangling link at the folder for the pass, in a folder every account can write (leg $mo_leg, given as ${mo_w#"$TMP"/}) -> memory_override, called directly, refused (1) with the state directory's own line naming the folder as the checks see it, not the comparison's, nothing written"
+      else
+        bad "claude mode: a dangling link at the folder for the pass, in a folder every account can write (leg $mo_leg, given as ${mo_w#"$TMP"/}) -- memory_override, called directly, was not refused with the state directory's own line naming the folder as the checks see it, or wrote -- got $mo_rc: $(cat "$TMP/memovr-dl.log" 2>/dev/null)"
+      fi
+    done
   fi
-  rm -rf "$CASE_STATE" "$TMP/memovr-dl" "$TMP/memovr-dl-none" "$TMP/memovr-dl.log"
+  rm -rf "$CASE_STATE" "$TMP/memovr-dl" "$TMP/memovr-dl-lnk" "$TMP/memovr-dl-none" "$TMP/memovr-dl.log"
 fi
 # A TMPDIR holding a space, as TEMP does under a Windows profile named with
 # one: a whole claude-mode pass runs, Claude Code is handed one --settings, and

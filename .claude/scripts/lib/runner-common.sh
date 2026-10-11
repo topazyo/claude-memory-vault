@@ -3203,14 +3203,15 @@ shown_name() {
 #
 # On Windows git.exe reads a folder as TMPDIR spells it, and Win32 reads that
 # spelling as text: it takes a .. back past a link or junction to the folder
-# above the link, and drops the dot from a part that ends in one, where in Git
-# Bash's /c/ spelling mktemp and the runners' own checks follow the junction
-# and keep the dot. With a .. after a junction git took its hooks folder from a
-# folder of the textual name and ran a hook there at the pass's first git
-# status, and with a part such as x. it looked for its hooks in the folder x
-# (both measured in Git Bash's /c/ spelling), folders an account able to make
-# folders there could supply. In the C:/ spelling Win32 reduces the .. for
-# mktemp too, and the two agreed (measured); it is refused all the same.
+# above the link, and drops the dot from a part that ends in one, where mktemp
+# and the runners' own checks follow the junction in Git Bash's /c/ spelling,
+# and keep the dot in either spelling. With a .. after a junction git took its
+# hooks folder from a folder of the textual name and ran a hook there at the
+# pass's first git status, and with a part such as x. it looked for its hooks
+# in the folder x, in the /c/ and the C:/ spelling alike (all measured in Git
+# Bash), folders an account able to make folders there could supply. In the
+# C:/ spelling Win32 reduces the .. for mktemp too, and the two agreed
+# (measured); it is refused all the same.
 # Each runner calls this right after it makes its temporary folder, before any
 # git call, in every mode, and memory_override calls it again for any other
 # caller. On Windows, decided as memory_override decides it (the platform, or a
@@ -3227,7 +3228,7 @@ temp_dir_spelling_ok() {
     *[!/\\]./*|*[!/\\].\\*) ;;
     *) return 0 ;;
   esac
-  printf '[%s] ERROR: the runner'"'"'s temporary folder, %s, is spelled with .. or with a part that ends in a dot, and on Windows git reads that spelling as text, so in Git Bash'"'"'s /c/ spelling it can take its hooks folder, and the commit message, from another folder than the one the runner made (measured in Git Bash). Point TMPDIR at the folder itself, with no part ending in a dot, or leave it unset and schedule the task as your own account. Refusing to run.\n' "$(ts)" "$(shown_name "$1")" >> "$2"
+  printf '[%s] ERROR: the runner'"'"'s temporary folder, %s, is spelled with .. or with a part that ends in a dot, and on Windows git reads that spelling as text, so it can take its hooks folder, and the commit message, from another folder than the one the runner made (measured in Git Bash, for a .. in its /c/ spelling and for a part ending in a dot in either spelling). Point TMPDIR at the folder itself, with no part ending in a dot, or leave it unset and schedule the task as your own account. Refusing to run.\n' "$(ts)" "$(shown_name "$1")" >> "$2"
   return 1
 }
 
@@ -3473,10 +3474,11 @@ memory_override() {
   # as resolved, is the folder above as given (tp): the two paths then name the
   # same entry, and -ef fails only where nothing is there to compare (a dangling
   # link, say). Where the checks passed (p=0) the line is the backstop's either
-  # way, for a folder replaced in between, a race no control can stage.
+  # way, for a folder replaced in between, a race no control can stage. A folder
+  # above at / is compared as /., not //., which Git Bash reads as a network path.
   if { [ "$p" -eq 9 ] && [ -d "$3" ]; } \
      || { [ "$p" -ne 9 ] && [ "$p" -ne 10 ] && ! [ "$work" -ef "$3" ] \
-          && { [ "$p" -eq 0 ] || ! [ "${work%/*}/." -ef "$tp/." ]; }; }; then
+          && { [ "$p" -eq 0 ] || ! [ "${work%/*}/." -ef "${tp%/}/." ]; }; }; then
     printf '[%s] ERROR: the runner'"'"'s folder for the pass, %s, is not the folder that resolving the folder above it led to: a folder above it changed while it was resolved, or a folder'"'"'s name ends in a line break, which the resolution drops, so the settings file would go to another folder. Refusing to run.\n' "$(ts)" "$nm" >> "$log"
     return 1
   fi

@@ -173,7 +173,9 @@ jobs:
           # list only. mem-override-work-colon, mem-override-work-gone,
           # mem-override-work-names and mem-override-settings-space run
           # everywhere: each calls the library directly, with folders the twin
-          # makes itself. mem-override-work-root-drive is on the Windows list
+          # makes itself (work-names' two legs with a line break in a folder
+          # name off Windows only, an INFO line there).
+          # mem-override-work-root-drive is on the Windows list
           # only, because the drive-path walk it holds runs only there.
           # mem-override-work-dotdot, mem-override-state-copy and
           # mem-override-walk-status run everywhere: each calls the library
@@ -183,14 +185,16 @@ jobs:
           # TMPDIR holding a space, so it is off the two macOS lists, whose
           # mktemp ignores TMPDIR. mem-override-work-backstop runs everywhere,
           # its legs with a folder name ending in a line break and its
-          # dangling-link leg off Windows only (an INFO line there). mem-override-work-unreachable (a folder this
+          # dangling-link legs off Windows only (an INFO line there).
+          # mem-override-work-unreachable (a folder this
           # account cannot enter) and mem-override-vault-unresolved (a vault
           # that is not there, which cygpath's round trip refuses first on
           # Windows) are off the Windows list: Git Bash's mode bits are not
           # Windows permissions. temp-dir-spelling runs everywhere: its runner
           # legs hand each runner the spelling through a mktemp stand-in, so
           # macOS's mktemp does not matter, and off Windows a cygpath stand-in
-          # makes the platform read as Windows.
+          # makes the platform read as Windows; its leg where the check must
+          # do nothing runs off Windows only, with no cygpath on PATH.
           # Naming a control that legitimately skips would
           # fail the job for the wrong reason, and naming none of them is how
           # they came to skip everywhere unnoticed.
