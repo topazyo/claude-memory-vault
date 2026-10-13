@@ -30,6 +30,19 @@
 #   VAULT_STATE_DIR     per-vault state outside the vault: run lock, quarantine,
 #                       tripwire copy, in-flight marker (default under
 #                       %LOCALAPPDATA% or ~/.local/state)
+#   TMPDIR              where the runner makes its own folder for the pass (on
+#                       macOS Apple's mktemp uses the per-user temporary
+#                       folder, whatever TMPDIR says): snapshots, backup, git's
+#                       hooks folder and, in claude mode, pass-settings.json,
+#                       which Claude Code reads as settings, hooks and other
+#                       commands among them. Keep it a folder only this account
+#                       can change, named with no link, no .. and no part
+#                       ending in a dot (on Windows, or wherever a cygpath is
+#                       found on PATH, a pass refuses a .. or a part ending in
+#                       a dot, in every mode, before its first git call); on
+#                       Windows schedule the task as your own account, and
+#                       leave it unset unless a long path needs a shorter
+#                       folder (docs/reference.md, Known limits)
 #   RUN_LOCK_WAIT       seconds to wait for another pass's run lock (default 1800)
 #   RUN_LOCK_POLL       seconds between checks while waiting (default 30)
 #   RUNNER_GIT_TIMEOUT  seconds each git step of the journal commit may take
@@ -47,7 +60,8 @@
 #   1    NO-ARTIFACT: exited 0 but no dream journal was added or changed,
 #        or the runner could not set itself up (temp dir, state directory, backup,
 #        prompt file, run lock, in-flight marker, git status), or git cannot
-#        read the vault's repository
+#        read the vault's repository, or in claude mode the memory override
+#        refused the pass (memory_override in lib/runner-common.sh)
 #   2    VIOLATION: files outside the dream journals changed during the run
 #        (steering surfaces among them are contained and the tripwire is set),
 #        or the pass changed a journal that already had uncommitted changes, or
@@ -90,7 +104,12 @@ set -u
 # user's session carries, which no CI job models, and LC_ALL rather than
 # LC_COLLATE because LC_ALL in the environment overrides LC_COLLATE. The pin
 # also covers the other unprefixed awks and the one sed the library runs on this
-# path. Nothing here reads a translated message.
+# path. Nothing here reads a translated message. It also reaches Git Bash's
+# cygpath, which under C cuts a path at its first character outside the ANSI
+# code page, so on Windows memory_override runs its cygpath calls, and
+# state_dir_ready's check of its own folder, under C.UTF-8 and checks what they
+# give; memory_override's own pwd -P and both identity walks run under C, as do
+# the state directory's and path_key's checks elsewhere.
 LC_ALL=C
 export LC_ALL
 
@@ -281,6 +300,9 @@ main() {
     printf '[%s] ERROR: could not create a temporary directory\n' "$(ts)" >> "$LOG"
     exit 1
   }
+  # On Windows git reads this folder as TMPDIR spells it, so a spelling it reads
+  # as another folder is refused before the first git call, in every mode.
+  temp_dir_spelling_ok "$SNAP_DIR" "$LOG" || exit 1
   mkdir -p "$SNAP_DIR/nohooks"
 
   # The journal is committed at the end, so a git operation in progress or a
@@ -328,10 +350,16 @@ main() {
     exit 1
   fi
   HEAD_BEFORE="$(head_state "$ROOT" "$SNAP_DIR/nohooks")"
-  # The last check before anything is written to the shared state directory.
+  # The last check of the run lock before the memory override, the backup and
+  # the in-flight marker touch the shared state directory.
   if ! run_lock_held; then
     printf '[%s] LOCKED: another runner replaced or removed this one'"'"'s owner file in the run lock before the pass started. Not starting.\n' "$(ts)" >> "$LOG"
     exit 75
+  fi
+  # In claude mode, Claude Code's memory for this pass is pointed inside the
+  # fence, or the pass does not start.
+  if [ "$AGENT_KIND" = claude ] && ! memory_override "$ROOT" "$STATE" "$SNAP_DIR" "$LOG"; then
+    exit 1
   fi
   cp "$SNAP_DIR/steering.tar" "$STATE/inflight-backup.tar" 2>/dev/null
   # Without the marker outside the vault, a pass killed mid-run would leave no

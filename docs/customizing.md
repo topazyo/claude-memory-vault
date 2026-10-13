@@ -102,7 +102,7 @@ is the authoritative list.
 | `30-knowledge/moc/VAULT-INDEX.md` | Every Dataview dashboard names its folders in a `from` clause. Miss this and each dashboard quietly returns an empty table. |
 | The five skills in `.claude/skills/` | `obsidian-save`, `wrap-up`, `resume`, `preserve` and `onboard-project` all name tier folders in their filing and reading instructions. |
 | `.claude/scripts/dream-pass.sh`, `promotion-pass.sh` | The write fences and artifact assertions name `20-projects/_logs/`, `31-standards/` and `40-llm-wiki/wiki/`. Miss these and every run exits 2 (VIOLATION) or 1 (NO-ARTIFACT). The `.cmd` wrappers name no tier folder. |
-| `.claude/scripts/lib/runner-common.sh` | The create-only check names `31-standards/` and `40-llm-wiki/wiki/` in a `case` pattern in `long_tier_existing` and another in `check_leftovers`, and `long_tier_existing` lists them for `git ls-tree`, and `REVERT_KEEP_DIRS` names the folders a put-back never removes. Miss the patterns and a promotion pass may change an existing long-tier note again, committed with exit 0 and nothing logged. `promotion-pass.sh` also names them in the grep that lists the long-tier notes a contained pass changed; miss that and a contained pass names none of the notes it left. |
+| `.claude/scripts/lib/runner-common.sh` | The create-only check names `31-standards/` and `40-llm-wiki/wiki/` in a `case` pattern in `long_tier_existing` and another in `check_leftovers`, and `long_tier_existing` lists them for `git ls-tree`, and `REVERT_KEEP_DIRS` names the folders a put-back never removes. Miss the patterns and a promotion pass may change an existing long-tier note again, committed with exit 0 and nothing logged. `promotion-pass.sh` also names them in the grep that lists the long-tier notes a contained pass changed; miss that and a contained pass names none of the notes it left. `memory_override` names `90-auto-memory/.pass-agent`, the folder a claude-mode pass points Claude Code's memory at, in its checks and in the settings file it writes, and the fence's steering list names `90-auto-memory/`. Rename the folder in both together: miss them and a pass checks, and points memory at, a folder that is no longer your memory tier. |
 | `.claude/scripts/run-tests.sh` | Its synthetic fixture paths. These are *not* your vault, but leaving them stale means the suite stops testing the paths you actually use. |
 | `.obsidian/daily-notes.json` | The daily-note folder and template path (vault-root-relative). Obsidian will happily create daily notes in a folder that no longer matches your tier layout. |
 | `.gitignore` | The commented note-exclusion block in section 8 below. |
@@ -382,7 +382,9 @@ already uses `**/*.md`, so nested logs are covered once you uncomment it.
 `90-auto-memory/` also grows per-project subdirectories when a harness keeps its auto-memory there
 (Claude Code's does, once pointed at it), but those are maintained by the harness, not by hand: nothing in there is linted or checked
 (`vault-check.sh` excludes the folder deliberately), so durable knowledge belongs in the long tier,
-never there.
+never there. Keep `90-auto-memory` itself a plain folder, not a symlink or junction: a claude-mode
+dream or promotion pass refuses to start while it is a link, because the fence would see writes
+through it only as the link.
 
 **Keep `PROJECT-INDEX.md` as the register.** It is the one place listing which codebases this
 vault covers, where each one's logs live, and what its slug is. A project is onboarded when it

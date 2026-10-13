@@ -49,6 +49,9 @@
 #   RETENTION_DAYS       days before a journal or stub may move (default 60)
 #   RETENTION_MAX_MOVES  the most files one run moves (default 50, at most 50)
 #   VAULT_STATE_DIR      per-vault state outside the vault (see dream-pass.sh)
+#   TMPDIR               where the run makes its folders, when it starts with /
+#                        and a folder can be made there (otherwise /tmp, and
+#                        failing that mktemp's own default)
 #   RUN_LOCK_WAIT        seconds to wait for another runner's lock (default 1800)
 #   RUN_LOCK_POLL        seconds between checks while waiting (default 30)
 #   RUNNER_GIT_TIMEOUT   seconds each watched git step may take (default 120)
@@ -58,9 +61,14 @@
 #        20-projects/_logs folder
 #   1    setup failure, 20-projects/_logs cannot be listed or entered, git
 #        cannot read the vault, the vault is not the top of its own
-#        repository, a shallow clone, grafts, or a sparse checkout. Also this
-#        script failing in itself, such as on an unset variable, which bash
-#        ends with 1
+#        repository, a shallow clone, grafts, or a sparse checkout, or, on
+#        Windows or wherever a cygpath is found on PATH, the temporary folder
+#        whose path git is given spelled with .. or a part ending in a dot
+#        (git there can read it as another folder; the run uses TMPDIR when it
+#        starts with / and a folder can be made there, otherwise /tmp, and
+#        when no folder can be made there either, mktemp's own default).
+#        Also this script failing in itself, such as on an unset variable,
+#        which bash ends with 1
 #   2    REPORT-REFUSED: the report was not written by this runner, or changed
 #   3    PARTIAL: the move failed and the vault was put back to HEAD, or an
 #        archive folder could not be made, or turned out to be a link or not a
@@ -3246,6 +3254,12 @@ main() {
     say "ERROR: could not create a temporary directory"
     return 1
   }
+  # On Windows git reads this folder as TMPDIR spells it, so a spelling it reads
+  # as another folder is refused before the first git call.
+  temp_dir_spelling_ok "$SNAP_DIR" "$LIB_LOG"
+  rc=$?
+  lib_logged
+  [ "$rc" -eq 0 ] || return 1
   mkdir -p "$SNAP_DIR/nohooks"
   HOOKS="$SNAP_DIR/nohooks"
 

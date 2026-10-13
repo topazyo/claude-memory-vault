@@ -25,6 +25,10 @@ ts() {
 
 RUNNER_UNAME="$(uname -s 2>/dev/null)"
 
+# Set only by memory_override, so a value from the environment cannot reach
+# run_agent, even under a runner that never calls memory_override.
+unset AGENT_SETTINGS_FILE
+
 # is_windows_bash
 # True under Git Bash, MSYS or Cygwin, where a native Windows process is stopped
 # with taskkill rather than a signal.
@@ -583,8 +587,10 @@ relabel() {
 #
 # Agent memory (.claude/agent-memory*) and 90-auto-memory/ are fenced in every
 # mode. Memory loads into later sessions, so an unseen write there would be a
-# planted instruction. run_agent turns Claude Code's own auto memory off for the
-# pass, which is what makes fencing it in claude mode possible.
+# planted instruction. In claude mode, memory_override points Claude Code's
+# memory folder at 90-auto-memory/.pass-agent/, inside the fence. That withdraws
+# the grant the agent's Write tool otherwise has to a memory folder outside the
+# vault (measured on Windows only), which CLAUDE_CODE_DISABLE_AUTO_MEMORY does not.
 #
 # In .git/ only the files that make git run code are fenced. They are config,
 # config.worktree, commondir (git reads config and hooks from the directory it
@@ -1065,6 +1071,10 @@ vault_state_dir() {
 # it resolves into the vault, 5 when it is a symlink in a world-writable folder,
 # 6 when find could not check the mode, and 7 when a folder above it is
 # world-writable with no sticky bit. state_dir_problem turns the code into words.
+# With nocreate as a third argument, a <dir> that is not a folder (once the link
+# check above has passed) is not made, and the code is 9; the caller says what
+# that means. A <root> that cannot be resolved is 10, which state_dir_problem
+# words as 1, so only a caller that says what it means tells the two apart.
 state_dir_ready() {
   local name parent real kroot open up
   name="$(printf '%s' "$1" | sed 's|//*$||')"
@@ -1076,6 +1086,7 @@ state_dir_ready() {
     [ -z "$open" ] || return 5
   fi
   if [ ! -d "$1" ]; then
+    [ "${3:-}" = nocreate ] && return 9
     ( umask 077 && mkdir -p "$1" ) 2>/dev/null || return 1
   fi
   real="$(cd "$1" 2>/dev/null && pwd -P)" || return 1
@@ -1091,10 +1102,16 @@ state_dir_ready() {
     [ -z "$open" ] || return 7
   done
   kroot="$(path_key "$(cd "$2" 2>/dev/null && pwd -P)")"
-  [ -n "$kroot" ] || return 1
+  [ -n "$kroot" ] || return 10
   case "$(path_key "$real")" in "$kroot"|"$kroot"/*) return 4 ;; esac
   printf '%s\n' "$real"
 }
+# state_dir_problem <code> - the words for a state_dir_ready code, and for 8,
+# which only memory_override gives: a folder that is not the path it resolves to,
+# because it is a link, a folder above it changed between memory_override's
+# resolution and the check's, or pwd -P spells its last part another way. A link
+# above it that is there all along is resolved and accepted for the settings
+# file; the snapshots, the backup and git's hooks folder use TMPDIR as spelled.
 state_dir_problem() {
   case "$1" in
     2) printf 'is not owned by this account, or this account cannot write it' ;;
@@ -1103,8 +1120,35 @@ state_dir_problem() {
     5) printf 'is a symlink in a folder every account can write' ;;
     6) printf 'could not be checked for write access by other accounts' ;;
     7) printf 'is inside a folder every account can write that has no sticky bit' ;;
+    8) printf 'is not the path it resolves to: it is a link, or a folder above it changed during the checks, or pwd -P spells its last part another way (. or .., or on Windows an 8.3 name)' ;;
     *) printf 'could not be created, or cannot be entered' ;;
   esac
+}
+
+# path_under_by_identity <dir> <root>
+# True when <dir>, or a folder above it, is <root> itself by file identity
+# (test -ef), however either is spelled. <dir> is an absolute Git Bash or POSIX
+# path, or on Windows a drive path (C:/...), which Git Bash's test compares
+# with its own spelling of the same folder. <dir> must be absolute: a relative
+# one is compared from the current folder. Only a drive letter alone gets its
+# slash back, so a folder whose name ends in a colon (a:) is walked past, not
+# turned into a:/ and back again forever.
+path_under_by_identity() {
+  local up="$1"
+  while [ -n "$up" ]; do
+    [ "$up" -ef "$2" ] && return 0
+    case "$up" in
+      /|[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]:/) return 1 ;;
+      */*)
+        up="${up%/*}"
+        case "$up" in
+          '') up=/ ;;
+          [ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]:) up="$up/" ;;
+        esac ;;
+      *) return 1 ;;
+    esac
+  done
+  return 1
 }
 
 # write_file_atomic <path> <content-file>
@@ -3145,6 +3189,380 @@ note_tripwire() {
   return 0
 }
 
+# shown_name <path>
+# Prints <path> with each C0 control character and DEL in it shown as ?, for a
+# log line, so a name holding a line break or an escape cannot split a line or
+# forge one. A C1 character (U+0080 to U+009F) is not among them and is printed
+# as it is (measured on Linux under the runners' C locale).
+shown_name() {
+  case "$1" in
+    *[[:cntrl:]]*) printf '%s' "$1" | LC_ALL=C tr '[:cntrl:]' '?' ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
+# temp_dir_spelling_ok <folder> <log>
+#
+# On Windows git.exe reads a folder as TMPDIR spells it, and Win32 reads that
+# spelling as text: it takes a .. back past a link or junction to the folder
+# above the link, and drops the dot from a part that ends in one, where mktemp
+# and the runners' own checks follow the junction in Git Bash's /c/ spelling,
+# and keep the dot in either spelling. With a .. after a junction git took its
+# hooks folder from a folder of the textual name and ran a hook there at the
+# pass's first git status, and with a part such as x. it looked for its hooks
+# in the folder x, in the /c/ and the C:/ spelling alike (all measured in Git
+# Bash), folders an account able to make folders there could supply. In the
+# C:/ spelling Win32 reduces the .. for mktemp too, and the two agreed
+# (measured); it is refused all the same.
+# Each runner calls this right after it makes the temporary folder whose path
+# git is given (the retention runner first makes a folder for its own copies of
+# the run's log, whose path no git call is given), before any git call, in every
+# mode, and memory_override calls it again for any other caller. On Windows,
+# decided as memory_override decides it (the platform, or a cygpath found), a
+# folder spelled with a part that ends in a dot, other than
+# . alone, is refused, with / or \ as the separator. Elsewhere it does nothing:
+# git there reaches the folder as mktemp did (measured on Linux with a .. after
+# a link). Returns 1, with the reason in <log>, when the run must not go on.
+temp_dir_spelling_ok() {
+  case "$RUNNER_UNAME" in
+    MINGW*|MSYS*|CYGWIN*) ;;
+    *) command -v cygpath >/dev/null 2>&1 || return 0 ;;
+  esac
+  case "/$1/" in
+    *[!/\\]./*|*[!/\\].\\*) ;;
+    *) return 0 ;;
+  esac
+  printf '[%s] ERROR: the runner'"'"'s temporary folder, %s, is spelled with .. or with a part that ends in a dot, and on Windows git reads that spelling as text, so it can take its hooks folder, and the commit message, from another folder than the one the runner made (measured in Git Bash, for a .. in its /c/ spelling and for a part ending in a dot in either spelling). Point TMPDIR at the folder itself, with no part ending in a dot, or leave it unset and schedule the task as your own account. Refusing to run.\n' "$(ts)" "$(shown_name "$1")" >> "$2"
+  return 1
+}
+
+# memory_override <root> <state-dir> <work-dir> <log>
+#
+# Claude mode only. Claude Code grants the agent's Write and Edit tools its
+# memory folder: the one a settings file names as autoMemoryDirectory, or by
+# default one under ~/.claude/projects. The default folder lies outside the
+# vault, and so may a named one, so a write there would be outside the fence,
+# and CLAUDE_CODE_DISABLE_AUTO_MEMORY does not withdraw the grant. The runner's
+# own settings file, passed with --settings, points the memory folder at
+# 90-auto-memory/.pass-agent/ inside the vault instead, where the fence sees a
+# write. With it, a Write to a named folder (Claude Code 2.1.284, 2.1.285,
+# 2.1.287, 2.1.289, 2.1.292, 2.1.295 and 2.1.296) and one to the default folder
+# (2.1.285, 2.1.287, 2.1.289, 2.1.292, 2.1.295 and 2.1.296) were measured
+# refused, on Windows only, for a vault on a drive path; other versions are
+# unmeasured.
+#
+# On Windows both paths are converted with cygpath under a UTF-8 locale: under
+# the runners' LC_ALL=C it cuts a path at its first character outside the ANSI
+# code page, which made the file name a folder outside the vault. Each converted
+# path must be a drive path and name, converted back, the very folder or file it
+# came from. A network path is refused: for a vault reached as //localhost/c$
+# (the host's own administrative share) or //wsl.localhost, Claude Code 2.1.289
+# and 2.1.292 ignored the file and kept granting the default folder; a share on
+# another server is unmeasured.
+#
+# The checks refuse a pass the file would not protect: outside Git Bash where
+# no cygpath is found, an agent binary that is a Windows program, which would
+# read the POSIX paths as other folders; a converted path that names something
+# else; a vault path the JSON would have to escape; a vault or settings-file
+# path that does not come back unchanged from UTF-8 to UTF-16LE and back, which
+# Claude Code could read as another folder; a 90-auto-memory or .pass-agent that
+# is a link (the fence sees a folder link that was there before the pass only as
+# a link, so writes through it would not be seen) or is not a folder; and a
+# .pass-agent holding anything but a regular .DS_Store file with no other hard
+# link, since anything else could be read into the pass as memory or let a write
+# leave the vault; on Windows a <work-dir> spelled with .. or with a part that
+# ends in a dot, which git there reads as text (temp_dir_spelling_ok, which the
+# runners call first); a <work-dir> that is not there as a folder, that cannot be
+# reached because a folder above it is not there or, off Windows, cannot be
+# entered, that is not the folder resolving the folder above it led to, that
+# fails the state directory's checks
+# (state_dir_ready, under a UTF-8 locale on Windows), whose walk up gives no
+# answer, or that lies inside the vault by file identity, walked as Git Bash
+# spells it and, on Windows, as a drive path (a subst or mapped drive, or a
+# mount, whose root lies inside the vault is not seen, reasoned); a vault that
+# cannot be resolved; and a pass-settings.json, pass-settings.new or
+# pass-settings.json.tmp.<pid> already in <work-dir>, which the write would go
+# through (only names there at the check: one planted after it is still written
+# through). The runner makes <work-dir> before the pass's "before" snapshot and
+# keeps the snapshot there, so one that is not there may have taken the
+# snapshot with it: it is refused, never made again. mktemp -d never makes a
+# link, so a <work-dir> that is a link itself was put in its place: its own name
+# is never resolved here, so the state directory's checks see whatever is there
+# when they resolve it, and a link there, or one put above it after that folder
+# was resolved, is not the path it resolves to (the comparison below; off
+# Windows one in a folder every account can write is refused as such). So is a
+# last part pwd -P spells another way (. or .., and on Windows an 8.3 name, which
+# pwd -P expands; a letter in another case it keeps, so that spelling of the
+# same folder passes, measured in Git Bash), which no runner passes. A link
+# above it that is there all along is resolved and accepted for the settings
+# file (the snapshots, the backup and git's hooks folder use TMPDIR as
+# spelled). A folder emptied,
+# or removed and made again, by another process of this account, by root, or on
+# Windows by any account
+# that can change the temporary folder, is not seen: it is checked like the
+# runner's own (off Windows a folder another account owns fails the owner
+# check), nor, off Windows, is another folder of this account's moved into its
+# place by an account that can rename entries in TMPDIR, nor one replaced once
+# the checks have resolved it and before Claude Code has read the file, which is
+# then written into, or read from, whatever took its place. Apart from removing
+# the copy of the file an earlier build left in the state directory (below), the
+# checks write nothing. They must run after that snapshot, so that anything
+# planted after them is still a change the fence sees. <work-dir> is taken as
+# the physical path (cd -P, then pwd -P) of the folder above it, as mktemp -d
+# resolved it, and its own name, and must still be the folder as given, by file
+# identity, so the conversions, the UTF-8 check, these checks and the write all
+# see the folder mktemp made. Then the file is written as pass-settings.json in
+# <work-dir>, the runner's own folder for the pass, and must read back byte for
+# byte, because Claude Code reads an empty or invalid settings file as if there
+# were none. The read-back,
+# and the check that the converted settings path names that file, need the
+# file, so a refusal at either leaves it in <work-dir>, which the runner removes
+# with the folder. The state directory may be shared or take its parent's
+# permissions, so a copy an earlier build left there is removed. On POSIX hosts
+# the file is readable by this account only, in the folder mktemp -d made, which
+# only it can enter; on Windows the temporary folder's permissions decide.
+# AGENT_SETTINGS_FILE names it as Claude Code reads a path.
+# .pass-agent itself is never created here. Returns 1, with the reason in <log>,
+# when the pass must not start.
+memory_override() {
+  local root="$1" state="$2" work="$3" log="$4" vault="$1" file="$3/pass-settings.json" arg="$3/pass-settings.json"
+  local dir="$1/90-auto-memory/.pass-agent" list line p h= up win=0 exe=0 pd pu= q nm nw tp=/
+  # Set only on success below, so no value from the environment can stand in.
+  unset AGENT_SETTINGS_FILE
+  # The file is written, checked and handed to Claude Code through the folder's
+  # resolved path, so a link, a .. or a relative part in TMPDIR's spelling cannot
+  # be pointed at another folder after the checks below. Only the folder above it
+  # is resolved here, and its own name kept, so a link put in its place before
+  # the state directory's checks resolve it is refused there (code 8, or off
+  # Windows code 5 in a folder every account can write). It is resolved
+  # physically (cd -P), as mktemp -d resolved it when it made the folder: a
+  # logical cd takes a .. after a link as text, and so named a folder mktemp
+  # never made, or one of the same name someone else had made. A relative folder
+  # above it is spelled ./ first, so one named - is not taken for $OLDPWD. A
+  # folder above that cannot be entered leaves the path as given. Off Windows the
+  # checks below then refuse it, with a line of their own; on Windows, where an
+  # account may by default pass through a folder it cannot enter, they reach the
+  # folder mktemp made and accept it (measured in Git Bash for a folder spelled
+  # with no link).
+  p="$work"
+  while :; do case "$p" in ?*/) p="${p%/}" ;; *) break ;; esac; done
+  if [ -n "$p" ]; then
+    case "$p" in */*) pd="${p%/*}"; [ -n "$pd" ] || pd=/ ;; *) pd=. ;; esac
+    case "$pd" in /*|[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]:*) ;; *) pd="./$pd" ;; esac
+    tp="$pd"
+    if pd="$(CDPATH= cd -P -- "$pd" 2>/dev/null && pwd -P)" && [ -n "$pd" ]; then
+      work="${pd%/}/${p##*/}"
+    else
+      pu=1
+    fi
+  fi
+  file="$work/pass-settings.json" arg="$work/pass-settings.json"
+  # On Windows a path left in Git Bash form is read by Claude Code as a folder
+  # under the drive root, so either the platform or cygpath picks this branch.
+  # A stray cygpath elsewhere must then give paths that pass the checks below.
+  case "$RUNNER_UNAME" in MINGW*|MSYS*|CYGWIN*) win=1 ;; esac
+  command -v cygpath >/dev/null 2>&1 && win=1
+  if [ "$win" = 0 ]; then
+    # A Windows Claude Code started from WSL would read POSIX paths the same way.
+    # WSL starts a Windows program by its header whatever it is called, so the
+    # name is looked up as the runner will start it, and the file it resolves to,
+    # through any link, is read: a Windows program starts with MZ. A name that
+    # resolves to no file (a function, say) cannot be checked, and neither can a
+    # file whose first bytes cannot be read, one this account may only start for
+    # instance, which could still be started by its header, so both refuse. A
+    # wrapper script that starts a Windows program is not recognised.
+    p="$(command -v "${AGENT_BIN:-}" 2>/dev/null)" || p=
+    case "$p" in */*) ;; *) p= ;; esac
+    if [ -f "$p" ] && ! h="$(LC_ALL=C dd if="$p" bs=2 count=1 2>/dev/null)"; then p=; fi
+    if [ -z "$p" ]; then
+      printf '[%s] ERROR: Claude Code here (%s) is not a file the runner can check, so it could be a Windows program that would read the memory override'"'"'s paths as other folders. Refusing to run.\n' "$(ts)" "$(shown_name "${AGENT_BIN:-}")" >> "$log"
+      return 1
+    fi
+    case "$p" in *.[eE][xX][eE]) exe=1 ;; esac
+    if [ -f "$p" ] && [ "$h" = MZ ]; then exe=1; fi
+    if [ "$exe" = 1 ]; then
+      printf '[%s] ERROR: Claude Code here (%s) looks like a Windows program, but this runner is not running under Git Bash, so Claude Code would read the memory override'"'"'s paths as other folders. Run the .cmd runner on Windows instead. Refusing to run.\n' "$(ts)" "$(shown_name "$p")" >> "$log"
+      return 1
+    fi
+  fi
+  if [ "$win" = 1 ]; then
+    vault="$(LC_ALL=C.UTF-8 cygpath -m "$root" 2>/dev/null)" && [ -n "$vault" ] \
+      && arg="$(LC_ALL=C.UTF-8 cygpath -m "$file" 2>/dev/null)" && [ -n "$arg" ] || {
+      printf '[%s] ERROR: cygpath could not convert a path for the memory override. Refusing to run.\n' "$(ts)" >> "$log"
+      return 1
+    }
+    for p in "$vault" "$arg"; do
+      case "$p" in
+        [ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]:/*) ;;
+        *)
+          printf '[%s] ERROR: cygpath gave %s for a path of the memory override, which is not a Windows drive path, so Claude Code would read it as another folder, or ignore the override, as it does for a vault on a network path. Keep the vault and the temporary folder on a drive. Refusing to run.\n' "$(ts)" "$(shown_name "$p")" >> "$log"
+          return 1 ;;
+      esac
+    done
+    if ! [ "$(LC_ALL=C.UTF-8 cygpath -u "$vault" 2>/dev/null)" -ef "$root" ]; then
+      printf '[%s] ERROR: cygpath turned %s into %s, which is not the same folder or file, so the memory override would name a path outside the vault. Refusing to run.\n' "$(ts)" "$(shown_name "$root")" "$(shown_name "$vault")" >> "$log"
+      return 1
+    fi
+  fi
+  case "$vault" in
+    *'"'*|*\\*|*[[:cntrl:]]*)
+      printf '[%s] ERROR: the vault'"'"'s path holds a character the settings file cannot carry (a double quote, a backslash or a control character), so Claude Code'"'"'s memory cannot be kept inside the vault. Rename the folder. Refusing to run.\n' "$(ts)" >> "$log"
+      return 1 ;;
+  esac
+  # Only a path with a byte outside printable ASCII needs iconv to vouch for it.
+  # The paths go to UTF-16LE and back and must come back byte for byte: glibc's
+  # iconv passes code points above U+10FFFF and 5- and 6-byte forms through to
+  # UTF-8 (2.43, measured), and macOS's takes them to UTF-16LE without an error
+  # under the C locale the runners set (measured on CI). Valid UTF-8 always comes
+  # back as it went in.
+  case "$vault$arg" in
+    *[![:print:]]*)
+      p="$(printf '%s\n%s\n' "$vault" "$arg" | iconv -f UTF-8 -t UTF-16LE 2>/dev/null | iconv -f UTF-16LE -t UTF-8 2>/dev/null; printf x)"
+      if [ "$p" != "$(printf '%s\n%s\nx' "$vault" "$arg")" ]; then
+        printf '[%s] ERROR: the vault'"'"'s path or the settings file'"'"'s path in the temporary folder is not valid UTF-8, or iconv could not check it, so Claude Code could read the memory override as naming another folder. Rename the folder, or point TMPDIR at one with a plain name. Refusing to run.\n' "$(ts)" >> "$log"
+        return 1
+      fi ;;
+  esac
+  if [ -L "$root/90-auto-memory" ] || [ -L "$dir" ]; then
+    printf '[%s] ERROR: the memory override folder is a link, so writes through it would leave the fence. 90-auto-memory and 90-auto-memory/.pass-agent must be plain folders, not symlinks or junctions. Refusing to run.\n' "$(ts)" >> "$log"
+    return 1
+  fi
+  if { [ -e "$root/90-auto-memory" ] && [ ! -d "$root/90-auto-memory" ]; } || { [ -e "$dir" ] && [ ! -d "$dir" ]; }; then
+    printf '[%s] ERROR: 90-auto-memory or 90-auto-memory/.pass-agent is not a folder, so the memory override folder cannot be made there. Make both plain folders. Refusing to run.\n' "$(ts)" >> "$log"
+    return 1
+  fi
+  if [ -e "$dir" ]; then
+    if ! list="$(ls -A "$dir" 2>/dev/null)" \
+       || { [ -n "$list" ] && { [ "$list" != .DS_Store ] || [ ! -f "$dir/.DS_Store" ] || [ -L "$dir/.DS_Store" ] \
+            || [ -z "$(find "$dir/.DS_Store" -links 1 2>/dev/null)" ]; }; }; then
+      printf '[%s] ERROR: the memory override folder already held a file, or could not be listed. 90-auto-memory/.pass-agent/ must be empty, apart from a plain .DS_Store file (not a link, no other hard link), because what it holds could be read into the pass as memory. Remove it. Refusing to run.\n' "$(ts)" >> "$log"
+      return 1
+    fi
+  fi
+  # The lines below name the folder as the runner made it (nm) or as the checks
+  # see it (nw), with each C0 control character and DEL in its name shown as ?.
+  nm="$(shown_name "$3")"
+  nw="$(shown_name "$work")"
+  # A spelling with .. or a part ending in a dot, which git on Windows can read
+  # as another folder: the runners refuse it before their first git call, and
+  # this refuses it for any other caller.
+  temp_dir_spelling_ok "$3" "$log" || return 1
+  # The file can name hooks Claude Code runs, so its folder must pass the state
+  # directory's checks. On Windows they run under a UTF-8 locale, as the
+  # conversions above do: under C, cygpath cut the vault's path and the folder's
+  # at a folder above both named outside the ANSI code page, a profile folder
+  # among them, and the folder looked as if it lay inside the vault. The check
+  # never makes the folder: the runner made it before the "before" snapshot,
+  # which it holds, so a folder that is not there now may have taken the
+  # snapshot with it, and the fence would compare the pass with nothing.
+  case "$RUNNER_UNAME" in
+    MINGW*|MSYS*|CYGWIN*) up="$( LC_ALL=C.UTF-8; export LC_ALL; state_dir_ready "$work" "$root" nocreate )" ;;
+    *) up="$(state_dir_ready "$work" "$root" nocreate)" ;;
+  esac
+  p=$?
+  # Code 9 says the folder is not there as the checks spell it, which is so for
+  # three causes, and each gets its own line, naming the folder as the runner
+  # made it. Where the folder above is not there, or, off Windows, could not be
+  # entered, the checks cannot see the folder at all.
+  if [ "$p" -eq 9 ] && [ -n "$pu" ]; then
+    printf '[%s] ERROR: the runner'"'"'s folder for the pass, %s, cannot be reached: this account cannot enter the folder above it, or that folder is not there, so the checks cannot see the folder the runner made. If that folder was removed, the pass'"'"'s snapshot went with it: find what removed it. Otherwise give this account back its access to that folder, or point TMPDIR at a folder outside the vault that this account can enter and only it can change (on Windows, leave it unset and schedule the task as your own account). Refusing to run.\n' "$(ts)" "$nm" >> "$log"
+    return 1
+  fi
+  # The folder above was resolved above, where it could be entered, and the
+  # folder's own name kept, so the path that check resolves it to must be the
+  # same, or the folder is a link, or one above it changed in between, and the
+  # file would go through another folder.
+  [ "$p" -eq 0 ] && [ "$up" != "$work" ] && p=8
+  # And the path the checks looked at must be the folder as given, compared by
+  # file identity: where the folder as given is there and that path is not, or
+  # where the checks answered for a path that is not it, whether they passed it
+  # or refused it for a cause of its own, resolving the folder above led
+  # elsewhere (a link above it changed between cd -P and pwd -P, or a folder's
+  # name ends in a line break, which $(...) drops), and the file would go to
+  # another folder, one someone else may have made, or the refusal would name it.
+  # A refusal for a cause of its own keeps its own line where the folder above,
+  # as resolved, is the folder above as given (tp): the two paths then name the
+  # same entry, and -ef fails only where nothing is there to compare (a dangling
+  # link, say). Where the checks passed (p=0) the line is the backstop's either
+  # way, for a folder replaced in between, a race no control can stage. A folder
+  # above at / is compared as /., not //., which Git Bash reads as a network path.
+  if { [ "$p" -eq 9 ] && [ -d "$3" ]; } \
+     || { [ "$p" -ne 9 ] && [ "$p" -ne 10 ] && ! [ "$work" -ef "$3" ] \
+          && { [ "$p" -eq 0 ] || ! [ "${work%/*}/." -ef "${tp%/}/." ]; }; }; then
+    printf '[%s] ERROR: the runner'"'"'s folder for the pass, %s, is not the folder that resolving the folder above it led to: a folder above it changed while it was resolved, or a folder'"'"'s name ends in a line break, which the resolution drops, so the settings file would go to another folder. Refusing to run.\n' "$(ts)" "$nm" >> "$log"
+    return 1
+  fi
+  if [ "$p" -eq 9 ]; then
+    printf '[%s] ERROR: the runner'"'"'s folder for the pass, %s, is not there as a folder, though the runner made it before the pass'"'"'s snapshot and keeps the snapshot in it, so the fence could not see what the pass changes. Refusing to run.\n' "$(ts)" "$nm" >> "$log"
+    return 1
+  fi
+  if [ "$p" -eq 10 ]; then
+    printf '[%s] ERROR: the vault, %s, cannot be resolved (this account cannot enter it, or it is not there), so whether the runner'"'"'s folder for the pass lies inside it cannot be checked. Refusing to run.\n' "$(ts)" "$(shown_name "$root")" >> "$log"
+    return 1
+  fi
+  # The state directory's check of the vault compares the two paths by name, and
+  # on Windows and macOS a letter outside ASCII in another case or an 8.3 name
+  # spells the same folder another way, and on every platform path_key gives a
+  # vault at a drive or file-system root a trailing slash the name never
+  # matches, so neither the folder nor any folder above it may be the vault
+  # itself, walked as Git Bash spells it and, on Windows, as a drive path, since
+  # a folder under Git Bash's /tmp mount, where pwd -P keeps that spelling,
+  # walks up to / and not to the drive. A subst or mapped drive, or a mount,
+  # whose root lies inside the vault is not seen (reasoned). A walk answers 0
+  # (under) or 1 (not under); any other status is no answer, so it refuses
+  # rather than pass as "not under".
+  if [ "$p" -eq 0 ]; then
+    path_under_by_identity "$work" "$root"
+    q=$?
+    if [ "$q" -eq 1 ] && [ "$win" = 1 ]; then
+      path_under_by_identity "${arg%/*}" "$root"
+      q=$?
+    fi
+    case "$q" in
+      0) p=4 ;;
+      1) ;;
+      *)
+        printf '[%s] ERROR: the walk that checks whether the runner'"'"'s folder for the pass, %s, lies inside the vault ended with status %s, which is not an answer, so the folder cannot be shown to lie outside the vault. Refusing to run.\n' "$(ts)" "$nw" "$q" >> "$log"
+        return 1 ;;
+    esac
+  fi
+  if [ "$p" -ne 0 ]; then
+    printf '[%s] ERROR: the runner'"'"'s folder for the pass, %s, %s, and the memory override'"'"'s settings file there can name hooks Claude Code runs. Point TMPDIR at a folder outside the vault that only this account can change (on macOS Apple'"'"'s mktemp does not take TMPDIR), or, on Windows, leave it unset and schedule the task as your own account; if the vault holds the default temporary folder, as one at a drive root does, move the vault into a folder of its own, or point TMPDIR outside it. Refusing to run.\n' "$(ts)" "$nw" "$(state_dir_problem "$p")" >> "$log"
+    return 1
+  fi
+  # Nothing reads a copy an earlier build left in the state directory.
+  rm -f "$state/pass-settings.json" 2>/dev/null
+  # The file is written through these names, and none of them is in the folder
+  # the runner made for the pass before this write, so one already there was put
+  # there by another process: a link would carry the write elsewhere, a folder
+  # would take it in, and a FIFO would hold the pass. Only names there now are
+  # seen; one planted after this check is still written through.
+  for p in "$file" "$work/pass-settings.new" "$file.tmp.$$"; do
+    if [ -e "$p" ] || [ -L "$p" ]; then
+      printf '[%s] ERROR: %s was already there, and the memory override is written through it, so the write could go elsewhere or never end. Refusing to run.\n' "$(ts)" "$(shown_name "$p")" >> "$log"
+      return 1
+    fi
+  done
+  line="{\"autoMemoryDirectory\":\"$vault/90-auto-memory/.pass-agent\"}"
+  # Readable by this account only on POSIX hosts, whatever the umask, because
+  # Claude Code runs the hooks a settings file names.
+  if ! ( umask 077 && printf '%s\n' "$line" > "$work/pass-settings.new" ) \
+     || ! write_file_atomic "$file" "$work/pass-settings.new"; then
+    printf '[%s] ERROR: could not write the memory override %s. Refusing to run.\n' "$(ts)" "$(shown_name "$file")" >> "$log"
+    return 1
+  fi
+  if [ "$win" = 1 ] && ! [ "$(LC_ALL=C.UTF-8 cygpath -u "$arg" 2>/dev/null)" -ef "$file" ]; then
+    printf '[%s] ERROR: cygpath turned %s into %s, which is not the same folder or file, so Claude Code would be handed another settings file. Refusing to run.\n' "$(ts)" "$(shown_name "$file")" "$(shown_name "$arg")" >> "$log"
+    return 1
+  fi
+  if ! printf '%s\n' "$line" | cmp -s - "$file"; then
+    printf '[%s] ERROR: the memory override %s does not hold what was written to it, or cmp could not compare it, and Claude Code reads an empty or invalid settings file as if there were none. Refusing to run.\n' "$(ts)" "$(shown_name "$file")" >> "$log"
+    return 1
+  fi
+  AGENT_SETTINGS_FILE="$arg"
+  return 0
+}
+
 # run_agent <timeout> <output-file> <agent-name> <task> <prompt-file-relative>
 #
 # Starts the agent chosen by agent_preflight under the watchdog, with
@@ -3160,14 +3578,30 @@ run_agent() {
   AGENT_SESSION_ID="$nonce"
   case "$AGENT_KIND" in
     claude)
+      # Only memory_override sets AGENT_SETTINGS_FILE, and a runner from an earlier
+      # release never calls it. Such a pass fails here with a status and the
+      # reason in the run output, rather than under set -u after the in-flight
+      # marker, which would leave the next pass a tripwire.
+      if [ -z "${AGENT_SETTINGS_FILE:-}" ]; then
+        printf '[%s] ERROR: no memory override was written for this pass, so this runner and lib/runner-common.sh come from different releases. Take runner-common.sh, dream-pass.sh and promotion-pass.sh together. Refusing to start Claude Code.\n' "$(ts)" >> "$out"
+        RUN_RC=1
+        RUN_TIMED_OUT=0
+        RUN_STALLED=0
+        RUN_KILL_FAILED=0
+        RUN_KILL_REPORT=""
+        return 0
+      fi
       # -p is REQUIRED. Without it, `claude --agent X` starts an INTERACTIVE
       # session; under a scheduler there is no TTY, so it either reads EOF and
       # exits 0 having done nothing, or waits on input that never arrives. Both
       # look like success to the scheduler, which is why each runner asserts an
       # artifact afterwards.
       #
-      # Auto memory is switched off for the pass. Claude Code would otherwise
-      # write memory files the fence has to treat as a planted instruction.
+      # Auto memory is switched off for the pass, so Claude Code does not write
+      # memory files of its own. That does not withdraw the agent's tools' grant
+      # to a memory folder outside the vault. The --settings file memory_override
+      # wrote does, by pointing the memory folder inside the fence (measured for
+      # Write, on Windows only).
       #
       # Neither agent's allowlist names a tool that runs commands. --disallowedTools
       # denies Bash, PowerShell (which Claude Code offers on Windows) and Monitor
@@ -3185,7 +3619,7 @@ run_agent() {
       RUN_STALL_SECONDS="$stall" RUN_GAPS_FILE="$gaps" RUN_NONCE="$nonce" run_with_watchdog "$timeout" "$out" \
         "$AGENT_BIN" -p "$task" --agent "$agent" --permission-mode acceptEdits \
         --output-format stream-json --verbose --include-partial-messages --session-id "$nonce" \
-        --disallowedTools Bash PowerShell Monitor
+        --settings "$AGENT_SETTINGS_FILE" --disallowedTools Bash PowerShell Monitor
       ;;
     command)
       # The wrapper gets the nonce in its environment. Only a process that puts
