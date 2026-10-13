@@ -1030,8 +1030,9 @@ Around that call, each runner does several things an exit code cannot:
     instead (unmeasured), whose permissions the per-user default does not describe. The same folder
     has held the pass's snapshots, its steering backup and the folder git takes hooks from since
     1.4.0, reached through `TMPDIR` as spelled, so name the folder itself, with no link, no `..` and
-    no part ending in a dot in its spelling. On Windows every runner, the retention pass's included,
-    refuses a `..` or a part ending in a dot in every mode, before its first git call (the retention
+    no part ending in a dot in its spelling. On Windows, or wherever a `cygpath` is found on `PATH`,
+    every runner, the retention runner included, refuses a `..` or a part ending in a dot in every
+    mode, before its first git call (the retention
     pass takes `TMPDIR` only when it starts with `/`, and otherwise uses `/tmp`). That check reads
     the spelling only, so it does not see a link; only a claude-mode pass checks the folder itself,
     and command mode, as in 1.4.0, does not. The settings file adds a file there whose hooks Claude

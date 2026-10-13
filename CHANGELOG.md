@@ -191,8 +191,8 @@ What that covers, and what it does not:
   spelled with a `..` or a part ending in a dot (next item).
 - **On Windows the dream, promotion and retention runners refuse a temporary folder spelled with a
   `..` or with a part ending in a dot**, in every mode, with exit 1 and an `ERROR:` line saying
-  `is spelled with .. or with a part that ends in a dot`, right after each makes the folder and
-  before its first git call, because git there would read that spelling as another folder
+  `is spelled with .. or with a part that ends in a dot`, right after each makes the folder git is
+  given and before its first git call, because git there would read that spelling as another folder
   (Security). The override checks it again for any other caller. Elsewhere the runners are
   unchanged by it, unless a `cygpath` is found on `PATH`, which makes every runner treat the
   platform as Windows here, as the override does.
@@ -427,10 +427,11 @@ What that covers, and what it does not:
    and `promotion-pass.sh`; older releases are unmeasured). A dream pass in command mode and 1.4.0's
    retention pass run there (measured on Linux), as in 1.4.0, so on Windows they would not refuse a
    `..` or a part ending in a dot (Security; reasoned: 1.4.0's runners never call the check).
-   With an older library and a 1.4.1 runner, each runner exits 1 with
+   With 1.4.0's library and a 1.4.1 runner, each runner exits 1 with
    `temp_dir_spelling_ok: command not found`, which goes to its stderr, not to its log (measured
-   on Linux with 1.4.0's library, for the dream runner in both modes, the promotion runner in claude
-   mode and the retention runner). Either way no agent ran in claude mode: take all four.
+   on Linux, for the dream runner in both modes, the promotion runner in claude mode and the
+   retention runner; older libraries are unmeasured). Either way no agent ran in claude mode: take
+   all four.
 2. **Nothing to configure for most vaults.** The override is on in claude mode for every pass.
    Item 11 asks some Windows accounts to set `VAULT_STATE_DIR`, and items 5 and 9 name the tools
    (`iconv`, `cmp`) a pass now needs.
