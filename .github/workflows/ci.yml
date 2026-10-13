@@ -190,11 +190,13 @@ jobs:
           # account cannot enter) and mem-override-vault-unresolved (a vault
           # that is not there, which cygpath's round trip refuses first on
           # Windows) are off the Windows list: Git Bash's mode bits are not
-          # Windows permissions. temp-dir-spelling runs everywhere: its runner
-          # legs hand each runner the spelling through a mktemp stand-in, so
-          # macOS's mktemp does not matter, and off Windows a cygpath stand-in
-          # makes the platform read as Windows; its leg where the check must
-          # do nothing runs off Windows only, with no cygpath on PATH.
+          # Windows permissions, and there an account may by default pass
+          # through a folder it cannot enter. temp-dir-spelling runs
+          # everywhere: its runner legs hand each runner the spelling through
+          # a mktemp stand-in, so macOS's mktemp does not matter, and off
+          # Windows a cygpath stand-in makes the platform read as Windows; its
+          # leg where the check must do nothing runs off Windows only, with no
+          # cygpath on PATH.
           # Naming a control that legitimately skips would
           # fail the job for the wrong reason, and naming none of them is how
           # they came to skip everywhere unnoticed.

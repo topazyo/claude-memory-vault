@@ -25,7 +25,7 @@ bash .claude/scripts/vault-update.sh --check --from ../template-new
 
 ---
 
-## 1.4.1 — 2026-10-11
+## 1.4.1 — 2026-10-13
 
 A security fix for the dream and promotion passes in claude mode. Claude Code's memory folder for
 a pass is now pointed inside the vault, where the write fence sees it. On Windows that holds for a
@@ -130,10 +130,15 @@ What that covers, and what it does not:
   hook in `<folder>/x` and not in the folder `mktemp` made (measured in Git Bash with git alone). On
   Windows (and wherever a `cygpath` is found on `PATH`, as for the override) the dream, promotion
   and retention runners now refuse a temporary folder spelled with a `..` or with a part ending in a
-  dot, in either spelling, right after `mktemp`, before their first git call, in every mode, command
-  mode included (measured in Git Bash, where no hook placed there ran: for a dream pass with a
-  stand-in agent, and with the suite's twin, on the measuring host and on CI's windows-latest, for
-  the dream and promotion runners in claude and command mode and the retention runner). The
+  dot, in either spelling, right after `mktemp` makes the folder git is given, before their first
+  git call, in every mode, command mode included (measured in Git Bash: for a dream pass with a
+  stand-in agent, and with the suite's twin on the measuring host and on CI's windows-latest, for
+  the dream and promotion runners in claude and command mode and the retention runner, a part
+  ending in a dot with the dream runner in claude mode only, and through the check itself for 18
+  spellings; the twin records no git call naming the folder before the refusal. That no hook placed
+  there ran tells the builds apart for the dream and promotion runners' `..`, where an earlier
+  build ran them, and not for the retention runner or a part ending in a dot, where the earlier
+  builds measured ran none either). The
   retention runner takes `TMPDIR` only when it starts with `/`, so for a `C:/...` spelling it makes
   its folder under `/tmp` instead, as in 1.4.0, and has nothing to refuse (reasoned from the code).
   A part that is `.` alone is not refused: Win32 and Git Bash both read it as the folder it is in
@@ -254,7 +259,9 @@ What that covers, and what it does not:
   - The runner's folder for the pass cannot be reached: this account cannot enter a folder above it,
     or that folder is not there, so the checks cannot see the folder the runner made. An earlier
     build of this release said the folder was not there, as if something had removed it (measured
-    on Linux).
+    on Linux). On Windows only the second cause applies: an account may by default pass through a
+    folder it cannot enter, so the checks reach the folder the runner made and accept it (measured
+    in Git Bash).
   - The path resolving the folder above the runner's folder gives is not that folder, compared by
     file identity, so the settings file would go to another folder, one someone else may have made:
     a folder above it is named with a line break at its end, which the shell drops (measured with
@@ -308,7 +315,11 @@ What that covers, and what it does not:
   `docs/reference.md` lists, and the runners' comments no longer credit
   `CLAUDE_CODE_DISABLE_AUTO_MEMORY` with keeping memory in, and name `TMPDIR` among their settings.
   `docs/setup.md` says that a command-mode wrapper that starts Claude Code gets no memory override.
-- The control suite holds each of these. Each new control id was seen failing against 1.4.0 first,
+- The control suite holds each of these on the jobs its lists below name, apart from three guards
+  no leg tests yet, each right today by reading the code: on Windows, the drive-path walk's own guard
+  (no leg follows a first walk that gives no answer, or "under", with a drive-path walk that answers
+  "not under"); and on every platform, resolving a folder above the runner's folder that is `/`, or
+  with `CDPATH` set. Each new control id was seen failing against 1.4.0 first,
   except `mem-override-sink-contained`: it holds the unchanged fence to containing a write in
   `.pass-agent/`, and was seen failing against a runner that exempts that folder;
   `mem-override-utf8-lax-host` and `mem-override-utf16-lax-host`, which record what the host's
@@ -330,7 +341,7 @@ What that covers, and what it does not:
   folder of the same name in the link's own folder; it took the path a folder name ending in a line
   break was cut to for the folder; it said a folder it could not reach was gone, and blamed the
   runner's folder for a vault it could not resolve; and it read a walk's error as "not under"
-  (work-dotdot's second leg and work-backstop failed against `444ec86` as well; `temp-dir-spelling`,
+  (all five failed against `444ec86` as well, work-dotdot at its second leg only; `temp-dir-spelling`,
   work-backstop's dangling-link leg and work-names' first line-break leg failed against `b4d1344`
   too, on Linux: its runners called git with the hooks folder before any refusal, it named the wrong
   cause, and it split the line); and `mem-override-state-copy` and `mem-override-work-space`, which
@@ -370,19 +381,21 @@ What that covers, and what it does not:
   folder every account can write, reached directly and through a link above, which keeps the state
   directory's own line), `temp-dir-spelling` (`temp_dir_spelling_ok` with the platform given as
   Windows, over 18 spellings it must refuse and 12 it must accept; off Windows, with no `cygpath`, a
-  `..` and an `x.` left alone; and each runner handed a `..` or `x.` spelling by a `mktemp`
-  stand-in, its git calls recorded and, off Windows, a `cygpath` stand-in making the platform read
-  as Windows: the dream and promotion runners in claude and command mode and the retention runner
-  must refuse before any git call names the hooks folder or the spelling, where the controls, the
-  dream and promotion runners in command mode, which start their agent, and the retention runner,
-  with the folder spelled plainly, call git with that hooks folder; and on Windows the hooks placed
-  in a folder of the textual name must not run) and `dream-agent-tools` are required on every suite
-  job. `mem-override-work-space`, a pass with a `TMPDIR` holding a space, is required on the ubuntu
+  `..` and an `x.` left alone; and each runner handed a `..` spelling, and the dream runner in
+  claude mode an `x.` one, by a `mktemp` stand-in, its git calls recorded and, off Windows, a
+  `cygpath` stand-in making the platform read as Windows: the dream and promotion runners in claude
+  and command mode and the retention runner must refuse before any git call names the hooks folder
+  or the spelling, where the controls, the dream and promotion runners in command mode, which start
+  their agent, and the retention runner, with the folder spelled plainly, call git with that hooks
+  folder; and on Windows the hooks placed in a folder of the textual name must not run, which tells
+  the builds apart only on the dream and promotion legs with `..`) and `dream-agent-tools` are
+  required on every suite job. `mem-override-work-space`, a pass with a `TMPDIR` holding a space, is required on the ubuntu
   and Windows jobs, where `mktemp` takes `TMPDIR`, and not on macOS. `mem-override-work-unreachable`
   (a folder above that this account cannot enter; skipped as root) and
   `mem-override-vault-unresolved` (a vault that is not there) are required on the Linux and macOS
-  jobs and not on Windows, where Git Bash's mode bits are not permissions and `cygpath`'s round trip
-  refuses a vault that is not there first. `mem-override-work-root-drive`, a vault at the drive root
+  jobs and not on Windows, where Git Bash's mode bits are not permissions, an account may by default
+  pass through a folder it cannot enter, and `cygpath`'s round trip refuses a vault that is not
+  there first. `mem-override-work-root-drive`, a vault at the drive root
   refused by the drive-path walk alone, is required on the Windows job only.
   `mem-override-sink-unreadable`, `mem-override-sink-filelink`, `mem-override-file-mode`,
   `mem-override-utf8-refused`, `mem-override-winbin`, `mem-override-winbin-unreadable`,
@@ -411,13 +424,13 @@ What that covers, and what it does not:
    Code starts, and the run log (`.claude/logs/dream-agent.run.log` or `promotion-agent.run.log`)
    says `no memory override was written for this pass`; no tripwire is left, also when
    `AGENT_SETTINGS_FILE` is set in the environment (measured on Linux with 1.4.0's `dream-pass.sh`
-   and `promotion-pass.sh`; older releases are unmeasured). A dream pass in command mode and 1.4.0's retention pass run there
-   (measured on Linux), as in 1.4.0, so on Windows they would not refuse a `..` or a part ending in
-   a dot (Security; reasoned: 1.4.0's runners never call the check). With an older library and a
-   1.4.1 runner, each runner exits 1 with `temp_dir_spelling_ok: command not found`, which goes to
-   its stderr, not to its log (measured on Linux with 1.4.0's library, for the dream runner in both
-   modes, the promotion runner in claude mode and the retention runner). Either way no agent ran in
-   claude mode: take all four.
+   and `promotion-pass.sh`; older releases are unmeasured). A dream pass in command mode and 1.4.0's
+   retention pass run there (measured on Linux), as in 1.4.0, so on Windows they would not refuse a
+   `..` or a part ending in a dot (Security; reasoned: 1.4.0's runners never call the check).
+   With an older library and a 1.4.1 runner, each runner exits 1 with
+   `temp_dir_spelling_ok: command not found`, which goes to its stderr, not to its log (measured
+   on Linux with 1.4.0's library, for the dream runner in both modes, the promotion runner in claude
+   mode and the retention runner). Either way no agent ran in claude mode: take all four.
 2. **Nothing to configure for most vaults.** The override is on in claude mode for every pass.
    Item 11 asks some Windows accounts to set `VAULT_STATE_DIR`, and items 5 and 9 name the tools
    (`iconv`, `cmp`) a pass now needs.
@@ -557,16 +570,19 @@ What that covers, and what it does not:
     Windows another account under a `TMPDIR` it can change; a cleaning tool is unlikely to pick a
     folder that new), so find what and stop it. If `TMPDIR` was already unset, or already named a
     folder only your account can change, a process running as you, as root or as an administrator,
-    or on Windows a task run as another account, did it: find that process before the next pass. A
-    folder above it that your account cannot enter gives `cannot be reached: this account cannot
-    enter the folder above it`: give your account back its access, or point `TMPDIR` at a folder
-    outside the vault that your account can enter and only it can change (on Windows, leave it unset
-    and schedule the task as your own account). `is not the folder that resolving the folder above
-    it led to` means a folder above it is named with a line break at its end, or a link above it
-    changed while the runner resolved it: rename the folder, or find what changed the link. `which
-    is not an answer, so the folder cannot be shown to lie outside the vault` means the check that
-    walks up the folder ended with an error: take `runner-common.sh` and the runners from the same
-    release. A planted name gives `was already there, and the memory override is written through
+    or on Windows a task run as another account, did it: find that process before the next pass. Off
+    Windows, a folder above it that your account cannot enter gives `cannot be reached: this account
+    cannot enter the folder above it`: give your account back its access, or point `TMPDIR` at a
+    folder outside the vault that your account can enter and only it can change. On Windows an
+    account may by default pass through a folder it cannot enter, and the checks then reach the
+    runner's folder and accept it (measured in Git Bash), so there the line means a folder above it
+    is not there: leave `TMPDIR` unset and schedule the task as your own account. `is not the folder
+    that resolving the folder above it led to` means a folder above it is named with a line break at
+    its end, or a link above it changed while the runner resolved it: rename the folder, or find
+    what changed the link. `which is not an answer, so the folder cannot be shown to lie outside the
+    vault` means the check that walks up the folder ended with neither answer, which this release's
+    walk never gives: `runner-common.sh` was edited or damaged, so take it and the runners from this
+    release again. A planted name gives `was already there, and the memory override is written through
     it`. Off Windows the folder is yours with mode 0700, so a process of your account or root wrote
     there, unless an account that can rename entries in `TMPDIR` or in a folder above it swapped in
     another folder of yours: point `TMPDIR` at a folder only you can change, then find that process.
@@ -586,9 +602,9 @@ What that covers, and what it does not:
     outside the vault that only your account can change, named directly, with no link, no `..` and
     no part ending in a dot: the settings file is reached through the folder's resolved path, but
     the snapshots, the steering backup and git's hooks folder there are reached through `TMPDIR` as
-    spelled, as in 1.4.0. On Windows the runner cannot read a folder's permissions, so leave
-    `TMPDIR` unset there, and schedule the task as your own account, unless item 9's `//?/` refusal
-    needs a shorter folder (on the one host measured, setting `TEMP` and `TMP` for the `.cmd` did
+    spelled, as in 1.4.0. On Windows the runner cannot read a folder's permissions, so schedule the
+    task as your own account, and leave `TMPDIR` unset there unless item 9's `//?/` refusal needs a
+    shorter folder (on the one host measured, setting `TEMP` and `TMP` for the `.cmd` did
     not move Git Bash's `/tmp`). A Git Bash login shell, as a Git Bash terminal starts one, sets
     `TMPDIR` from `TMP`, spelled `C:/...`, and a pass started from it fails at its steering backup,
     as in 1.4.0, because `tar` reads `C:` as a host name (measured on 1.4.0 and this release): start

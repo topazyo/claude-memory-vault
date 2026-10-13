@@ -36,12 +36,13 @@
 #                       hooks folder and, in claude mode, pass-settings.json,
 #                       which Claude Code reads as settings, hooks and other
 #                       commands among them. Keep it a folder only this account
-#                       can change, named with no link and no .. (on Windows a
-#                       pass refuses a .. or a part ending in a dot, in every
-#                       mode, before its first git call); on Windows leave it
-#                       unset and schedule the task as your own account, unless
-#                       a long path needs a shorter folder (docs/reference.md,
-#                       Known limits)
+#                       can change, named with no link, no .. and no part
+#                       ending in a dot (on Windows, or wherever a cygpath is
+#                       found on PATH, a pass refuses a .. or a part ending in
+#                       a dot, in every mode, before its first git call); on
+#                       Windows schedule the task as your own account, and
+#                       leave it unset unless a long path needs a shorter
+#                       folder (docs/reference.md, Known limits)
 #   RUN_LOCK_WAIT       seconds to wait for another pass's run lock (default 1800)
 #   RUN_LOCK_POLL       seconds between checks while waiting (default 30)
 #   RUNNER_GIT_TIMEOUT  seconds each git step of the journal commit may take

@@ -483,9 +483,9 @@ a lint that does nothing and a lint that found nothing wrong print the same thin
   `TMPDIR` spelled through a link (where `mktemp` takes `TMPDIR`), or off Windows holding a `..`
   after one (called directly, and as a pass where `mktemp` takes `TMPDIR`), runs with the file in
   the folder `mktemp -d` made, and never in a folder of the same name in the link's own folder; on
-  Windows one holding a `..` after a junction, in Git Bash's `/c/...` or Windows' own spelling, is
-  refused for the `..`, the direct calls and the pass alike, with nothing written. A folder for the
-  pass given relative to the current folder, under a folder named `-`, runs on every platform. A
+  Windows one holding a `..` after a junction is refused for the `..`, with nothing written, called
+  directly in Git Bash's spelling or Windows' own, and as a pass in Git Bash's spelling. A folder for
+  the pass given relative to the current folder, under a folder named `-`, runs on every platform. A
   folder above the runner's folder that this account cannot enter, a vault that cannot be resolved
   (both off Windows), an identity walk that ends without an answer, and, off Windows, a folder whose
   resolved path is not the folder itself (a folder above it named with a line break at its end) are
@@ -498,11 +498,12 @@ a lint that does nothing and a lint that found nothing wrong print the same thin
   the checks see it; so is, outside Git Bash, an agent's name or a `.exe` agent's path holding a
   line break. The check of the temporary folder's spelling refuses, with the platform given as
   Windows, each of 18 spellings with a part ending in a dot and accepts 12 others, and off Windows
-  (with no `cygpath`) leaves a `..` and an `x.` alone; handed a `..` or `x.` spelling by a stand-in
-  `mktemp`, with their git calls recorded and, off Windows, a stand-in `cygpath`, the dream and
-  promotion runners in claude and command mode and the retention runner each refuse before any git
-  call names the hooks folder or the spelling, and on Windows hooks placed in a folder of the
-  textual name do not run. A copy of the file an earlier build left in the state directory stays
+  (with no `cygpath`) leaves a `..` and an `x.` alone; handed a `..` spelling by a stand-in `mktemp`
+  (the dream runner in claude mode an `x.` one too), with their git calls recorded and, off Windows,
+  a stand-in `cygpath`, the dream and promotion runners in claude and command mode and the retention
+  runner each refuse before any git call names the hooks folder or the spelling, and on Windows hooks
+  placed in a folder of the textual name do not run (which tells the builds apart only on the dream
+  and promotion legs with `..`). A copy of the file an earlier build left in the state directory stays
   when the folder fails its checks and is gone when a planted name is refused after them. Where
   `mktemp` takes `TMPDIR`, a pass with a `TMPDIR` holding a space runs and hands Claude Code one
   `--settings`, its path whole. A folder for the pass under folders whose names end in `:` runs, and
@@ -835,7 +836,7 @@ Around that call, each runner does several things an exit code cannot:
   (below), or lies inside the vault by file identity, a check the state directory does not get,
   because the file can name hooks Claude Code runs: inside the vault (by name, then by identity, so
   a letter in another case or a vault at a drive or file-system root does not hide it, nor, reasoned,
-  an 8.3 name; a `subst` or mapped drive, or a mount, whose root lies inside the vault is not seen,
+  an 8.3 name on a volume with file IDs; a `subst` or mapped drive, or a mount, whose root lies inside the vault is not seen,
   reasoned), where the agent could change it, or, off Windows, under a folder every account can
   write that has no sticky bit; when it is not there as a folder, because the runner makes it before
   the pass's "before" snapshot and keeps the snapshot in it, so one that went away may have taken
@@ -846,23 +847,26 @@ Around that call, each runner does several things an exit code cannot:
   owns fails the owner check, but not another folder of yours moved into its place by an account
   that can rename entries in `TMPDIR`; one replaced once the checks have resolved it and before
   Claude Code has read the file is written into, or read from, whatever took its place, reasoned);
-  on Windows when its spelling holds a `..` or a part ending in a dot, because git there reads the
-  folder as `TMPDIR` spells it and takes the `..` as text and drops the dot, so after a junction in
-  Git Bash's `/c/...` spelling it took its hooks folder and the commit message from a folder of the
-  textual name, and with a part such as `x.` it looked for its hooks in `x`, in the `C:/...`
-  spelling too, where `mktemp` keeps the dot as well (measured in Git Bash; every runner refuses
-  such a spelling in every mode right after `mktemp`, before its first git call, and the override
-  checks it again for any other caller); when this account cannot enter a folder above it, so the
-  checks cannot reach it (a line of its own, not the one for a folder that is not there); when the
-  path resolving the folder above it gives is not the folder itself, compared by file identity,
-  because the file would then go to another folder (a folder above it named with a line break at its
-  end, which the shell drops, measured with the suite's twin off Windows; a link above it repointed
-  while it is resolved, reasoned); when it is a link, which `mktemp -d` never makes, or a folder
-  above it became one during the checks (a link above it that is there all along is resolved and
-  accepted for the settings file, which is reached through the resolved path, while the snapshots,
-  the steering backup and git's hooks folder are reached through `TMPDIR` as spelled), so that it is
-  not the path it resolves to (off Windows a link in a folder every account can write is refused as
-  one, reasoned); when the identity walk up its path ends with a status that is no answer, so it
+  on Windows, or wherever a `cygpath` is found on `PATH`, when its spelling holds a `..` or a part
+  ending in a dot, because git there reads the folder as `TMPDIR` spells it and takes the `..` as
+  text and drops the dot, so after a junction in Git Bash's `/c/...` spelling it took its hooks
+  folder and the commit message from a folder of the textual name, and with a part such as `x.` it
+  looked for its hooks in `x`, in the `C:/...` spelling too, where `mktemp` keeps the dot as well
+  (measured in Git Bash; every runner refuses such a spelling in every mode right after `mktemp`
+  makes the folder git is given, before its first git call, and the override checks it again for
+  any other caller); when, off Windows, this account cannot enter a folder above it, so the checks
+  cannot reach it (a line of its own, not the one for a folder that is not there; on Windows an
+  account may by default pass through such a folder, and the checks reach the folder and accept
+  it, measured in Git Bash); when the path resolving the folder above it gives is not the folder
+  itself, compared by file identity, because the file would then go to another folder (a folder
+  above it named with a line break at its end, which the shell drops, measured with the suite's
+  twin off Windows; a link above it repointed while it is resolved, reasoned); when it is a link,
+  which `mktemp -d` never makes, or a folder above it became one during the checks (a link above
+  it that is there all along is resolved and accepted for the settings file, which is reached
+  through the resolved path, while the snapshots, the steering backup and git's hooks folder are
+  reached through `TMPDIR` as spelled), so that it is not the path it resolves to (off Windows a
+  link in a folder every account can write is refused as one, measured on Linux for a dangling one
+  with the suite's twin); when the identity walk up its path ends with a status that is no answer, so it
   cannot be shown to lie outside the vault; when the vault itself cannot be resolved (a line naming
   the vault); when `pass-settings.json`, `pass-settings.new`, or the temporary name ending in the
   runner's process id that the file is written through, is already there, since a link there would
@@ -1009,9 +1013,9 @@ Around that call, each runner does several things an exit code cannot:
     and the checks read mode bits only, so an access control list that lets another account change
     the folder is not seen: keep `TMPDIR`, and every folder above it, owned by your account or by
     root, and writable by no other account unless it has the sticky bit, as `/tmp` has. On Windows
-    it carries the temporary folder's permissions and the runner cannot read them, so leave `TMPDIR`
-    unset there, and schedule the task as your own account, unless the `//?/` limit below needs a
-    shorter folder: the folder is then made in Git Bash's `/tmp`, this account's temporary folder,
+    it carries the temporary folder's permissions and the runner cannot read them, so schedule the
+    task as your own account, and leave `TMPDIR` unset there unless the `//?/` limit below needs a
+    shorter folder: unset, the folder is made in Git Bash's `/tmp`, this account's temporary folder,
     which only the account, SYSTEM and Administrators can change (measured; on the one host
     measured, setting `TEMP` and `TMP` for the `.cmd` did not move `/tmp`). A Git Bash login shell,
     as a Git Bash terminal starts one, sets `TMPDIR` from `TMP`, spelled `C:/...`, and a pass
@@ -1545,7 +1549,7 @@ Known limits, each failing in the quiet direction:
 | Exit | Meaning (`vault-retention.sh`) |
 | --- | --- |
 | `0` | OK: the moves were committed, nothing was eligible, this was a dry run, or there is no `20-projects/_logs` folder. Its last printed line, and the log, say which |
-| `1` | setup failure, `20-projects/_logs` cannot be listed or entered, git cannot read the vault, the vault is not the top of its own repository, a shallow clone, `info/grafts`, or a sparse checkout, or, on Windows, the run's temporary folder is spelled with a `..` or a part ending in a dot, which git there would read as another folder ("is spelled with .. or with a part that ends in a dot", before any git call). Also the script failing in itself, such as on an unset variable, which bash ends with `1`. A folder that cannot be listed is never read as an empty one, which is a clean `0` |
+| `1` | setup failure, `20-projects/_logs` cannot be listed or entered, git cannot read the vault, the vault is not the top of its own repository, a shallow clone, `info/grafts`, or a sparse checkout, or, on Windows or wherever a `cygpath` is found on `PATH`, the run's temporary folder is spelled with a `..` or a part ending in a dot, which git there would read as another folder ("is spelled with .. or with a part that ends in a dot", before any git call). With an older `lib/runner-common.sh` it exits 1 with `temp_dir_spelling_ok: command not found` on stderr, not in its log (measured on Linux with 1.4.0's library). Also the script failing in itself, such as on an unset variable, which bash ends with `1`. A folder that cannot be listed is never read as an empty one, which is a clean `0` |
 | `2` | REPORT-REFUSED: the `--adopt-legacy` report was not written by this runner, or its list has changed since. Nothing moved |
 | `3` | PARTIAL: a move failed while HEAD was unchanged, and every file was put back. Nothing is committed. Also when the archive folders could not be made, or one turned out to be a link or not a folder just as the move was about to use it (the log says `ERROR:` or `PATH-BLOCKED:`), where nothing had moved to put back |
 | `4` | COMMIT-FAILED: the commit failed with HEAD unchanged, and the moves were put back |
@@ -1562,7 +1566,7 @@ Known limits, each failing in the quiet direction:
 | Exit | Meaning (dream and promotion runners) |
 | --- | --- |
 | `0` | OK: the artifact assertion held, nothing outside the fence changed, and the pass's files were committed, HEAD already held them, git ignores them, or the vault is not a repository of its own |
-| `1` | NO-ARTIFACT, the runner could not create its temporary directory or, on Windows, in either mode, that directory is spelled with a `..` or a part ending in a dot, which git there would read as another folder ("is spelled with .. or with a part that ends in a dot", before any git call), it could not use its state directory, write its in-flight marker or (promotion pass) its git state file, run `git status` or back up the steering surfaces, git cannot read the vault's repository, or (command mode) the agent definition file is missing. Also, in claude mode, the memory override refused the pass before the agent started: `90-auto-memory/.pass-agent/` holds anything but a regular `.DS_Store` file with no other hard link, or cannot be listed ("the memory override folder already held a file"), it or `90-auto-memory` is a symlink or junction ("the memory override folder is a link"), either is not a folder ("is not a folder, so the memory override folder cannot be made there"), the vault's path holds a `"`, a `\` or a control character ("the vault's path holds a character the settings file cannot carry"), the vault's path or the settings file's holds bytes that do not come back unchanged from UTF-8 to UTF-16LE and back ("is not valid UTF-8, or iconv could not check it"), the runner's folder for the pass fails the state directory's checks, lies inside the vault by file identity or is not the path it resolves to ("the runner's folder for the pass", then the check, then "and the memory override's settings file there can name hooks Claude Code runs"), that folder is not there as a folder ("is not there as a folder, though the runner made it before the pass's snapshot"), a folder above it cannot be entered ("cannot be reached: this account cannot enter the folder above it"), resolving the folder above it led to another folder ("is not the folder that resolving the folder above it led to"), the walk up it gave no answer ("which is not an answer, so the folder cannot be shown to lie outside the vault"), the vault cannot be resolved ("the vault, ..., cannot be resolved"), `pass-settings.json`, `pass-settings.new` or the temporary name the file is written through is already there ("was already there, and the memory override is written through it"), `pass-settings.json` could not be written ("could not write the memory override") or does not read back as written ("does not hold what was written to it"), or, on Windows, `cygpath` could not convert a path it needs ("cygpath could not convert a path for the memory override"), gave one that is not a drive path, a network path among them ("which is not a Windows drive path") or gave one that names another folder or file ("which is not the same folder or file"), or, outside Git Bash where no `cygpath` is found, the agent binary looks like a Windows program ("looks like a Windows program, but this runner is not running under Git Bash") or is not a file it can check ("is not a file the runner can check"). Claude Code's own exit 1, for example on a settings file it cannot use, also ends the run with 1: the log then says `dream-agent exited with code 1` (or `promotion-agent`) and the run log holds Claude Code's message. So does a claude-mode start for which no override was written, as when the runner and `lib/runner-common.sh` come from different releases: the run log then says "no memory override was written for this pass" and Claude Code was never started |
+| `1` | NO-ARTIFACT, the runner could not create its temporary directory or, on Windows or wherever a `cygpath` is found on `PATH`, in either mode, that directory is spelled with a `..` or a part ending in a dot, which git there would read as another folder ("is spelled with .. or with a part that ends in a dot", before any git call), it could not use its state directory, write its in-flight marker or (promotion pass) its git state file, run `git status` or back up the steering surfaces, git cannot read the vault's repository, or (command mode) the agent definition file is missing. Also, in claude mode, the memory override refused the pass before the agent started: `90-auto-memory/.pass-agent/` holds anything but a regular `.DS_Store` file with no other hard link, or cannot be listed ("the memory override folder already held a file"), it or `90-auto-memory` is a symlink or junction ("the memory override folder is a link"), either is not a folder ("is not a folder, so the memory override folder cannot be made there"), the vault's path holds a `"`, a `\` or a control character ("the vault's path holds a character the settings file cannot carry"), the vault's path or the settings file's holds bytes that do not come back unchanged from UTF-8 to UTF-16LE and back ("is not valid UTF-8, or iconv could not check it"), the runner's folder for the pass fails the state directory's checks, lies inside the vault by file identity or is not the path it resolves to ("the runner's folder for the pass", then the check, then "and the memory override's settings file there can name hooks Claude Code runs"), that folder is not there as a folder ("is not there as a folder, though the runner made it before the pass's snapshot"), a folder above it cannot be entered (off Windows) or is not there ("cannot be reached: this account cannot enter the folder above it"), resolving the folder above it led to another folder ("is not the folder that resolving the folder above it led to"), the walk up it gave no answer ("which is not an answer, so the folder cannot be shown to lie outside the vault"), the vault cannot be resolved ("the vault, ..., cannot be resolved"), `pass-settings.json`, `pass-settings.new` or the temporary name the file is written through is already there ("was already there, and the memory override is written through it"), `pass-settings.json` could not be written ("could not write the memory override") or does not read back as written ("does not hold what was written to it"), or, on Windows, `cygpath` could not convert a path it needs ("cygpath could not convert a path for the memory override"), gave one that is not a drive path, a network path among them ("which is not a Windows drive path") or gave one that names another folder or file ("which is not the same folder or file"), or, outside Git Bash where no `cygpath` is found, the agent binary looks like a Windows program ("looks like a Windows program, but this runner is not running under Git Bash") or is not a file it can check ("is not a file the runner can check"). Claude Code's own exit 1, for example on a settings file it cannot use, also ends the run with 1: the log then says `dream-agent exited with code 1` (or `promotion-agent`) and the run log holds Claude Code's message. So does a claude-mode start for which no override was written, as when the runner and `lib/runner-common.sh` come from different releases: the run log then says "no memory override was written for this pass" and Claude Code was never started. With an older `lib/runner-common.sh` and a 1.4.1 runner, the run exits 1 with `temp_dir_spelling_ok: command not found` on the runner's stderr, not in its log (measured on Linux with 1.4.0's library, for the dream runner in both modes and the promotion runner in claude mode) |
 | `2` | VIOLATION: a file outside the allowed write areas changed during the run. When steering surfaces are among them they are contained and the tripwire is set. Also when the pass changed a file it owns that already had uncommitted changes before it started, or a file it owns and changed is no longer a regular file, or (promotion pass) it changed a long-tier note that was there before it started. The runner commits nothing. Those last three reasons give exit 2 even when the agent failed, timed out or (promotion pass) gave no summary, and nothing is recorded for the next run. The promotion pass also puts back its notes, as for exit 5, except one that already had uncommitted changes |
 | `3` | REFUSED: `VAULT_AGENT=command` without `VAULT_ALLOW_UNENFORCED_TOOLS=1`; the agent was not started |
 | `4` | COMMIT-FAILED: staging or committing the pass's files failed, ran longer than `RUNNER_GIT_TIMEOUT`, or a file changed while it was checked. The files are left in place and uncommitted, and the log says whether they could be unstaged. Also a commit that was made but does not hold the checked content, which the log names |
@@ -1595,7 +1599,7 @@ Known limits, each failing in the quiet direction:
 | `RUNNER_RUN_LOG_MAX_BYTES` | `10000000` | both runners: the size above which a pass's run log in `.claude/logs` is cut to its newest part after the pass |
 | `RUNNER_GIT_TIMEOUT` | `120` seconds | all three runners: how long each git step of the runner commit (staging, then the commit and its signing) may take before it is stopped and the run exits 4. In `vault-retention.sh` it bounds the history walk and the move as well, and a step it stops there gives 75 before any move or 71 after one |
 | `VAULT_STATE_DIR` | per-vault directory under `%LOCALAPPDATA%` or `~/.local/state` | all three runners: the run lock, the quarantine, the tripwire and in-flight copies, the pre-pass backup of a running pass, and the retention runner's legacy reports and its `retention-inflight` recovery file, all outside the vault, and `vault-check.sh`, which looks for the tripwire copy there. An absolute path is required, and a Windows path is converted. A relative one, one containing `..`, or one inside the vault is replaced with a directory under the system temp folder, and the runner logs a warning. A state directory the runner's account does not own or cannot write stops the run with exit 1. Give each vault its own value |
-| `TMPDIR` | unset (`/tmp`; for the dream and promotion runners on macOS Apple's `mktemp` takes the per-user temporary folder, whatever `TMPDIR` says) | the dream and promotion runners: where each makes its own folder for the pass with `mktemp -d`, holding the snapshots, the steering backup, git's hooks folder and, in claude mode, `pass-settings.json`, which Claude Code reads as settings, hooks and other commands among them; the retention runner, when it starts with `/`, for its own folders and git's hooks folder, which it names by a template, so macOS honours it too (otherwise `/tmp`). Keep it a folder only your account can change, named with no link, no `..` and no part ending in a dot (on Windows every runner refuses a `..` or a part ending in a dot, in every mode, before its first git call, because git there reads the spelling as text); on Windows leave it unset and schedule the task as your own account, unless a path near 260 characters needs a shorter folder (§ 4.3, Known limits) |
+| `TMPDIR` | unset (`/tmp`; for the dream and promotion runners on macOS Apple's `mktemp` takes the per-user temporary folder, whatever `TMPDIR` says) | the dream and promotion runners: where each makes its own folder for the pass with `mktemp -d`, holding the snapshots, the steering backup, git's hooks folder and, in claude mode, `pass-settings.json`, which Claude Code reads as settings, hooks and other commands among them; the retention runner, when it starts with `/`, for its own folders and git's hooks folder, which it names by a template, so macOS honours it too (otherwise `/tmp`). Keep it a folder only your account can change, named with no link, no `..` and no part ending in a dot (on Windows, or wherever a `cygpath` is found on `PATH`, every runner refuses a `..` or a part ending in a dot, in every mode, before its first git call, because git there reads the spelling as text); on Windows schedule the task as your own account, and leave it unset unless a path near 260 characters needs a shorter folder (§ 4.3, Known limits) |
 | `BASH_EXE` | standard Git for Windows paths | all three `.cmd` wrappers |
 | `VAULT_FORCE_NO_JQ` | unset | `vault-lint.sh` and `postcompact-wrap-up.sh`: take the no-jq branch even when `jq` is installed |
 

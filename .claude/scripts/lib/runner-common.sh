@@ -3190,8 +3190,10 @@ note_tripwire() {
 }
 
 # shown_name <path>
-# Prints <path> with any control character in it shown as ?, for a log line, so
-# a name holding a line break or an escape cannot split a line or forge one.
+# Prints <path> with each C0 control character and DEL in it shown as ?, for a
+# log line, so a name holding a line break or an escape cannot split a line or
+# forge one. A C1 character (U+0080 to U+009F) is not among them and is printed
+# as it is (measured on Linux under the runners' C locale).
 shown_name() {
   case "$1" in
     *[[:cntrl:]]*) printf '%s' "$1" | LC_ALL=C tr '[:cntrl:]' '?' ;;
@@ -3212,9 +3214,10 @@ shown_name() {
 # Bash), folders an account able to make folders there could supply. In the
 # C:/ spelling Win32 reduces the .. for mktemp too, and the two agreed
 # (measured); it is refused all the same.
-# Each runner calls this right after it makes its temporary folder, before any
-# git call, in every mode, and memory_override calls it again for any other
-# caller. On Windows, decided as memory_override decides it (the platform, or a
+# Each runner calls this right after it makes the temporary folder whose path
+# git is given, before any git call, in every mode, and memory_override calls it
+# again for any other caller (the retention runner first makes a folder for its
+# own copies of the run's log, whose path no git call is given). On Windows, decided as memory_override decides it (the platform, or a
 # cygpath found), a folder spelled with a part that ends in a dot, other than
 # . alone, is refused, with / or \ as the separator. Elsewhere it does nothing:
 # git there reaches the folder as mktemp did (measured on Linux with a .. after
@@ -3269,8 +3272,9 @@ temp_dir_spelling_ok() {
 # leave the vault; on Windows a <work-dir> spelled with .. or with a part that
 # ends in a dot, which git there reads as text (temp_dir_spelling_ok, which the
 # runners call first); a <work-dir> that is not there as a folder, that cannot be
-# reached because a folder above it cannot be entered, that is not the folder
-# resolving the folder above it led to, that fails the state directory's checks
+# reached because a folder above it is not there or, off Windows, cannot be
+# entered, that is not the folder resolving the folder above it led to, that
+# fails the state directory's checks
 # (state_dir_ready, under a UTF-8 locale on Windows), whose walk up gives no
 # answer, or that lies inside the vault by file identity, walked as Git Bash
 # spells it and, on Windows, as a drive path (a subst or mapped drive, or a
@@ -3334,8 +3338,10 @@ memory_override() {
   # logical cd takes a .. after a link as text, and so named a folder mktemp
   # never made, or one of the same name someone else had made. A relative folder
   # above it is spelled ./ first, so one named - is not taken for $OLDPWD. A
-  # folder above that cannot be entered leaves the path as given, and the checks
-  # below refuse it, with a line of their own.
+  # folder above that cannot be entered leaves the path as given. Off Windows the
+  # checks below then refuse it, with a line of their own; on Windows, where an
+  # account may by default pass through a folder it cannot enter, they reach the
+  # folder mktemp made and accept it (measured in Git Bash).
   p="$work"
   while :; do case "$p" in ?*/) p="${p%/}" ;; *) break ;; esac; done
   if [ -n "$p" ]; then
@@ -3432,7 +3438,7 @@ memory_override() {
     fi
   fi
   # The lines below name the folder as the runner made it (nm) or as the checks
-  # see it (nw), with any control character in its name shown as ?.
+  # see it (nw), with each C0 control character and DEL in its name shown as ?.
   nm="$(shown_name "$3")"
   nw="$(shown_name "$work")"
   # A spelling git on Windows reads as another folder: the runners refuse it
@@ -3453,8 +3459,8 @@ memory_override() {
   p=$?
   # Code 9 says the folder is not there as the checks spell it, which is so for
   # three causes, and each gets its own line, naming the folder as the runner
-  # made it. Where the folder above could not be entered, the checks cannot see
-  # the folder at all.
+  # made it. Where the folder above is not there, or, off Windows, could not be
+  # entered, the checks cannot see the folder at all.
   if [ "$p" -eq 9 ] && [ -n "$pu" ]; then
     printf '[%s] ERROR: the runner'"'"'s folder for the pass, %s, cannot be reached: this account cannot enter the folder above it, or that folder is not there, so the checks cannot see the folder the runner made. If that folder was removed, the pass'"'"'s snapshot went with it: find what removed it. Otherwise give this account back its access to that folder, or point TMPDIR at a folder outside the vault that this account can enter and only it can change (on Windows, leave it unset and schedule the task as your own account). Refusing to run.\n' "$(ts)" "$nm" >> "$log"
     return 1

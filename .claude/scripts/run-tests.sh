@@ -3184,7 +3184,9 @@ rm -rf "$TMP/memovr-sc1" "$TMP/memovr-sc" "$TMP/memovr-sc.log" "$MO_SC/pass-sett
 # enter hides the folder from the checks, which is not the folder having gone:
 # the refusal says that it cannot be reached, not that something removed it.
 # Off Windows only, where a folder's mode can deny this account entry: Git Bash's
-# mode bits are not Windows permissions.
+# mode bits are not Windows permissions, and on Windows an account may by default
+# pass through a folder it cannot enter, so the checks reach the folder and
+# accept it (measured in Git Bash).
 MO_UNREACH="cannot be reached: this account cannot enter the folder above it, or that folder is not there"
 if is_windows_host; then
   skip mem-override-work-unreachable 'a folder above the one for the pass that this account cannot enter: Git Bash mode bits are not Windows permissions'
@@ -6419,11 +6421,12 @@ mo_dd_clean
 # as TMPDIR spells it, and Win32 takes a .. back past a link or junction as text
 # and drops a dot that ends a part, so git could take its hooks folder, and run
 # a hook from it at the pass's first git status, from a folder of another name
-# (measured in Git Bash). Each runner refuses such a spelling right after
-# mktemp, before its first git call, in every mode. First the pattern, on every
-# host, with the platform given as Windows: each spelling below with a part that
-# ends in a dot, other than . alone, must be refused on one ERROR: line naming
-# it, a line break shown as ?, and each other one accepted with nothing logged.
+# (measured in Git Bash). Each runner refuses such a spelling right after it
+# makes the folder git is given, before its first git call, in every mode. First
+# the pattern, on every host, with the platform given as Windows: each spelling
+# below with a part that ends in a dot, other than . alone, must be refused on
+# one ERROR: line naming it, a line break shown as ?, and each other one
+# accepted with nothing logged.
 # Off Windows, with no cygpath on PATH, it must do nothing.
 mo_spell() {  # mo_spell <uname> <spelling> - temp_dir_spelling_ok's status, with RUNNER_UNAME as given
   rm -f "$TMP/memovr-spell.log"
@@ -6482,12 +6485,14 @@ rm -f "$TMP/memovr-spell.log"
 # their agent, which shows the record of it works; so must the retention runner
 # call git. Each other leg must be refused (1) with the line before any git call
 # names the nohooks folder or a path under the spelling handed over, and the
-# agent must never start: the dream
-# and promotion runners in claude and in command mode, and the retention runner,
-# with .., and the dream runner with a part ending in a dot. On Windows a folder
-# of the textual name also holds every client hook git may run, each leaving a
-# marker, and a tracked note is touched first, so a git status would write the
-# index: no hook may run.
+# agent must never start: the dream and promotion runners in claude and in
+# command mode, and the retention runner, with .., and the dream runner in claude
+# mode with a part ending in a dot. On Windows a folder of the textual name also
+# holds eight client hooks git may run, each leaving a marker, and a tracked note
+# is touched first, so a git status would write the index: no hook may run. That
+# tells the builds apart only on the dream and promotion legs with ..: on the
+# retention and dot legs an earlier build ran no hook either, so there the count
+# of git calls naming the nohooks folder or the spelling holds the refusal.
 MO_K4="$TMP/memovr-k4"
 mo_k4_clean() {
   if is_windows_host && [ -L "$MO_K4/base/lnk" ]; then

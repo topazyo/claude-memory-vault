@@ -49,6 +49,8 @@
 #   RETENTION_DAYS       days before a journal or stub may move (default 60)
 #   RETENTION_MAX_MOVES  the most files one run moves (default 50, at most 50)
 #   VAULT_STATE_DIR      per-vault state outside the vault (see dream-pass.sh)
+#   TMPDIR               where the run makes its folders, when it starts with /
+#                        (otherwise /tmp)
 #   RUN_LOCK_WAIT        seconds to wait for another runner's lock (default 1800)
 #   RUN_LOCK_POLL        seconds between checks while waiting (default 30)
 #   RUNNER_GIT_TIMEOUT   seconds each watched git step may take (default 120)
@@ -58,9 +60,11 @@
 #        20-projects/_logs folder
 #   1    setup failure, 20-projects/_logs cannot be listed or entered, git
 #        cannot read the vault, the vault is not the top of its own
-#        repository, a shallow clone, grafts, or a sparse checkout, or on
-#        Windows a TMPDIR whose spelling holds .. or a part ending in a dot
-#        (git there would read it as another folder). Also this
+#        repository, a shallow clone, grafts, or a sparse checkout, or, on
+#        Windows or wherever a cygpath is found on PATH, a TMPDIR starting
+#        with / whose spelling holds .. or a part ending in a dot (git there
+#        would read it as another folder; a TMPDIR not starting with / is
+#        passed over for /tmp). Also this
 #        script failing in itself, such as on an unset variable, which bash
 #        ends with 1
 #   2    REPORT-REFUSED: the report was not written by this runner, or changed
