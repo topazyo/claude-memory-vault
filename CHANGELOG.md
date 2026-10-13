@@ -132,14 +132,14 @@ What that covers, and what it does not:
   and retention runners now refuse a temporary folder spelled with a `..` or with a part ending in a
   dot, in either spelling, right after `mktemp` makes the folder git is given, before their first
   git call, in every mode, command mode included (measured in Git Bash: for a dream pass with a
-  stand-in agent, and with the suite's twin on the measuring host and on CI's windows-latest, for
-  the dream and promotion runners in claude and command mode and the retention runner, a part
-  ending in a dot with the dream runner in claude mode only, and through the check itself for 18
-  spellings; the twin records no git call naming the folder before the refusal. That no hook placed
-  there ran tells the builds apart for the dream and promotion runners' `..`, where an earlier
-  build ran them, and not for the retention runner or a part ending in a dot, where the earlier
-  builds measured ran none either). The
-  retention runner takes `TMPDIR` only when it starts with `/`, so for a `C:/...` spelling it makes
+  stand-in agent; and with the suite's twin, on the measuring host and on CI's windows-latest, for
+  a `..` with the dream and promotion runners in claude and command mode and the retention runner,
+  for a part ending in a dot with the dream runner in claude mode only, and through the check
+  itself for 18 spellings; the twin records no git call naming the folder before the refusal. That
+  no hook placed there ran tells this release from earlier builds for the dream and promotion
+  runners' `..`, where an earlier build ran them, and not for the retention runner or a part ending
+  in a dot, where the earlier builds measured ran none either). The retention runner takes `TMPDIR`
+  only when it starts with `/`, so for a `C:/...` spelling it makes
   its folder under `/tmp` instead, as in 1.4.0, and has nothing to refuse (reasoned from the code).
   A part that is `.` alone is not refused: Win32 and Git Bash both read it as the folder it is in
   (reasoned). Claude Code itself keeps the dot: handed `--settings <folder>/x./s.json`, 2.1.296 read
@@ -259,9 +259,9 @@ What that covers, and what it does not:
   - The runner's folder for the pass cannot be reached: this account cannot enter a folder above it,
     or that folder is not there, so the checks cannot see the folder the runner made. An earlier
     build of this release said the folder was not there, as if something had removed it (measured
-    on Linux). On Windows only the second cause applies: an account may by default pass through a
+    on Linux). On Windows, by default, only the second cause applies: an account may pass through a
     folder it cannot enter, so the checks reach the folder the runner made and accept it (measured
-    in Git Bash).
+    in Git Bash for a folder spelled with no link).
   - The path resolving the folder above the runner's folder gives is not that folder, compared by
     file identity, so the settings file would go to another folder, one someone else may have made:
     a folder above it is named with a line break at its end, which the shell drops (measured with
@@ -319,8 +319,8 @@ What that covers, and what it does not:
   no leg tests yet, each right today by reading the code: on Windows, the drive-path walk's own guard
   (no leg follows a first walk that gives no answer, or "under", with a drive-path walk that answers
   "not under"); and on every platform, resolving a folder above the runner's folder that is `/`, or
-  with `CDPATH` set. Each new control id was seen failing against 1.4.0 first,
-  except `mem-override-sink-contained`: it holds the unchanged fence to containing a write in
+  with `CDPATH` set. Each new control id was seen failing against 1.4.0 first, except
+  `mem-override-sink-contained`: it holds the unchanged fence to containing a write in
   `.pass-agent/`, and was seen failing against a runner that exempts that folder;
   `mem-override-utf8-lax-host` and `mem-override-utf16-lax-host`, which record what the host's
   `iconv` does rather than holding a refusal; `mem-override-work-root` and `mem-override-work-made`,
@@ -388,15 +388,15 @@ What that covers, and what it does not:
   or the spelling, where the controls, the dream and promotion runners in command mode, which start
   their agent, and the retention runner, with the folder spelled plainly, call git with that hooks
   folder; and on Windows the hooks placed in a folder of the textual name must not run, which tells
-  the builds apart only on the dream and promotion legs with `..`) and `dream-agent-tools` are
-  required on every suite job. `mem-override-work-space`, a pass with a `TMPDIR` holding a space, is required on the ubuntu
-  and Windows jobs, where `mktemp` takes `TMPDIR`, and not on macOS. `mem-override-work-unreachable`
-  (a folder above that this account cannot enter; skipped as root) and
-  `mem-override-vault-unresolved` (a vault that is not there) are required on the Linux and macOS
-  jobs and not on Windows, where Git Bash's mode bits are not permissions, an account may by default
-  pass through a folder it cannot enter, and `cygpath`'s round trip refuses a vault that is not
-  there first. `mem-override-work-root-drive`, a vault at the drive root
-  refused by the drive-path walk alone, is required on the Windows job only.
+  this release from earlier builds only on the dream and promotion legs with `..`) and
+  `dream-agent-tools` are required on every suite job. `mem-override-work-space`, a pass with a
+  `TMPDIR` holding a space, is required on the ubuntu and Windows jobs, where `mktemp` takes
+  `TMPDIR`, and not on macOS. `mem-override-work-unreachable` (a folder above that this account
+  cannot enter; skipped as root) and `mem-override-vault-unresolved` (a vault that is not there)
+  are required on the Linux and macOS jobs and not on Windows, where Git Bash's mode bits are not
+  permissions, an account may by default pass through a folder it cannot enter, and `cygpath`'s
+  round trip refuses a vault that is not there first. `mem-override-work-root-drive`, a vault at
+  the drive root refused by the drive-path walk alone, is required on the Windows job only.
   `mem-override-sink-unreadable`, `mem-override-sink-filelink`, `mem-override-file-mode`,
   `mem-override-utf8-refused`, `mem-override-winbin`, `mem-override-winbin-unreadable`,
   `mem-override-stray-cygpath`, `mem-override-no-cygpath` and `mem-override-work-open` are required
@@ -560,8 +560,9 @@ What that covers, and what it does not:
 15. **A claude-mode pass refuses to start when its folder under `TMPDIR` fails the state directory's
     checks, lies inside the vault by file identity, is not the path it resolves to, is not there,
     cannot be reached, is not the folder its resolution led to, or already holds a name the settings
-    file is written through; on Windows every pass, in either mode, and the retention pass refuse
-    one spelled with a `..` or a part ending in a dot.** The log says `the runner's folder for the
+    file is written through; on Windows, or wherever a `cygpath` is found on `PATH`, every pass, in
+    either mode, and the retention pass refuse one spelled with a `..` or a part ending in a dot.**
+    The log says `the runner's folder for the
     pass, ...`, then why (`resolves into the vault`, `is inside a folder every account can write
     that has no sticky bit`, `is not the path it resolves to`, and so on), `and the memory
     override's settings file there can name hooks Claude Code runs`. A folder that is not there
@@ -575,14 +576,16 @@ What that covers, and what it does not:
     cannot enter the folder above it`: give your account back its access, or point `TMPDIR` at a
     folder outside the vault that your account can enter and only it can change. On Windows an
     account may by default pass through a folder it cannot enter, and the checks then reach the
-    runner's folder and accept it (measured in Git Bash), so there the line means a folder above it
-    is not there: leave `TMPDIR` unset and schedule the task as your own account. `is not the folder
-    that resolving the folder above it led to` means a folder above it is named with a line break at
-    its end, or a link above it changed while the runner resolved it: rename the folder, or find
-    what changed the link. `which is not an answer, so the folder cannot be shown to lie outside the
-    vault` means the check that walks up the folder ended with neither answer, which this release's
-    walk never gives: `runner-common.sh` was edited or damaged, so take it and the runners from this
-    release again. A planted name gives `was already there, and the memory override is written through
+    runner's folder and accept it (measured in Git Bash for a folder spelled with no link), so there
+    the line normally means a folder above it is not there: the pass's snapshot went with it, so
+    find what removed it, then leave `TMPDIR` unset and schedule the task as your own account. `is
+    not the folder that resolving the folder above it led to` means a folder above it is named with
+    a line break at its end, or a link above it changed while the runner resolved it: rename the
+    folder, or find what changed the link. `which is not an answer, so the folder cannot be shown to
+    lie outside the vault` means the check that walks up the folder ended with neither answer, which
+    this release's walk never gives: `runner-common.sh` was edited or damaged, so take it and the
+    runners from this release again. A planted name gives `was already there, and the memory
+    override is written through
     it`. Off Windows the folder is yours with mode 0700, so a process of your account or root wrote
     there, unless an account that can rename entries in `TMPDIR` or in a folder above it swapped in
     another folder of yours: point `TMPDIR` at a folder only you can change, then find that process.

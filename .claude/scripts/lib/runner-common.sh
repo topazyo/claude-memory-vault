@@ -3217,8 +3217,9 @@ shown_name() {
 # Each runner calls this right after it makes the temporary folder whose path
 # git is given, before any git call, in every mode, and memory_override calls it
 # again for any other caller (the retention runner first makes a folder for its
-# own copies of the run's log, whose path no git call is given). On Windows, decided as memory_override decides it (the platform, or a
-# cygpath found), a folder spelled with a part that ends in a dot, other than
+# own copies of the run's log, whose path no git call is given). On Windows,
+# decided as memory_override decides it (the platform, or a cygpath found), a
+# folder spelled with a part that ends in a dot, other than
 # . alone, is refused, with / or \ as the separator. Elsewhere it does nothing:
 # git there reaches the folder as mktemp did (measured on Linux with a .. after
 # a link). Returns 1, with the reason in <log>, when the run must not go on.
@@ -3341,7 +3342,8 @@ memory_override() {
   # folder above that cannot be entered leaves the path as given. Off Windows the
   # checks below then refuse it, with a line of their own; on Windows, where an
   # account may by default pass through a folder it cannot enter, they reach the
-  # folder mktemp made and accept it (measured in Git Bash).
+  # folder mktemp made and accept it (measured in Git Bash for a folder spelled
+  # with no link).
   p="$work"
   while :; do case "$p" in ?*/) p="${p%/}" ;; *) break ;; esac; done
   if [ -n "$p" ]; then

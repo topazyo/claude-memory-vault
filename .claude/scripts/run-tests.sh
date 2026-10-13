@@ -3186,7 +3186,7 @@ rm -rf "$TMP/memovr-sc1" "$TMP/memovr-sc" "$TMP/memovr-sc.log" "$MO_SC/pass-sett
 # Off Windows only, where a folder's mode can deny this account entry: Git Bash's
 # mode bits are not Windows permissions, and on Windows an account may by default
 # pass through a folder it cannot enter, so the checks reach the folder and
-# accept it (measured in Git Bash).
+# accept it (measured in Git Bash for a folder spelled with no link).
 MO_UNREACH="cannot be reached: this account cannot enter the folder above it, or that folder is not there"
 if is_windows_host; then
   skip mem-override-work-unreachable 'a folder above the one for the pass that this account cannot enter: Git Bash mode bits are not Windows permissions'
@@ -6491,8 +6491,9 @@ rm -f "$TMP/memovr-spell.log"
 # holds eight client hooks git may run, each leaving a marker, and a tracked note
 # is touched first, so a git status would write the index: no hook may run. That
 # tells the builds apart only on the dream and promotion legs with ..: on the
-# retention and dot legs an earlier build ran no hook either, so there the count
-# of git calls naming the nohooks folder or the spelling holds the refusal.
+# retention and dot legs the earlier builds measured ran no hook either, so there
+# the count of git calls naming the nohooks folder or the spelling holds the
+# refusal.
 MO_K4="$TMP/memovr-k4"
 mo_k4_clean() {
   if is_windows_host && [ -L "$MO_K4/base/lnk" ]; then

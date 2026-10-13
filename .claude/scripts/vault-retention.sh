@@ -64,9 +64,8 @@
 #        Windows or wherever a cygpath is found on PATH, a TMPDIR starting
 #        with / whose spelling holds .. or a part ending in a dot (git there
 #        would read it as another folder; a TMPDIR not starting with / is
-#        passed over for /tmp). Also this
-#        script failing in itself, such as on an unset variable, which bash
-#        ends with 1
+#        passed over for /tmp). Also this script failing in itself, such as
+#        on an unset variable, which bash ends with 1
 #   2    REPORT-REFUSED: the report was not written by this runner, or changed
 #   3    PARTIAL: the move failed and the vault was put back to HEAD, or an
 #        archive folder could not be made, or turned out to be a link or not a
