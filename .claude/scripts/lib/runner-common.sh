@@ -3443,9 +3443,9 @@ memory_override() {
   # see it (nw), with each C0 control character and DEL in its name shown as ?.
   nm="$(shown_name "$3")"
   nw="$(shown_name "$work")"
-  # A spelling with .. or a part ending in a dot, which git on Windows reads as
-  # another folder: the runners refuse it before their first git call, and this
-  # refuses it for any other caller.
+  # A spelling with .. or a part ending in a dot, which git on Windows can read
+  # as another folder: the runners refuse it before their first git call, and
+  # this refuses it for any other caller.
   temp_dir_spelling_ok "$3" "$log" || return 1
   # The file can name hooks Claude Code runs, so its folder must pass the state
   # directory's checks. On Windows they run under a UTF-8 locale, as the

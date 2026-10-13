@@ -856,10 +856,11 @@ Around that call, each runner does several things an exit code cannot:
   looked for its hooks in `x`, in the `C:/...` spelling too, where `mktemp` keeps the dot as well
   (measured in Git Bash; every runner refuses such a spelling in every mode right after `mktemp`
   makes the folder git is given, before its first git call, and the override checks it again for
-  any other caller); when, off Windows, this account cannot enter a folder above it, so the checks
-  cannot reach it (a line of its own, not the one for a folder that is not there; on Windows an
-  account may by default pass through such a folder, and the checks reach the folder and accept
-  it, measured in Git Bash for a folder spelled with no link); when the path resolving the folder
+  any other caller); when a folder above it is not there or, off Windows, this account cannot enter
+  one, so the checks cannot reach it (a line of its own, not the one for a folder that is not there
+  itself; on Windows an account may by default pass through such a folder, and the checks reach the
+  folder and accept it, measured in Git Bash for a folder spelled with no link); when the path
+  resolving the folder
   above it gives is not the folder itself, compared by file identity, because the file would then
   go to another folder (a folder
   above it named with a line break at its end, which the shell drops, measured with the suite's

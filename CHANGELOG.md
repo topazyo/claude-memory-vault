@@ -31,8 +31,9 @@ A security fix for the dream and promotion passes in claude mode. Claude Code's 
 a pass is now pointed inside the vault, where the write fence sees it. On Windows that holds for a
 vault on a drive path, and a vault on a `//` network path is refused instead. Measured for the
 Write tool on Windows, with ASCII and non-ASCII vault paths; Linux and macOS are unverified. On
-Windows every runner, the retention pass's included, also refuses in every mode a temporary folder
-spelled with a `..` or with a part ending in a dot, which git there can read as another folder.
+Windows, or wherever a `cygpath` is found on `PATH`, every runner, the retention runner included,
+also refuses in every mode a temporary folder spelled with a `..` or with a part ending in a dot,
+which git there can read as another folder.
 
 ### Security
 
@@ -139,8 +140,9 @@ What that covers, and what it does not:
   no hook placed there ran tells this release from earlier builds for the dream and promotion
   runners' `..`, where an earlier build ran them, and not for the retention runner or a part ending
   in a dot, where the earlier builds measured ran none either). The retention runner takes `TMPDIR`
-  only when it starts with `/`, so for a `C:/...` spelling it makes
-  its folder under `/tmp` instead, as in 1.4.0, and has nothing to refuse (reasoned from the code).
+  only when it starts with `/`, so for a `C:/...` spelling it makes its folder under `/tmp`
+  instead, as in 1.4.0, and has nothing to refuse unless no folder can be made under `/tmp` either
+  (reasoned from the code).
   A part that is `.` alone is not refused: Win32 and Git Bash both read it as the folder it is in
   (reasoned). Claude Code itself keeps the dot: handed `--settings <folder>/x./s.json`, 2.1.296 read
   that file, not `<folder>/x/s.json` (measured); its memory folder is reached the same way
