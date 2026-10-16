@@ -3284,6 +3284,77 @@ temp_dir_spelling_ok() {
   return 1
 }
 
+# vault_root_spelling_ok <root> <log>
+#
+# git.exe reads the vault's folder as the runner spells it, and Win32 reads that
+# spelling as text. It drops the dot from a part that ends in one, so with a
+# folder v beside the vault v. git read the repository in v, in either spelling
+# and from inside v. (measured in Git Bash). It reads a colon after a part's name
+# as a stream of that folder, and drops a space that ends the last part (both
+# reasoned). Each runner calls this once its log is known, before the state
+# directory, the run lock or any git call, in every mode. Decided as
+# temp_dir_spelling_ok decides it: on Windows, or wherever a cygpath is found;
+# elsewhere it does nothing. Returns 1, with the reason in <log>, when the run
+# must not go on.
+vault_root_spelling_ok() {
+  local rest="$1"
+  case "$RUNNER_UNAME" in
+    MINGW*|MSYS*|CYGWIN*) ;;
+    *) command -v cygpath >/dev/null 2>&1 || return 0 ;;
+  esac
+  case "$rest" in [ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]:*) rest="${rest#??}" ;; esac
+  case "/$1/" in
+    *[!/\\]./*|*[!/\\].\\*) ;;
+    *)
+      case "$rest" in
+        *:*|*' ') ;;
+        *) return 0 ;;
+      esac ;;
+  esac
+  printf '[%s] ERROR: the vault, %s, is spelled with a part that ends in a dot, a colon that is not a drive letter'"'"'s, or a last part that ends in a space, and Windows reads such a spelling as another folder: git read the repository in a folder v beside a vault v. (measured in Git Bash), and a colon reads as a stream of the folder before it and a trailing space is dropped (both reasoned). Rename the folder, or reach the vault through a path with none of these. Refusing to run.\n' "$(ts)" "$(shown_name "$1")" >> "$2"
+  return 1
+}
+
+# runner_folder_ok <folder> <log>
+#
+# The runner's folder for the pass must be an absolute path. mktemp returns a
+# relative one when TMPDIR is relative or starts with ~ (measured in Git Bash and
+# on Linux), and the runners have moved into the vault by then, so the folder is
+# made inside it; git, handed its nohooks folder as core.hooksPath, resolves a
+# relative one against the top of the repository and expands a leading ~ to the
+# home folder, neither of them the folder the runner made. A drive path (C:/ or
+# C:\) counts as absolute only under Git Bash, MSYS or Cygwin; elsewhere it is a
+# relative one. On Windows, or wherever a cygpath is found, a colon other than a
+# leading drive letter's is refused too: NTFS reads a part such as
+# x::$INDEX_ALLOCATION as the folder x (the mechanism of CVE-2019-1352), and MSYS
+# leaves a path holding a colon unconverted, so git could read another folder
+# (reasoned, not staged: staging it needs a folder at a drive root). The runners
+# call this right after temp_dir_spelling_ok, before any git call, in every mode;
+# memory_override does not, so its own callers may hand it a relative folder.
+# Returns 1, with the reason in <log>, when the run must not go on.
+runner_folder_ok() {
+  local win=0 rest="$1"
+  case "$RUNNER_UNAME" in MINGW*|MSYS*|CYGWIN*) win=1 ;; esac
+  case "$1" in
+    /*) ;;
+    [ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]:/*|[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]:\\*)
+      [ "$win" = 1 ] || rest= ;;
+    *) rest= ;;
+  esac
+  if [ -z "$rest" ]; then
+    printf '[%s] ERROR: the runner'"'"'s temporary folder, %s, is not an absolute path, so it was made relative to the vault and git would look for its hooks folder somewhere other than the folder the runner made (mktemp returns such a path when TMPDIR is relative or starts with ~, measured in Git Bash and on Linux). Point TMPDIR at an absolute folder outside the vault, or leave it unset. Refusing to run.\n' "$(ts)" "$(shown_name "$1")" >> "$2"
+    return 1
+  fi
+  [ "$win" = 1 ] || command -v cygpath >/dev/null 2>&1 || return 0
+  case "$rest" in [ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]:*) rest="${rest#??}" ;; esac
+  case "$rest" in
+    *:*)
+      printf '[%s] ERROR: the runner'"'"'s temporary folder, %s, is spelled with a colon that is not a drive letter'"'"'s, and on Windows a part such as x::$INDEX_ALLOCATION names the folder x while MSYS leaves a path holding a colon unconverted, so git could read another folder than the one the runner made (reasoned, not staged). Point TMPDIR at a folder with no colon but the drive letter'"'"'s, or leave it unset. Refusing to run.\n' "$(ts)" "$(shown_name "$1")" >> "$2"
+      return 1 ;;
+  esac
+  return 0
+}
+
 # memory_override <root> <state-dir> <work-dir> <log>
 #
 # Claude mode only. Claude Code grants the agent's Write and Edit tools its

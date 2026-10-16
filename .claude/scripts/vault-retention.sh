@@ -49,9 +49,10 @@
 #   RETENTION_DAYS       days before a journal or stub may move (default 60)
 #   RETENTION_MAX_MOVES  the most files one run moves (default 50, at most 50)
 #   VAULT_STATE_DIR      per-vault state outside the vault (see dream-pass.sh)
-#   TMPDIR               where the run makes its folders, when it starts with /
-#                        and a folder can be made there (otherwise /tmp, and
-#                        failing that mktemp's own default)
+#   TMPDIR               where the run makes its folders and temporary files,
+#                        when it starts with / (otherwise /tmp for the whole
+#                        run); a folder that cannot be made there is made in
+#                        /tmp, and a run that can make neither refuses
 #   RUN_LOCK_WAIT        seconds to wait for another runner's lock (default 1800)
 #   RUN_LOCK_POLL        seconds between checks while waiting (default 30)
 #   RUNNER_GIT_TIMEOUT   seconds each watched git step may take (default 120)
@@ -61,14 +62,14 @@
 #        20-projects/_logs folder
 #   1    setup failure, 20-projects/_logs cannot be listed or entered, git
 #        cannot read the vault, the vault is not the top of its own
-#        repository, a shallow clone, grafts, or a sparse checkout, or, on
-#        Windows or wherever a cygpath is found on PATH, the temporary folder
-#        whose path git is given spelled with .. or a part ending in a dot
-#        (git there can read it as another folder; the run uses TMPDIR when it
-#        starts with / and a folder can be made there, otherwise /tmp, and
-#        when no folder can be made there either, mktemp's own default).
-#        Also this script failing in itself, such as on an unset variable,
-#        which bash ends with 1
+#        repository, a shallow clone, grafts, or a sparse checkout, a
+#        temporary folder that could not be made in TMPDIR or /tmp, or is not
+#        an absolute path, or, on Windows or wherever a cygpath is found on
+#        PATH, the vault or the temporary folder whose path git is given
+#        spelled with .., a part ending in a dot or a colon that is not a drive
+#        letter's, or a vault whose last part ends in a space (git there can
+#        read it as another folder). Also this script failing in itself, such
+#        as on an unset variable, which bash ends with 1
 #   2    REPORT-REFUSED: the report was not written by this runner, or changed
 #   3    PARTIAL: the move failed and the vault was put back to HEAD, or an
 #        archive folder could not be made, or turned out to be a link or not a
@@ -3120,13 +3121,15 @@ usage() {
 # puts the folder in the per-user folder the system names and not in TMPDIR, so
 # a caller who points TMPDIR somewhere would find the run's folders elsewhere.
 # TMPDIR counts only when it is an absolute path: the run has already moved
-# into the vault, where a relative one would put the folders. /tmp is the
-# fallback when TMPDIR cannot be used, and the plain form the last resort.
+# into the vault, where a relative one would put the folders, and main sets it
+# to /tmp for the whole run when it is not one. /tmp is the fallback when
+# TMPDIR cannot be used. There is no plain mktemp -d after it: that form reads
+# TMPDIR itself, and when neither folder can be made the run refuses instead.
 tmp_dir() {
   local base=/tmp
   case "${TMPDIR:-}" in /*) base="$TMPDIR" ;; esac
   mktemp -d "$base/vaultretention.XXXXXXXX" 2>/dev/null \
-    || mktemp -d /tmp/vaultretention.XXXXXXXX 2>/dev/null || mktemp -d 2>/dev/null
+    || mktemp -d /tmp/vaultretention.XXXXXXXX 2>/dev/null
 }
 
 main() {
@@ -3194,6 +3197,11 @@ main() {
   done
   [ -n "$OUT_FD" ] || OUT_FD=9
   { eval "exec $OUT_FD>&1"; } 2>/dev/null
+  # Every temporary file of the run is made where its folders are. The run has
+  # moved into the vault, so a TMPDIR that does not start with / would put the
+  # library's own temporary files, the watchdog's among them, inside the vault
+  # while its git steps run: it is replaced by /tmp for the whole run.
+  case "${TMPDIR:-}" in ''|/*) ;; *) TMPDIR=/tmp; export TMPDIR ;; esac
   # This run's own copy of what it logs, made before anything can fail, in a
   # folder of its own. When it cannot be made the run goes on logging to the log
   # alone, and print_run says so in place of the lines. It is not the folder the
@@ -3218,6 +3226,13 @@ main() {
   trap 'on_signal 129' HUP
   git_env_warning "$LIB_LOG"
   lib_logged
+  # On Windows git reads the vault's folder as it is spelled, so a spelling it
+  # reads as another folder is refused before the state directory, the lock or
+  # any git call.
+  vault_root_spelling_ok "$ROOT" "$LIB_LOG"
+  rc=$?
+  lib_logged
+  [ "$rc" -eq 0 ] || return 1
   # Anything that reaches arithmetic is checked first, because the shell reads a
   # variable in arithmetic as an expression and a planted one would run.
   RETENTION_DAYS="$(uint_setting RETENTION_DAYS 60 1 "$LIB_LOG" days)"
@@ -3259,6 +3274,10 @@ main() {
   # On Windows git reads this folder as TMPDIR spells it, so a spelling it reads
   # as another folder is refused before the first git call.
   temp_dir_spelling_ok "$SNAP_DIR" "$LIB_LOG"
+  rc=$?
+  lib_logged
+  [ "$rc" -eq 0 ] || return 1
+  runner_folder_ok "$SNAP_DIR" "$LIB_LOG"
   rc=$?
   lib_logged
   [ "$rc" -eq 0 ] || return 1

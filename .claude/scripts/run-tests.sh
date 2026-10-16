@@ -6782,6 +6782,296 @@ MC_EOF
 else
   skip msys-conv-pass 'MSYS converts paths for Windows programs only, so the switch that stops it matters only in Git Bash'
 fi
+# vault_root_spelling_ok: on Windows git reads the vault's folder as it is
+# spelled, and Win32 drops the dot from a part that ends in one (git read the
+# repository in a folder v beside a vault v., measured in Git Bash), reads a
+# colon as a stream of the folder before it, and drops a space that ends the last
+# part. First the pattern, the platform given as Windows: each spelling below
+# with such a part must be refused on one ERROR: line naming it, and each other
+# one accepted with nothing logged. Off Windows, with no cygpath, it does nothing.
+vr_spell() {  # vr_spell <uname> <root> - vault_root_spelling_ok's status, RUNNER_UNAME as given
+  rm -f "$TMP/v142-vr.log"
+  ( LC_ALL=C; export LC_ALL; . "$RV/.claude/scripts/lib/runner-common.sh"; RUNNER_UNAME="$1"
+    vault_root_spelling_ok "$2" "$TMP/v142-vr.log" )
+}
+VR_LINE='is spelled with a part that ends in a dot, a colon that is not a drive letter'
+ran vault-root-spelling
+vr_bad=0 vr_n=0 vr_r=0
+for vr_p in '/b/v./vault' '/b/v.' 'C:\b\v.\vault' 'C:/b/v./vault' '/b/x::$INDEX_ALLOCATION/v' \
+  '/b/x:$I30:$INDEX_ALLOCATION/v' '/b/v ' 'C:/b/v. ' '/c/b/v:x'; do
+  vr_n=$((vr_n + 1)) vr_r=$((vr_r + 1))
+  vr_spell MINGW64_NT-10.0 "$vr_p"
+  vr_rc=$?
+  if ! { [ "$vr_rc" -eq 1 ] && [ "$(grep -c '' "$TMP/v142-vr.log" 2>/dev/null)" = 1 ] \
+         && grep -F -- "ERROR: the vault, $vr_p, $VR_LINE" "$TMP/v142-vr.log" | grep -q '^\[[^]]*\] ERROR: '; }; then
+    vr_bad=$((vr_bad + 1))
+    bad "vault_root_spelling_ok, the platform given as Windows, did not refuse [$vr_p] on one ERROR: line naming it -- got $vr_rc: $(tr '\n' '|' < "$TMP/v142-vr.log" 2>/dev/null)"
+  fi
+done
+for vr_p in '/b/v/vault' 'C:/Users/Some One/vault' 'c:/b/vault' 'C:\b\vault' '/b/.x/v' '/b/a b/v' '/b/x. /v' \
+  '/c/Users/Some One/vault' '/b/v.x'; do
+  vr_n=$((vr_n + 1))
+  vr_spell MINGW64_NT-10.0 "$vr_p"
+  vr_rc=$?
+  if [ "$vr_rc" -ne 0 ] || [ -s "$TMP/v142-vr.log" ]; then
+    vr_bad=$((vr_bad + 1))
+    bad "vault_root_spelling_ok, the platform given as Windows, refused [$vr_p] or logged -- got $vr_rc: $(cat "$TMP/v142-vr.log" 2>/dev/null)"
+  fi
+done
+[ "$vr_bad" -eq 0 ] && ok "vault_root_spelling_ok, the platform given as Windows -> the $vr_r spellings with a part ending in a dot, a colon that is not a drive letter's or a last part ending in a space refused, each on one ERROR: line naming it, and the $((vr_n - vr_r)) others accepted with nothing logged"
+if is_windows_host || command -v cygpath >/dev/null 2>&1; then
+  printf '  INFO  [vault-root-spelling] the leg where it must do nothing runs off Windows only, with no cygpath on PATH (not counted)\n'
+else
+  for vr_p in '/b/v./vault' '/b/v '; do
+    vr_spell "$(uname -s)" "$vr_p"
+    vr_rc=$?
+    if [ "$vr_rc" -eq 0 ] && [ ! -s "$TMP/v142-vr.log" ]; then
+      ok "vault_root_spelling_ok off Windows, with no cygpath on PATH -> does nothing (0, nothing logged) for [$vr_p]"
+    else
+      bad "vault_root_spelling_ok off Windows, with no cygpath on PATH, did not leave [$vr_p] alone -- got $vr_rc: $(cat "$TMP/v142-vr.log" 2>/dev/null)"
+    fi
+  done
+fi
+rm -f "$TMP/v142-vr.log"
+# Then the runners, through the git stand-in that records every call (and, off
+# Windows, the cygpath stand-in, so the platform reads as Windows): a vault built
+# plainly and renamed to v. must be refused (1) with the line and no git call at
+# all, and no agent started, by the dream runner in claude and command mode, the
+# promotion runner in command mode and the retention runner. The same vault under
+# a plain name, through the same stand-ins, must call git and start its agent, so
+# a stand-in that was never used cannot pass for the refusal.
+VR_B="$TMP/v142-vr"
+rm -rf "$VR_B"
+mkdir -p "$VR_B"
+vr_ready=1
+v142_vault "$VR_B/vplain" || vr_ready=0
+v142_vault "$VR_B/vdot" && mv "$VR_B/vdot" "$VR_B/v." 2>/dev/null || vr_ready=0
+cp -R "$MO_K4_RV" "$VR_B/rplain" 2>/dev/null && cp -R "$MO_K4_RV" "$VR_B/rdot" 2>/dev/null \
+  && mv "$VR_B/rdot" "$VR_B/r." 2>/dev/null || vr_ready=0
+[ -f "$VR_B/v./.claude/scripts/dream-pass.sh" ] && [ -f "$VR_B/r./.claude/scripts/vault-retention.sh" ] || vr_ready=0
+vr_ret() {  # vr_ret <vault> - the retention runner's status, through the mo_k4 stand-ins, the folder spelled plainly
+  rm -f "$MO_K4/git.log"
+  env VAULT_STATE_DIR="$TMP/state-v142-vr-ret" RUN_LOCK_WAIT=0 RUN_LOCK_POLL=1 WATCHDOG_POLL=1 WATCHDOG_GRACE=2 \
+    PATH="$MO_K4/shim:$PATH" MO_K4_MKTEMP="$MO_K4_MT" MO_K4_GIT="$MO_K4_G" MO_K4_GITLOG="$MO_K4/git.log" \
+    MO_K4_MARK="$MO_K4/fired" MO_K4_SPELL="$MO_K4/tgt" MO_K4_REAL="$MO_K4/tgt" MO_K4_DECOY= \
+    bash "$1/.claude/scripts/vault-retention.sh" >/dev/null 2>&1
+  echo "$?"
+}
+if [ "$vr_ready" -ne 1 ]; then
+  bad "vault-root-spelling: its vaults, plain and renamed to v., could not be made, so the runner legs cannot run"
+else
+  CASE_STATE="$TMP/state-v142-vr"
+  rm -rf "$CASE_STATE" "$TMP/state-v142-vr-ret"
+  vr_rc="$(RUNNER_VAULT="$VR_B/vplain" mo_k4_run dream-pass.sh "$MO_K4/tgt" "$MO_K4/tgt" "" VAULT_AGENT=command \
+    VAULT_AGENT_CMD="$FAKE" VAULT_ALLOW_UNENFORCED_TOOLS=1)"
+  vr_calls="$(grep -c '' "$MO_K4/git.log" 2>/dev/null | tr -d ' ')"
+  vr_started=no
+  [ -e "$REC.argv" ] && vr_started=yes
+  vr_rrc="$(vr_ret "$VR_B/rplain")"
+  vr_rcalls="$(grep -c '' "$MO_K4/git.log" 2>/dev/null | tr -d ' ')"
+  if [ "$vr_rc" -eq 0 ] && [ "${vr_calls:-0}" -ge 1 ] && [ "$vr_started" = yes ] && [ "$vr_rrc" -eq 0 ] && [ "${vr_rcalls:-0}" -ge 1 ]; then
+    ok "vault-root-spelling: the control runs, the vault under a plain name -> the dream runner in command mode ran (0), called git ($vr_calls) and started its agent, and the retention runner ran (0) and called git ($vr_rcalls)"
+    for vr_leg in dream-claude dream-command promotion-command retention; do
+      vr_mode=
+      case "$vr_leg" in
+        dream-claude) vr_s=dream-pass.sh vr_log="$VR_B/v./.claude/logs/dream-agent.log" ;;
+        dream-command) vr_s=dream-pass.sh vr_log="$VR_B/v./.claude/logs/dream-agent.log" vr_mode=command ;;
+        promotion-command) vr_s=promotion-pass.sh vr_log="$VR_B/v./.claude/logs/promotion-agent.log" vr_mode=command ;;
+        retention) vr_s=vault-retention.sh vr_log="$VR_B/r./.claude/logs/vault-retention.log" ;;
+      esac
+      vr_before="$(mo_lines "$vr_log")"
+      if [ "$vr_leg" = retention ]; then
+        vr_rc="$(vr_ret "$VR_B/r.")"
+      elif [ -n "$vr_mode" ]; then
+        vr_rc="$(RUNNER_VAULT="$VR_B/v." mo_k4_run "$vr_s" "$MO_K4/tgt" "$MO_K4/tgt" "" VAULT_AGENT=command \
+          VAULT_AGENT_CMD="$FAKE" VAULT_ALLOW_UNENFORCED_TOOLS=1)"
+      else
+        vr_rc="$(RUNNER_VAULT="$VR_B/v." mo_k4_run "$vr_s" "$MO_K4/tgt" "$MO_K4/tgt" "")"
+      fi
+      vr_calls="$(grep -c '' "$MO_K4/git.log" 2>/dev/null | tr -d ' ')"
+      vr_said=absent
+      tail -n +"$((vr_before + 1))" "$vr_log" 2>/dev/null | grep -F -- "$VR_LINE" | grep -q '^\[[^]]*\] ERROR: the vault, ' && vr_said=present
+      vr_started=no
+      [ -e "$REC.argv" ] && vr_started=yes
+      if [ "$vr_rc" -eq 1 ] && [ "$vr_said" = present ] && [ "${vr_calls:-0}" -eq 0 ] && [ "$vr_started" = no ]; then
+        ok "vault-root-spelling: $vr_leg, the vault renamed to v. -> refused (1) on an ERROR: line naming the vault, with no git call and no agent started"
+      else
+        bad "vault-root-spelling: $vr_leg, the vault renamed to v. -- expected exit 1, the line, no git call and no agent; got exit $vr_rc, line $vr_said, git calls ${vr_calls:-0}, agent started: $vr_started"
+      fi
+      tripwire_clear
+    done
+  else
+    bad "vault-root-spelling: the control runs, the vault under a plain name, did not run through the stand-ins (dream exit $vr_rc, ${vr_calls:-0} git call(s), agent started: $vr_started; retention exit $vr_rrc, ${vr_rcalls:-0} git call(s)), so the runner legs cannot show anything"
+  fi
+fi
+rm -rf "$VR_B" "$TMP/state-v142-vr" "$TMP/state-v142-vr-ret"
+# runner_folder_ok: the runner's folder for the pass must be an absolute path,
+# because mktemp returns a relative one when TMPDIR is relative or starts with ~
+# and the runners have moved into the vault by then; a drive path counts as
+# absolute only on Windows. On Windows, or wherever a cygpath is found, a colon
+# other than a leading drive letter's is refused as well. The rows: each refused
+# one on one ERROR: line naming it, with the line its rule gives, and each other
+# one accepted with nothing logged.
+rf_spell() {  # rf_spell <uname> <folder> - runner_folder_ok's status, RUNNER_UNAME as given
+  rm -f "$TMP/v142-rf.log"
+  ( LC_ALL=C; export LC_ALL; . "$RV/.claude/scripts/lib/runner-common.sh"; RUNNER_UNAME="$1"
+    runner_folder_ok "$2" "$TMP/v142-rf.log" )
+}
+RF_ABS='is not an absolute path, so it was made relative to the vault'
+RF_COLON='is spelled with a colon that is not a drive letter'
+rf_has_cygpath=0
+command -v cygpath >/dev/null 2>&1 && rf_has_cygpath=1
+ran runner-folder
+rf_bad=0 rf_n=0
+# rf_row <uname> <folder> <expect: abs|colon|ok>
+rf_row() {
+  rf_n=$((rf_n + 1))
+  rf_spell "$1" "$2"
+  rf_rc=$?
+  case "$3" in
+    ok) [ "$rf_rc" -eq 0 ] && [ ! -s "$TMP/v142-rf.log" ] && return 0 ;;
+    abs) [ "$rf_rc" -eq 1 ] && [ "$(grep -c '' "$TMP/v142-rf.log" 2>/dev/null)" = 1 ] \
+           && grep -F -- "folder, $2, $RF_ABS" "$TMP/v142-rf.log" | grep -q '^\[[^]]*\] ERROR: ' && return 0 ;;
+    colon) [ "$rf_rc" -eq 1 ] && [ "$(grep -c '' "$TMP/v142-rf.log" 2>/dev/null)" = 1 ] \
+             && grep -F -- "folder, $2, $RF_COLON" "$TMP/v142-rf.log" | grep -q '^\[[^]]*\] ERROR: ' && return 0 ;;
+  esac
+  rf_bad=$((rf_bad + 1))
+  bad "runner_folder_ok, the platform given as $1, did not give [$2] the expected outcome ($3) -- got $rf_rc: $(tr '\n' '|' < "$TMP/v142-rf.log" 2>/dev/null)"
+}
+for rf_u in MINGW64_NT-10.0 Linux; do
+  for rf_p in 'rel/tmp.X' '~/x/tmp.X' './tmp.X' 'C:rel/tmp.X' '.' ''; do rf_row "$rf_u" "$rf_p" abs; done
+  rf_row "$rf_u" '/tmp/tmp.Ab12' ok
+done
+for rf_p in 'C:/b/tmp.X' 'c:\b\tmp.X' 'C:/Users/Some One/AppData/Local/Temp/tmp.Ab12'; do
+  rf_row MINGW64_NT-10.0 "$rf_p" ok
+  rf_row Linux "$rf_p" abs
+done
+for rf_p in '/b/x::$INDEX_ALLOCATION/tmp.X' '/b/x:$I30:$INDEX_ALLOCATION/tmp.X' 'C:/b/x::$INDEX_ALLOCATION/tmp.X' '/b/c:/tmp.X'; do
+  rf_row MINGW64_NT-10.0 "$rf_p" colon
+done
+for rf_p in '/b/x::$INDEX_ALLOCATION/tmp.X' '/b/c:/tmp.X'; do
+  if [ "$rf_has_cygpath" -eq 1 ]; then rf_row Linux "$rf_p" colon; else rf_row Linux "$rf_p" ok; fi
+done
+[ "$rf_bad" -eq 0 ] && ok "runner_folder_ok -> the $rf_n rows: a relative folder refused on both platforms, a drive path accepted only on Windows, a colon other than a drive letter's refused on Windows (and off Windows only where a cygpath is found), each refusal on one ERROR: line naming it, every accepted row with nothing logged"
+rm -f "$TMP/v142-rf.log"
+# Then the runners, through the mktemp stand-in, which hands each a spelling of
+# the folder it made elsewhere: rel/tmp.*, relative, to the dream runner in claude
+# and command mode, the promotion runner in command mode and the retention
+# runner; and x::$INDEX_ALLOCATION/tmp.* to the dream runner in command mode, the
+# platform read as Windows. Each must be refused (1) with its rule's line, before
+# any git call names a nohooks folder, with no agent started and nothing made
+# under the vault's rel/. Each vault is new, so a folder an earlier build made
+# there cannot reach the next leg.
+RF_V="$TMP/v142-rf-vault"
+RF_RV="$TMP/v142-rf-rvault"
+for rf_leg in dream-claude dream-command promotion-command retention dream-colon; do
+  rf_sp=rel rf_line="$RF_ABS" rf_mode=
+  case "$rf_leg" in
+    dream-claude) rf_s=dream-pass.sh rf_log="$RF_V/.claude/logs/dream-agent.log" ;;
+    dream-command) rf_s=dream-pass.sh rf_log="$RF_V/.claude/logs/dream-agent.log" rf_mode=command ;;
+    promotion-command) rf_s=promotion-pass.sh rf_log="$RF_V/.claude/logs/promotion-agent.log" rf_mode=command ;;
+    retention) rf_s=vault-retention.sh rf_log="$RF_RV/.claude/logs/vault-retention.log" ;;
+    dream-colon) rf_s=dream-pass.sh rf_log="$RF_V/.claude/logs/dream-agent.log" rf_mode=command \
+                   rf_sp="$MO_K4/x::\$INDEX_ALLOCATION" rf_line="$RF_COLON" ;;
+  esac
+  if [ "$rf_leg" = retention ]; then
+    rm -rf "$RF_RV"
+    cp -R "$MO_K4_RV" "$RF_RV" 2>/dev/null
+    rf_vault="$RF_RV"
+  else
+    v142_vault "$RF_V"
+    rf_vault="$RF_V"
+  fi
+  if [ ! -f "$rf_vault/.claude/scripts/$rf_s" ] || [ -e "$rf_vault/rel" ]; then
+    bad "runner-folder: the $rf_leg leg's vault could not be made, or already holds rel"
+    continue
+  fi
+  CASE_STATE="$TMP/state-v142-rf"
+  rm -rf "$CASE_STATE" "$TMP/state-v142-rf-ret" "$MO_K4/git.log" "$REC.argv"
+  if [ "$rf_leg" = retention ]; then
+    env VAULT_STATE_DIR="$TMP/state-v142-rf-ret" RUN_LOCK_WAIT=0 RUN_LOCK_POLL=1 WATCHDOG_POLL=1 WATCHDOG_GRACE=2 \
+      PATH="$MO_K4/shim:$PATH" MO_K4_MKTEMP="$MO_K4_MT" MO_K4_GIT="$MO_K4_G" MO_K4_GITLOG="$MO_K4/git.log" \
+      MO_K4_MARK="$MO_K4/fired" MO_K4_SPELL="$rf_sp" MO_K4_REAL="$MO_K4/tgt" MO_K4_DECOY= \
+      bash "$RF_RV/.claude/scripts/vault-retention.sh" >/dev/null 2>&1
+    rf_rc=$?
+  elif [ -n "$rf_mode" ]; then
+    rf_rc="$(RUNNER_VAULT="$RF_V" mo_k4_run "$rf_s" "$rf_sp" "$MO_K4/tgt" "" VAULT_AGENT=command \
+      VAULT_AGENT_CMD="$FAKE" VAULT_ALLOW_UNENFORCED_TOOLS=1)"
+  else
+    rf_rc="$(RUNNER_VAULT="$RF_V" mo_k4_run "$rf_s" "$rf_sp" "$MO_K4/tgt" "")"
+  fi
+  rf_nh="$(mo_k4_nohooks)"
+  rf_said=absent
+  grep -F -- "$rf_line" "$rf_log" 2>/dev/null | grep -q '^\[[^]]*\] ERROR: ' && rf_said=present
+  rf_started=no
+  [ -e "$REC.argv" ] && rf_started=yes
+  rf_rel=absent
+  { [ -e "$rf_vault/rel" ] || [ -L "$rf_vault/rel" ]; } && rf_rel=present
+  if [ "$rf_rc" -eq 1 ] && [ "$rf_said" = present ] && [ "${rf_nh:-0}" -eq 0 ] && [ "$rf_started" = no ] && [ "$rf_rel" = absent ]; then
+    ok "runner-folder: $rf_leg, the folder handed over as ${rf_sp#"$MO_K4"/}/tmp.* -> refused (1) on its rule's ERROR: line, before any git call named a nohooks folder, no agent started and nothing made under the vault's rel/"
+  else
+    bad "runner-folder: $rf_leg, the folder handed over as ${rf_sp#"$MO_K4"/}/tmp.* -- expected exit 1, its rule's line, no git call naming nohooks, no agent and no rel/ in the vault; got exit $rf_rc, line $rf_said, git calls naming nohooks ${rf_nh:-0}, agent started: $rf_started, rel/: $rf_rel"
+  fi
+  tripwire_clear
+done
+rm -rf "$RF_V" "$RF_RV" "$TMP/state-v142-rf" "$TMP/state-v142-rf-ret"
+# The retention runner makes its folders in TMPDIR when it starts with /, and in
+# /tmp otherwise; the plain mktemp -d it once fell back to read TMPDIR itself. A
+# mktemp stand-in that fails both of its templates, and makes a folder for the
+# plain form, must see the run refuse with "could not create a temporary
+# directory"; with the fallback the run goes on instead, which is the text that
+# tells the two apart. And with TMPDIR relative, every git call the run makes
+# must see TMPDIR as /tmp, so no temporary file of the run lands in the vault.
+RT_V="$TMP/v142-rt-vault"
+RT_SHIM="$TMP/v142-rt-shim"
+rm -rf "$RT_V" "$RT_SHIM" "$TMP/v142-rt-plain"
+mkdir -p "$RT_SHIM/m" "$RT_SHIM/g" "$TMP/v142-rt-plain"
+cat > "$RT_SHIM/m/mktemp" <<'RT_EOF'
+#!/usr/bin/env bash
+case "$#:$*" in
+  2:-d\ */vaultretention.XXXXXXXX) exit 1 ;;
+  1:-d) d="$RT_PLAIN/plain.$$.$RANDOM"; mkdir "$d" && printf '%s\n' "$d"; exit $? ;;
+esac
+exec "$RT_MKTEMP" "$@"
+RT_EOF
+cat > "$RT_SHIM/g/git" <<'RT_EOF'
+#!/usr/bin/env bash
+printf '%s\n' "${TMPDIR-unset}" >> "$RT_GITLOG"
+exec "$RT_GIT" "$@"
+RT_EOF
+chmod +x "$RT_SHIM/m/mktemp" "$RT_SHIM/g/git"
+cp -R "$MO_K4_RV" "$RT_V" 2>/dev/null
+if [ ! -f "$RT_V/.claude/scripts/vault-retention.sh" ]; then
+  bad "retention-tmp: its vault could not be made"
+else
+  ran retention-tmp
+  rt_before="$(mo_lines "$RT_V/.claude/logs/vault-retention.log")"
+  env VAULT_STATE_DIR="$TMP/state-v142-rt" RUN_LOCK_WAIT=0 RUN_LOCK_POLL=1 WATCHDOG_POLL=1 WATCHDOG_GRACE=2 \
+    PATH="$RT_SHIM/m:$PATH" RT_MKTEMP="$MO_K4_MT" RT_PLAIN="$TMP/v142-rt-plain" \
+    bash "$RT_V/.claude/scripts/vault-retention.sh" >/dev/null 2>&1
+  rt_rc=$?
+  rt_said=absent
+  tail -n +"$((rt_before + 1))" "$RT_V/.claude/logs/vault-retention.log" 2>/dev/null \
+    | grep -qF 'ERROR: could not create a temporary directory' && rt_said=present
+  if [ "$rt_rc" -eq 1 ] && [ "$rt_said" = present ]; then
+    ok "retention-tmp: neither TMPDIR nor /tmp can hold its folders -> the retention runner refused (1) with \"could not create a temporary directory\", taking no folder from a plain mktemp -d"
+  else
+    bad "retention-tmp: neither TMPDIR nor /tmp can hold its folders -- expected exit 1 and \"could not create a temporary directory\"; got exit $rt_rc, line $rt_said"
+  fi
+  rm -rf "$TMP/state-v142-rt" "$TMP/v142-rt.gitlog"
+  mkdir -p "$RT_V/rel"
+  ( cd "$RT_V" && env VAULT_STATE_DIR="$TMP/state-v142-rt" RUN_LOCK_WAIT=0 RUN_LOCK_POLL=1 WATCHDOG_POLL=1 WATCHDOG_GRACE=2 \
+      PATH="$RT_SHIM/g:$PATH" RT_GIT="$MO_K4_G" \
+      RT_GITLOG="$TMP/v142-rt.gitlog" TMPDIR=rel bash "$RT_V/.claude/scripts/vault-retention.sh" >/dev/null 2>&1 )
+  rt_n="$(grep -c '' "$TMP/v142-rt.gitlog" 2>/dev/null | tr -d ' ')"
+  rt_off="$(grep -cvx /tmp "$TMP/v142-rt.gitlog" 2>/dev/null | tr -d ' ')"
+  if [ "${rt_n:-0}" -ge 1 ] && [ "${rt_off:-1}" -eq 0 ]; then
+    ok "retention-tmp: TMPDIR relative -> each of the retention runner's $rt_n git calls saw TMPDIR as /tmp"
+  else
+    bad "retention-tmp: TMPDIR relative -- expected every git call to see TMPDIR as /tmp; got ${rt_n:-0} call(s), ${rt_off:-?} not /tmp: $(sort -u "$TMP/v142-rt.gitlog" 2>/dev/null | head -n 3 | tr '\n' '|')"
+  fi
+fi
+rm -rf "$RT_V" "$RT_SHIM" "$TMP/v142-rt-plain" "$TMP/state-v142-rt" "$TMP/v142-rt.gitlog"
 CASE_STATE="$v142_case_state"
 mo_k4_clean
 # A folder above the runner's folder for the pass whose name ends in a line

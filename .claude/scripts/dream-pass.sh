@@ -244,6 +244,10 @@ main() {
   LOG="$LOG_DIR/dream-agent.log"
   RUN_OUT="$LOG_DIR/dream-agent.run.log"
   git_env_warning "$LOG"
+  # On Windows git reads the vault's folder as it is spelled, so a spelling it
+  # reads as another folder is refused before the state directory, the lock or
+  # any git call.
+  vault_root_spelling_ok "$ROOT" "$LOG" || exit 1
   # Settings that reach arithmetic are checked first. A value that is not a whole
   # number would abort the runner with nothing in the log, and bash evaluates a
   # variable in arithmetic as an expression.
@@ -302,8 +306,10 @@ main() {
     exit 1
   }
   # On Windows git reads this folder as TMPDIR spells it, so a spelling it reads
-  # as another folder is refused before the first git call, in every mode.
+  # as another folder is refused before the first git call, in every mode, and so
+  # is a folder that is not an absolute path.
   temp_dir_spelling_ok "$SNAP_DIR" "$LOG" || exit 1
+  runner_folder_ok "$SNAP_DIR" "$LOG" || exit 1
   mkdir -p "$SNAP_DIR/nohooks"
 
   # The journal is committed at the end, so a git operation in progress or a
