@@ -174,7 +174,7 @@ on_exit() {
   fi
   # What a tripwire or stop report left when a signal cut it short.
   [ -n "${STATE:-}" ] && rm -f "$STATE/tripwire-body.$$" "$STATE/kill-report.$$" "$STATE/runner-tripwire.tmp.$$" "$STATE/$RUNNER.interrupted.run.tmp.$$" "$STATE/signal-stop.$$" "$STATE/signal-stop.$$.powershell" 2>/dev/null
-  [ -n "${ROOT:-}" ] && rm -f "$ROOT/$TRIPWIRE_REL.tmp.$$" "$ROOT/$TRIPWIRE_REL.tmp.$$".* 2>/dev/null
+  [ -n "${ROOT:-}" ] && rm -f "$ROOT/$TRIPWIRE_REL.tmp.$$" "$ROOT/$TRIPWIRE_REL.tmp.$$".* "$ROOT/$INFLIGHT_REL.tmp.$$".* 2>/dev/null
   [ -n "$SNAP_DIR" ] && [ "$SNAP_KEEP" -eq 0 ] && rm -rf "$SNAP_DIR"
   run_lock_release
 }

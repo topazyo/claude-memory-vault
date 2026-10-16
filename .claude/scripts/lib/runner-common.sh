@@ -1223,20 +1223,30 @@ vault_logs_linked() {
 
 # write_vault_copy <root> <path> <content-file>
 # write_file_atomic for a copy in the vault, where a pass can reach it. Nothing is
-# written while vault_logs_linked holds, and the temporary name is one no pass
-# can work out from the runner's pid, so a link put at such a name is not
-# written through: mktemp's, or, where mktemp fails or makes no file, one made
-# from $RANDOM, because the tripwire must not depend on mktemp. A link at <path>
+# written while vault_logs_linked holds. The temporary file is one mktemp made,
+# under a name it picked, or, where mktemp fails or makes no file (the tripwire
+# must not depend on mktemp), one made here under a name from $RANDOM: refused
+# when anything is already there, which a pass could have put at a name it
+# guessed, and created only if it does not exist (noclobber). A link at <path>
 # itself is removed first, because mv would move the copy into a folder it
-# names, outside the vault. Returns 1 when no copy is in place.
+# names, outside the vault; when it cannot be removed nothing is written.
+# Returns 1 when no copy is in place.
 write_vault_copy() {
   local root="$1" path="$2" src="$3" tmp
   vault_logs_linked "$root" && return 1
   mkdir -p "$(dirname "$path")" 2>/dev/null
-  [ -L "$path" ] && rm -f "$path" 2>/dev/null
+  if [ -L "$path" ]; then
+    rm -f "$path" 2>/dev/null
+    [ -L "$path" ] && return 1
+  fi
   tmp="$(mktemp "$path.tmp.$$.XXXXXX" 2>/dev/null)"
-  { [ -n "$tmp" ] && [ -f "$tmp" ]; } || tmp="$path.tmp.$$.${RANDOM:-0}${RANDOM:-0}"
-  cp "$src" "$tmp" 2>/dev/null && mv -f "$tmp" "$path" 2>/dev/null
+  if [ -n "$tmp" ] && [ -f "$tmp" ]; then
+    cp "$src" "$tmp" 2>/dev/null && mv -f "$tmp" "$path" 2>/dev/null
+  else
+    tmp="$path.tmp.$$.${RANDOM:-0}${RANDOM:-0}"
+    { [ -e "$tmp" ] || [ -L "$tmp" ]; } && return 1
+    ( set -C; cat "$src" > "$tmp" ) 2>/dev/null && mv -f "$tmp" "$path" 2>/dev/null
+  fi
   rm -f "$tmp" 2>/dev/null
   [ -f "$path" ] && [ ! -L "$path" ]
 }
@@ -1338,9 +1348,9 @@ tripwire_text() {
       printf 'A .git deeper in the vault is a steering surface too, and diff -r shows a new\n'
       printf 'one only as a new folder above it: list every .git with find . -name .git, and\n'
       printf 'check the config and hooks of any you did not make.\n'
-      printf 'A link in .claude/logs is in neither the backup nor git: list them with\n'
-      printf 'find .claude/logs -type l, and remove any you did not make once you have\n'
-      printf 'checked what it names.\n'
+      printf 'A link in .claude/logs, or .claude itself as a link, is in neither the backup\n'
+      printf 'nor git: list them with find .claude -type l, and remove any you did not make\n'
+      printf 'once you have checked what it names.\n'
       printf 'Then review the rest of the vault. Where it is a git repository, start with\n'
       printf 'git -c core.fsmonitor=false --no-pager status --ignore-submodules=all, which\n'
       printf 'starts no fsmonitor command or pager and stays out of repositories nested in it.\n'
