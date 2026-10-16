@@ -13,9 +13,10 @@ shell: bash
    quarantined. Say that nothing else in this skill ran, and that the owner clears it by reading the
    quarantined files and deleting the tripwire. Do not delete it yourself.
 1. Read the most recent 3 log files from `20-projects/_logs/`, ignoring `templates/`, any
-   `compaction-*.md` stubs and any `dream-*.md` journals. A dream journal holds the nightly pass's
-   proposals, not a record of work, and a new one lands in this folder every night, so counting it
-   would build the briefing from that pass's output instead of from what was done.
+   `compaction-*.md` stubs, and the `dream-*.md` journals and `promotion-*.md` reports the scheduled
+   passes write. Those hold a pass's proposals and results, not a record of work, and a dream
+   journal lands in this folder every night, so counting them would build the briefing from the
+   passes' own output instead of from what was done.
 2. If a session-memory search tool is available (any MCP server that indexes past sessions), use it to
    retrieve recent observations about the same project. If it is unavailable, say so in the
    briefing rather than producing a briefing that silently rests on files alone.
