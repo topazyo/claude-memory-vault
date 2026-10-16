@@ -586,9 +586,10 @@ a lint that does nothing and a lint that found nothing wrong print the same thin
   marker's tripwire saying the log was moved; the retention runner, with a tripwire, or a marker a
   dead pass left, and its log a link to a file outside, ends 78 the same way, the lines and a
   `WARNING:` in `vault-retention.uncontained.log` and the `WARNING:` exactly once in its printed
-  lines, and with a tripwire and no temporary folder to be had its printed line says it could keep
-  no copy of its lines and names that log; for each runner, a log that becomes a link to a file
-  outside while the run waits for the run lock, which a stand-in owner holds, not aged, with a
+  lines, and with a tripwire, no temporary folder to be had and a lock warning logged before the
+  lock is held, that line is not written through the link either and its printed line says it
+  could keep no copy of its lines and names that log; for each runner, a log that becomes a link
+  to a file outside while the run waits for the run lock, which a stand-in owner holds, not aged, with a
   tripwire in the vault and a `RUN_LOCK_WAIT` the runner warns about as it starts to wait, ends the
   run 78 with the file as it was and the refusal and a `WARNING:` in the state directory's log;
   links the stand-in makes in its own TERM handler, so only once the runner stops the tree, are
@@ -625,7 +626,8 @@ a lint that does nothing and a lint that found nothing wrong print the same thin
   (each row first checking that the link was made), puts its note in the state directory's copy
   only and writes nothing through the link, whether or not a tripwire file is where it points, and
   `mark_inflight`, with a link at `runner-inflight.tmp.<pid>`, leaves the vault's marker a file and
-  the file the link named as it was. The dream runner takes every leg; the promotion runner the
+  the file the link named as it was, and so does `write_vault_copy` with no `mktemp` and a link at
+  `runner-tripwire.tmp.<pid>`. The dream runner takes every leg; the promotion runner the
   folder removed (with and without a stop), the hooks, the folder, `run` and logs replaced by
   links, `cksum` for a pass, the name outside the set, a TERM with nothing, `run` and the logs, or
   the folder, replaced by links, the links made in the stand-in's TERM handler, the folder removed
@@ -1117,8 +1119,9 @@ Around that call, each runner does several things an exit code cannot:
   keyword and keeps its marker too, but exits with the signal's code, 130 or 143. The `TRIPWIRE-ERROR:`
   line for a changed folder, the one a signal logs and the one for a dead pass's marker say "Treat
   the vault as unverified, and run no git command in it before the steering surfaces have been
-  checked." The vault's copy is written under a temporary name `mktemp` picks beside it and
-  renamed into place, once a link at the copy's own name has been removed, because `mv` would
+  checked." The vault's copy is written under a temporary name `mktemp` picks beside it (or, where
+  `mktemp` fails or makes no file, one made from `$RANDOM`, so the copy does not depend on
+  `mktemp`) and renamed into place, once a link at the copy's own name has been removed, because `mv` would
   otherwise move the copy into a folder the link names, outside the vault; nothing is written there
   while `.claude` or `.claude/logs` is a link, and then only the state directory's copy is written,
   which the runners and `vault-check.sh` read too, so they still refuse. The vault's copy of the

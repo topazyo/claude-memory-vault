@@ -179,12 +179,13 @@ reports.
   `runner-inflight.tmp.<pid>` having a file outside the vault written through it (measured on
   1.4.1), and a link to a folder at the tripwire's own name had the copy moved into that folder,
   outside the vault, leaving the vault's tripwire not a file (measured on 1.4.1). The vault's
-  copies of the tripwire and of the marker now take their temporary name from `mktemp`, and
-  neither they nor a note are written while `.claude` or `.claude/logs` is a link; a link at the
-  copy's own name is removed before the copy is renamed into place, because `mv` would otherwise
-  move the copy into a folder the link names. While `.claude` or `.claude/logs` is a link only the
-  state directory's copy is written, and `vault-check.sh` and the runners read that copy too, so
-  they still refuse.
+  copies of the tripwire and of the marker now take their temporary name from `mktemp`, or, where
+  `mktemp` fails or makes no file, from `$RANDOM`, so the tripwire still does not depend on
+  `mktemp`, and neither they nor a note are written while `.claude` or `.claude/logs` is a link;
+  a link at the copy's own name is removed before the copy is renamed into place, because `mv`
+  would otherwise move the copy into a folder the link names. While `.claude` or `.claude/logs`
+  is a link only the state directory's copy is written, and `vault-check.sh` and the runners read
+  that copy too, so they still refuse.
 - **A pass that removed the runner's folder and then signalled its runner was not stopped.** The
   signal handler recorded its stop in the runner's folder for the pass. On 1.4.1 a pass that
   removed that folder and then sent its runner TERM was still running after the runner exited
@@ -257,8 +258,9 @@ reports.
   dead pass left (78, the file as it was, the tripwire saying the log was moved); for the
   retention runner, a tripwire and its log a link to a file outside (78, the file as it was, the
   refusal and a `WARNING:` in `vault-retention.uncontained.log`, and the `WARNING:` exactly once in
-  its printed lines), again with no temporary folder to be had (its printed line saying it could
-  keep no copy of its lines and naming that log), and `marker`, the same with a dead pass's
+  its printed lines), again with no temporary folder to be had and a lock warning logged before
+  the lock is held (that line not written through the link either, and its printed line saying it
+  could keep no copy of its lines and naming that log), and `marker`, the same with a dead pass's
   in-flight marker in place of the tripwire (78, the file as it was, the lines and a `WARNING:` in
   that log, and the `WARNING:` once in its printed lines); for each runner, its log made a link to
   a file outside while it waited for the run lock, which a stand-in owner held, not aged, with a
@@ -281,14 +283,16 @@ reports.
   `backupseed`, a link to a file outside already at the backup's name, in a state directory made
   before the run (the pass ends 0, the file as it was). `sigdirlink` now also needs nothing of the
   stop recorded through the link at the folder, and `sigterm` its lines in the vault's log and no
-  moved-log note, a control that the log is not moved when nothing is a link. Six unit rows hold
+  moved-log note, a control that the log is not moved when nothing is a link. Seven unit rows hold
   `log_outside_links` with `.claude/logs` a file and `LOG_MOVED_NOTE` exported before the library
   loads (cleared at load, the log moved once, a second call changing nothing, one `WARNING:` naming
   the vault's log); `note_tripwire` with `.claude/logs` a link, in one row with a tripwire file
   where the link points and in one without (the note in the state directory's copy only, and
   nothing written through the link; each row first checks that the link was made);
   `mark_inflight` with a link at `runner-inflight.tmp.<pid>` (the vault's marker a file, the file
-  the link named as it was); and, with no copy of the tripwire writable, `snap_untrusted`, and
+  the link named as it was); `write_vault_copy` with no `mktemp` and a link at
+  `runner-tripwire.tmp.<pid>` (the copy a file, the file the link named as it was); and, with no
+  copy of the tripwire writable, `snap_untrusted`, and
   `tripwire_check` with a dead pass's marker (each 70, the `TRIPWIRE-ERROR:` line saying to run no
   git command in the vault before the steering surfaces have been checked). Of the legs and rows
   named from `twlink` on, these run on Windows: `logdir`, both runners' `backupnone`, `sigterm`'s
