@@ -6635,13 +6635,13 @@ fi
 # promotion passes write their journals and reports into that folder, so a
 # briefing that counted them would hand the next session the passes' own output
 # as if it were the work. Both copies of the skill, and the form spelled out in
-# docs/agent-onboarding.md, must name both kinds beside the compaction stubs.
+# docs/agent-onboarding.md, must name both kinds beside the compaction stubs, on
+# the one line that names the stubs, so a mention elsewhere does not count.
 v142_case_state="${CASE_STATE:-}"
 ran resume-skips-pass-output
 rs_bad=
 for rs_f in .claude/skills/resume/SKILL.md .agents/skills/resume/SKILL.md docs/agent-onboarding.md; do
-  if ! { grep -qF 'compaction-*.md' "$ROOT/$rs_f" && grep -qF 'dream-*.md' "$ROOT/$rs_f" \
-         && grep -qF 'promotion-*.md' "$ROOT/$rs_f"; } 2>/dev/null; then
+  if ! grep -F 'compaction-*.md' "$ROOT/$rs_f" 2>/dev/null | grep -F 'dream-*.md' | grep -qF 'promotion-*.md'; then
     rs_bad="$rs_bad $rs_f"
   fi
 done
@@ -6748,14 +6748,37 @@ done
 rm -rf "$GD_V" "$GD_O" "$TMP/state-v142-gd-dream" "$TMP/state-v142-gd-promotion"
 # The retention runner clears them too: with GIT_DIR naming another repository
 # it must run (0) on the vault's own repository, say so on the WARNING line and
-# leave the other repository as it was.
+# leave the other repository as it was. The vault holds nine aged dream
+# journals, committed as the dream runner commits them; retention keeps the
+# newest eight dates, so the run has one move to commit, and that commit, with
+# its trailer, must land in the vault.
 GD_RV="$TMP/v142-gitdir-rvault"
 rm -rf "$GD_RV"
 cp -R "$MO_K4_RV" "$GD_RV" 2>/dev/null
-if ! v142_vault "$GD_O" || [ ! -f "$GD_RV/.claude/scripts/vault-retention.sh" ]; then
-  bad "git-dir-pass: the retention leg's vault or the other repository could not be made"
+gd_seed=no
+if [ -f "$GD_RV/.claude/scripts/vault-retention.sh" ]; then
+  gd_s="$TMP/v142-gd-seed"
+  rm -rf "$gd_s"
+  mkdir -p "$gd_s/nohooks"
+  : > "$gd_s/owned"
+  : > "$gd_s/predirty"
+  for gd_d in 01 02 03 04 05 06 07 08 09; do
+    printf -- '---\ntitle: "Dream Pass"\ntier: medium\ntype: project-log\n---\n\nold\n' > "$GD_RV/20-projects/_logs/dream-2020-01-$gd_d.md"
+    printf '20-projects/_logs/dream-2020-01-%s.md\n' "$gd_d" >> "$gd_s/owned"
+  done
+  ( cd "$GD_RV" || exit 1
+    export VAULT_STATE_DIR="$TMP/state-v142-gd-seed" WATCHDOG_POLL=1 WATCHDOG_GRACE=2
+    . "$GD_RV/.claude/scripts/lib/runner-common.sh"
+    VAULT_GIT=1
+    commit_owned "$GD_RV" dream "$gd_s/owned" "$gd_s/predirty" "$gd_s" "$gd_s/log" ) >/dev/null 2>&1 \
+    && git -C "$GD_RV" log -1 --format=%B 2>/dev/null | grep -qx 'Vault-Pass: dream' && gd_seed=yes
+  rm -rf "$gd_s" "$TMP/state-v142-gd-seed"
+fi
+if ! v142_vault "$GD_O" || [ "$gd_seed" != yes ]; then
+  bad "git-dir-pass: the retention leg's vault, its aged dream journal or the other repository could not be made"
 else
   gd_o_before="$(git -C "$GD_O" rev-parse HEAD 2>/dev/null) $(git -C "$GD_O" for-each-ref 2>/dev/null | cksum) $(cksum < "$GD_O/.git/index")"
+  gd_v_head="$(git -C "$GD_RV" rev-parse HEAD 2>/dev/null)"
   rm -f "$GD_RV/.claude/logs/vault-retention.log"
   env VAULT_STATE_DIR="$TMP/state-v142-gd-ret" RUN_LOCK_WAIT=0 RUN_LOCK_POLL=1 WATCHDOG_POLL=1 WATCHDOG_GRACE=2 \
     GIT_DIR="$GD_O/.git" bash "$GD_RV/.claude/scripts/vault-retention.sh" >/dev/null 2>&1
@@ -6764,10 +6787,15 @@ else
   gd_warn=absent
   grep -F -- 'WARNING: the environment set GIT_DIR, ' "$GD_RV/.claude/logs/vault-retention.log" 2>/dev/null \
     | grep -q '^\[[^]]*\] WARNING: ' && gd_warn=present
-  if [ "$gd_rc" -eq 0 ] && [ "$gd_warn" = present ] && [ "$gd_o_after" = "$gd_o_before" ]; then
-    ok "git-dir-pass: the retention runner, GIT_DIR naming another repository -> ran (0), the WARNING naming GIT_DIR, the other repository's HEAD, refs and index unchanged"
+  gd_new=no
+  [ "$(git -C "$GD_RV" rev-parse HEAD 2>/dev/null)" != "$gd_v_head" ] \
+    && git -C "$GD_RV" log -1 --format=%B 2>/dev/null | grep -qx 'Vault-Pass: retention' \
+    && git -C "$GD_RV" show --name-only --format= HEAD 2>/dev/null | grep -qx '99-archive/20-projects/_logs/dream-2020-01-01.md' \
+    && gd_new=yes
+  if [ "$gd_rc" -eq 0 ] && [ "$gd_new" = yes ] && [ "$gd_warn" = present ] && [ "$gd_o_after" = "$gd_o_before" ]; then
+    ok "git-dir-pass: the retention runner, GIT_DIR naming another repository -> ran (0), its move of an aged journal committed in the vault with its trailer, the WARNING naming GIT_DIR, the other repository's HEAD, refs and index unchanged"
   else
-    bad "git-dir-pass: the retention runner, GIT_DIR naming another repository -- expected 0, the WARNING and the other repository unchanged; got $gd_rc, WARNING: $gd_warn, other repository unchanged: $([ "$gd_o_after" = "$gd_o_before" ] && echo yes || echo no)"
+    bad "git-dir-pass: the retention runner, GIT_DIR naming another repository -- expected 0, the move committed in the vault, the WARNING and the other repository unchanged; got $gd_rc, vault commit: $gd_new, WARNING: $gd_warn, other repository unchanged: $([ "$gd_o_after" = "$gd_o_before" ] && echo yes || echo no)"
   fi
 fi
 rm -rf "$GD_RV" "$GD_O" "$TMP/state-v142-gd-ret"
@@ -7026,6 +7054,8 @@ for rf_leg in dream-claude dream-command promotion-command retention dream-colon
   if [ "$rf_leg" = retention ]; then
     rm -rf "$RF_RV"
     cp -R "$MO_K4_RV" "$RF_RV" 2>/dev/null
+    # Only this run's lines count, so a log the copy brought along goes.
+    rm -f "$RF_RV/.claude/logs/vault-retention.log"
     rf_vault="$RF_RV"
   else
     v142_vault "$RF_V"
@@ -7102,10 +7132,14 @@ else
   rt_said=absent
   tail -n +"$((rt_before + 1))" "$RT_V/.claude/logs/vault-retention.log" 2>/dev/null \
     | grep -qF 'ERROR: could not create a temporary directory' && rt_said=present
-  if [ "$rt_rc" -eq 1 ] && [ "$rt_said" = present ]; then
+  # The stand-in makes its plain folders in v142-rt-plain, so that folder staying
+  # empty is what shows no plain mktemp -d was taken; the real mktemp it hands
+  # every other call must have been there to hand.
+  rt_plain="$(ls -A "$TMP/v142-rt-plain" 2>/dev/null)"
+  if [ "$rt_rc" -eq 1 ] && [ "$rt_said" = present ] && [ -z "$rt_plain" ] && [ -x "$MO_K4_MT" ]; then
     ok "retention-tmp: neither TMPDIR nor /tmp can hold its folders -> the retention runner refused (1) with \"could not create a temporary directory\", taking no folder from a plain mktemp -d"
   else
-    bad "retention-tmp: neither TMPDIR nor /tmp can hold its folders -- expected exit 1 and \"could not create a temporary directory\"; got exit $rt_rc, line $rt_said"
+    bad "retention-tmp: neither TMPDIR nor /tmp can hold its folders -- expected exit 1, \"could not create a temporary directory\" and no plain folder taken; got exit $rt_rc, line $rt_said, plain folders: ${rt_plain:-none}, real mktemp: ${MO_K4_MT:-none}"
   fi
   rm -rf "$TMP/state-v142-rt" "$TMP/v142-rt.gitlog"
   mkdir -p "$RT_V/rel"
@@ -7187,6 +7221,36 @@ else
       bad "state-shown: the $st_leg runner, VAULT_STATE_DIR naming a file whose name holds a line break and an escape -- expected 1 and one line showing both as ?; got $st_rc, line $st_one, raw escapes $st_esc, split lines $st_split: $(tr '\n' '|' < "$st_log" 2>/dev/null | cut -c1-300)"
     fi
   done
+  # The tripwire refusal names the state directory too. With VAULT_STATE_DIR a
+  # folder whose name holds both, and a tripwire in the vault only, the dream
+  # runner refuses (78) on one line that names the state directory's copy with
+  # both shown as ?. Off Windows, where a folder's name can hold a line break.
+  if is_windows_host; then
+    printf '  INFO  [state-shown] the tripwire leg runs off Windows only, where a folder name can hold a line break (not counted)\n'
+  else
+    ST_D="$TMP/v142-sd${NL}ir$(printf '\033')y"
+    ST_DSHOWN="$TMP/v142-sd?ir?y"
+    rm -rf "$ST_D"
+    ( umask 077 && mkdir -p "$ST_D" )
+    st_log="$ST_V/.claude/logs/dream-agent.log"
+    rm -f "$st_log"
+    mkdir -p "$ST_V/.claude/logs"
+    printf 'TRIPWIRE set by the suite\n' > "$ST_V/.claude/logs/runner-tripwire"
+    st_rc="$(RUNNER_VAULT="$ST_V" runner dream-pass.sh journal VAULT_AGENT=command VAULT_AGENT_CMD="$FAKE" \
+      VAULT_ALLOW_UNENFORCED_TOOLS=1 VAULT_STATE_DIR="$ST_D")"
+    st_one=absent
+    grep -F -- "anything at $ST_DSHOWN/runner-tripwire. No copy in $ST_DSHOWN is a file" "$st_log" 2>/dev/null \
+      | grep -q '^\[[^]]*\] TRIPWIRE: ' && st_one=present
+    st_esc="$(grep -c "$(printf '\033')" "$st_log" 2>/dev/null | tr -d ' ')"
+    st_split="$(grep -c '^ir' "$st_log" 2>/dev/null | tr -d ' ')"
+    if [ "$st_rc" -eq 78 ] && [ "$st_one" = present ] && [ "${st_esc:-0}" -eq 0 ] && [ "${st_split:-0}" -eq 0 ]; then
+      ok "state-shown: the dream runner, a tripwire in the vault and VAULT_STATE_DIR a folder whose name holds a line break and an escape -> refused (78) on one line naming the state directory's copy with both shown as ?"
+    else
+      bad "state-shown: the dream runner, a tripwire in the vault and VAULT_STATE_DIR a folder whose name holds a line break and an escape -- expected 78 and one line showing both as ?; got $st_rc, line $st_one, raw escapes $st_esc, split lines $st_split: $(tr '\n' '|' < "$st_log" 2>/dev/null | cut -c1-300)"
+    fi
+    rm -f "$ST_V/.claude/logs/runner-tripwire"
+    rm -rf "$ST_D"
+  fi
 fi
 rm -rf "$ST_F" "$ST_V" "$ST_RV"
 # memory_override walks up the runner's folder for the pass, and on Windows,
@@ -7311,7 +7375,29 @@ rm -rf "$FA_B" "$TMP/v142-fa.log"
 #           holds a line break and spells the record's next line, then removes
 #           the snapshot and nohooks, so a record taken name by name would read
 #           the same as before
-# The dream runner takes every leg, the promotion runner rmdir and rmslow.
+#   hooksdark (off Windows) the hooks leg, then nohooks left searchable but not
+#           readable, so a listing would read it as empty while git still runs
+#           a hook in it
+#   gapslink writes its journal and gives gaps a second name outside the folder
+#           (a hard link), so a record that passed gaps whatever its link count
+#           would read the same as before
+#   dirlink (off Windows) writes its journal and replaces the folder with a link
+#           to a copy of it
+#   runlink (off Windows) writes its journal and replaces run with a link to the
+#           canary: a WARNING that the run output was not kept, the canary as it was
+#   rmstall the rmslow agent under a 3-second stall threshold: the STALLED line is
+#           logged as well as the 78
+#   cksum   writes its journal with sha256sum and shasum hidden as functions,
+#           which snap_tool does not take: the pass ends 0, with cksum's WARNING
+#   cksumrm the rmdir leg the same way: 78, and the WARNING
+#   badname a mktemp stand-in puts a name holding a space in the runner's folder
+#           before the record: exit 1 with the record's ERROR line, no agent
+# Each 78 leg also needs the tripwire in the vault to say that no git command is
+# run in it before the review, hide and hooks need the run output kept in the
+# state directory, and quiet needs the stand-in to have seen gaps written while
+# it ran.
+# The dream runner takes every leg, the promotion runner rmdir, rmslow, runlink
+# and rmstall.
 SA_DIR="$TMP/v142-sa"
 SA_V="$SA_DIR/vault"
 SA_AGENT="$SA_DIR/agent"
@@ -7320,6 +7406,8 @@ mkdir -p "$SA_DIR"
 cat > "$SA_AGENT" <<'SA_EOF'
 #!/usr/bin/env bash
 s="$(dirname "${RUN_GAPS_FILE:-/nonexistent/x}")"
+: > "$SA_STARTED"
+printf '%s\n' "$s" > "$SA_SDIR"
 if [ ! -f "$s/before" ] || [ ! -f "$s/steering.tar" ]; then
   : > "$SA_FIX"
   exit 0
@@ -7334,7 +7422,10 @@ steer() {
 }
 case "$SA_MODE" in
   plain) steer ;;
-  quiet) printf 'working\n'; sleep 4; printf 'still working\n'; sleep 3; journal ;;
+  quiet)
+    printf 'working\n'; sleep 4; printf 'still working\n'; sleep 3
+    [ -s "$RUN_GAPS_FILE" ] && : > "$SA_GAPS"
+    journal ;;
   rmdir) steer; rm -rf "$s" ;;
   rmslow) steer; rm -rf "$s"; sleep 30 ;;
   hide)
@@ -7353,6 +7444,17 @@ case "$SA_MODE" in
     journal
     cp "$s/before" "$s/before
 d - nohooks" && rm -f "$s/before" && rmdir "$s/nohooks" ;;
+  journal) journal ;;
+  hooksdark)
+    journal
+    for h in post-index-change pre-commit prepare-commit-msg commit-msg post-commit post-checkout reference-transaction pre-auto-gc; do
+      printf '#!/bin/sh\necho %s >> "%s"\nexit 0\n' "$h" "$SA_MARK" > "$s/nohooks/$h"
+      chmod +x "$s/nohooks/$h"
+    done
+    chmod 100 "$s/nohooks" ;;
+  gapslink) journal; : >> "$RUN_GAPS_FILE"; ln "$RUN_GAPS_FILE" "$SA_COPY" || : > "$SA_FIX" ;;
+  dirlink) journal; { cp -Rp "$s" "$SA_COPY" && rm -rf "$s" && ln -s "$SA_COPY" "$s"; } || : > "$SA_FIX" ;;
+  runlink) journal; { rm -f "$s/run" && ln -s "$SA_CANARY" "$s/run"; } || : > "$SA_FIX" ;;
 esac
 printf 'PROMOTION-SUMMARY: promoted=0 pending=0\n'
 exit 0
@@ -7366,7 +7468,7 @@ sa_run() {
   local script="$1" mode="$2"
   v142_vault "$SA_V" || return 1
   sa_state="$SA_DIR/state-$mode-${script%%-*}"
-  rm -rf "$sa_state" "$SA_DIR/fixture" "$SA_DIR/mark" "$SA_DIR/copy"
+  rm -rf "$sa_state" "$SA_DIR/fixture" "$SA_DIR/mark" "$SA_DIR/copy" "$SA_DIR/started" "$SA_DIR/sdir" "$SA_DIR/gapsseen"
   printf 'canary\n' > "$SA_DIR/canary"
   sa_log="$SA_V/.claude/logs/dream-agent.log"
   [ "$script" = promotion-pass.sh ] && sa_log="$SA_V/.claude/logs/promotion-agent.log"
@@ -7376,30 +7478,67 @@ sa_run() {
   CASE_STATE="$sa_state"
   sa_rc="$(RUNNER_VAULT="$SA_V" runner "$script" journal VAULT_AGENT=command VAULT_AGENT_CMD="$SA_AGENT" \
     VAULT_ALLOW_UNENFORCED_TOOLS=1 SA_MODE="$mode" SA_FIX="$SA_DIR/fixture" SA_MARK="$SA_DIR/mark" \
-    SA_CANARY="$SA_DIR/canary" SA_COPY="$SA_DIR/copy" DREAM_PASS_TIMEOUT="$sa_timeout" PROMOTION_PASS_TIMEOUT="$sa_timeout")"
+    SA_CANARY="$SA_DIR/canary" SA_COPY="$SA_DIR/copy" DREAM_PASS_TIMEOUT="$sa_timeout" PROMOTION_PASS_TIMEOUT="$sa_timeout" \
+    SA_STARTED="$SA_DIR/started" SA_SDIR="$SA_DIR/sdir" SA_GAPS="$SA_DIR/gapsseen" RUNNER_STALL_SECONDS="$sa_stall" \
+    PATH="$sa_path" SA_REALMT="$SA_REALMT")"
   return 0
 }
-sa_tripwire_why() {  # the vault's and the state directory's tripwire copies both hold D1's reason
+# sa_tripwire_why: the vault's and the state directory's tripwire copies both
+# hold D1's reason, and the vault's says no git command is run in it until the
+# review, because nothing the pass planted in .git was put back.
+sa_tripwire_why() {
   grep -qF -- "$SA_WHY" "$SA_V/.claude/logs/runner-tripwire" 2>/dev/null \
-    && grep -qF -- "$SA_WHY" "$sa_state/runner-tripwire" 2>/dev/null
+    && grep -qF -- "$SA_WHY" "$sa_state/runner-tripwire" 2>/dev/null \
+    && grep -qF -- "$SA_NOGIT" "$SA_V/.claude/logs/runner-tripwire" 2>/dev/null
 }
+# The mktemp stand-in of the badname leg: the runner's own folder, made by a
+# plain mktemp -d, gets a name outside the record's set before the record.
+SA_REALMT="$(command -v mktemp)"
+SA_SHIM="$SA_DIR/shim"
+mkdir -p "$SA_SHIM"
+printf '#!/usr/bin/env bash\nd="$("$SA_REALMT" "$@")" || exit $?\n[ "$*" = -d ] && [ -d "$d" ] && : > "$d/bad name"\nprintf "%%s\\n" "$d"\n' > "$SA_SHIM/mktemp"
+chmod +x "$SA_SHIM/mktemp"
+SA_NOGIT='and run no git command in it'
+SA_RECERR="ERROR: the runner could not record its folder for the pass, "
+SA_CKWARN='WARNING: no sha256sum or shasum was found, so the runner checks its folder for the pass with cksum'
+SA_RUNWARN='is not a regular file, so it was not kept'
 ran snapshot-sealed
-for sa_leg in dream:plain dream:quiet dream:rmdir dream:rmslow dream:hide dream:hooks dream:link dream:linkbefore dream:newline promotion:rmdir promotion:rmslow; do
-  sa_s="${sa_leg%%:*}-pass.sh" sa_m="${sa_leg#*:}" sa_timeout=3600
-  [ "$sa_m" = rmslow ] && sa_timeout=3
+for sa_leg in dream:plain dream:quiet dream:rmdir dream:rmslow dream:hide dream:hooks dream:link dream:linkbefore dream:newline \
+    dream:hooksdark dream:gapslink dream:dirlink dream:runlink dream:rmstall dream:cksum dream:cksumrm dream:badname \
+    promotion:rmdir promotion:rmslow promotion:runlink promotion:rmstall; do
+  sa_s="${sa_leg%%:*}-pass.sh" sa_m="${sa_leg#*:}" sa_timeout=3600 sa_stall= sa_path="$PATH" sa_mode="${sa_leg#*:}"
   case "$sa_m" in
-    link|linkbefore|newline)
+    rmslow) sa_timeout=3 ;;
+    rmstall) sa_mode=rmslow sa_stall=3 ;;
+    cksum) sa_mode=journal ;;
+    cksumrm) sa_mode=rmdir ;;
+    badname) sa_mode=journal sa_path="$SA_SHIM:$PATH" ;;
+  esac
+  case "$sa_m" in
+    link|linkbefore|newline|hooksdark|dirlink|runlink)
       if is_windows_host; then
-        printf '  INFO  [snapshot-sealed] the %s leg runs off Windows only, where a link or a name holding a line break can be made (not counted)\n' "$sa_m"
+        printf '  INFO  [snapshot-sealed] the %s leg runs off Windows only, where a link, a name holding a line break or a folder that cannot be listed can be made (not counted)\n' "$sa_m"
         continue
       fi ;;
   esac
-  if ! sa_run "$sa_s" "$sa_m"; then
+  # cksum and cksumrm: sha256sum and shasum exported as functions, which
+  # command -v names without a path, so snap_tool takes cksum.
+  if [ "$sa_m" = cksum ] || [ "$sa_m" = cksumrm ]; then
+    sha256sum() { return 1; }
+    shasum() { return 1; }
+    export -f sha256sum shasum
+  fi
+  sa_made=0
+  sa_run "$sa_s" "$sa_mode" && sa_made=1
+  unset -f sha256sum shasum 2>/dev/null
+  # A folder the leg left unreadable is opened again so it can be removed.
+  [ -s "$SA_DIR/sdir" ] && chmod u+rwx "$(cat "$SA_DIR/sdir")/nohooks" 2>/dev/null
+  if [ "$sa_made" -eq 0 ]; then
     bad "snapshot-sealed: fixture: the $sa_leg leg's vault could not be made, or it already held a steering file, a tripwire or a state directory"
     continue
   fi
   if [ -e "$SA_DIR/fixture" ]; then
-    bad "snapshot-sealed: fixture: in the $sa_leg leg the stand-in found no snapshot or steering backup in the runner's folder, so the leg shows nothing"
+    bad "snapshot-sealed: fixture: in the $sa_leg leg the stand-in found no snapshot or steering backup in the runner's folder, or could not make the leg's change, so the leg shows nothing"
     tripwire_clear
     continue
   fi
@@ -7416,10 +7555,29 @@ for sa_leg in dream:plain dream:quiet dream:rmdir dream:rmslow dream:hide dream:
         bad "snapshot-sealed: $sa_leg, a steering file written and the runner's folder left alone -- expected 2, restored, a tripwire and no UNVERIFIED; got $sa_rc, UNVERIFIED $sa_unv, CLAUDE.md there: $([ -e "$SA_V/31-standards/CLAUDE.md" ] && echo yes || echo no)"
       fi ;;
     quiet)
-      if [ "$sa_rc" -eq 0 ] && [ "$sa_unv" = absent ] && [ ! -e "$SA_V/.claude/logs/runner-tripwire" ]; then
-        ok "snapshot-sealed: $sa_leg, a journal written after silent polls, the watchdog writing run and gaps -> the pass ended 0, with no UNVERIFIED line and no tripwire"
+      # The stand-in saw gaps holding a silent stretch before it wrote its
+      # journal, so the watchdog wrote gaps while the agent ran.
+      if [ "$sa_rc" -eq 0 ] && [ "$sa_unv" = absent ] && [ ! -e "$SA_V/.claude/logs/runner-tripwire" ] \
+         && [ -e "$SA_DIR/gapsseen" ]; then
+        ok "snapshot-sealed: $sa_leg, a journal written after silent polls, the watchdog writing run and gaps -> the pass ended 0, with no UNVERIFIED line and no tripwire, gaps seen written while the agent ran"
       else
-        bad "snapshot-sealed: $sa_leg, a journal written after silent polls -- expected 0, no UNVERIFIED and no tripwire; got $sa_rc, UNVERIFIED $sa_unv: $(tail -n 3 "$sa_log" 2>/dev/null | tr '\n' '|' | cut -c1-300)"
+        bad "snapshot-sealed: $sa_leg, a journal written after silent polls -- expected 0, no UNVERIFIED, no tripwire and gaps written while the agent ran; got $sa_rc, UNVERIFIED $sa_unv, gaps seen: $([ -e "$SA_DIR/gapsseen" ] && echo yes || echo no): $(tail -n 3 "$sa_log" 2>/dev/null | tr '\n' '|' | cut -c1-300)"
+      fi ;;
+    cksum)
+      sa_ck=absent
+      grep -F -- "$SA_CKWARN" "$sa_log" 2>/dev/null | grep -q '^\[[^]]*\] WARNING: ' && sa_ck=present
+      if [ "$sa_rc" -eq 0 ] && [ "$sa_ck" = present ] && [ "$sa_unv" = absent ] && [ ! -e "$SA_V/.claude/logs/runner-tripwire" ]; then
+        ok "snapshot-sealed: $sa_leg, a journal written with only cksum to take -> the pass ended 0, with the cksum WARNING and no UNVERIFIED line"
+      else
+        bad "snapshot-sealed: $sa_leg, a journal written with only cksum to take -- expected 0, the cksum WARNING and no UNVERIFIED; got $sa_rc, WARNING $sa_ck, UNVERIFIED $sa_unv: $(tail -n 3 "$sa_log" 2>/dev/null | tr '\n' '|' | cut -c1-300)"
+      fi ;;
+    badname)
+      sa_re=absent
+      grep -F -- "$SA_RECERR" "$sa_log" 2>/dev/null | grep -q '^\[[^]]*\] ERROR: ' && sa_re=present
+      if [ "$sa_rc" -eq 1 ] && [ "$sa_re" = present ] && [ ! -e "$SA_DIR/started" ] && [ ! -e "$SA_V/.claude/logs/runner-tripwire" ] && [ "$sa_mk" = none ]; then
+        ok "snapshot-sealed: $sa_leg, a name holding a space in the runner's folder before the record -> refused (1) with the record's ERROR line, no agent, no tripwire and no marker"
+      else
+        bad "snapshot-sealed: $sa_leg, a name holding a space in the runner's folder before the record -- expected 1, the record's ERROR line and no agent; got $sa_rc, line $sa_re, agent started: $([ -e "$SA_DIR/started" ] && echo yes || echo no), tripwire: $([ -e "$SA_V/.claude/logs/runner-tripwire" ] && echo yes || echo no), marker $sa_mk"
       fi ;;
     *)
       sa_extra=ok
@@ -7428,6 +7586,17 @@ for sa_leg in dream:plain dream:quiet dream:rmdir dream:rmslow dream:hide dream:
         link) [ "$(cat "$SA_DIR/canary" 2>/dev/null)" = canary ] || sa_extra="the canary outside was written through" ;;
         rmslow) grep -F -- "TIMEOUT: ${sa_s%-pass.sh}-agent exceeded 3s and was killed" "$sa_log" 2>/dev/null | grep -q '^\[[^]]*\] TIMEOUT: ' \
                   || sa_extra="no TIMEOUT line for the stopped agent" ;;
+        rmstall) grep -F -- "STALLED: ${sa_s%-pass.sh}-agent wrote no output for 3s" "$sa_log" 2>/dev/null | grep -q '^\[[^]]*\] STALLED: ' \
+                   || sa_extra="no STALLED line for the stopped agent" ;;
+        hooksdark) [ -e "$SA_DIR/mark" ] && sa_extra="a planted hook ran: $(tr '\n' ' ' < "$SA_DIR/mark")" ;;
+        runlink)
+          grep -F -- "$SA_RUNWARN" "$sa_log" 2>/dev/null | grep -q '^\[[^]]*\] WARNING: ' || sa_extra="no WARNING that the run output was not kept"
+          [ "$(cat "$SA_DIR/canary" 2>/dev/null)" = canary ] || sa_extra="the canary was written through the link at run" ;;
+        cksumrm) grep -F -- "$SA_CKWARN" "$sa_log" 2>/dev/null | grep -q '^\[[^]]*\] WARNING: ' || sa_extra="no cksum WARNING" ;;
+      esac
+      # The run output of a pass that ended 78 is kept outside the vault.
+      case "$sa_m" in
+        hide|hooks) [ -s "$sa_state/${sa_s%.sh}.interrupted.run" ] || sa_extra="${sa_extra#ok}; the run output was not kept in the state directory" ;;
       esac
       if [ "$sa_rc" -eq 78 ] && [ "$sa_unv" = present ] && sa_tripwire_why && [ "$sa_mk" = none ] \
          && [ -s "$sa_state/inflight-backup.tar" ] && [ "$sa_extra" = ok ]; then
@@ -7457,6 +7626,22 @@ if [ "$sa_rc" -eq 0 ] && grep -F -- "no record of the runner's folder for the pa
   ok "snapshot-sealed: run_agent in command mode with no record of the runner's folder, SNAP_SEALS exported before the library loaded -> RUN_RC 1, an ERROR: line in the run output, the agent never started"
 else
   bad "snapshot-sealed: run_agent in command mode with no record of the runner's folder did not refuse -- got $sa_rc, agent started: $([ -e "$REC.argv" ] && echo yes || echo no): $(cat "$SA_DIR/mixed.out" 2>/dev/null)"
+fi
+# GLOBIGNORE set before the library loads would drop the names it matches from
+# every glob, and so from both records of the folder, which would then agree.
+# The library clears it: with it naming the snapshot, a record taken after the
+# library loads must still list the snapshot. First, that it hides the name here:
+# GLOBIGNORE matches the whole path a glob gives, and its * does not cross a /.
+mkdir -p "$SA_DIR/gi"
+printf 'x\n' > "$SA_DIR/gi/before"
+sa_gi0="$( GLOBIGNORE="$SA_DIR/gi/before"; for e in "$SA_DIR/gi"/*; do printf '%s\n' "${e##*/}"; done )"
+sa_gi="$( GLOBIGNORE="$SA_DIR/gi/before"; . "$RV/.claude/scripts/lib/runner-common.sh"; snap_manifest "$SA_DIR/gi" )"
+if printf '%s\n' "$sa_gi0" | grep -qx before; then
+  bad "snapshot-sealed: fixture: GLOBIGNORE naming the snapshot did not hide it from a glob in this shell, so the leg shows nothing"
+elif printf '%s\n' "$sa_gi" | grep -q ' before$'; then
+  ok "snapshot-sealed: GLOBIGNORE naming the snapshot when the library loads -> the record still lists it"
+else
+  bad "snapshot-sealed: GLOBIGNORE naming the snapshot when the library loads hid it from the record -- got: $(printf '%s' "$sa_gi" | tr '\n' '|')"
 fi
 rm -rf "$SA_DIR" "$REC.argv"
 CASE_STATE="$v142_case_state"

@@ -385,7 +385,7 @@ main() {
   # marker, and again as soon as the agent returns (snap_manifest).
   if ! SNAP_SEALS="$(snap_manifest "$SNAP_DIR")" || [ -z "$SNAP_SEALS" ]; then
     SNAP_SEALS=
-    printf '[%s] ERROR: the runner could not record its folder for the pass, %s, before the agent started (a name in it outside letters, digits, dot, underscore and hyphen, or a file it could not checksum), so it could not check the folder afterwards. Refusing to run.\n' "$(ts)" "$(shown_name "$SNAP_DIR")" >> "$LOG"
+    printf '[%s] ERROR: the runner could not record its folder for the pass, %s, before the agent started (a name in it outside letters, digits, dot, underscore and hyphen, a file it could not checksum, a folder in it that could not be listed, or no sha256sum, shasum or cksum found), so it could not check the folder afterwards. Refusing to run.\n' "$(ts)" "$(shown_name "$SNAP_DIR")" >> "$LOG"
     exit 1
   fi
   case "$(snap_tool)" in
@@ -439,10 +439,16 @@ main() {
     if [ "$RUN_TIMED_OUT" -eq 1 ] || [ "$RUN_STALLED" -eq 1 ]; then
       report_stop "$LOG" dream-agent "$ROOT" "$STATE" "$RUNNER"
     fi
-    RUN_LOG_APPENDED=1
+    # A signal before RUN_LOG_APPENDED is set keeps the output itself, so it is
+    # set only once the output is kept, or at once when run is not a regular file,
+    # which on_signal's test would follow if it were a link.
     if [ -f "$SNAP_DIR/run" ] && [ ! -L "$SNAP_DIR/run" ]; then
       keep_run_output "$SNAP_DIR/run" "$STATE" "$RUNNER" "$LOG"
+      RUN_LOG_APPENDED=1
       record_session_once
+    else
+      RUN_LOG_APPENDED=1
+      printf '[%s] WARNING: the run output, %s, is not a regular file, so it was not kept.\n' "$(ts)" "$(shown_name "$SNAP_DIR/run")" >> "$LOG"
     fi
     exit "$snap_rc"
   fi

@@ -70,6 +70,12 @@ for runner_git_var in $GIT_REPO_ENV_VARS; do
   [ -n "${!runner_git_var+x}" ] && GIT_REPO_ENV_SET="${GIT_REPO_ENV_SET:+$GIT_REPO_ENV_SET }$runner_git_var"
 done
 unset runner_git_var $GIT_REPO_ENV_VARS MSYS_NO_PATHCONV MSYS2_ARG_CONV_EXCL MSYS2_ENV_CONV_EXCL
+# GLOBIGNORE drops the names it matches from every glob, so set before the
+# library loads it would hide entries from both records of the runner's folder
+# (snap_manifest), which would then agree. bash 5.3 does not take it from the
+# environment (measured in Git Bash and on Linux); bash 3.2 is unmeasured, and
+# a script that sources this library may have set it.
+unset GLOBIGNORE
 
 # is_windows_bash
 # True under Git Bash, MSYS or Cygwin, where a native Windows process is stopped
@@ -1268,15 +1274,22 @@ tripwire_text() {
         printf 'delete this file.\n'
       fi
     elif [ "$shape" = unverified ]; then
+      # Nothing was put back, so git config, git hooks and Obsidian plugins the
+      # pass may have planted are still in place: git runs the first two (a
+      # core.fsmonitor command at the first git status), Obsidian loads the third.
       printf 'Nothing was moved or restored, because the runner could not tell what the\n'
-      printf 'pass changed. Do not open the vault in an agent session until it is reviewed.\n'
+      printf 'pass changed. Until the vault is reviewed, do not open it in an agent session\n'
+      printf 'or in Obsidian, and run no git command in it: the pass may have changed\n'
+      printf '.git/config or .git/hooks, which git runs, or .obsidian/, which Obsidian loads.\n'
       if [ -s "$state/inflight-backup.tar" ]; then
-        printf 'Compare the steering surfaces with the pre-pass backup of them at\n%s\n' "$state/inflight-backup.tar"
-        printf '(copy it first, because the next pass replaces it), and the rest of the vault\n'
-        printf "with 'git status' where the vault is a git repository.\n"
+        printf 'First compare the steering surfaces, those three among them, with the pre-pass\n'
+        printf 'backup of them at\n%s\n' "$state/inflight-backup.tar"
+        printf '(copy it first, because the next pass replaces it), and put back what differs.\n'
+        printf "Then review the rest of the vault, with 'git status' where it is a git repository.\n"
       else
         printf 'No pre-pass backup of the steering surfaces is there to compare against, so\n'
-        printf "review the vault with 'git status' where it is a git repository.\n"
+        printf 'check those three by hand first. Then review the rest of the vault, with\n'
+        printf "'git status' where it is a git repository.\n"
       fi
       printf "The runner's folder for the pass is kept, for the review, at\n%s.\n" "$qdir"
     else
@@ -1341,14 +1354,15 @@ tripwire_check() {
     # there, so the owner is never sent to a path that holds nothing. A pass can
     # write the vault's copy unseen, so its instructions are not vouched for.
     # vault-check.sh names the copy by the same rule.
+    # Each path goes through shown_name, because the state directory is the
+    # owner's to set and may hold a line break or an escape.
     tw="$state/$(basename "$TRIPWIRE_REL")"
-    advice="Read $tw and do what it says, then delete it and its copy."
+    advice="Read $(shown_name "$tw") and do what it says, then delete it and its copy."
     if [ ! -f "$tw" ] || [ -L "$tw" ]; then
       if [ -e "$root/$TRIPWIRE_REL" ] || [ -L "$root/$TRIPWIRE_REL" ]; then
-        tw="$root/$TRIPWIRE_REL"
-        advice="Read $tw, then delete it and anything at $state/$(basename "$TRIPWIRE_REL"). No copy in $state is a file, and a pass can write the copy in the vault, so a pass may have written this one. Check its reason against this log before you do anything it says."
+        advice="Read $(shown_name "$root/$TRIPWIRE_REL"), then delete it and anything at $(shown_name "$tw"). No copy in $(shown_name "$state") is a file, and a pass can write the copy in the vault, so a pass may have written this one. Check its reason against this log before you do anything it says."
       else
-        advice="$tw is not a file, so it holds no tripwire text. Remove it, then read this log for why the tripwire was set."
+        advice="$(shown_name "$tw") is not a file, so it holds no tripwire text. Remove it, then read this log for why the tripwire was set."
       fi
     fi
     printf '[%s] TRIPWIRE: refusing to run. A previous pass changed a steering or execution surface, was interrupted before containment, or may have left a process running. %s\n' \
@@ -2846,10 +2860,10 @@ snap_digest() {
 # folder there, nohooks, must stay empty. run and gaps, which the watchdog writes
 # while the agent runs, are left out while each is a regular file with one link,
 # and recorded otherwise, so a link, a FIFO or a second name there differs. Fails
-# when <dir> is not a folder or is a link, when a name is outside the set, or
-# when a file cannot be digested.
+# when <dir> is not a folder or is a link, when a name is outside the set, when a
+# file cannot be digested, or when a folder in it cannot be listed.
 snap_manifest() {
-  local dir="$1" tool name path e n lc d
+  local dir="$1" tool name path e n lc d lst
   [ -d "$dir" ] && [ ! -L "$dir" ] || return 1
   tool="$(snap_tool)" || return 1
   name="${tool%% *}" path="${tool#* }"
@@ -2872,7 +2886,11 @@ snap_manifest() {
       d="$(snap_digest "$e" "$name" "$path")" || return 1
       printf 'f%s %s %s\n' "$lc" "$d" "$n"
     elif [ -d "$e" ]; then
-      if [ -z "$(ls -A "$e" 2>/dev/null)" ]; then printf 'd - %s\n' "$n"; else printf 'D - %s\n' "$n"; fi
+      # A folder that cannot be listed would read as empty, while git can still
+      # run a hook in it through its search bit, so it fails the record.
+      [ -r "$e" ] && [ -x "$e" ] || return 1
+      lst="$(ls -A "$e" 2>/dev/null)" || return 1
+      if [ -z "$lst" ]; then printf 'd - %s\n' "$n"; else printf 'D - %s\n' "$n"; fi
     else
       printf 'o - %s\n' "$n"
     fi
@@ -2897,8 +2915,13 @@ snap_untrusted() {
   fi
   CONTAINED=1
   clear_inflight "$root" "$state"
-  printf '[%s] UNVERIFIED: the runner'"'"'s own folder for the pass, %s, was changed while the pass ran, so nothing was moved or restored and the tripwire is set. Do not open the vault in an agent session until it is reviewed: compare the steering surfaces with the pre-pass backup of them, %s (copy it before you delete the tripwire, because the next pass replaces it), and the rest of the vault with git where there is one. The folder is kept for the review.\n' \
-    "$(ts)" "$(shown_name "$snap")" "$(shown_name "$state/inflight-backup.tar")" >> "$log"
+  if [ -s "$state/inflight-backup.tar" ]; then
+    printf '[%s] UNVERIFIED: the runner'"'"'s own folder for the pass, %s, was changed while the pass ran, so nothing was moved or restored and the tripwire is set. Until the vault is reviewed, run no git command in it and do not open it in Obsidian or an agent session, because the pass may have changed .git/config, .git/hooks or .obsidian/: first compare the steering surfaces with the pre-pass backup of them, %s (copy it before you delete the tripwire, because the next pass replaces it), then the rest of the vault, with git where there is one. The folder is kept for the review.\n' \
+      "$(ts)" "$(shown_name "$snap")" "$(shown_name "$state/inflight-backup.tar")" >> "$log"
+  else
+    printf '[%s] UNVERIFIED: the runner'"'"'s own folder for the pass, %s, was changed while the pass ran, so nothing was moved or restored and the tripwire is set. Until the vault is reviewed, run no git command in it and do not open it in Obsidian or an agent session, because the pass may have changed .git/config, .git/hooks or .obsidian/: no pre-pass backup of the steering surfaces was made, so check those by hand first, then the rest of the vault, with git where there is one. The folder is kept for the review.\n' \
+      "$(ts)" "$(shown_name "$snap")" >> "$log"
+  fi
   return 78
 }
 
