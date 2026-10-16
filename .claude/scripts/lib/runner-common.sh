@@ -28,6 +28,9 @@ RUNNER_UNAME="$(uname -s 2>/dev/null)"
 # Set only by memory_override, so a value from the environment cannot reach
 # run_agent, even under a runner that never calls memory_override.
 unset AGENT_SETTINGS_FILE
+# Set only by a runner, from snap_manifest, so a value from the environment
+# cannot stand in for the record of its folder that run_agent requires.
+unset SNAP_SEALS
 
 # Git's variables for one repository are cleared here, before any function
 # runs. GIT_DIR beats discovery and git -C changes only the working directory,
@@ -1233,8 +1236,10 @@ write_tripwire() {
   return "$ok"
 }
 
-# tripwire_text <root> <state-dir> <runner> <reason> <quarantine-dir> <handled-list> [<errors-list> [stop]]
-# Prints the text of the tripwire that write_tripwire writes.
+# tripwire_text <root> <state-dir> <runner> <reason> <quarantine-dir> <handled-list> [<errors-list> [stop|unverified]]
+# Prints the text of the tripwire that write_tripwire writes. The unverified
+# shape is for a pass whose runner could not trust its own folder: nothing was
+# moved or restored, and <quarantine-dir> names that folder, kept for review.
 tripwire_text() {
   local state="$2" runner="$3" reason="$4" qdir="$5" handled="$6" errors="${7:-}" shape="${8:-}"
   {
@@ -1262,6 +1267,18 @@ tripwire_text() {
       else
         printf 'delete this file.\n'
       fi
+    elif [ "$shape" = unverified ]; then
+      printf 'Nothing was moved or restored, because the runner could not tell what the\n'
+      printf 'pass changed. Do not open the vault in an agent session until it is reviewed.\n'
+      if [ -s "$state/inflight-backup.tar" ]; then
+        printf 'Compare the steering surfaces with the pre-pass backup of them at\n%s\n' "$state/inflight-backup.tar"
+        printf '(copy it first, because the next pass replaces it), and the rest of the vault\n'
+        printf "with 'git status' where the vault is a git repository.\n"
+      else
+        printf 'No pre-pass backup of the steering surfaces is there to compare against, so\n'
+        printf "review the vault with 'git status' where it is a git repository.\n"
+      fi
+      printf "The runner's folder for the pass is kept, for the review, at\n%s.\n" "$qdir"
     else
       printf 'Changed files were moved to the quarantine and restored from the pre-pass\n'
       printf 'backup where one existed. Git HEAD and refs are never rewritten, so check them\n'
@@ -1278,7 +1295,11 @@ tripwire_text() {
       sed 's/^/  /' "$errors"
     fi
     printf '\nNo runner, and not vault-check.sh, will run while this file exists.\n'
-    [ "$shape" = stop ] || printf 'Review the paths above, then delete this file. '
+    case "$shape" in
+      stop) ;;
+      unverified) printf 'Review the vault as above, then delete this file. ' ;;
+      *) printf 'Review the paths above, then delete this file. ' ;;
+    esac
     printf 'The runners also keep a copy\n'
     printf 'at %s. Delete that too.\n' "$state/$(basename "$TRIPWIRE_REL")"
   }
@@ -1749,7 +1770,7 @@ run_lock_acquire() {
       # misses in a row, a second apart.
       mkdir_misses=$((mkdir_misses + 1))
       if [ -e "$lock" ] || [ -L "$lock" ] || [ "$mkdir_misses" -ge 5 ]; then
-        printf '[%s] ERROR: could not create the run lock %s. Refusing to run.\n' "$(ts)" "$lock" >> "$log"
+        printf '[%s] ERROR: could not create the run lock %s. Refusing to run.\n' "$(ts)" "$(shown_name "$lock")" >> "$log"
         return 1
       fi
       sleep 1
@@ -1778,7 +1799,7 @@ run_lock_acquire() {
       if [ -n "$(owner_field "$owner" kill_failed)" ]; then
         # Never stale. A process of that pass may still be running.
         printf '[%s] LOCKED: the run lock is marked KILL_FAILED by %s (pid %s). A process of that pass may still be running. Check for it, stop it, then delete %s.\n' \
-          "$(ts)" "${o_runner:-an unknown runner}" "${o_pid:-unknown}" "$lock" >> "$log"
+          "$(ts)" "${o_runner:-an unknown runner}" "${o_pid:-unknown}" "$(shown_name "$lock")" >> "$log"
         return 75
       elif [ -z "$o_nonce" ]; then
         # No usable owner file. Either a runner is between mkdir and its first
@@ -1876,7 +1897,7 @@ run_lock_release() {
 # as no repository, says why. Each runner calls it once its log is known.
 git_env_warning() {
   [ -n "${GIT_REPO_ENV_SET:-}" ] || return 0
-  printf '[%s] WARNING: the environment set %s, git'"'"'s variables for one repository, and the runner cleared them, so git finds the vault'"'"'s repository from the vault itself. A vault git reached only through GIT_DIR now reads as no repository: give it a .git file that names its git directory (gitdir: <path>).\n' "$(ts)" "$GIT_REPO_ENV_SET" >> "$1"
+  printf '[%s] WARNING: the environment set %s, which change the repository, index, objects or configuration git uses, and the runner cleared them, so git finds the vault'"'"'s repository from the vault itself, and settings passed through GIT_CONFIG_COUNT or git -c, safe.directory among them, no longer reach the pass. A vault git reached only through GIT_DIR now reads as no repository; a .git file in the vault naming its git directory (gitdir: <path>, with no part ending in a dot) would let git find it from the vault (reasoned).\n' "$(ts)" "$GIT_REPO_ENV_SET" >> "$1"
 }
 
 # safe_git <empty-hooks-dir> <git args...>
@@ -2050,7 +2071,7 @@ RUNNER_TAB="$(printf '\t')"
 record_uncommitted() {
   local root="$1" hooks="$2" list="$3/$4.uncommitted" log="${6:-/dev/null}" p blob failed=0
   if ! : > "$list.new" 2>/dev/null; then
-    printf '[%s] WARNING: could not record the files this pass left uncommitted in %s, so the next run will take them for someone'"'"'s edit.\n' "$(ts)" "$3" >> "$log"
+    printf '[%s] WARNING: could not record the files this pass left uncommitted in %s, so the next run will take them for someone'"'"'s edit.\n' "$(ts)" "$(shown_name "$3")" >> "$log"
     return 0
   fi
   while IFS= read -r p; do
@@ -2063,7 +2084,7 @@ record_uncommitted() {
   done < "$5"
   if [ "$failed" -eq 1 ] || ! mv -f "$list.new" "$list" 2>/dev/null; then
     rm -f "$list.new" 2>/dev/null
-    printf '[%s] WARNING: could not record the files this pass left uncommitted in %s, so the next run will take them for someone'"'"'s edit.\n' "$(ts)" "$3" >> "$log"
+    printf '[%s] WARNING: could not record the files this pass left uncommitted in %s, so the next run will take them for someone'"'"'s edit.\n' "$(ts)" "$(shown_name "$3")" >> "$log"
   fi
 }
 
@@ -2767,6 +2788,120 @@ move_line_break_names() {
   }
 }
 
+# The runner's own folder for the pass holds its snapshot of the vault (before),
+# its backup of the steering surfaces (steering.tar), git's hooks folder
+# (nohooks) and the files git_preflight and the dirty-path check leave, and the
+# fence trusts every one of them. A pass that could change that folder could
+# remove the snapshot, so the comparison saw nothing, rewrite it to hide its own
+# write, or put a hook into nohooks for the runner's commit to run: with the
+# folder removed by the agent, or after it ran, every build up to 1.4.1 kept the
+# pass's writes and set no tripwire (measured). So each runner records the
+# folder with snap_manifest right after the memory override and before the
+# in-flight marker, and records it again as soon as the agent returns, before it
+# writes anything there; two records that differ, or one that cannot be made,
+# end the pass with snap_untrusted.
+#
+# snap_tool
+# The first of sha256sum, shasum and cksum found on PATH as an absolute path,
+# printed as "<name> <path>". cksum is a CRC: anyone able to write the folder
+# can make a file match it, which the runner's WARNING says. Fails when none is
+# found.
+snap_tool() {
+  local t p
+  for t in sha256sum shasum cksum; do
+    p="$(command -v "$t" 2>/dev/null)" || continue
+    case "$p" in
+      /*|[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]:/*|[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]:\\*)
+        printf '%s %s\n' "$t" "$p"; return 0 ;;
+    esac
+  done
+  return 1
+}
+
+# snap_digest <file> <tool name> <tool path>
+# The file's digest, read on standard input so no name is escaped into the
+# output, with its spaces turned into colons. Fails when the tool fails or
+# prints nothing.
+snap_digest() {
+  local out
+  case "$2" in
+    shasum) out="$("$3" -a 256 < "$1" 2>/dev/null)" || return 1 ;;
+    sha256sum|cksum) out="$("$3" < "$1" 2>/dev/null)" || return 1 ;;
+    *) return 1 ;;
+  esac
+  [ -n "$out" ] || return 1
+  printf '%s\n' "${out// /:}"
+}
+
+# snap_manifest <dir>
+# One line per entry directly in <dir>, in the order the shell sorts names:
+#   f<n> <digest> <name>   a regular file with <n> links (1, or n for more)
+#   l - <name>             a link, never followed
+#   d - <name> / D - <name>  an empty folder / one that holds anything
+#   o - <name>             a FIFO, a socket, a device or anything else
+# Entries are found by glob, so a name holding a line break is one name, and
+# every name must be made of letters, digits, dot, underscore and hyphen, spelled
+# out so no locale widens the set: a name outside it fails the record, so no name
+# can print a line of its own. Folders are not entered, since the runner's only
+# folder there, nohooks, must stay empty. run and gaps, which the watchdog writes
+# while the agent runs, are left out while each is a regular file with one link,
+# and recorded otherwise, so a link, a FIFO or a second name there differs. Fails
+# when <dir> is not a folder or is a link, when a name is outside the set, or
+# when a file cannot be digested.
+snap_manifest() {
+  local dir="$1" tool name path e n lc d
+  [ -d "$dir" ] && [ ! -L "$dir" ] || return 1
+  tool="$(snap_tool)" || return 1
+  name="${tool%% *}" path="${tool#* }"
+  for e in "$dir"/* "$dir"/.[!.]* "$dir"/..?*; do
+    { [ -e "$e" ] || [ -L "$e" ]; } || continue
+    n="${e##*/}"
+    case "$n" in
+      *[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-]*) return 1 ;;
+    esac
+    if [ -L "$e" ]; then
+      printf 'l - %s\n' "$n"
+    elif [ -f "$e" ]; then
+      lc=n
+      [ -n "$(find "$e" -prune -links 1 2>/dev/null)" ] && lc=1
+      case "$n" in
+        run|gaps)
+          [ "$lc" = 1 ] || printf 'f%s - %s\n' "$lc" "$n"
+          continue ;;
+      esac
+      d="$(snap_digest "$e" "$name" "$path")" || return 1
+      printf 'f%s %s %s\n' "$lc" "$d" "$n"
+    elif [ -d "$e" ]; then
+      if [ -z "$(ls -A "$e" 2>/dev/null)" ]; then printf 'd - %s\n' "$n"; else printf 'D - %s\n' "$n"; fi
+    else
+      printf 'o - %s\n' "$n"
+    fi
+  done
+  return 0
+}
+
+# snap_untrusted <root> <state-dir> <runner> <snap-dir> <log>
+# Ends a pass whose runner could not trust its own folder after the agent ran:
+# nothing it holds can be compared or restored from, so nothing is. Writes the
+# tripwire in its unverified shape, naming the folder, which the runner keeps
+# for the review; then the tripwire does the in-flight marker's job, so the
+# marker goes. Returns 78, or 70 when no tripwire could be written, with the
+# marker kept.
+snap_untrusted() {
+  local root="$1" state="$2" runner="$3" snap="$4" log="$5"
+  if ! write_tripwire "$root" "$state" "$runner" \
+       "the runner's own folder for the pass, which holds its snapshot of the vault, its backup of the steering surfaces and git's hooks folder, was changed while the pass ran, so what the pass wrote could not be checked or contained" \
+       "$snap" /dev/null "" unverified; then
+    printf '[%s] TRIPWIRE-ERROR: the runner'"'"'s own folder for the pass, %s, was changed while the pass ran and no tripwire could be written. Treat the vault as unverified. The in-flight marker is kept.\n' "$(ts)" "$(shown_name "$snap")" >> "$log"
+    return 70
+  fi
+  CONTAINED=1
+  clear_inflight "$root" "$state"
+  printf '[%s] UNVERIFIED: the runner'"'"'s own folder for the pass, %s, was changed while the pass ran, so nothing was moved or restored and the tripwire is set. Do not open the vault in an agent session until it is reviewed: compare the steering surfaces with the pre-pass backup of them, %s (copy it before you delete the tripwire, because the next pass replaces it), and the rest of the vault with git where there is one. The folder is kept for the review.\n' \
+    "$(ts)" "$(shown_name "$snap")" "$(shown_name "$state/inflight-backup.tar")" >> "$log"
+  return 78
+}
+
 # contain_pass <root> <state-dir> <runner> <snap-dir> <log> <head-before>
 # The whole post-agent sequence, in the only safe order: contain the fenced
 # steering surfaces with no git involved, then, if git's own config was not
@@ -3036,7 +3171,7 @@ append_run_log() {
     return 1
   fi
   if [ -e "$out" ] && [ ! -f "$out" ]; then
-    printf '[%s] WARNING: %s is not a file, so the run output was not added to it.\n' "$(ts)" "$out" >> "$log"
+    printf '[%s] WARNING: %s is not a file, so the run output was not added to it.\n' "$(ts)" "$(shown_name "$out")" >> "$log"
     return 1
   fi
   if [ -f "$out" ]; then
@@ -3054,7 +3189,7 @@ append_run_log() {
     return 1
   fi
   if ! tmp="$(mktemp "$out.runner-tmp.XXXXXX" 2>/dev/null)"; then
-    printf '[%s] WARNING: no temporary file could be made beside %s, so the run output was not added to it.\n' "$(ts)" "$out" >> "$log"
+    printf '[%s] WARNING: no temporary file could be made beside %s, so the run output was not added to it.\n' "$(ts)" "$(shown_name "$out")" >> "$log"
     return 1
   fi
   if [ -n "$old" ] && ! cat "$old" > "$tmp" 2>/dev/null; then
@@ -3073,7 +3208,7 @@ append_run_log() {
     if part="$(mktemp "$out.runner-tmp.XXXXXX" 2>/dev/null)" && cap_copy "$tmp" "$part" "$max" && mv -f "$part" "$tmp" 2>/dev/null; then
       :
     else
-      printf '[%s] WARNING: %s could not be cut to %s bytes, so it is kept whole this time.\n' "$(ts)" "$out" "$max" >> "$log"
+      printf '[%s] WARNING: %s could not be cut to %s bytes, so it is kept whole this time.\n' "$(ts)" "$(shown_name "$out")" "$max" >> "$log"
       [ -n "$part" ] && rm -f "$part" 2>/dev/null
     fi
   fi
@@ -3224,7 +3359,7 @@ note_tripwire() {
     [ -f "$f" ] && [ ! -L "$f" ] || continue
     found=0
     printf '\n%s\n' "$text" >> "$f" 2>/dev/null \
-      || printf '[%s] TRIPWIRE-ERROR: a note could not be added to %s, which is still set.\n' "$(ts)" "$f" >> "$log"
+      || printf '[%s] TRIPWIRE-ERROR: a note could not be added to %s, which is still set.\n' "$(ts)" "$(shown_name "$f")" >> "$log"
   done
   [ "$found" -eq 0 ] || return 1
   if [ ! -f "$kept" ] || [ -L "$kept" ]; then
@@ -3232,7 +3367,7 @@ note_tripwire() {
       || printf '[%s] WARNING: the tripwire could not be copied to the state directory %s.\n' "$(ts)" "$(shown_name "$state")" >> "$log"
   elif [ ! -f "$vault" ] || [ -L "$vault" ]; then
     write_file_atomic "$vault" "$kept" \
-      || printf '[%s] WARNING: the tripwire could not be copied to %s.\n' "$(ts)" "$vault" >> "$log"
+      || printf '[%s] WARNING: the tripwire could not be copied to %s.\n' "$(ts)" "$(shown_name "$vault")" >> "$log"
   fi
   return 0
 }
@@ -3317,7 +3452,7 @@ vault_root_spelling_ok() {
         *) return 0 ;;
       esac ;;
   esac
-  printf '[%s] ERROR: the vault, %s, is spelled with a part that ends in a dot, a colon that is not a drive letter'"'"'s, or a last part that ends in a space, and Windows reads such a spelling as another folder: git read the repository in a folder v beside a vault v. (measured in Git Bash), and a colon reads as a stream of the folder before it and a trailing space is dropped (both reasoned). Rename the folder, or reach the vault through a path with none of these. Refusing to run.\n' "$(ts)" "$(shown_name "$1")" >> "$2"
+  printf '[%s] ERROR: the vault, %s, is spelled with a part that ends in a dot, a colon that is not a drive letter'"'"'s, or a last part that ends in a space, and Windows reads such a spelling as another folder: with a folder v beside a vault named v., git reads the repository in v (measured in Git Bash), a part such as x::$INDEX_ALLOCATION names the folder x, and a space that ends the last part is dropped (both reasoned). Rename the folder, or reach the vault through a path with none of these. Refusing to run.\n' "$(ts)" "$(shown_name "$1")" >> "$2"
   return 1
 }
 
@@ -3348,7 +3483,7 @@ runner_folder_ok() {
     *) rest= ;;
   esac
   if [ -z "$rest" ]; then
-    printf '[%s] ERROR: the runner'"'"'s temporary folder, %s, is not an absolute path, so it was made relative to the vault and git would look for its hooks folder somewhere other than the folder the runner made (mktemp returns such a path when TMPDIR is relative or starts with ~, measured in Git Bash and on Linux). Point TMPDIR at an absolute folder outside the vault, or leave it unset. Refusing to run.\n' "$(ts)" "$(shown_name "$1")" >> "$2"
+    printf '[%s] ERROR: the runner'"'"'s temporary folder, %s, is not an absolute path, so it was made inside the vault, where the pass could write its snapshot, its backup and git'"'"'s hooks folder (mktemp returns such a path when TMPDIR is relative or starts with ~, measured in Git Bash and on Linux; for one starting with ~, git would also take its hooks from the home folder, reasoned). Point TMPDIR at an absolute folder outside the vault, or leave it unset. Refusing to run.\n' "$(ts)" "$(shown_name "$1")" >> "$2"
     return 1
   fi
   [ "$win" = 1 ] || command -v cygpath >/dev/null 2>&1 || return 0
@@ -3710,6 +3845,19 @@ run_agent() {
   local stall="${AGENT_STALL_SECONDS:-0}" gaps="${AGENT_GAPS_FILE:-}" nonce="${AGENT_SESSION_ID:-}"
   [ -n "$nonce" ] || nonce="$(new_uuid)"
   AGENT_SESSION_ID="$nonce"
+  # Only a runner sets SNAP_SEALS, from snap_manifest, and one from an earlier
+  # release never does, so it could not check its folder when the agent returns.
+  # Such a pass, in either mode, fails here with a status and the reason in the
+  # run output, before the agent starts.
+  if [ -z "${SNAP_SEALS:-}" ]; then
+    printf '[%s] ERROR: no record of the runner'"'"'s folder for the pass was taken before the agent started, so this runner and lib/runner-common.sh come from different releases. Take runner-common.sh, dream-pass.sh, promotion-pass.sh and vault-retention.sh together. Refusing to start the agent.\n' "$(ts)" >> "$out"
+    RUN_RC=1
+    RUN_TIMED_OUT=0
+    RUN_STALLED=0
+    RUN_KILL_FAILED=0
+    RUN_KILL_REPORT=""
+    return 0
+  fi
   case "$AGENT_KIND" in
     claude)
       # Only memory_override sets AGENT_SETTINGS_FILE, and a runner from an earlier

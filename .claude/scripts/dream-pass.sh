@@ -117,6 +117,8 @@ RUNNER=dream-pass
 CONTAINMENT_CHECKED=0
 INFLIGHT=0
 SNAP_DIR=""
+# 1 once the check of the runner's folder failed, so on_exit keeps it for review.
+SNAP_KEEP=0
 SESSION_RECORDED=0
 AGENT_SESSION_ID=""
 KILL_FAILED_MARKED=0
@@ -159,7 +161,7 @@ on_exit() {
   # What a tripwire or stop report left when a signal cut it short.
   [ -n "${STATE:-}" ] && rm -f "$STATE/tripwire-body.$$" "$STATE/kill-report.$$" "$STATE/runner-tripwire.tmp.$$" "$STATE/$RUNNER.interrupted.run.tmp.$$" 2>/dev/null
   [ -n "${ROOT:-}" ] && rm -f "$ROOT/$TRIPWIRE_REL.tmp.$$" 2>/dev/null
-  [ -n "$SNAP_DIR" ] && rm -rf "$SNAP_DIR"
+  [ -n "$SNAP_DIR" ] && [ "$SNAP_KEEP" -eq 0 ] && rm -rf "$SNAP_DIR"
   run_lock_release
 }
 
@@ -191,7 +193,6 @@ on_signal() {
     keep_run_output "$SNAP_DIR/run" "$STATE" "$RUNNER" "$LOG"
   fi
   if [ "$INFLIGHT" -eq 1 ] && [ "$CONTAINMENT_CHECKED" -eq 0 ]; then
-    : > "$SNAP_DIR/empty"
     # A tripwire this run already set, by containment or by a stop's report,
     # stays as it is, with a note. tripwire_check made sure neither copy existed
     # when the run started, and the pass cannot write the state directory copy.
@@ -201,7 +202,7 @@ on_signal() {
       printf '[%s] INTERRUPTED after the tripwire was set. The tripwire is kept.\n' "$(ts)" >> "$LOG"
     elif write_tripwire "$ROOT" "$STATE" "$RUNNER" \
          "the pass was interrupted by a signal before containment ran, so the vault's steering surfaces are unverified (the pre-pass backup is $STATE/inflight-backup.tar)" \
-         "(none, because containment did not run)" "$SNAP_DIR/empty"; then
+         "(none, because containment did not run)" /dev/null; then
       clear_inflight "$ROOT" "$STATE"
       printf '[%s] INTERRUPTED before containment. Tripwire set.\n' "$(ts)" >> "$LOG"
     else
@@ -368,6 +369,16 @@ main() {
   if [ "$AGENT_KIND" = claude ] && ! memory_override "$ROOT" "$STATE" "$SNAP_DIR" "$LOG"; then
     exit 1
   fi
+  # The runner's folder for the pass is recorded now, before the in-flight
+  # marker, and again as soon as the agent returns (snap_manifest).
+  if ! SNAP_SEALS="$(snap_manifest "$SNAP_DIR")" || [ -z "$SNAP_SEALS" ]; then
+    SNAP_SEALS=
+    printf '[%s] ERROR: the runner could not record its folder for the pass, %s, before the agent started (a name in it outside letters, digits, dot, underscore and hyphen, or a file it could not checksum), so it could not check the folder afterwards. Refusing to run.\n' "$(ts)" "$(shown_name "$SNAP_DIR")" >> "$LOG"
+    exit 1
+  fi
+  case "$(snap_tool)" in
+    cksum\ *) printf '[%s] WARNING: no sha256sum or shasum was found, so the runner checks its folder for the pass with cksum, a CRC that anyone able to write the folder can make a file match.\n' "$(ts)" >> "$LOG" ;;
+  esac
   cp "$SNAP_DIR/steering.tar" "$STATE/inflight-backup.tar" 2>/dev/null
   # Without the marker outside the vault, a pass killed mid-run would leave no
   # trace the next run can trust. Refuse rather than start the agent.
@@ -398,6 +409,24 @@ main() {
   STOP_REPORT_PENDING="${RUN_KILL_FAILED:-0}"
   AGENT_RUNNING=0
 
+  # Before anything is written to the folder again, it must be as it was when
+  # the agent started; otherwise nothing in it can be trusted, and the pass ends
+  # with the tripwire and the folder kept (snap_untrusted).
+  if ! SNAP_NOW="$(snap_manifest "$SNAP_DIR")" || [ "$SNAP_NOW" != "$SNAP_SEALS" ]; then
+    SNAP_KEEP=1
+    snap_untrusted "$ROOT" "$STATE" "$RUNNER" "$SNAP_DIR" "$LOG"
+    snap_rc=$?
+    [ "$snap_rc" -eq 78 ] && INFLIGHT=0
+    if [ "$RUN_TIMED_OUT" -eq 1 ] || [ "$RUN_STALLED" -eq 1 ]; then
+      report_stop "$LOG" dream-agent "$ROOT" "$STATE" "$RUNNER"
+    fi
+    RUN_LOG_APPENDED=1
+    if [ -f "$SNAP_DIR/run" ] && [ ! -L "$SNAP_DIR/run" ]; then
+      keep_run_output "$SNAP_DIR/run" "$STATE" "$RUNNER" "$LOG"
+      record_session_once
+    fi
+    exit "$snap_rc"
+  fi
   snapshot_tree "$ROOT" "$SNAP_DIR/after"
   changed_paths "$SNAP_DIR/before" "$SNAP_DIR/after" > "$SNAP_DIR/changed"
 
