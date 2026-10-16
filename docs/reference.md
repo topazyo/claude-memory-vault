@@ -530,8 +530,9 @@ a lint that does nothing and a lint that found nothing wrong print the same thin
   names the cleared git ones and keeps `GIT_CONFIG_GLOBAL`, `GIT_NAMESPACE` and
   `GIT_CEILING_DIRECTORIES`, and the list `git rev-parse --local-env-vars` prints on the host must
   lie inside the library's. `git-dir-pass`: with `GIT_DIR` naming another repository, a dream and
-  a promotion pass in command mode commit in the vault and the retention runner runs, each logging
-  the `WARNING:` that names `GIT_DIR`, with the other repository's HEAD, refs and index unchanged.
+  a promotion pass in command mode commit in the vault and the retention runner commits its move
+  of an aged dream journal there, each logging the `WARNING:` that names `GIT_DIR`, with the other
+  repository's HEAD, refs and index unchanged.
   `msys-conv-pass` (Windows job only): a dream pass with `MSYS2_ARG_CONV_EXCL=core.` inherited runs
   and hands `git.exe` a drive path in every `core.hooksPath`. `vault-root-spelling`: with the
   platform given as Windows, spellings with a part ending in a dot, a colon that is not a drive
@@ -552,16 +553,24 @@ a lint that does nothing and a lint that found nothing wrong print the same thin
   under `LC_ALL=C`, `shown_name` shows U+0080, U+0085, U+009B and U+009F as `?`, as it does a line
   break and an escape, and keeps U+00A0, an e-acute and an A with a macron byte for byte.
   `state-shown`: each runner, with `VAULT_STATE_DIR` naming a file whose name holds a line break and
-  an escape, refuses (1) on one line showing both as `?`. `snapshot-sealed`: with a stand-in agent
-  in command mode, a pass whose runner's folder is removed (dream and promotion), removed before
-  the agent is stopped for its timeout (with the `TIMEOUT:` line), its write added to the snapshot,
-  hooks planted in its hooks folder, a link at the name of the "after" or in place of the "before"
-  snapshot, or a name holding a line break that forges its listing, each ends 78 with the
-  `UNVERIFIED:` line, the tripwire's reason in both copies, no in-flight marker and the pre-pass
-  backup kept, no planted hook run and the link's target untouched (the link and line-break legs
-  off Windows only); a pass that leaves the folder alone is contained as before (2), or ends 0 with
-  no `UNVERIFIED:` line while the watchdog writes `run` and `gaps`; and `run_agent` with no record
-  of the folder sets `RUN_RC` 1 and never starts the agent, even with `SNAP_SEALS` exported.
+  an escape, refuses (1) on one line showing both as `?`, and off Windows the dream runner, with
+  `VAULT_STATE_DIR` a folder so named and a tripwire in the vault, refuses (78) the same way.
+  `snapshot-sealed`: with a stand-in agent in command mode, a pass whose runner's folder is removed
+  (dream and promotion), removed before the agent is stopped for its timeout or its silence (with
+  the `TIMEOUT:` or `STALLED:` line, dream and promotion), its write added to the snapshot, hooks
+  planted in its hooks folder (readable, or off Windows searchable but not readable), `gaps` given a
+  second name outside the folder, a link at the name of the "after" or in place of the "before"
+  snapshot, the folder or `run` replaced by a link, or a name holding a line break that forges its
+  listing, each ends 78 with the `UNVERIFIED:` line, the tripwire's reason in both copies and its
+  advice to run no git command in the vault before the review, no in-flight marker and the pre-pass
+  backup kept, no planted hook run and the link's target untouched, the run output kept (or, with
+  `run` a link, a `WARNING:` that it was not), and with only `cksum` to take, its `WARNING:` (the
+  link, line-break and unreadable-folder legs off Windows only); a pass that leaves the folder
+  alone is contained as before (2), or ends 0 with no `UNVERIFIED:` line while the watchdog writes
+  `run` and `gaps`, with only `cksum` too; a name outside the record's set put in the folder before
+  the record makes the pass refuse (1) with no agent started; `run_agent` with no record of the
+  folder sets `RUN_RC` 1 and never starts the agent, even with `SNAP_SEALS` exported; and a
+  `GLOBIGNORE` set when the library loads does not hide a name from the record.
   `resume-skips-pass-output`: both copies of the `/resume` skill and `docs/agent-onboarding.md`
   name `dream-*.md` and `promotion-*.md` beside `compaction-*.md`.
 - **Pre-commit gate** — allows a commit on a conformant vault even with an inherited
@@ -750,7 +759,8 @@ Around that call, each runner does several things an exit code cannot:
   the signal's own stop names what it found in the tripwire the signal sets. After such a stop the
   run's output is kept in the state directory, not added to the run log in the vault, because a
   process left running could swap the log's temporary file for a link. The runner still exits 124
-  or 125. A marked lock
+  or 125, or 78 when its own folder for the pass was also changed while the agent ran (70 when no
+  tripwire could be written). A marked lock
   is never released or reclaimed, so every later run exits **75** until a human has made sure
   nothing of the old pass is running, reviewed the vault, deleted the tripwire and deleted the
   lock folder. A stop of a commit step, or a stop made by a signal to the runner, that leaves a
@@ -864,10 +874,13 @@ Around that call, each runner does several things an exit code cannot:
   plugins and in the vault's own settings, which would otherwise run inside the unattended pass as
   the account, with a shell the agent's allowlist never sees, do not run. With 1.4.1's file Claude
   Code 2.1.301 ran a probe folder's own hooks and plugins' `SessionStart` and `Stop` hooks, one of
-  which wrote a file outside the folder; with the new line it ran none and still loaded the
-  instructions (measured on Windows, `-p`, on 2.1.301 only). Hooks from managed settings are not
-  turned off (measured 2026-09-15 on an earlier version), and MCP servers, and the commands a
-  settings file names outside hooks, still start.
+  which wrote a file outside the folder; with the new line it ran none, and the account's
+  `CLAUDE.md` was still sent in the request (measured on Windows, `-p`, on 2.1.301 only); a live
+  dream pass through the 1.4.2 runner ran to its journal (measured). Hooks from managed settings
+  are not turned off (measured 2026-09-15 on an earlier version), and MCP servers, and the commands
+  a settings file names outside hooks, still start (reasoned): `apiKeyHelper`, `awsAuthRefresh`,
+  `awsCredentialExport` and `otelHeadersHelper`, a `statusLine` command, and the MCP and LSP
+  servers plugins ship, among them (reasoned).
   Managed settings outrank `--settings`, so a memory folder set there is not overridden. A memory
   write that does happen lands in `.pass-agent/`, where it is contained and trips the tripwire like
   any other write under `90-auto-memory/`. The pass refuses to start (exit 1) when `.pass-agent/`
@@ -1116,11 +1129,21 @@ Around that call, each runner does several things an exit code cannot:
     (measured on 1.4.0 and 1.4.1 with a stand-in agent). Each runner now records the folder before
     the agent starts and again as soon as it returns, before writing anything there, so a folder
     removed or changed in between ends the pass with exit 78, the tripwire set in a shape that says
-    nothing was moved or restored, and the pre-pass backup and the folder kept. The record does not
-    see a change undone before the agent returns, or one made after the check by a process still
-    running, and where the runner falls back to `cksum` (it logs a `WARNING:`), any of the accounts
-    above that can write the folder can forge a match. Keep anything that cleans the temporary
-    folder from removing a pass's folder while it runs.
+    nothing was moved or restored, and the pre-pass backup and the folder kept; when no tripwire
+    can be written it exits 70 instead, with a `TRIPWIRE-ERROR:` line in place of the
+    `UNVERIFIED:` one, and keeps the in-flight marker. The record holds each file's digest and
+    whether it has one link or more, and refuses a name outside letters, digits, dot, underscore and
+    hyphen. Folders in it are recorded as empty or not, never entered, and one that cannot be listed
+    fails the record: on Linux a hooks folder made searchable but not readable (`chmod 100`) listed
+    as empty while a hook in it still ran through its search bit (measured on Linux; on Windows
+    `chmod` does not stop a listing, measured in Git Bash), so such a folder refuses the pass with
+    exit 1 before the agent starts, and ends it with 78 after. The library clears `GLOBIGNORE` as it
+    loads, because set before then it would hide names from both records, which would then agree
+    (bash 5.3 does not take it from the environment, measured in Git Bash and on Linux; bash 3.2 is
+    unmeasured). The record does not see a change undone before the agent returns, or one made
+    after the check by a process still running, and where the runner falls back to `cksum` (it logs
+    a `WARNING:`), any of the accounts above that can write the folder can forge a match. Keep
+    anything that cleans the temporary folder from removing a pass's folder while it runs.
   - The runner removes the settings file with its folder when the pass ends. After a stop that
     leaves Claude Code running (`KILL_FAILED`, which sets the tripwire), the file is gone while the
     process may still be at work; whether Claude Code would then grant its default memory folder
@@ -1446,10 +1469,12 @@ itself; `GIT_CONFIG_GLOBAL`, `GIT_CONFIG_SYSTEM`, `GIT_CONFIG_NOSYSTEM`, `GIT_EX
 and `GIT_TRACE*`, the account's own configuration and tools; and `GIT_NAMESPACE` and
 `GIT_ATTR_SOURCE`. This reaches all three runners. `vault-check.sh` and `vault-update.sh` load the
 library in a subshell, so their own git calls still honour inherited values. What it costs:
-settings passed through `GIT_CONFIG_COUNT` or a `git -c` wrapper, `safe.directory` among them, no
-longer reach a pass, so put such a setting in the account's global git configuration; and a vault
-git reached only through `GIT_DIR`, with no `.git` entry of its own, reads as no repository, so
-dream and promotion passes run without committing and the retention runner refuses.
+settings a parent git passed down with `-c` (in `GIT_CONFIG_PARAMETERS`), and those set through
+`GIT_CONFIG_COUNT`, `safe.directory` among them, no longer reach a pass, so put such a setting in
+the account's global git configuration (a `git` wrapper on `PATH` that adds `-c` to every call is
+not affected); and a vault git reached only through `GIT_DIR`, with no `.git` entry of its own,
+reads as no repository, so dream and promotion passes run without committing and the retention
+runner refuses (reasoned).
 
 #### 4.3.1 `vault-retention.sh` — the retention mover
 
@@ -1667,7 +1692,7 @@ Known limits, each failing in the quiet direction:
 | Exit | Meaning (dream and promotion runners) |
 | --- | --- |
 | `0` | OK: the artifact assertion held, nothing outside the fence changed, and the pass's files were committed, HEAD already held them, git ignores them, or the vault is not a repository of its own |
-| `1` | NO-ARTIFACT, the vault's path, on Windows or wherever a `cygpath` is found on `PATH`, in either mode, holds a part ending in a dot, a colon that is not a drive letter's or a last part ending in a space ("the vault, ..., is spelled with a part that ends in a dot", before the state directory, the run lock or any git call), the runner could not create its temporary directory, that directory is not an absolute path ("is not an absolute path, so it was made inside the vault") or, on Windows or wherever a `cygpath` is found on `PATH`, is spelled with a `..` or a part ending in a dot, which git there would read as another folder ("is spelled with .. or with a part that ends in a dot"), or with a colon that is not a drive letter's ("is spelled with a colon that is not a drive letter's"), each in either mode and before any git call, it could not use its state directory, write its in-flight marker or (promotion pass) its git state file, run `git status` or back up the steering surfaces, it could not record its folder for the pass before the agent started ("the runner could not record its folder for the pass": a name in it outside letters, digits, dot, underscore and hyphen, or a file it could not checksum), git cannot read the vault's repository, or (command mode) the agent definition file is missing. Also, in claude mode, the memory override refused the pass before the agent started: `90-auto-memory/.pass-agent/` holds anything but a regular `.DS_Store` file with no other hard link, or cannot be listed ("the memory override folder already held a file"), it or `90-auto-memory` is a symlink or junction ("the memory override folder is a link"), either is not a folder ("is not a folder, so the memory override folder cannot be made there"), the vault's path holds a `"`, a `\` or a control character ("the vault's path holds a character the settings file cannot carry"), the vault's path or the settings file's holds bytes that do not come back unchanged from UTF-8 to UTF-16LE and back ("is not valid UTF-8, or iconv could not check it"), the runner's folder for the pass fails the state directory's checks, lies inside the vault by file identity or is not the path it resolves to ("the runner's folder for the pass", then the check, then "and the memory override's settings file there can name hooks Claude Code runs"), that folder is not there as a folder ("is not there as a folder, though the runner made it before the pass's snapshot"), a folder above it cannot be entered (off Windows) or is not there ("cannot be reached: this account cannot enter the folder above it"), resolving the folder above it led to another folder ("is not the folder that resolving the folder above it led to"), the walk up it gave no answer ("which is not an answer, so the folder cannot be shown to lie outside the vault"), the vault cannot be resolved ("the vault, ..., cannot be resolved"), `pass-settings.json`, `pass-settings.new` or the temporary name the file is written through is already there ("was already there, and the memory override is written through it"), `pass-settings.json` could not be written ("could not write the memory override") or does not read back as written ("does not hold what was written to it"), or, on Windows, `cygpath` could not convert a path it needs ("cygpath could not convert a path for the memory override"), gave one that is not a drive path, a network path among them ("which is not a Windows drive path") or gave one that names another folder or file ("which is not the same folder or file"), or, outside Git Bash where no `cygpath` is found, the agent binary looks like a Windows program ("looks like a Windows program, but this runner is not running under Git Bash") or is not a file it can check ("is not a file the runner can check"). Claude Code's own exit 1, for example on a settings file it cannot use, also ends the run with 1: the log then says `dream-agent exited with code 1` (or `promotion-agent`) and the run log holds Claude Code's message. So does a start, in either mode, for which no record of the runner's folder was taken, as when the runner and `lib/runner-common.sh` come from different releases: with the 1.4.2 library and 1.4.1's runner every pass exits 1 before its agent starts, with no tripwire, and the run log says "no record of the runner's folder for the pass was taken before the agent started" (in claude mode the memory override is written first). With 1.4.1's library and a 1.4.2 runner, the run exits 1 before its agent with `git_env_warning: command not found` and `vault_root_spelling_ok: command not found` on the runner's stderr, not in its log (both measured on Linux, for each runner and mode), and with 1.4.0's library and a 1.4.1 runner with `temp_dir_spelling_ok: command not found` there (measured on Linux, for the dream runner in both modes and the promotion runner in claude mode; older libraries are unmeasured) |
+| `1` | NO-ARTIFACT, the vault's path, on Windows or wherever a `cygpath` is found on `PATH`, in either mode, holds a part ending in a dot, a colon that is not a drive letter's or a last part ending in a space ("the vault, ..., is spelled with a part that ends in a dot", before the state directory, the run lock or any git call), the runner could not create its temporary directory, that directory is not an absolute path ("is not an absolute path, so it was made inside the vault") or, on Windows or wherever a `cygpath` is found on `PATH`, is spelled with a `..` or a part ending in a dot, which git there would read as another folder ("is spelled with .. or with a part that ends in a dot"), or with a colon that is not a drive letter's ("is spelled with a colon that is not a drive letter's"), each in either mode and before any git call, it could not use its state directory, write its in-flight marker or (promotion pass) its git state file, run `git status` or back up the steering surfaces, it could not record its folder for the pass before the agent started ("the runner could not record its folder for the pass": a name in it outside letters, digits, dot, underscore and hyphen, a file it could not checksum, a folder in it that could not be listed, or no `sha256sum`, `shasum` or `cksum` found), git cannot read the vault's repository, or (command mode) the agent definition file is missing. Also, in claude mode, the memory override refused the pass before the agent started: `90-auto-memory/.pass-agent/` holds anything but a regular `.DS_Store` file with no other hard link, or cannot be listed ("the memory override folder already held a file"), it or `90-auto-memory` is a symlink or junction ("the memory override folder is a link"), either is not a folder ("is not a folder, so the memory override folder cannot be made there"), the vault's path holds a `"`, a `\` or a control character ("the vault's path holds a character the settings file cannot carry"), the vault's path or the settings file's holds bytes that do not come back unchanged from UTF-8 to UTF-16LE and back ("is not valid UTF-8, or iconv could not check it"), the runner's folder for the pass fails the state directory's checks, lies inside the vault by file identity or is not the path it resolves to ("the runner's folder for the pass", then the check, then "and the memory override's settings file there can name hooks Claude Code runs"), that folder is not there as a folder ("is not there as a folder, though the runner made it before the pass's snapshot"), a folder above it cannot be entered (off Windows) or is not there ("cannot be reached: this account cannot enter the folder above it"), resolving the folder above it led to another folder ("is not the folder that resolving the folder above it led to"), the walk up it gave no answer ("which is not an answer, so the folder cannot be shown to lie outside the vault"), the vault cannot be resolved ("the vault, ..., cannot be resolved"), `pass-settings.json`, `pass-settings.new` or the temporary name the file is written through is already there ("was already there, and the memory override is written through it"), `pass-settings.json` could not be written ("could not write the memory override") or does not read back as written ("does not hold what was written to it"), or, on Windows, `cygpath` could not convert a path it needs ("cygpath could not convert a path for the memory override"), gave one that is not a drive path, a network path among them ("which is not a Windows drive path") or gave one that names another folder or file ("which is not the same folder or file"), or, outside Git Bash where no `cygpath` is found, the agent binary looks like a Windows program ("looks like a Windows program, but this runner is not running under Git Bash") or is not a file it can check ("is not a file the runner can check"). Claude Code's own exit 1, for example on a settings file it cannot use, also ends the run with 1: the log then says `dream-agent exited with code 1` (or `promotion-agent`) and the run log holds Claude Code's message. So does a start, in either mode, for which no record of the runner's folder was taken, as when the runner and `lib/runner-common.sh` come from different releases: with the 1.4.2 library and 1.4.1's runner every pass exits 1 before its agent starts, with no tripwire, and the run log says "no record of the runner's folder for the pass was taken before the agent started" (in claude mode the memory override is written first). With 1.4.1's library and a 1.4.2 runner, the run exits 1 before its agent with `git_env_warning: command not found` and `vault_root_spelling_ok: command not found` on the runner's stderr, not in its log (both measured on Linux, for each runner and mode), and with 1.4.0's library and a 1.4.1 runner with `temp_dir_spelling_ok: command not found` there (measured on Linux, for the dream runner in both modes and the promotion runner in claude mode; older libraries are unmeasured) |
 | `2` | VIOLATION: a file outside the allowed write areas changed during the run. When steering surfaces are among them they are contained and the tripwire is set. Also when the pass changed a file it owns that already had uncommitted changes before it started, or a file it owns and changed is no longer a regular file, or (promotion pass) it changed a long-tier note that was there before it started. The runner commits nothing. Those last three reasons give exit 2 even when the agent failed, timed out or (promotion pass) gave no summary, and nothing is recorded for the next run. The promotion pass also puts back its notes, as for exit 5, except one that already had uncommitted changes |
 | `3` | REFUSED: `VAULT_AGENT=command` without `VAULT_ALLOW_UNENFORCED_TOOLS=1`; the agent was not started |
 | `4` | COMMIT-FAILED: staging or committing the pass's files failed, ran longer than `RUNNER_GIT_TIMEOUT`, or a file changed while it was checked. The files are left in place and uncommitted, and the log says whether they could be unstaged. Also a commit that was made but does not hold the checked content, which the log names |
@@ -1675,9 +1700,9 @@ Known limits, each failing in the quiet direction:
 | `64` | `VAULT_AGENT` is neither `claude` nor `command` |
 | `70` | TRIPWIRE-ERROR: containment was needed, or the runner's own folder for the pass was changed while it ran, but neither copy of the tripwire could be written. The in-flight marker is left, so the next run refuses |
 | `75` | LOCKED: the run lock stayed held, or git's `index.lock` stayed, for `RUN_LOCK_WAIT` seconds, the run lock is marked `KILL_FAILED` (this exits at once), the `index.lock` is older than 10 minutes, another runner took the lock over before the pass started, a git merge, rebase, cherry-pick, revert or bisect is in progress, or HEAD is detached. The agent was not started |
-| `78` | TRIPWIRE: a tripwire exists, or an earlier pass died before containment and this run turned its marker into one; the agent was not started. Also UNVERIFIED: the agent ran, and the runner's own folder for the pass was changed while it ran or could not be recorded again when it returned. Nothing was moved or restored, the tripwire is set in a shape that says so, the in-flight marker is cleared, and the pre-pass backup (`inflight-backup.tar` in the state directory) and the folder are kept for review |
-| `124` | TIMEOUT: the watchdog killed the run and everything it started. With `KILL_FAILED` in the log, a process may still be running, the run lock is kept and the tripwire is set. When the runner's own folder for the pass was also changed while the agent ran, the pass exits 78 (UNVERIFIED) instead, or 70 when no tripwire could be written, and the log holds both the `UNVERIFIED:` and the `TIMEOUT:` line |
-| `125` | STALLED: the run's output stopped growing for the stall threshold (claude mode, or command mode with `RUNNER_STALL_SECONDS` set), and the watchdog killed the run and everything it started. `KILL_FAILED` means the same as for 124, and so does a runner's folder changed while the agent ran, with the `STALLED:` line beside the `UNVERIFIED:` one |
+| `78` | TRIPWIRE: a tripwire exists, or an earlier pass died before containment and this run turned its marker into one; the agent was not started. Also UNVERIFIED: the agent ran, and the runner's own folder for the pass was changed while it ran or could not be recorded again when it returned. Nothing was moved or restored, the tripwire is set in a shape that says so, the in-flight marker is cleared, and the pre-pass backup (`inflight-backup.tar` in the state directory) and the folder are kept for review. `.git/config`, `.git/hooks` and `.obsidian/` may still hold what the pass planted (reasoned), so until the vault is reviewed run no git command in it and do not open it in Obsidian or an agent session: compare the steering surfaces with that backup first (copy it before you delete the tripwire), then the rest, with `git status` where the vault is a repository. The run output is kept in the state directory as `<runner>.interrupted.run`; when `run` is no longer a regular file it is not kept, and the log says `WARNING: the run output, …, is not a regular file, so it was not kept.` |
+| `124` | TIMEOUT: the watchdog killed the run and everything it started. With `KILL_FAILED` in the log, a process may still be running, the run lock is kept and the tripwire is set. When the runner's own folder for the pass was also changed while the agent ran, the pass exits 78 (UNVERIFIED) instead, with or without `KILL_FAILED`, and the log holds both the `UNVERIFIED:` and the `TIMEOUT:` line; or it exits 70 when no tripwire could be written, with a `TRIPWIRE-ERROR:` line in place of the `UNVERIFIED:` one and the in-flight marker kept |
+| `125` | STALLED: the run's output stopped growing for the stall threshold (claude mode, or command mode with `RUNNER_STALL_SECONDS` set), and the watchdog killed the run and everything it started. `KILL_FAILED` means the same as for 124, and so does a runner's folder changed while the agent ran (78, or 70), with the `STALLED:` line beside the `UNVERIFIED:` or `TRIPWIRE-ERROR:` one |
 | `127` | the `claude` binary, the `VAULT_AGENT_CMD` wrapper, or (from a `.cmd`) Git Bash was not found |
 | other | the agent's own non-zero status, when nothing above applies |
 

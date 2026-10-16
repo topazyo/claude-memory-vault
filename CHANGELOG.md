@@ -27,11 +27,12 @@ bash .claude/scripts/vault-update.sh --check --from ../template-new
 
 ## 1.4.2 — 2026-10-16
 
-A hardening release for the scheduled runners, and a fix for `/resume`. Each runner now refuses
-the inherited settings and the spellings under which git worked on another folder or another
-repository than the runner meant, checks its own temporary folder before trusting what it holds,
-and, in claude mode, starts Claude Code with every hook but managed ones turned off. `/resume` no
-longer briefs from the scheduled passes' own journals and reports.
+A hardening release for the scheduled runners, and a fix for `/resume`. Each runner now clears
+the inherited git settings that pointed git at another repository (with a `WARNING:`), refuses the
+spellings under which git read another folder than the runner meant, checks its own temporary
+folder before trusting what it holds, and, in claude mode, starts Claude Code with every hook but
+managed ones turned off. `/resume` no longer briefs from the scheduled passes' own journals and
+reports.
 
 ### Security
 
@@ -62,45 +63,65 @@ longer briefs from the scheduled passes' own journals and reports.
   a `cygpath` stand-in).
 - **A relative `TMPDIR` put the runner's own folder inside the vault.** `mktemp` returns a relative
   path when `TMPDIR` is relative or starts with `~` (measured in Git Bash and on Linux), and the
-  runners have moved into the vault by then, so on 1.4.1 every runner made its folder there and
-  called git with that folder's hooks folder (measured on Linux, through a `mktemp` stand-in); in
-  command mode the dream and promotion agents then started. Every runner, in every mode, now
-  refuses a temporary folder that is not an absolute path (a drive path counts only under Git
-  Bash, MSYS or Cygwin), and, on Windows or wherever a `cygpath` is found, one holding a colon that
-  is not a drive letter's: NTFS reads a part such as `x::$INDEX_ALLOCATION` as the folder `x`, and
-  MSYS leaves a path with a colon unconverted (reasoned; on 1.4.1 a dream pass in command mode ran
-  with such a folder, measured on Linux through the stand-ins).
+  runners have moved into the vault by then, so on 1.4.1 the dream and promotion runners made their
+  folder there and called git with that folder's hooks folder (measured on Linux, through a
+  `mktemp` stand-in); in command mode their agents then started. The retention runner did the same
+  only when a `mktemp` stand-in handed it a relative folder: its own rule takes `TMPDIR` only when it
+  starts with `/`, and a relative `TMPDIR` reached it only through the fallback the next item
+  describes. Every runner, in every mode, now refuses a temporary folder that is not an absolute
+  path (a drive path counts only under Git Bash, MSYS or Cygwin), and, on Windows or wherever a
+  `cygpath` is found, one holding a colon that is not a drive letter's: NTFS reads a part such as
+  `x::$INDEX_ALLOCATION` as the folder `x`, and MSYS leaves a path with a colon unconverted
+  (reasoned; on 1.4.1 a dream pass in command mode ran with such a folder, measured on Linux
+  through the stand-ins).
 - **The retention runner could make its folders, and its temporary files, inside the vault.** When
   neither `$TMPDIR` nor `/tmp` could hold a folder it fell back to a plain `mktemp -d`, which reads
-  `TMPDIR` itself, a relative one included; and the library's own temporary files, the watchdog's
-  among them, took a relative `TMPDIR` as given (measured on 1.4.1, through stand-ins). The
-  fallback is gone, so such a run refuses, and the runner sets `TMPDIR` to `/tmp` for the whole run
-  when it does not start with `/`.
+  `TMPDIR` itself, a relative one included; and its git calls saw a relative `TMPDIR` as given (all
+  16 saw `TMPDIR=rel`, measured on 1.4.1, through stand-ins), so the library's own temporary files,
+  the watchdog's among them, follow it there (reasoned). The fallback is gone, so such a run
+  refuses with `could not create a temporary directory`, and the runner sets `TMPDIR` to `/tmp` for
+  the whole run when it does not start with `/`.
 - **The fence trusted a folder the pass could change.** The runner keeps its snapshot of the vault,
   its backup of the steering surfaces and git's hooks folder in its own temporary folder. Measured
-  on 1.4.1 with stand-in agents in command mode, on Linux: with that folder removed the pass exited
-  1, its writes kept and no tripwire set; with its write added to the snapshot, the snapshot
-  replaced by a link, or a name holding a line break forging the folder's listing, it exited 0;
-  hooks planted in the hooks folder ran at the runner's commit; and a link put at the name of the
-  "after" snapshot had a file outside the vault written through. Each runner now records the
-  folder before the agent starts and again as soon as it returns, before writing anything there.
-  When the two differ, or the second cannot be made, the pass ends with exit 78: an `UNVERIFIED:`
-  line, the tripwire in a shape that says nothing was moved or restored, no in-flight marker, and
-  the pre-pass backup and the folder kept for review. When the watchdog also stopped the agent, 78
-  takes the place of 124 or 125, and the `TIMEOUT:` or `STALLED:` line is logged as well. The
-  record holds each file's digest (`sha256sum`, else `shasum`, else `cksum` with a `WARNING:`) and
-  link count, refuses any name outside letters, digits, dot, underscore and hyphen, and passes the
-  watchdog's `run` and `gaps` only as regular files with one link. It does not see a change undone
-  before the agent returns, or one made after the check by a process still running; with `cksum`,
-  anyone able to write the folder can forge a match.
+  on 1.4.1 with stand-in agents in command mode, on Linux: with that folder removed, or with the
+  snapshot moved to a name holding a line break that forges the folder's listing, the pass exited
+  1, its writes kept and no tripwire set; with its write added to the snapshot, or the snapshot
+  replaced by a link, it exited 0; hooks planted in the hooks folder ran at the runner's commit; and
+  a link put at the name of the "after" snapshot had a file outside the vault written through. Each
+  runner now records the folder before the agent starts and again as soon as it returns, before
+  writing anything there. When the two differ, or the second cannot be made, the pass ends with
+  exit 78: an `UNVERIFIED:` line, the tripwire in a shape that says nothing was moved or restored,
+  no in-flight marker, and the pre-pass backup and the folder kept for review. When no tripwire can
+  be written the exit is 70 instead, with a `TRIPWIRE-ERROR:` line in place of the `UNVERIFIED:`
+  one and the in-flight marker kept. When the watchdog also stopped the agent, 78 or 70 takes the
+  place of 124 or 125, and the `TIMEOUT:` or `STALLED:` line is logged as well. Nothing is restored
+  on that path, so `.git/config`, `.git/hooks` and `.obsidian/` may still hold what the pass
+  planted: a `core.fsmonitor` command runs at the first `git status`, hooks run at git calls, and
+  Obsidian loads plugins (reasoned). The `UNVERIFIED:` line and the tripwire now say to run no git
+  command in the vault, and not to open it in Obsidian or an agent session, until the steering
+  surfaces have been compared with the pre-pass backup and the rest reviewed. The record holds each
+  file's digest (`sha256sum`, else `shasum`, else `cksum` with a `WARNING:`) and whether it has one
+  link or more, refuses any name outside letters, digits, dot, underscore and hyphen, and passes
+  the watchdog's `run` and `gaps` only as regular files with one link. Folders in it are recorded
+  as empty or not, never entered, and one that cannot be listed fails the record: on Linux a hooks
+  folder made searchable but not readable (`chmod 100`) listed as empty while a hook in it still
+  ran through its search bit (measured on Linux; on Windows `chmod` does not stop a listing,
+  measured in Git Bash), so such a folder now refuses the pass with exit 1 before the agent starts
+  and ends it with 78 after. The library also clears `GLOBIGNORE` as it loads, because set before
+  then it would hide names from both records (bash 5.3 does not take it from the environment,
+  measured in Git Bash and on Linux; bash 3.2 is unmeasured). The record does not see a change
+  undone before the agent returns, or one made after the check by a process still running; with
+  `cksum`, anyone able to write the folder can forge a match.
 - **Hooks ran inside every claude-mode pass.** Hooks in the account's settings, in enabled plugins
   and in the vault's own settings ran inside the unattended pass, as the account, with a shell the
   agent's allowlist never sees. With 1.4.1's settings file, Claude Code 2.1.301 ran a probe folder's
   own hooks and plugins' `SessionStart` and `Stop` hooks, one of which wrote a file outside the
-  folder; with the runner's file now holding `"disableAllHooks":true`, it ran none and still loaded
-  the instructions (measured on Windows, `-p`). Hooks from managed settings are not turned off
-  (measured 2026-09-15 on an earlier version), and MCP servers, and the commands a settings file
-  names outside hooks, still start. The new line is measured on 2.1.301 only.
+  folder; with the runner's file now holding `"disableAllHooks":true`, it ran none, and the
+  account's `CLAUDE.md` was still sent in the request (measured on Windows, `-p`); a live dream
+  pass through the 1.4.2 runner ran to its journal (measured). Hooks from managed settings are not
+  turned off (measured 2026-09-15 on an earlier version), and MCP servers, and the commands a
+  settings file names outside hooks, still start (reasoned). The new line is measured on 2.1.301
+  only.
 
 ### Changed
 
@@ -128,8 +149,16 @@ longer briefs from the scheduled passes' own journals and reports.
   1.4.1 (the drive-path walk's own guard, and resolving a folder above at `/` or with `CDPATH` set)
   and were seen failing against mutants of them; the unit rows of
   `vault-root-spelling` and `runner-folder`, whose functions 1.4.1 lacks, were seen failing against
-  mutants of this release. Eleven existing comparisons of the settings file's exact bytes now expect
-  the new line.
+  mutants of this release. `snapshot-sealed` also covers a hooks folder that cannot be listed, the
+  folder replaced by a link and `run` replaced by a link (all three off Windows), `gaps` given a
+  second name outside the folder, a stall with the folder removed (dream and promotion), the
+  `cksum` path (a pass and a 78), a name outside the set before the record (exit 1, no agent) and
+  `GLOBIGNORE` at load; `state-shown` covers the tripwire refusal with a state directory named with
+  a line break and an escape (off Windows); and `git-dir-pass`'s retention leg needs the run's move
+  of an aged journal committed in the vault with its `Vault-Pass: retention` trailer. Eleven
+  existing comparisons of the settings file's exact bytes now expect the new line, and two existing
+  controls, `mem-override-mixed-release` and `mem-override-settings-space`, now set
+  `SNAP_SEALS=sealed` after loading the library, which takes them past `run_agent`'s new refusal.
 
 ### Adopting this
 
@@ -148,36 +177,50 @@ longer briefs from the scheduled passes' own journals and reports.
    holds a part ending in a dot, a colon that is not a drive letter's, or a last part ending in a
    space.** The log says `ERROR: the vault, …, is spelled with a part that ends in a dot`. Rename the
    folder, or reach the vault through a path with none of these. The `.cmd` wrappers cannot reach
-   such a vault; a Git Bash prompt can.
-4. **A runner refuses to start while its temporary folder is not an absolute path, or, on Windows,
-   holds a colon that is not a drive letter's.** The log says `is not an absolute path, so it was
-   made inside the vault` or `is spelled with a colon that is not a drive letter's`. Point `TMPDIR`
-   at an absolute folder outside the vault, or leave it unset. The retention runner uses `TMPDIR`
-   only when it starts with `/` (otherwise `/tmp`, now for its temporary files too), so it cannot
-   meet the first line through `TMPDIR`.
+   such a vault (reasoned); a Git Bash prompt can.
+4. **A runner refuses to start while its temporary folder is not an absolute path, or, on Windows
+   or wherever a `cygpath` is found on `PATH`, holds a colon that is not a drive letter's.** The log
+   says `is not an absolute path, so it was made inside the vault` or `is spelled with a colon that
+   is not a drive letter's`. Point `TMPDIR` at an absolute folder outside the vault, or leave it
+   unset. The retention runner uses `TMPDIR` only when it starts with `/` (otherwise `/tmp`, now for
+   its temporary files too), so it cannot meet the first line through `TMPDIR`. It now refuses with
+   `could not create a temporary directory` (exit 1) when neither an absolute `TMPDIR` nor `/tmp`
+   can hold its folder, where 1.4.1 fell back to a plain `mktemp -d`; make one of them writable.
 5. **A pass whose runner's folder changed while the agent ran now exits 78**, with `UNVERIFIED: the
    runner's own folder for the pass, …, was changed while the pass ran`. Nothing was moved or
-   restored. Do not open the vault in an agent session until you have reviewed it: compare the
-   steering surfaces with the pre-pass backup in the state directory, `inflight-backup.tar` (copy it
-   before you delete the tripwire, because the next pass replaces it), and the rest of the vault
-   with git where there is one; the folder named in the line is kept for the review. Then delete the
-   tripwire as for any other. A runner that cannot record its folder before the agent starts exits
-   1 with `the runner could not record its folder for the pass`; a name in it outside letters,
-   digits, dot, underscore and hyphen, or a file it could not checksum, is the cause. A runner that
-   finds no `sha256sum` or `shasum` logs a `WARNING:` and checks the folder with `cksum`.
+   restored, so `.git/config`, `.git/hooks` and `.obsidian/` may still hold what the pass planted
+   (reasoned). Until you have reviewed the vault, run no git command in it and do not open it in
+   Obsidian or an agent session. First compare the steering surfaces, those three among them, with
+   the pre-pass backup in the state directory, `inflight-backup.tar` (copy it before you delete the
+   tripwire, because the next pass replaces it), and put back what differs; when the line says no
+   backup was made, check them by hand. Then review the rest of the vault, with `git status` where
+   it is a repository; the folder named in the line is kept for the review. Last, delete the
+   tripwire as for any other. When no tripwire could be written the exit is 70 instead, with a
+   `TRIPWIRE-ERROR:` line in place of the `UNVERIFIED:` one and the in-flight marker kept. A runner
+   that cannot record its folder before the agent starts exits 1 with `the runner could not record
+   its folder for the pass`, and the line names the four causes: a name in it outside letters,
+   digits, dot, underscore and hyphen, a file it could not checksum, a folder in it that could not
+   be listed, or no `sha256sum`, `shasum` or `cksum` found. Find what wrote into the runner's
+   folder, put `sha256sum` or `shasum` on the task's `PATH`, and point `TMPDIR` at a folder only
+   this account can change. A runner that finds no `sha256sum` or `shasum` logs a `WARNING:` and
+   checks the folder with `cksum`.
 6. **Hooks are off in claude-mode passes.** That includes the account's own user-level hooks, any
    guard hook among them, plugins' hooks and the vault's own: the agent no longer gets
    `vault-lint.sh`'s advice after each write (the runner still checks the notes a pass wrote with
    `vault-check.sh` before committing them), and no compaction stub is written during a pass. Hooks
-   from managed settings still run, and so do MCP servers. Command mode is unchanged: a wrapper that
-   starts Claude Code gets neither the memory override nor the hook switch.
-7. **Settings passed to git through `GIT_CONFIG_COUNT` or a `git -c` wrapper no longer reach a
-   pass, `safe.directory` among them**; put such a setting in the account's global git
-   configuration. A vault git reached only through `GIT_DIR`, with no `.git` entry of its own, now
-   reads as no repository: dream and promotion passes run without committing, and the retention
-   runner refuses. A `.git` file in the vault naming its git directory (`gitdir: <path>`, with no
-   part ending in a dot) would let git find it (reasoned). The runner's `WARNING:` names the
-   variables it cleared.
+   from managed settings still run, and so do MCP servers (reasoned). Command mode is unchanged: a
+   wrapper that starts Claude Code gets neither the memory override nor the hook switch.
+7. **Settings a parent git passed down with `-c` (in `GIT_CONFIG_PARAMETERS`), and those set
+   through `GIT_CONFIG_COUNT`, no longer reach a pass, `safe.directory` among them**; put such a
+   setting in the account's global git configuration. A `git` wrapper on `PATH` that adds `-c` to
+   every call is not affected. A vault git reached only through `GIT_DIR`, with no `.git` entry of
+   its own, now reads as no repository: dream and promotion passes run without committing, and the
+   retention runner refuses (reasoned). A `.git` file in the vault naming its git directory
+   (`gitdir: <path>`, with no part ending in a dot) would let git find it (reasoned). The runner's
+   `WARNING:` names the variables it cleared. A command-mode wrapper no longer inherits git's
+   per-repository variables or the MSYS switches (`MSYS_NO_PATHCONV`, `MSYS2_ARG_CONV_EXCL`,
+   `MSYS2_ENV_CONV_EXCL`), because the library clears them as it loads; a wrapper that needs one
+   sets it itself.
 8. **`/resume`**: take both copies of `.claude/skills/resume/SKILL.md` (`.claude/` and `.agents/`)
    together, as the control suite requires them byte-identical.
 9. The shipped files this release touches: `.claude/scripts/lib/runner-common.sh`,

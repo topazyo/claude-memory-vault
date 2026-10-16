@@ -15,8 +15,9 @@ already works when you start Claude Code from the vault root.
 
 ## Enforced, and guidance
 
-- **Enforced:** the lint after every Write or Edit, the compaction stub, the Read deny for the
-  three secret paths (not for shell commands such as `cat`), and each agent's tool allowlist in
+- **Enforced:** the lint after every Write or Edit and the compaction stub, outside claude-mode
+  dream and promotion passes, which run with every hook but managed ones off; the Read deny for the
+  three secret paths (not for shell commands such as `cat`); and each agent's tool allowlist in
   the scheduled passes. Where those passes keep Claude Code's memory is under **Scheduled passes**
   below.
 - **Guidance:** everything else in `.claude/rules/security.md`, and the note contract itself,
@@ -71,8 +72,9 @@ share on another server is unmeasured). Managed settings outrank the file, and a
 start when the folder already holds anything but a plain `.DS_Store` file. The same file holds
 `"disableAllHooks":true`, so no hook runs inside a claude-mode pass but those of managed settings
 (measured on Claude Code 2.1.301 only): not the account's, not an enabled plugin's and not the
-vault's own, so the pass gets no lint advice and writes no compaction stub. MCP servers still
-start, and command mode is unchanged. `docs/reference.md` § 4.3, in the dream and promotion
+vault's own, so the pass gets no lint advice and writes no compaction stub. MCP servers, and the
+commands a settings file names outside hooks, still start (reasoned), and command mode is
+unchanged. `docs/reference.md` § 4.3, in the dream and promotion
 runners' **Write fence** item, has the limits.
 
 ## Sources
