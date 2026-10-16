@@ -154,9 +154,10 @@ rather than absent.
 Or spelled out:
 
 ```
-Read the three most recent logs in 20-projects/_logs/, ignoring templates/ and any
-compaction-*.md stubs. Summarise: what was being worked on, which decisions were made, which
-standards were applied, and what is still open.
+Read the three most recent logs in 20-projects/_logs/, ignoring templates/, any
+compaction-*.md stubs, and the dream-*.md journals and promotion-*.md reports the scheduled passes
+write. Summarise: what was being worked on, which decisions were made, which standards were
+applied, and what is still open.
 
 If a session-memory search tool is available, use it too — and if it is not, say so in the
 briefing rather than producing a summary that quietly rests on files alone.

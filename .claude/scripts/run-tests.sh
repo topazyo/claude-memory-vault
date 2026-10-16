@@ -6625,6 +6625,28 @@ else
     done
   fi
 fi
+# --- 1.4.2 ---
+# The controls of release 1.4.2 sit here, inside the block the mutation harness
+# cuts, with the mktemp, git and cygpath stand-ins above still in place.
+#
+# /resume briefs from the three newest logs in 20-projects/_logs/. The dream and
+# promotion passes write their journals and reports into that folder, so a
+# briefing that counted them would hand the next session the passes' own output
+# as if it were the work. Both copies of the skill, and the form spelled out in
+# docs/agent-onboarding.md, must name both kinds beside the compaction stubs.
+ran resume-skips-pass-output
+rs_bad=
+for rs_f in .claude/skills/resume/SKILL.md .agents/skills/resume/SKILL.md docs/agent-onboarding.md; do
+  if ! { grep -qF 'compaction-*.md' "$ROOT/$rs_f" && grep -qF 'dream-*.md' "$ROOT/$rs_f" \
+         && grep -qF 'promotion-*.md' "$ROOT/$rs_f"; } 2>/dev/null; then
+    rs_bad="$rs_bad $rs_f"
+  fi
+done
+if [ -z "$rs_bad" ]; then
+  ok "resume: both skill copies and docs/agent-onboarding.md skip dream-*.md and promotion-*.md beside compaction-*.md"
+else
+  bad "resume: these do not name dream-*.md, promotion-*.md and compaction-*.md together, or could not be read:$rs_bad"
+fi
 mo_k4_clean
 # A folder above the runner's folder for the pass whose name ends in a line
 # break is cut by $(...), so resolving it gives another path, which the checks
