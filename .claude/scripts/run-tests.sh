@@ -8151,6 +8151,35 @@ else
     fi
   fi
   rm -rf "$SA_DIR/mi"
+  # With no mktemp (a stand-in that fails), write_vault_copy still writes the
+  # copy, under a name made from $RANDOM, not through a link at the name the
+  # runner's pid gives (runner-tripwire.tmp.<pid>).
+  rm -rf "$SA_DIR/wv"
+  mkdir -p "$SA_DIR/wv/vault/.claude/logs" "$SA_DIR/wv/shim"
+  printf '#!/bin/sh\nexit 1\n' > "$SA_DIR/wv/shim/mktemp"
+  chmod +x "$SA_DIR/wv/shim/mktemp"
+  printf 'canary\n' > "$SA_DIR/wv/canary"
+  printf 'the copy\n' > "$SA_DIR/wv/src"
+  ln -s "$SA_DIR/wv/canary" "$SA_DIR/wv/vault/.claude/logs/runner-tripwire.tmp.$$"
+  if [ ! -L "$SA_DIR/wv/vault/.claude/logs/runner-tripwire.tmp.$$" ]; then
+    bad "snapshot-sealed: fixture: the write_vault_copy row could not put its link in place, so it shows nothing"
+  else
+    ( PATH="$SA_DIR/wv/shim:$PATH"
+      . "$RV/.claude/scripts/lib/runner-common.sh"
+      write_vault_copy "$SA_DIR/wv/vault" "$SA_DIR/wv/vault/.claude/logs/runner-tripwire" "$SA_DIR/wv/src" )
+    sa_rc=$?
+    sa_wvx=ok
+    [ "$(cat "$SA_DIR/wv/canary" 2>/dev/null)" = canary ] || sa_wvx="the canary was written through the link"
+    { [ -f "$SA_DIR/wv/vault/.claude/logs/runner-tripwire" ] && [ ! -L "$SA_DIR/wv/vault/.claude/logs/runner-tripwire" ] \
+        && [ "$(cat "$SA_DIR/wv/vault/.claude/logs/runner-tripwire")" = 'the copy' ]; } \
+      || sa_wvx="${sa_wvx#ok}; the copy is not a file holding the text"
+    if [ "$sa_rc" -eq 0 ] && [ "$sa_wvx" = ok ]; then
+      ok "snapshot-sealed: write_vault_copy with no mktemp and a link at runner-tripwire.tmp.<pid> -> 0, the copy a file, the canary as it was"
+    else
+      bad "snapshot-sealed: write_vault_copy with no mktemp and a link at runner-tripwire.tmp.<pid> -- expected 0, the copy a file and the canary as it was; got $sa_rc, $sa_wvx"
+    fi
+  fi
+  rm -rf "$SA_DIR/wv"
   # A run that waited for the run lock checks the vault's log again once it
   # holds it, so a link the pass that held the lock put there in the meantime
   # takes none of its lines. The lock is held by a stand-in owner that is not
@@ -8259,9 +8288,12 @@ else
       bad "snapshot-sealed: fixture: the retention vault of the $sa_rt leg could not be made"
       continue
     fi
-    sa_rpath="$PATH"
-    [ "$sa_rt" = nocopy ] && sa_rpath="$SA_SHIM3:$PATH"
-    env VAULT_STATE_DIR="$SA_DIR/rstate" RUN_LOCK_WAIT=0 RUN_LOCK_POLL=1 WATCHDOG_POLL=1 WATCHDOG_GRACE=2 PATH="$sa_rpath" \
+    # With no copy of its lines the library logs to the log itself, so nocopy also
+    # has the lock warn (RUN_LOCK_WAIT=x) before the lock is held: that line must
+    # not go through the link either, which the check before the lock ensures.
+    sa_rpath="$PATH" sa_rwait=0
+    [ "$sa_rt" = nocopy ] && sa_rpath="$SA_SHIM3:$PATH" sa_rwait=x
+    env VAULT_STATE_DIR="$SA_DIR/rstate" RUN_LOCK_WAIT="$sa_rwait" RUN_LOCK_POLL=1 WATCHDOG_POLL=1 WATCHDOG_GRACE=2 PATH="$sa_rpath" \
       bash "$SA_RV/.claude/scripts/vault-retention.sh" > "$SA_DIR/rout" 2>/dev/null
     sa_rc=$?
     sa_rl="$SA_DIR/rstate/vault-retention.uncontained.log"

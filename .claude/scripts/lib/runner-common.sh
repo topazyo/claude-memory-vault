@@ -1223,17 +1223,19 @@ vault_logs_linked() {
 
 # write_vault_copy <root> <path> <content-file>
 # write_file_atomic for a copy in the vault, where a pass can reach it. Nothing is
-# written while vault_logs_linked holds, and the temporary name comes from
-# mktemp, so a link a pass put at a name it could work out from the runner's pid
-# is not written through. A link at <path> itself is removed first, because mv
-# would move the copy into a folder it names, outside the vault. Returns 1 when
-# no copy is in place.
+# written while vault_logs_linked holds, and the temporary name is one no pass
+# can work out from the runner's pid, so a link put at such a name is not
+# written through: mktemp's, or, where mktemp fails or makes no file, one made
+# from $RANDOM, because the tripwire must not depend on mktemp. A link at <path>
+# itself is removed first, because mv would move the copy into a folder it
+# names, outside the vault. Returns 1 when no copy is in place.
 write_vault_copy() {
   local root="$1" path="$2" src="$3" tmp
   vault_logs_linked "$root" && return 1
   mkdir -p "$(dirname "$path")" 2>/dev/null
   [ -L "$path" ] && rm -f "$path" 2>/dev/null
-  tmp="$(mktemp "$path.tmp.$$.XXXXXX" 2>/dev/null)" || return 1
+  tmp="$(mktemp "$path.tmp.$$.XXXXXX" 2>/dev/null)"
+  { [ -n "$tmp" ] && [ -f "$tmp" ]; } || tmp="$path.tmp.$$.${RANDOM:-0}${RANDOM:-0}"
   cp "$src" "$tmp" 2>/dev/null && mv -f "$tmp" "$path" 2>/dev/null
   rm -f "$tmp" 2>/dev/null
   [ -f "$path" ] && [ ! -L "$path" ]
