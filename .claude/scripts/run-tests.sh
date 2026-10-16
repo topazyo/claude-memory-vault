@@ -7677,14 +7677,15 @@ SA_NODEREF='with --no-dereference where your diff has it'
 SA_NESTED='list every .git with find . -name .git'
 SA_SAFEGIT='git -c core.fsmonitor=false --no-pager status --ignore-submodules=all'
 SA_LOGLINKS='list them with find .claude -type l, and remove any you did not make'
+SA_CLAUDEITSELF='or .claude itself as a link, is in neither the backup'
 # The no-git sentence of the TRIPWIRE-ERROR lines, where no tripwire could be written.
 SA_NOGITERR='Treat the vault as unverified, and run no git command in it before the steering surfaces have been checked.'
 # sa_advice <file> [nobackup] - the tripwire at <file> holds that advice, the
-# links in .claude/logs among it, the comparison and --no-dereference only where
+# links under .claude among it, the comparison and --no-dereference only where
 # a backup is there to compare with.
 sa_advice() {
   grep -qF -- "$SA_AUTOGIT" "$1" 2>/dev/null && grep -qF -- "$SA_NESTED" "$1" && grep -qF -- "$SA_SAFEGIT" "$1" \
-    && grep -qF -- "$SA_LOGLINKS" "$1" \
+    && grep -qF -- "$SA_LOGLINKS" "$1" && grep -qF -- "$SA_CLAUDEITSELF" "$1" \
     && { [ "${2:-}" = nobackup ] || { grep -qF -- "$SA_NOGITCMP" "$1" && grep -qF -- "$SA_NODEREF" "$1"; }; }
 }
 SA_RECERR="ERROR: the runner could not record its folder for the pass, "
@@ -8236,6 +8237,62 @@ else
     bad "snapshot-sealed: write_vault_copy with no mktemp and a link already at the \$RANDOM name -- expected 1 and nothing at the copy's name; got $(printf '%s' "$sa_wvo" | tr '\n' ' '), at the name: $([ -L "$SA_DIR/wv/vault/.claude/logs/runner-tripwire" ] && echo a link || { [ -e "$SA_DIR/wv/vault/.claude/logs/runner-tripwire" ] && echo something || echo nothing; })"
   fi
   rm -rf "$SA_DIR/wv"
+  # A link to a folder at the copy's own name that rm cannot remove (an rm
+  # stand-in that removes nothing, as an immutable link would be on macOS):
+  # write_vault_copy refuses (1) and moves nothing into that folder.
+  rm -rf "$SA_DIR/ws"
+  mkdir -p "$SA_DIR/ws/vault/.claude/logs" "$SA_DIR/ws/elsewhere" "$SA_DIR/ws/shim"
+  printf '#!/bin/sh\nexit 0\n' > "$SA_DIR/ws/shim/rm"
+  chmod +x "$SA_DIR/ws/shim/rm"
+  printf 'the copy\n' > "$SA_DIR/ws/src"
+  printf 'probe\n' > "$SA_DIR/ws/probe"
+  ln -s "$SA_DIR/ws/elsewhere" "$SA_DIR/ws/vault/.claude/logs/runner-tripwire"
+  ( PATH="$SA_DIR/ws/shim:$PATH"; rm -f "$SA_DIR/ws/probe" )
+  if [ ! -L "$SA_DIR/ws/vault/.claude/logs/runner-tripwire" ] || [ ! -f "$SA_DIR/ws/probe" ]; then
+    bad "snapshot-sealed: fixture: the write_vault_copy row with a link rm cannot remove could not put its link in place, or its rm stand-in removed a file, so it shows nothing"
+  else
+    ( PATH="$SA_DIR/ws/shim:$PATH"
+      . "$RV/.claude/scripts/lib/runner-common.sh"
+      write_vault_copy "$SA_DIR/ws/vault" "$SA_DIR/ws/vault/.claude/logs/runner-tripwire" "$SA_DIR/ws/src" )
+    sa_rc=$?
+    if [ "$sa_rc" -eq 1 ] && [ -z "$(ls -A "$SA_DIR/ws/elsewhere" 2>/dev/null)" ]; then
+      ok "snapshot-sealed: write_vault_copy with a link to a folder at the copy's name that rm cannot remove -> refused (1), nothing moved into that folder"
+    else
+      bad "snapshot-sealed: write_vault_copy with a link to a folder at the copy's name that rm cannot remove -- expected 1 and the folder empty; got $sa_rc, the folder: $(ls -A "$SA_DIR/ws/elsewhere" 2>/dev/null | tr '\n' ' ')"
+    fi
+  fi
+  rm -rf "$SA_DIR/ws"
+  # The fallback's noclobber: a link to the canary put at its name between the
+  # refusal and the write (a DEBUG trap, inherited by the write's subshell under
+  # set -T, plants it just before cat runs) is not written through: refused (1),
+  # the canary as it was. The trap says so, which shows the race was staged.
+  sa_nc_trap() {
+    [ "${BASH_COMMAND#cat }" != "$BASH_COMMAND" ] && [ -n "${tmp:-}" ] && [ ! -e "$tmp" ] && [ ! -L "$tmp" ] \
+      && ln -s "$SA_DIR/nc/canary" "$tmp" 2>/dev/null && printf 'raced\n'
+    return 0
+  }
+  rm -rf "$SA_DIR/nc"
+  mkdir -p "$SA_DIR/nc/vault/.claude/logs" "$SA_DIR/nc/shim"
+  printf '#!/bin/sh\nexit 1\n' > "$SA_DIR/nc/shim/mktemp"
+  chmod +x "$SA_DIR/nc/shim/mktemp"
+  printf 'canary\n' > "$SA_DIR/nc/canary"
+  printf 'the copy\n' > "$SA_DIR/nc/src"
+  sa_nco="$( PATH="$SA_DIR/nc/shim:$PATH"
+    . "$RV/.claude/scripts/lib/runner-common.sh"
+    set -T
+    trap sa_nc_trap DEBUG
+    write_vault_copy "$SA_DIR/nc/vault" "$SA_DIR/nc/vault/.claude/logs/runner-tripwire" "$SA_DIR/nc/src"
+    sa_ncr=$?
+    trap - DEBUG
+    printf 'rc=%s\n' "$sa_ncr" )"
+  if ! printf '%s\n' "$sa_nco" | grep -qx raced; then
+    bad "snapshot-sealed: fixture: the noclobber row could not put its link at the name between the refusal and the write, so it shows nothing"
+  elif printf '%s\n' "$sa_nco" | grep -qx 'rc=1' && [ "$(cat "$SA_DIR/nc/canary" 2>/dev/null)" = canary ]; then
+    ok "snapshot-sealed: write_vault_copy with no mktemp and a link put at the \$RANDOM name just before the write -> refused (1), the canary as it was"
+  else
+    bad "snapshot-sealed: write_vault_copy with no mktemp and a link put at the \$RANDOM name just before the write -- expected 1 and the canary as it was; got $(printf '%s' "$sa_nco" | tr '\n' ' '), canary: $([ "$(cat "$SA_DIR/nc/canary" 2>/dev/null)" = canary ] && echo 'as it was' || echo changed)"
+  fi
+  rm -rf "$SA_DIR/nc"
   # A run that waited for the run lock checks the vault's log again once it
   # holds it, so a link the pass that held the lock put there in the meantime
   # takes none of its lines. The lock is held by a stand-in owner that is not
