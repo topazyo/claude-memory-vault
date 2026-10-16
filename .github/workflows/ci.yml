@@ -49,7 +49,14 @@ jobs:
     # 60 covers that observed outlier and still catches a genuinely hung step in
     # an hour rather than the six hour default. Raising it further would buy
     # nothing, since nothing measured comes close.
-    timeout-minutes: 60
+    #
+    # 90 since 1.4.2, measured: 1.4.1's Windows job took 54 minutes, and 1.4.2's
+    # controls, which run the dream and promotion runners through dozens more
+    # passes, ran its Windows job into the 60 limit with 967 controls passed,
+    # none failed, partway through the template-update section near the end.
+    # Linux and macOS stay near a quarter of an hour, so 90 still catches a hung
+    # step there, and on Windows leaves a margin over the full suite.
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
