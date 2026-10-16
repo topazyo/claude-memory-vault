@@ -49,14 +49,15 @@ jobs:
     # 60 covered that observed outlier and still caught a genuinely hung step in
     # an hour rather than the six hour default. Nothing measured then came close.
     #
-    # 90 since 1.4.2, measured: 1.4.1's Windows job took 54 minutes. 1.4.2's
+    # 120 since 1.4.2, measured: 1.4.1's Windows job took 54 minutes. 1.4.2's
     # controls run the dream and promotion runners through dozens more passes,
-    # and its Windows jobs took 50 and 62 minutes, while one was cancelled at the
-    # 60 limit with 967 controls passed, none failed, in the template-update
-    # section near the end. Linux took about 9 minutes and macOS 11 to 16 on the
-    # same commits, so 90 still catches a hung step there, and on Windows leaves
-    # about half an hour over the slowest finished run.
-    timeout-minutes: 90
+    # and its Windows jobs took 50 to 68 minutes across the release's commits,
+    # rising as controls were added, while one was cancelled at a 60 limit with
+    # 967 controls passed, none failed, in the template-update section near the
+    # end. Linux took about 10 minutes and macOS 12 to 17 on the same commits, so
+    # 120 still catches a hung step in two hours rather than six, and on Windows
+    # leaves about fifty minutes over the slowest finished run.
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
@@ -222,7 +223,9 @@ jobs:
   bash32:
     name: macOS with system bash 3.2
     runs-on: macos-latest
-    timeout-minutes: 20
+    # 30 since 1.4.2: this job took 14 to 16 minutes on the release's commits,
+    # which left little of the 20 it had.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
