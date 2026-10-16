@@ -6683,12 +6683,14 @@ GE_CLEARED="GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_CONFIG GIT_CONFIG_PARAMETERS GI
 GE_MSYS="MSYS_NO_PATHCONV MSYS2_ARG_CONV_EXCL MSYS2_ENV_CONV_EXCL"
 GE_KEPT="GIT_CONFIG_GLOBAL GIT_NAMESPACE GIT_CEILING_DIRECTORIES"
 ran git-env-cleared
+# A grep rather than a case for the names: bash 3.2 reads the ) of a case
+# pattern inside $( ) as the end of the substitution.
 ge_res="$(
   for ge_v in $GE_CLEARED $GE_MSYS $GE_KEPT; do export "$ge_v=x"; done
   . "$RV/.claude/scripts/lib/runner-common.sh"
   for ge_v in $GE_CLEARED $GE_MSYS; do eval "[ -n \"\${$ge_v+x}\" ]" && printf 'left %s\n' "$ge_v"; done
   for ge_v in $GE_KEPT; do eval "[ -n \"\${$ge_v+x}\" ]" || printf 'lost %s\n' "$ge_v"; done
-  for ge_v in $GE_CLEARED; do case " ${GIT_REPO_ENV_SET:-} " in *" $ge_v "*) ;; *) printf 'unnamed %s\n' "$ge_v" ;; esac; done
+  for ge_v in $GE_CLEARED; do printf ' %s ' ${GIT_REPO_ENV_SET:-} | grep -qF -- " $ge_v " || printf 'unnamed %s\n' "$ge_v"; done
   printf 'list %s\n' "$(printf '%s ' ${GIT_REPO_ENV_VARS:-})"
 )"
 ge_list="$(printf '%s\n' "$ge_res" | sed -n 's/^list //p')"
