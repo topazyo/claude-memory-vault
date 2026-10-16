@@ -2526,7 +2526,7 @@ do_moves() {
     mark_kill_failed "$LIB_LOG" "${RUN_KILL_REPORT:-}"
     lib_logged
     write_recovery kill-failed
-    say "RECOVERY-NEEDED: the move was stopped and a git process of it may still be running, so nothing is put back. $STATE/retention-inflight says what was being moved."
+    say "RECOVERY-NEEDED: the move was stopped and a git process of it may still be running, so nothing is put back. $(shown_name "$STATE")/retention-inflight says what was being moved."
     MOVING=0
     return 71
   fi
@@ -2592,7 +2592,7 @@ put_back() {
   pb_head="$(rgit rev-parse -q --verify 'HEAD^{commit}' 2>/dev/null)"
   if [ -z "$pb_head" ] || [ "$pb_head" != "$HEAD_BEFORE" ]; then
     write_recovery putback-head-moved
-    say "RECOVERY-NEEDED: HEAD is not where this run started, so nothing is put back. A commit made while this run was working may hold the moves, and undoing them would undo whatever else it carried. $STATE/retention-inflight says where each file belongs."
+    say "RECOVERY-NEEDED: HEAD is not where this run started, so nothing is put back. A commit made while this run was working may hold the moves, and undoing them would undo whatever else it carried. $(shown_name "$STATE")/retention-inflight says where each file belongs."
     return 1
   fi
   index_lock_wait
@@ -2602,7 +2602,7 @@ put_back() {
   # and that is the one outcome here no later run can resolve.
   if ! index_of_moves; then
     write_recovery putback-unreadable-index
-    say "RECOVERY-NEEDED: the index could not be read, so nothing is put back rather than putting files back where git would not see them. $STATE/retention-inflight says where each file belongs."
+    say "RECOVERY-NEEDED: the index could not be read, so nothing is put back rather than putting files back where git would not see them. $(shown_name "$STATE")/retention-inflight says where each file belongs."
     return 1
   fi
   while [ "$k" -lt "${#SRCS[@]}" ]; do
@@ -2662,7 +2662,7 @@ put_back() {
     mark_kill_failed "$LIB_LOG" "${RUN_KILL_REPORT:-}"
     lib_logged
     write_recovery kill-failed
-    say "RECOVERY-NEEDED: a git command of the put-back was stopped and may still be running, so nothing further was touched. $STATE/retention-inflight says where each file belongs."
+    say "RECOVERY-NEEDED: a git command of the put-back was stopped and may still be running, so nothing further was touched. $(shown_name "$STATE")/retention-inflight says where each file belongs."
     while IFS= read -r line; do say "    git: $line"; done < "$SNAP_DIR/git.err"
     return 1
   fi
@@ -2678,7 +2678,7 @@ put_back() {
   # restore a journal they had deliberately deleted.
   if ! head_of_sources; then
     write_recovery putback-unverified
-    say "RECOVERY-NEEDED: the files may be back, but HEAD could not be read to check them, so this run does not claim either way. $STATE/retention-inflight says where each file belongs."
+    say "RECOVERY-NEEDED: the files may be back, but HEAD could not be read to check them, so this run does not claim either way. $(shown_name "$STATE")/retention-inflight says where each file belongs."
     return 1
   fi
   k=0
@@ -2703,7 +2703,7 @@ put_back() {
     return 0
   fi
   write_recovery putback-failed
-  say "RECOVERY-NEEDED: the vault could not be put back. $STATE/retention-inflight says where each file should be. Put them back, then run again."
+  say "RECOVERY-NEEDED: the vault could not be put back. $(shown_name "$STATE")/retention-inflight says where each file should be. Put them back, then run again."
   while IFS= read -r line; do say "    git: $line"; done < "$SNAP_DIR/git.err"
   return 1
 }
@@ -2893,14 +2893,14 @@ settle_outcome() {
     mark_kill_failed "$LIB_LOG" "${RUN_KILL_REPORT:-}"
     lib_logged
     write_recovery kill-failed
-    say "RECOVERY-NEEDED: a git command of this run was stopped and may still be running, so what it did is not known and nothing is put back. $STATE/retention-inflight says what was being moved."
+    say "RECOVERY-NEEDED: a git command of this run was stopped and may still be running, so what it did is not known and nothing is put back. $(shown_name "$STATE")/retention-inflight says what was being moved."
     MOVING=0
     return 71
   fi
   head_now="$(rgit rev-parse -q --verify 'HEAD^{commit}' 2>/dev/null)"
   if [ -z "$head_now" ]; then
     write_recovery head-unreadable
-    say "RECOVERY-NEEDED: HEAD could not be read after the move, so what this run did is not known. $STATE/retention-inflight says what was being moved."
+    say "RECOVERY-NEEDED: HEAD could not be read after the move, so what this run did is not known. $(shown_name "$STATE")/retention-inflight says what was being moved."
     MOVING=0
     return 71
   fi
@@ -2930,9 +2930,9 @@ settle_outcome() {
     # the owner the first when it was the second sends them looking for a
     # disagreement that may not exist.
     if [ "$HEAD_HOLDS_UNKNOWN" -eq 1 ]; then
-      say "RECOVERY-NEEDED: the commit was made and whether HEAD holds what was judged could not be established, so it is left alone. $STATE/retention-inflight says what was being moved."
+      say "RECOVERY-NEEDED: the commit was made and whether HEAD holds what was judged could not be established, so it is left alone. $(shown_name "$STATE")/retention-inflight says what was being moved."
     else
-      say "RECOVERY-NEEDED: the commit was made but HEAD does not hold what was judged, so it is left alone. $STATE/retention-inflight says what was being moved."
+      say "RECOVERY-NEEDED: the commit was made but HEAD does not hold what was judged, so it is left alone. $(shown_name "$STATE")/retention-inflight says what was being moved."
     fi
     MOVING=0
     return 71
@@ -2956,7 +2956,7 @@ settle_outcome() {
     return 0
   fi
   write_recovery head-moved
-  say "RECOVERY-NEEDED: HEAD moved to $head_now while this run was working and it does not hold the moves, so nothing is put back. $STATE/retention-inflight says what was being moved."
+  say "RECOVERY-NEEDED: HEAD moved to $head_now while this run was working and it does not hold the moves, so nothing is put back. $(shown_name "$STATE")/retention-inflight says what was being moved."
   MOVING=0
   return 71
 }
@@ -2970,7 +2970,7 @@ recovery_check() {
   local f="$STATE/retention-inflight" key rest rhead rnonce headnow undone=1 n=0 rdone=0
   [ -e "$f" ] || return 0
   if [ ! -f "$f" ] || [ ! -r "$f" ]; then
-    say "TRIPWIRE: $f is not a readable file, so what an earlier run was doing cannot be established. Look at it, then remove it."
+    say "TRIPWIRE: $(shown_name "$f") is not a readable file, so what an earlier run was doing cannot be established. Look at it, then remove it."
     return 78
   fi
   rhead=""
@@ -3000,7 +3000,7 @@ recovery_check() {
   done < "$f"
   headnow="$(rgit rev-parse -q --verify 'HEAD^{commit}' 2>/dev/null)"
   if [ "$n" -eq 0 ] || [ -z "$rhead" ] || [ -z "$headnow" ]; then
-    say "TRIPWIRE: $f does not say what an earlier run was moving, so it cannot be cleared here. Look at it, then remove it."
+    say "TRIPWIRE: $(shown_name "$f") does not say what an earlier run was moving, so it cannot be cleared here. Look at it, then remove it."
     return 78
   fi
   # The commit landed, and HEAD holds every destination and no source.
@@ -3088,7 +3088,7 @@ recovery_check() {
     return 0
   fi
   say "TRIPWIRE: an earlier run could not say what its moves did, and the vault does not yet show either outcome. Nothing is moved until this is settled."
-  say "  the record is $f, and HEAD was $rhead when it was written"
+  say "  the record is $(shown_name "$f"), and HEAD was $rhead when it was written"
   # Said carefully. The marker means the rename reported success, not that
   # files moved, and its absence covers a rename that never ran as well as one
   # that ran and reported failure. A git mv that moved some of its files and
@@ -3105,7 +3105,7 @@ recovery_check() {
     say "  $(printf '%s' "${DSTS[$k]}") work tree $([ -e "$ROOT/${DSTS[$k]}" ] && echo present || echo absent), index $(idx_blob "${DSTS[$k]}")"
     k=$((k + 1))
   done
-  say "  put every file back where the record says it belongs, or finish the move by hand, then remove $f"
+  say "  put every file back where the record says it belongs, or finish the move by hand, then remove $(shown_name "$f")"
   return 78
 }
 
@@ -3249,7 +3249,7 @@ main() {
   STATE_REAL="$(state_dir_ready "$STATE" "$ROOT")"
   state_rc=$?
   if [ "$state_rc" -ne 0 ]; then
-    say "ERROR: the state directory $STATE $(state_dir_problem "$state_rc"). Refusing to run."
+    say "ERROR: the state directory $(shown_name "$STATE") $(state_dir_problem "$state_rc"). Refusing to run."
     return 1
   fi
   STATE="$STATE_REAL"
@@ -3374,7 +3374,7 @@ main() {
 
   RETENTION_NONCE="$(new_uuid)"
   write_recovery moving || {
-    say "ERROR: the record of what is about to move could not be written to $STATE, so nothing was moved."
+    say "ERROR: the record of what is about to move could not be written to $(shown_name "$STATE"), so nothing was moved."
     log_verdicts
     return 1
   }
@@ -3399,7 +3399,7 @@ main() {
   fi
   if ! real_dir_ok "$LOGS_REL" || ! real_dir_ok "$ARCH_REL"; then
     write_recovery folders-changed
-    say "RECOVERY-NEEDED: a folder on the path changed while this run was moving, so nothing further is done. $STATE/retention-inflight says what was moved."
+    say "RECOVERY-NEEDED: a folder on the path changed while this run was moving, so nothing further is done. $(shown_name "$STATE")/retention-inflight says what was moved."
     MOVING=0
     log_verdicts
     return 71

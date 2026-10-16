@@ -151,9 +151,9 @@ on_exit() {
     if [ "$KILL_FAILED_MARKED" -eq 0 ]; then
       rm -f "$STATE/inflight-backup.tar" 2>/dev/null
     elif [ -s "$STATE/inflight-backup.tar" ]; then
-      printf '[%s] The pre-pass backup is kept at %s for the review after KILL_FAILED.\n' "$(ts)" "$STATE/inflight-backup.tar" >> "$LOG"
+      printf '[%s] The pre-pass backup is kept at %s for the review after KILL_FAILED.\n' "$(ts)" "$(shown_name "$STATE/inflight-backup.tar")" >> "$LOG"
     else
-      printf '[%s] WARNING: there is no pre-pass backup at %s to review against after KILL_FAILED.\n' "$(ts)" "$STATE/inflight-backup.tar" >> "$LOG"
+      printf '[%s] WARNING: there is no pre-pass backup at %s to review against after KILL_FAILED.\n' "$(ts)" "$(shown_name "$STATE/inflight-backup.tar")" >> "$LOG"
     fi
   fi
   # What a tripwire or stop report left when a signal cut it short.
@@ -260,7 +260,7 @@ main() {
   STATE_REAL="$(state_dir_ready "$STATE" "$ROOT")"
   state_rc=$?
   if [ "$state_rc" -ne 0 ]; then
-    printf '[%s] ERROR: the state directory %s %s. Refusing to run.\n' "$(ts)" "$STATE" "$(state_dir_problem "$state_rc")" >> "$LOG"
+    printf '[%s] ERROR: the state directory %s %s. Refusing to run.\n' "$(ts)" "$(shown_name "$STATE")" "$(state_dir_problem "$state_rc")" >> "$LOG"
     exit 1
   fi
   STATE="$STATE_REAL"
@@ -373,7 +373,7 @@ main() {
   # trace the next run can trust. Refuse rather than start the agent.
   if ! mark_inflight "$ROOT" "$STATE" "$RUNNER"; then
     clear_inflight "$ROOT" "$STATE"
-    printf '[%s] ERROR: could not write the in-flight marker in the state directory %s. Refusing to run.\n' "$(ts)" "$STATE" >> "$LOG"
+    printf '[%s] ERROR: could not write the in-flight marker in the state directory %s. Refusing to run.\n' "$(ts)" "$(shown_name "$STATE")" >> "$LOG"
     exit 1
   fi
   INFLIGHT=1

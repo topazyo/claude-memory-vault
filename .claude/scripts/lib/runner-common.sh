@@ -1079,7 +1079,7 @@ vault_state_dir() {
   if [ -z "$dir" ]; then
     dir="${TMPDIR:-/tmp}/claude-memory-vault-state-$id"
     [ -n "${VAULT_STATE_DIR:-}" ] && printf '[%s] WARNING: VAULT_STATE_DIR "%s" is not an absolute path outside the vault. Using %s instead.\n' \
-      "$(ts)" "$VAULT_STATE_DIR" "$dir" >&2
+      "$(ts)" "$(shown_name "$VAULT_STATE_DIR")" "$(shown_name "$dir")" >&2
   fi
   printf '%s\n' "$dir"
 }
@@ -1668,7 +1668,7 @@ run_lock_reclaim() {
         [ -e "$lock/${aside##*/}" ] && mv "$lock/${aside##*/}" "$aside" 2>/dev/null
         if [ -e "$aside" ] || [ -e "$lock/${aside##*/}" ]; then
           printf '[%s] RUN-LOCK-RACE: the run lock changed while it was being reclaimed. The lock that was moved is kept at %s for review.\n' \
-            "$(ts)" "$aside" >> "$log"
+            "$(ts)" "$(shown_name "$aside")" >> "$log"
         fi
       fi
     fi
@@ -1718,7 +1718,7 @@ run_lock_acquire() {
       if [ "$cur" != "$RUN_LOCK_NONCE" ]; then
         if ! is_nonce "$cur"; then
           run_lock_release
-          printf '[%s] ERROR: could not write the run lock'"'"'s owner file in %s. Refusing to run.\n' "$(ts)" "$state" >> "$log"
+          printf '[%s] ERROR: could not write the run lock'"'"'s owner file in %s. Refusing to run.\n' "$(ts)" "$(shown_name "$state")" >> "$log"
           return 1
         fi
         # Another runner took the directory before this one's owner file landed.
@@ -1822,7 +1822,7 @@ mark_kill_failed() {
   if run_lock_held && printf 'kill_failed=%s\n' "$(date +%s)" >> "$RUN_LOCK_DIR/owner" 2>/dev/null; then
     # The tripwire says whether the lock holds later passes back.
     KILL_FAILED_LOCKED=1
-    printf '[%s] KILL_FAILED: a process of the stopped pass may still be running, so the run lock %s is kept and no pass will start. Check for it, stop it, then delete the lock folder. What the stop found:\n' "$(ts)" "$RUN_LOCK_DIR" >> "$log"
+    printf '[%s] KILL_FAILED: a process of the stopped pass may still be running, so the run lock %s is kept and no pass will start. Check for it, stop it, then delete the lock folder. What the stop found:\n' "$(ts)" "$(shown_name "$RUN_LOCK_DIR")" >> "$log"
   else
     printf '[%s] KILL_FAILED: a process of the stopped pass may still be running, and the run lock could not be marked, so later passes are not held back. Check for it and stop it. What the stop found:\n' "$(ts)" >> "$log"
   fi
@@ -2803,7 +2803,7 @@ contain_pass() {
     return 70
   fi
   CONTAINED=1
-  printf '[%s] VIOLATION: steering or execution surfaces changed during the run. They were contained (quarantine %s) and the tripwire is set. The paths follow.\n' "$(ts)" "$qdir" >> "$log"
+  printf '[%s] VIOLATION: steering or execution surfaces changed during the run. They were contained (quarantine %s) and the tripwire is set. The paths follow.\n' "$(ts)" "$(shown_name "$qdir")" >> "$log"
   sed 's/^/    /' "$snap/contained" >> "$log"
   if [ -s "$snap/contain-errors" ]; then
     printf '[%s] CONTAINMENT-ERROR:\n' "$(ts)" >> "$log"
@@ -2994,7 +2994,7 @@ record_runner_session() {
     printf '[%s] WARNING: the stream names session %s, not the %s the runner chose. Both are recorded.\n' "$(ts)" "$seen" "$id" >> "$log"
   fi
   printf '%s\t%s\t%s\t%s\n' "$(ts)" "$runner" "$id" "$status" >> "$state/runner-sessions.tsv" 2>/dev/null \
-    || printf '[%s] WARNING: could not record session %s in %s.\n' "$(ts)" "$id" "$state/runner-sessions.tsv" >> "$log"
+    || printf '[%s] WARNING: could not record session %s in %s.\n' "$(ts)" "$id" "$(shown_name "$state/runner-sessions.tsv")" >> "$log"
 }
 
 # cap_copy <file> <dest> <max-bytes>
@@ -3112,7 +3112,7 @@ keep_run_output() {
     elif [ -e "$dest" ] || [ -L "$dest" ]; then
       note=" What is at that path is not a regular file, and holds no output a run kept."
     fi
-    printf '[%s] WARNING: the output of the pass could not be kept at %s, so it is lost.%s\n' "$(ts)" "$dest" "$note" >> "$4"
+    printf '[%s] WARNING: the output of the pass could not be kept at %s, so it is lost.%s\n' "$(ts)" "$(shown_name "$dest")" "$note" >> "$4"
     return 1
   }
   # A link at the path would send the rename wherever it points, and a folder
@@ -3130,13 +3130,13 @@ keep_run_output() {
   fi
   if [ -z "$in_way" ] && mv -f "$tmp" "$dest" 2>/dev/null; then
     if [ -f "$dest" ] && [ ! -L "$dest" ]; then
-      printf '[%s] The output of the pass is kept at %s.\n' "$(ts)" "$dest" >> "$4"
+      printf '[%s] The output of the pass is kept at %s.\n' "$(ts)" "$(shown_name "$dest")" >> "$4"
       return 0
     fi
     # Something took the path between the check and the rename, and the rename
     # moved the output into it.
     printf '[%s] WARNING: something took the place of %s while the output of the pass was being kept, so the output may be inside it as %s.\n' \
-      "$(ts)" "$dest" "${tmp##*/}" >> "$4"
+      "$(ts)" "$(shown_name "$dest")" "${tmp##*/}" >> "$4"
     return 1
   fi
   # What is in the way stays as it is for the owner to look at, and the output is
@@ -3144,12 +3144,12 @@ keep_run_output() {
   [ -n "$in_way" ] || in_way="a path the output could not be renamed to"
   alt="$(mktemp "$dest.XXXXXX" 2>/dev/null)"
   if [ -n "$alt" ] && mv -f "$tmp" "$alt" 2>/dev/null && [ -f "$alt" ] && [ ! -L "$alt" ]; then
-    printf '[%s] WARNING: %s is %s, so the output of the pass is kept at %s instead.\n' "$(ts)" "$dest" "$in_way" "$alt" >> "$4"
+    printf '[%s] WARNING: %s is %s, so the output of the pass is kept at %s instead.\n' "$(ts)" "$(shown_name "$dest")" "$in_way" "$(shown_name "$alt")" >> "$4"
     return 0
   fi
   rm -f "$tmp" 2>/dev/null
   [ -n "$alt" ] && [ ! -s "$alt" ] && rm -f "$alt" 2>/dev/null
-  printf '[%s] WARNING: the output of the pass could not be kept at %s, which is %s, or beside it, so it is lost.\n' "$(ts)" "$dest" "$in_way" >> "$4"
+  printf '[%s] WARNING: the output of the pass could not be kept at %s, which is %s, or beside it, so it is lost.\n' "$(ts)" "$(shown_name "$dest")" "$in_way" >> "$4"
   return 1
 }
 
@@ -3229,7 +3229,7 @@ note_tripwire() {
   [ "$found" -eq 0 ] || return 1
   if [ ! -f "$kept" ] || [ -L "$kept" ]; then
     write_file_atomic "$kept" "$vault" \
-      || printf '[%s] WARNING: the tripwire could not be copied to the state directory %s.\n' "$(ts)" "$state" >> "$log"
+      || printf '[%s] WARNING: the tripwire could not be copied to the state directory %s.\n' "$(ts)" "$(shown_name "$state")" >> "$log"
   elif [ ! -f "$vault" ] || [ -L "$vault" ]; then
     write_file_atomic "$vault" "$kept" \
       || printf '[%s] WARNING: the tripwire could not be copied to %s.\n' "$(ts)" "$vault" >> "$log"
@@ -3238,13 +3238,19 @@ note_tripwire() {
 }
 
 # shown_name <path>
-# Prints <path> with each C0 control character and DEL in it shown as ?, for a
-# log line, so a name holding a line break or an escape cannot split a line or
-# forge one. A C1 character (U+0080 to U+009F) is not among them and is printed
-# as it is (measured on Linux under the runners' C locale).
+# Prints <path> with each C0 control character, DEL and C1 control character
+# (U+0080 to U+009F, in its UTF-8 encoding) in it shown as ?, for a log line, so
+# a name holding a line break, an escape or a CSI cannot split a line or forge
+# one. Under the runners' C locale [:cntrl:] matches C0 and DEL only, so the C1
+# characters are mapped by their bytes. A raw byte 0x80 to 0x9F that is not part
+# of such an encoding, U+2028, U+2029 and the bidirectional controls are printed
+# as they are.
 shown_name() {
+  local c1
   case "$1" in
-    *[[:cntrl:]]*) printf '%s' "$1" | LC_ALL=C tr '[:cntrl:]' '?' ;;
+    *[[:cntrl:]]*|*$'\302'*)
+      c1="$(printf '\302[\200-\237]')"
+      printf '%s' "$1" | LC_ALL=C tr '[:cntrl:]' '?' | LC_ALL=C sed "s/$c1/?/g" ;;
     *) printf '%s' "$1" ;;
   esac
 }

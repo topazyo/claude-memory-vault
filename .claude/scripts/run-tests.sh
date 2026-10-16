@@ -6850,7 +6850,7 @@ cp -R "$MO_K4_RV" "$VR_B/rplain" 2>/dev/null && cp -R "$MO_K4_RV" "$VR_B/rdot" 2
   && mv "$VR_B/rdot" "$VR_B/r." 2>/dev/null || vr_ready=0
 [ -f "$VR_B/v./.claude/scripts/dream-pass.sh" ] && [ -f "$VR_B/r./.claude/scripts/vault-retention.sh" ] || vr_ready=0
 vr_ret() {  # vr_ret <vault> - the retention runner's status, through the mo_k4 stand-ins, the folder spelled plainly
-  rm -f "$MO_K4/git.log"
+  rm -f "$MO_K4/git.log" "$REC.argv"
   env VAULT_STATE_DIR="$TMP/state-v142-vr-ret" RUN_LOCK_WAIT=0 RUN_LOCK_POLL=1 WATCHDOG_POLL=1 WATCHDOG_GRACE=2 \
     PATH="$MO_K4/shim:$PATH" MO_K4_MKTEMP="$MO_K4_MT" MO_K4_GIT="$MO_K4_G" MO_K4_GITLOG="$MO_K4/git.log" \
     MO_K4_MARK="$MO_K4/fired" MO_K4_SPELL="$MO_K4/tgt" MO_K4_REAL="$MO_K4/tgt" MO_K4_DECOY= \
@@ -7072,6 +7072,74 @@ else
   fi
 fi
 rm -rf "$RT_V" "$RT_SHIM" "$TMP/v142-rt-plain" "$TMP/state-v142-rt" "$TMP/v142-rt.gitlog"
+# shown_name shows C0 control characters, DEL and the UTF-8 encodings of the C1
+# ones (U+0080 to U+009F) as ?, so a NEL or a CSI in a folder's name cannot reach
+# a log line as it is. Under the runners' C locale [:cntrl:] matches C0 and DEL
+# only, which is the locale here. The characters beside the C1 range, U+00A0, an
+# e-acute and an A with a macron (whose second byte is 0x80), must come through
+# byte for byte.
+ran shown-name-c1
+sn_bad=
+sn_check() {  # sn_check <input> <expected> - shown_name under LC_ALL=C must print exactly <expected>
+  sn_got="$( LC_ALL=C; export LC_ALL; . "$RV/.claude/scripts/lib/runner-common.sh"; shown_name "$1" )"
+  [ "$sn_got" = "$2" ] || sn_bad="$sn_bad [$(printf '%s' "$1" | od -An -tx1 | tr -s ' \n' ' ') gave $(printf '%s' "$sn_got" | od -An -tx1 | tr -s ' \n' ' ')]"
+}
+sn_check "a$(printf '\302\205')b" 'a?b'
+sn_check "a$(printf '\302\233')[31mb" 'a?[31mb'
+sn_check "a$(printf '\302\200')b$(printf '\302\237')c" 'a?b?c'
+sn_check "a$(printf '\302\240')b" "a$(printf '\302\240')b"
+sn_check "caf$(printf '\303\251')" "caf$(printf '\303\251')"
+sn_check "$(printf '\304\200')x" "$(printf '\304\200')x"
+sn_check "a${NL}b$(printf '\033')c" 'a?b?c'
+if [ -z "$sn_bad" ]; then
+  ok "shown_name under LC_ALL=C -> U+0085, U+009B, U+0080 and U+009F shown as ?, a line break and an escape too, and U+00A0, an e-acute and an A with a macron kept byte for byte"
+else
+  bad "shown_name under LC_ALL=C did not show the C1 controls as ? while keeping their neighbours --$sn_bad"
+fi
+# The state directory's path is the owner's to set, and each runner prints it
+# when it refuses one. Through shown_name, a line break and an escape in it must
+# not split the line or reach the log raw: each runner, with VAULT_STATE_DIR
+# naming a regular file whose name holds both, refuses (1) on one physical line
+# that shows them as ?.
+ST_F="$TMP/v142-st${NL}ate$(printf '\033')x"
+ST_SHOWN="$TMP/v142-st?ate?x"
+ST_V="$TMP/v142-st-vault"
+ST_RV="$TMP/v142-st-rvault"
+rm -rf "$ST_F" "$ST_V" "$ST_RV"
+printf 'not a folder\n' > "$ST_F" 2>/dev/null
+v142_vault "$ST_V"
+cp -R "$MO_K4_RV" "$ST_RV" 2>/dev/null
+if [ ! -f "$ST_F" ] || [ ! -f "$ST_V/.claude/scripts/dream-pass.sh" ] || [ ! -f "$ST_RV/.claude/scripts/vault-retention.sh" ]; then
+  bad "state-shown: the state file named with a line break, or its vaults, could not be made"
+else
+  ran state-shown
+  for st_leg in dream promotion retention; do
+    case "$st_leg" in
+      dream) st_log="$ST_V/.claude/logs/dream-agent.log" ;;
+      promotion) st_log="$ST_V/.claude/logs/promotion-agent.log" ;;
+      retention) st_log="$ST_RV/.claude/logs/vault-retention.log" ;;
+    esac
+    rm -f "$st_log"
+    if [ "$st_leg" = retention ]; then
+      env VAULT_STATE_DIR="$ST_F" RUN_LOCK_WAIT=0 RUN_LOCK_POLL=1 WATCHDOG_POLL=1 WATCHDOG_GRACE=2 \
+        bash "$ST_RV/.claude/scripts/vault-retention.sh" >/dev/null 2>&1
+      st_rc=$?
+    else
+      st_rc="$(RUNNER_VAULT="$ST_V" runner "$st_leg-pass.sh" journal VAULT_AGENT=command VAULT_AGENT_CMD="$FAKE" \
+        VAULT_ALLOW_UNENFORCED_TOOLS=1 VAULT_STATE_DIR="$ST_F")"
+    fi
+    st_one=absent
+    grep -F -- "ERROR: the state directory $ST_SHOWN " "$st_log" 2>/dev/null | grep -q '^\[[^]]*\] ERROR: ' && st_one=present
+    st_esc="$(grep -c "$(printf '\033')" "$st_log" 2>/dev/null | tr -d ' ')"
+    st_split="$(grep -c '^ate' "$st_log" 2>/dev/null | tr -d ' ')"
+    if [ "$st_rc" -eq 1 ] && [ "$st_one" = present ] && [ "${st_esc:-0}" -eq 0 ] && [ "${st_split:-0}" -eq 0 ]; then
+      ok "state-shown: the $st_leg runner, VAULT_STATE_DIR naming a file whose name holds a line break and an escape -> refused (1) on one line showing both as ?"
+    else
+      bad "state-shown: the $st_leg runner, VAULT_STATE_DIR naming a file whose name holds a line break and an escape -- expected 1 and one line showing both as ?; got $st_rc, line $st_one, raw escapes $st_esc, split lines $st_split: $(tr '\n' '|' < "$st_log" 2>/dev/null | cut -c1-300)"
+    fi
+  done
+fi
+rm -rf "$ST_F" "$ST_V" "$ST_RV"
 CASE_STATE="$v142_case_state"
 mo_k4_clean
 # A folder above the runner's folder for the pass whose name ends in a line
