@@ -1242,10 +1242,13 @@ write_tripwire() {
   return "$ok"
 }
 
-# tripwire_text <root> <state-dir> <runner> <reason> <quarantine-dir> <handled-list> [<errors-list> [stop|unverified]]
+# tripwire_text <root> <state-dir> <runner> <reason> <quarantine-dir> <handled-list> [<errors-list> [stop|unverified|uncontained]]
 # Prints the text of the tripwire that write_tripwire writes. The unverified
 # shape is for a pass whose runner could not trust its own folder: nothing was
 # moved or restored, and <quarantine-dir> names that folder, kept for review.
+# The uncontained shape is for a pass that ended before containment ran (a
+# signal, or a marker a dead pass left): nothing was moved or restored either,
+# and <quarantine-dir> is not shown. Both print LOG_MOVED_NOTE when it is set.
 tripwire_text() {
   local state="$2" runner="$3" reason="$4" qdir="$5" handled="$6" errors="${7:-}" shape="${8:-}"
   {
@@ -1273,25 +1276,41 @@ tripwire_text() {
       else
         printf 'delete this file.\n'
       fi
-    elif [ "$shape" = unverified ]; then
+    elif [ "$shape" = unverified ] || [ "$shape" = uncontained ]; then
       # Nothing was put back, so git config, git hooks and Obsidian plugins the
       # pass may have planted are still in place: git runs the first two (a
-      # core.fsmonitor command at the first git status), Obsidian loads the third.
-      printf 'Nothing was moved or restored, because the runner could not tell what the\n'
-      printf 'pass changed. Until the vault is reviewed, do not open it in an agent session\n'
-      printf 'or in Obsidian, and run no git command in it: the pass may have changed\n'
-      printf '.git/config or .git/hooks, which git runs, or .obsidian/, which Obsidian loads.\n'
+      # core.fsmonitor command at the first git status, a pager at git reflog),
+      # Obsidian loads the third.
+      if [ "$shape" = unverified ]; then
+        printf 'Nothing was moved or restored, because the runner could not tell what the\n'
+        printf 'pass changed.\n'
+      else
+        printf 'Nothing was moved or restored, because containment did not run.\n'
+      fi
+      printf 'Until the vault is reviewed, do not open it in Obsidian or an agent session,\n'
+      printf 'and run no git command in it before the steering surfaces have been checked:\n'
+      printf 'the pass may have changed .git/config or .git/hooks, which git runs, or\n'
+      printf '.obsidian/, which Obsidian loads. That includes git that starts on its own,\n'
+      printf 'in a shell prompt that shows git state or an editor with git integration.\n'
       if [ -s "$state/inflight-backup.tar" ]; then
-        printf 'First compare the steering surfaces, those three among them, with the pre-pass\n'
+        printf 'Compare the steering surfaces, those three among them, with the pre-pass\n'
         printf 'backup of them at\n%s\n' "$state/inflight-backup.tar"
-        printf '(copy it first, because the next pass replaces it), and put back what differs.\n'
-        printf "Then review the rest of the vault, with 'git status' where it is a git repository.\n"
+        printf '(copy it first, because the next pass replaces it), without git: unpack the\n'
+        printf 'copy into an empty folder with tar -xf, compare that folder with the vault\n'
+        printf 'with diff -r, and put back what differs.\n'
       else
         printf 'No pre-pass backup of the steering surfaces is there to compare against, so\n'
-        printf 'check those three by hand first. Then review the rest of the vault, with\n'
-        printf "'git status' where it is a git repository.\n"
+        printf 'check those three by hand.\n'
       fi
-      printf "The runner's folder for the pass is kept, for the review, at\n%s.\n" "$qdir"
+      printf 'Where .git is a file, the git folder it names is outside the vault and outside\n'
+      printf 'the backup: check its config and hooks by hand as well.\n'
+      printf "Then review the rest of the vault, with 'git status' where it is a git repository.\n"
+      if [ "$shape" = unverified ]; then
+        printf "The runner's folder for the pass is kept, for the review, at\n%s.\n" "$qdir"
+      fi
+      if [ -n "${LOG_MOVED_NOTE:-}" ]; then
+        printf '%s\n' "$LOG_MOVED_NOTE"
+      fi
     else
       printf 'Changed files were moved to the quarantine and restored from the pre-pass\n'
       printf 'backup where one existed. Git HEAD and refs are never rewritten, so check them\n'
@@ -1310,7 +1329,7 @@ tripwire_text() {
     printf '\nNo runner, and not vault-check.sh, will run while this file exists.\n'
     case "$shape" in
       stop) ;;
-      unverified) printf 'Review the vault as above, then delete this file. ' ;;
+      unverified|uncontained) printf 'Review the vault as above, then delete this file. ' ;;
       *) printf 'Review the paths above, then delete this file. ' ;;
     esac
     printf 'The runners also keep a copy\n'
@@ -1384,7 +1403,7 @@ tripwire_check() {
     wrote=1
     write_tripwire "$root" "$state" "$runner" \
       "a previous pass ended before containment ran (interrupted, killed, or the machine stopped), so the vault's steering surfaces are unverified. $marker" \
-      "(none, because containment did not run. A pre-pass backup may be in the state directory.)" "$empty" && wrote=0
+      "(none, because containment did not run. A pre-pass backup may be in the state directory.)" "$empty" "" uncontained && wrote=0
     rm -f "$empty"
     if [ "$wrote" -ne 0 ]; then
       printf '[%s] TRIPWIRE-ERROR: a previous pass never reached containment and no tripwire could be written. The in-flight marker is kept. Refusing to run.\n' "$(ts)" >> "$log"
@@ -2916,13 +2935,32 @@ snap_untrusted() {
   CONTAINED=1
   clear_inflight "$root" "$state"
   if [ -s "$state/inflight-backup.tar" ]; then
-    printf '[%s] UNVERIFIED: the runner'"'"'s own folder for the pass, %s, was changed while the pass ran, so nothing was moved or restored and the tripwire is set. Until the vault is reviewed, run no git command in it and do not open it in Obsidian or an agent session, because the pass may have changed .git/config, .git/hooks or .obsidian/: first compare the steering surfaces with the pre-pass backup of them, %s (copy it before you delete the tripwire, because the next pass replaces it), then the rest of the vault, with git where there is one. The folder is kept for the review.\n' \
+    printf '[%s] UNVERIFIED: the runner'"'"'s own folder for the pass, %s, was changed while the pass ran, so nothing was moved or restored and the tripwire is set. Until the vault is reviewed, do not open it in Obsidian or an agent session, and run no git command in it before the steering surfaces, .git/config, .git/hooks and .obsidian/ among them, have been compared without git with the pre-pass backup of them, %s, and what differs put back (copy the backup before you delete the tripwire, because the next pass replaces it); the tripwire says how. Then review the rest of the vault, with git where there is one. The folder is kept for the review.\n' \
       "$(ts)" "$(shown_name "$snap")" "$(shown_name "$state/inflight-backup.tar")" >> "$log"
   else
-    printf '[%s] UNVERIFIED: the runner'"'"'s own folder for the pass, %s, was changed while the pass ran, so nothing was moved or restored and the tripwire is set. Until the vault is reviewed, run no git command in it and do not open it in Obsidian or an agent session, because the pass may have changed .git/config, .git/hooks or .obsidian/: no pre-pass backup of the steering surfaces was made, so check those by hand first, then the rest of the vault, with git where there is one. The folder is kept for the review.\n' \
+    printf '[%s] UNVERIFIED: the runner'"'"'s own folder for the pass, %s, was changed while the pass ran, so nothing was moved or restored and the tripwire is set. Until the vault is reviewed, do not open it in Obsidian or an agent session, and run no git command in it before the steering surfaces, .git/config, .git/hooks and .obsidian/ among them, have been checked by hand: no pre-pass backup of them was made. Then review the rest of the vault, with git where there is one. The folder is kept for the review.\n' \
       "$(ts)" "$(shown_name "$snap")" >> "$log"
   fi
   return 78
+}
+
+# log_outside_links <root> <state-dir> <runner>
+# Where containment never runs, or has not run yet, a link the pass put in place
+# of the vault's log, or of a folder above it, is still there, and the runner's
+# next line would be written through it to whatever it names. When LOG, .claude
+# or .claude/logs is a link, or LOG is there and not a file, LOG becomes
+# <state-dir>/<runner>.uncontained.log, which the pass cannot reach, and
+# LOG_MOVED_NOTE says so, for that log and for the tripwire. Changes nothing
+# otherwise. It sets globals, so call it directly, never in $(...).
+log_outside_links() {
+  local root="$1" state="$2" runner="$3" was="$LOG"
+  if [ ! -L "$root/.claude" ] && [ ! -L "$root/.claude/logs" ] && [ ! -L "$LOG" ] \
+     && { [ ! -e "$LOG" ] || [ -f "$LOG" ]; }; then
+    return 0
+  fi
+  LOG="$state/$runner.uncontained.log"
+  LOG_MOVED_NOTE="The vault's log, $(shown_name "$was"), or a folder above it, was a link or not a file, which the pass may have made, so the runner wrote the rest of this pass's lines to $(shown_name "$LOG") instead."
+  printf '[%s] WARNING: %s\n' "$(ts)" "$LOG_MOVED_NOTE" >> "$LOG"
 }
 
 # contain_pass <root> <state-dir> <runner> <snap-dir> <log> <head-before>

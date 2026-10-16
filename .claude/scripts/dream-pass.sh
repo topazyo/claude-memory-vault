@@ -89,9 +89,11 @@
 #        detached
 #   78   TRIPWIRE: a tripwire is set, or an earlier pass died before containment,
 #        or UNVERIFIED: the runner's own folder for the pass changed while the
-#        agent ran, so nothing was moved or restored and the tripwire is set
-#        (also when the run timed out or stalled: 78 then takes the place of
-#        124 or 125, and the TIMEOUT or STALLED line is logged as well)
+#        agent ran, or could not be recorded again when it returned, so nothing
+#        was moved or restored and the tripwire is set (also when the run timed
+#        out or stalled: 78, or 70 when no tripwire could be written, then takes
+#        the place of 124 or 125, and the TIMEOUT or STALLED line is logged as
+#        well)
 #   124  TIMEOUT: the watchdog killed a run that exceeded DREAM_PASS_TIMEOUT, and
 #        everything it started
 #   125  STALLED: the watchdog killed a run whose output stopped growing for the
@@ -182,6 +184,11 @@ on_exit() {
 # next pass's baseline.
 on_signal() {
   local report=""
+  # Before containment the pass may have put a link in place of the vault's log,
+  # so the lines below go to the state directory then (log_outside_links).
+  if [ "$INFLIGHT" -eq 1 ] && [ "$CONTAINMENT_CHECKED" -eq 0 ]; then
+    log_outside_links "$ROOT" "$STATE" "$RUNNER"
+  fi
   # The whole tree, so a child of the agent or of a git step cannot keep writing
   # after the exit. RUN_PID is set while such a command runs, and while the
   # watchdog finishes stopping one that has ended (RUN_REAPED=1). Then the private
@@ -200,8 +207,10 @@ on_signal() {
   fi
   record_session_once
   # Before its output reached the run log, the pass's stream would go with the
-  # temporary directory, so it is kept in the state directory.
-  if [ "$RUN_LOG_APPENDED" -eq 0 ] && [ -n "$SNAP_DIR" ] && [ -f "$SNAP_DIR/run" ]; then
+  # temporary directory, so it is kept in the state directory, unless run or the
+  # folder is a link, which the copy would follow to whatever it names.
+  if [ "$RUN_LOG_APPENDED" -eq 0 ] && [ -n "$SNAP_DIR" ] && [ -f "$SNAP_DIR/run" ] \
+     && [ ! -L "$SNAP_DIR/run" ] && [ ! -L "$SNAP_DIR" ]; then
     keep_run_output "$SNAP_DIR/run" "$STATE" "$RUNNER" "$LOG"
   fi
   if [ "$INFLIGHT" -eq 1 ] && [ "$CONTAINMENT_CHECKED" -eq 0 ]; then
@@ -214,7 +223,7 @@ on_signal() {
       printf '[%s] INTERRUPTED after the tripwire was set. The tripwire is kept.\n' "$(ts)" >> "$LOG"
     elif write_tripwire "$ROOT" "$STATE" "$RUNNER" \
          "the pass was interrupted by a signal before containment ran, so the vault's steering surfaces are unverified (the pre-pass backup is $STATE/inflight-backup.tar)" \
-         "(none, because containment did not run)" /dev/null; then
+         "(none, because containment did not run)" /dev/null "" uncontained; then
       clear_inflight "$ROOT" "$STATE"
       printf '[%s] INTERRUPTED before containment. Tripwire set.\n' "$(ts)" >> "$LOG"
     else
@@ -385,13 +394,22 @@ main() {
   # marker, and again as soon as the agent returns (snap_manifest).
   if ! SNAP_SEALS="$(snap_manifest "$SNAP_DIR")" || [ -z "$SNAP_SEALS" ]; then
     SNAP_SEALS=
-    printf '[%s] ERROR: the runner could not record its folder for the pass, %s, before the agent started (a name in it outside letters, digits, dot, underscore and hyphen, a file it could not checksum, a folder in it that could not be listed, or no sha256sum, shasum or cksum found), so it could not check the folder afterwards. Refusing to run.\n' "$(ts)" "$(shown_name "$SNAP_DIR")" >> "$LOG"
+    printf '[%s] ERROR: the runner could not record its folder for the pass, %s, before the agent started (the folder missing or a link, a name in it outside letters, digits, dot, underscore and hyphen, a file it could not checksum, a folder in it that could not be listed, no sha256sum, shasum or cksum found, or a record that came out empty), so it could not check the folder afterwards. Refusing to run.\n' "$(ts)" "$(shown_name "$SNAP_DIR")" >> "$LOG"
     exit 1
   fi
   case "$(snap_tool)" in
     cksum\ *) printf '[%s] WARNING: no sha256sum or shasum was found, so the runner checks its folder for the pass with cksum, a CRC that anyone able to write the folder can make a file match.\n' "$(ts)" >> "$LOG" ;;
   esac
+  # A backup an earlier pass kept, after a 78 or a KILL_FAILED, goes first, so a
+  # copy that fails cannot leave it to be named as this pass's backup.
+  rm -f "$STATE/inflight-backup.tar" 2>/dev/null
   cp "$SNAP_DIR/steering.tar" "$STATE/inflight-backup.tar" 2>/dev/null
+  backup_rc=$?
+  if [ "$backup_rc" -ne 0 ] || [ ! -f "$STATE/inflight-backup.tar" ] || [ -L "$STATE/inflight-backup.tar" ]; then
+    rm -f "$STATE/inflight-backup.tar" 2>/dev/null
+    printf '[%s] ERROR: could not copy the pre-pass backup of the steering surfaces to the state directory as %s. Refusing to run.\n' "$(ts)" "$(shown_name "$STATE/inflight-backup.tar")" >> "$LOG"
+    exit 1
+  fi
   # Without the marker outside the vault, a pass killed mid-run would leave no
   # trace the next run can trust. Refuse rather than start the agent.
   if ! mark_inflight "$ROOT" "$STATE" "$RUNNER"; then
@@ -426,6 +444,9 @@ main() {
   # with the tripwire and the folder kept (snap_untrusted).
   if ! SNAP_NOW="$(snap_manifest "$SNAP_DIR")" || [ "$SNAP_NOW" != "$SNAP_SEALS" ]; then
     SNAP_KEEP=1
+    # Containment does not run on this path, so a link the pass put in place of
+    # the vault's log stays, and is not written through (log_outside_links).
+    log_outside_links "$ROOT" "$STATE" "$RUNNER"
     snap_untrusted "$ROOT" "$STATE" "$RUNNER" "$SNAP_DIR" "$LOG"
     snap_rc=$?
     [ "$snap_rc" -eq 78 ] && INFLIGHT=0
@@ -440,15 +461,15 @@ main() {
       report_stop "$LOG" dream-agent "$ROOT" "$STATE" "$RUNNER"
     fi
     # A signal before RUN_LOG_APPENDED is set keeps the output itself, so it is
-    # set only once the output is kept, or at once when run is not a regular file,
-    # which on_signal's test would follow if it were a link.
-    if [ -f "$SNAP_DIR/run" ] && [ ! -L "$SNAP_DIR/run" ]; then
+    # set only once the output is kept, or at once when it cannot be. Neither
+    # copy follows a link at run or at the folder.
+    if [ -f "$SNAP_DIR/run" ] && [ ! -L "$SNAP_DIR/run" ] && [ ! -L "$SNAP_DIR" ]; then
       keep_run_output "$SNAP_DIR/run" "$STATE" "$RUNNER" "$LOG"
       RUN_LOG_APPENDED=1
       record_session_once
     else
       RUN_LOG_APPENDED=1
-      printf '[%s] WARNING: the run output, %s, is not a regular file, so it was not kept.\n' "$(ts)" "$(shown_name "$SNAP_DIR/run")" >> "$LOG"
+      printf '[%s] WARNING: the run output, %s, is missing, is not a regular file or is in a folder that is a link, so it was not kept.\n' "$(ts)" "$(shown_name "$SNAP_DIR/run")" >> "$LOG"
     fi
     exit "$snap_rc"
   fi
