@@ -2467,7 +2467,7 @@ else
     else
       bad "the settings file is not a regular file in a private folder of the runner's own that the pass removed -- got: ${mo_f:-nothing} ($(tr '\n' ' ' < "$MO_CAP.where" 2>/dev/null))"
     fi
-    if [ "$(cat "$MO_CAP.json" 2>/dev/null)" = "{\"autoMemoryDirectory\":\"$MO_WANT\"}" ]; then
+    if [ "$(cat "$MO_CAP.json" 2>/dev/null)" = "{\"autoMemoryDirectory\":\"$MO_WANT\",\"disableAllHooks\":true}" ]; then
       ok "the settings file points autoMemoryDirectory at 90-auto-memory/.pass-agent in the vault, and holds nothing else"
     else
       bad "the settings file does not hold exactly the vault's override folder -- want $MO_WANT, got: $(cat "$MO_CAP.json" 2>/dev/null)"
@@ -2501,7 +2501,7 @@ else
     if [ -n "$mo_f" ] && [ -n "$mo_pf" ] && [ "$mo_pf" != "$mo_f" ] && [ "${mo_pf##*/}" = pass-settings.json ] \
        && [ "$(awk '$0 == "--settings" { n++ } END { print n + 0 }' "$REC.argv" 2>/dev/null)" = 1 ] \
        && [ "$(tail -n 6 "$REC.argv" 2>/dev/null | head -n 1)" = --settings ] && mo_own "$RV" \
-       && [ "$(cat "$MO_CAP.json" 2>/dev/null)" = "{\"autoMemoryDirectory\":\"$MO_WANT\"}" ]; then
+       && [ "$(cat "$MO_CAP.json" 2>/dev/null)" = "{\"autoMemoryDirectory\":\"$MO_WANT\",\"disableAllHooks\":true}" ]; then
       ok "the promotion agent is started with one settings file it wrote itself, in its own folder, just before the tool denials"
     else
       bad "the promotion agent argv or settings file is wrong -- got: $(tr '\n' ' ' < "$REC.argv" 2>/dev/null), file: $(cat "$MO_CAP.json" 2>/dev/null) ($(tr '\n' ' ' < "$MO_CAP.where" 2>/dev/null))"
@@ -2537,7 +2537,7 @@ rm -f "$REC.argv" "$MO_CAP.json" "$MO_CAP.where"
 if [ "$(cat "$MO_STATE/pass-settings.json" 2>/dev/null)" = "$mo_stale" ]; then
   mo_rc="$(runner dream-pass.sh journal FAKE_RECORD="$REC" CLAUDE_BIN="$MO_CAP")"
   if [ "$mo_rc" -eq 0 ] && [ ! -e "$MO_STATE/pass-settings.json" ] && [ ! -L "$MO_STATE/pass-settings.json" ] \
-     && [ "$(cat "$MO_CAP.json" 2>/dev/null)" = "{\"autoMemoryDirectory\":\"$MO_WANT\"}" ]; then
+     && [ "$(cat "$MO_CAP.json" 2>/dev/null)" = "{\"autoMemoryDirectory\":\"$MO_WANT\",\"disableAllHooks\":true}" ]; then
     ok "claude mode: a settings file an earlier build left in the state directory is removed, and Claude Code is handed this pass's own (exit 0)"
   else
     bad "claude mode: a settings file left in the state directory was kept, or Claude Code was handed the wrong one -- got exit $mo_rc, state copy $([ -e "$MO_STATE/pass-settings.json" ] && cat "$MO_STATE/pass-settings.json" || echo removed), handed: $(cat "$MO_CAP.json" 2>/dev/null)"
@@ -2894,7 +2894,7 @@ case "$(cd "$MO_COLON/c:/w" 2>/dev/null && pwd -P)" in
     # than the walks alone, which make none.
     mo_bounded 120 memory_override "$RV" "${CASE_STATE:-$TMP/state}" "$MO_COLON/c:/w" "$TMP/memovr-colon.log"
     mo_rc=$?
-    if [ "$mo_rc" -eq 0 ] && [ "$(cat "$MO_COLON/c:/w/pass-settings.json" 2>/dev/null)" = "{\"autoMemoryDirectory\":\"$MO_WANT\"}" ]; then
+    if [ "$mo_rc" -eq 0 ] && [ "$(cat "$MO_COLON/c:/w/pass-settings.json" 2>/dev/null)" = "{\"autoMemoryDirectory\":\"$MO_WANT\",\"disableAllHooks\":true}" ]; then
       ok "claude mode: a folder for the pass under folders whose names end in a colon -> memory_override returns 0, and the settings file reads back"
     elif [ "$mo_rc" -eq 124 ]; then
       bad "claude mode: memory_override with a folder for the pass under $MO_COLON did not return within 120s"
@@ -2965,7 +2965,7 @@ else
     PATH="$TMP/memovr-cp:$PATH"
     memory_override "$RV" "${CASE_STATE:-$TMP/state}" "$mo_gp/w" "$TMP/memovr-gone.log" )
   mo_rc=$?
-  if [ "$mo_rc" -eq 0 ] && [ "$(cat "$mo_gp/w/pass-settings.json" 2>/dev/null)" = "{\"autoMemoryDirectory\":\"$MO_WANT\"}" ] \
+  if [ "$mo_rc" -eq 0 ] && [ "$(cat "$mo_gp/w/pass-settings.json" 2>/dev/null)" = "{\"autoMemoryDirectory\":\"$MO_WANT\",\"disableAllHooks\":true}" ] \
      && [ "$(cat "$TMP/memovr-cp.rec" 2>/dev/null)" = "$mo_gp/w/pass-settings.new $mo_gp/w/pass-settings.json.tmp.$$" ]; then
     ok "claude mode: the same folder for the pass, once it is there -> memory_override returns 0, the settings file reads back, and it was written in one copy from pass-settings.new through pass-settings.json.tmp.<pid>"
   else
@@ -3539,7 +3539,7 @@ else
       dream-pass.sh journal "$MO_LOG" PATH="$MO_SC:$PATH" MO_SC_UNC=settings
     rm -f "$REC.argv" "$MO_CAP.json" "$MO_CAP.where"
     mo_rc="$(runner dream-pass.sh journal FAKE_RECORD="$REC" CLAUDE_BIN="$MO_CAP" PATH="$MO_SC:$PATH" MO_SC_UNC=none)"
-    if [ "$mo_rc" -eq 0 ] && [ "$(cat "$MO_CAP.json" 2>/dev/null)" = "{\"autoMemoryDirectory\":\"C:$RV/90-auto-memory/.pass-agent\"}" ] \
+    if [ "$mo_rc" -eq 0 ] && [ "$(cat "$MO_CAP.json" 2>/dev/null)" = "{\"autoMemoryDirectory\":\"C:$RV/90-auto-memory/.pass-agent\",\"disableAllHooks\":true}" ] \
        && case "$(awk 'prev == "--settings" { print; exit } { prev = $0 }' "$REC.argv" 2>/dev/null)" in C:/*/pass-settings.json) true ;; *) false ;; esac; then
       ok "claude mode off Windows with a stray cygpath giving drive paths that map back -> runs (exit 0), with those paths"
     else
@@ -3694,7 +3694,7 @@ if [ "$(ls -A "$MO_DIR")" = .DS_Store ] && [ -f "$MO_DIR/.DS_Store" ] && [ ! -L 
   mo_rc="$(runner dream-pass.sh journal FAKE_RECORD="$REC" CLAUDE_BIN="$MO_CAP")"
   if [ "$mo_rc" -eq 0 ] && [ -f "$REC.argv" ] \
      && [ -n "$(awk 'prev == "--settings" { print; exit } { prev = $0 }' "$REC.argv")" ] \
-     && [ "$(cat "$MO_CAP.json" 2>/dev/null)" = "{\"autoMemoryDirectory\":\"$MO_WANT\"}" ]; then
+     && [ "$(cat "$MO_CAP.json" 2>/dev/null)" = "{\"autoMemoryDirectory\":\"$MO_WANT\",\"disableAllHooks\":true}" ]; then
     ok "claude mode: a .DS_Store file alone in 90-auto-memory/.pass-agent -> the pass runs with the override (exit 0)"
   else
     bad "claude mode: a .DS_Store file alone in 90-auto-memory/.pass-agent stopped the pass or lost the override -- got exit $mo_rc"
@@ -6062,7 +6062,7 @@ mo_accepts() {
   if [ -n "$t" ]; then case "$arg" in "$t"/*) ;; *) under=no ;; esac; fi
   mo_own "$v" || own=no
   if [ "$rc" -eq 0 ] && [ -n "$arg" ] && [ "$form" = yes ] && [ "$under" = yes ] && [ "$own" = yes ] \
-     && [ "$got" = "{\"autoMemoryDirectory\":\"$w/90-auto-memory/.pass-agent\"}${NL}x" ]; then
+     && [ "$got" = "{\"autoMemoryDirectory\":\"$w/90-auto-memory/.pass-agent\",\"disableAllHooks\":true}${NL}x" ]; then
     ok "$label -> runs (exit 0), with the override naming that vault's own 90-auto-memory/.pass-agent"
   else
     bad "$label -- expected exit 0 and the override naming $w/90-auto-memory/.pass-agent; got exit $rc, --settings ${arg:-none} (under ${t:-any folder}: $under, the runner's own folder: $own), file: $(cat "$MO_CAP.json" 2>/dev/null)"
@@ -6187,7 +6187,7 @@ for mo_i in e-acute cyrillic cjk emoji top tmp tmp-emoji; do
       ( umask 077 && mkdir -p "$mo_tmp/w" )
       mo_direct "$MO_NV" "$mo_tmp/w" "$TMP/memovr-na.log"
       mo_rc=$?
-      if [ "$mo_rc" -eq 0 ] && [ "$(cat "$mo_tmp/w/pass-settings.json" 2>/dev/null)" = "{\"autoMemoryDirectory\":\"$MO_NV/90-auto-memory/.pass-agent\"}" ]; then
+      if [ "$mo_rc" -eq 0 ] && [ "$(cat "$mo_tmp/w/pass-settings.json" 2>/dev/null)" = "{\"autoMemoryDirectory\":\"$MO_NV/90-auto-memory/.pass-agent\",\"disableAllHooks\":true}" ]; then
         ok "memory_override, called directly as mktemp here does not take TMPDIR: $mo_say -> accepted (0), the file names that vault's own 90-auto-memory/.pass-agent"
       else
         bad "memory_override, called directly, did not accept $mo_say -- got $mo_rc: $(cat "$TMP/memovr-na.log" 2>/dev/null)"
@@ -6365,7 +6365,7 @@ else
       else
         bad "claude mode: TMPDIR holding .. after a junction, leg $mo_leg ($mo_say) -- memory_override, called directly, was not refused for the .. that git on Windows reads as text, or wrote -- got $mo_rc, the folder mktemp makes there holds: $(ls -A "$MO_DD/tgt/tmp.dd" 2>/dev/null | tr '\n' ' '), the folder of that name in the junction's own folder: $mo_dc: $(cat "$TMP/memovr-dd.log" 2>/dev/null)"
       fi
-    elif [ "$mo_rc" -eq 0 ] && [ "$(cat "$MO_DD/tgt/tmp.dd/pass-settings.json" 2>/dev/null)" = "{\"autoMemoryDirectory\":\"$MO_WANT\"}" ] \
+    elif [ "$mo_rc" -eq 0 ] && [ "$(cat "$MO_DD/tgt/tmp.dd/pass-settings.json" 2>/dev/null)" = "{\"autoMemoryDirectory\":\"$MO_WANT\",\"disableAllHooks\":true}" ] \
        && [ "$mo_dk" = yes ]; then
       ok "claude mode: TMPDIR holding .. after a link, leg $mo_leg ($mo_say) -> memory_override, called directly, returns 0 with the settings file in the folder mktemp makes there"
     else
@@ -6385,7 +6385,7 @@ else
       LC_ALL=C; export LC_ALL; . "$RV/.claude/scripts/lib/runner-common.sh"; AGENT_BIN="$FAKE"
       memory_override "$RV" "$TMP/state-memovr-dd" "-/tmp.dd" "$TMP/memovr-dd.log" )
     mo_rc=$?
-    if [ "$mo_rc" -eq 0 ] && [ "$(cat "$MO_DD/rel/-/tmp.dd/pass-settings.json" 2>/dev/null)" = "{\"autoMemoryDirectory\":\"$MO_WANT\"}" ]; then
+    if [ "$mo_rc" -eq 0 ] && [ "$(cat "$MO_DD/rel/-/tmp.dd/pass-settings.json" 2>/dev/null)" = "{\"autoMemoryDirectory\":\"$MO_WANT\",\"disableAllHooks\":true}" ]; then
       ok "claude mode: a folder for the pass given relative to the current folder, under a folder named - -> memory_override, called directly, returns 0 with the settings file there"
     else
       bad "claude mode: a folder for the pass given relative to the current folder, under a folder named - -- memory_override, called directly, did not write the settings file there -- got $mo_rc, file there: $(cat "$MO_DD/rel/-/tmp.dd/pass-settings.json" 2>/dev/null): $(cat "$TMP/memovr-dd.log" 2>/dev/null)"
@@ -7140,6 +7140,91 @@ else
   done
 fi
 rm -rf "$ST_F" "$ST_V" "$ST_RV"
+# memory_override walks up the runner's folder for the pass, and on Windows,
+# after a first walk that answers "not under" (1), walks the drive path too. A
+# first walk that gives no answer (2), or answers "under" (0), must decide the
+# pass without the drive walk, however that would answer. A cygpath stand-in
+# that adds Z: for -m and takes it off for -u puts memory_override on that
+# branch on every platform, and a walk stand-in answers by the path's shape
+# (Z:/ is the drive walk): first 2 and drive 1 must refuse with the walk-status
+# line, first 0 and drive 1 with code 4's line, and neither may write the file.
+DW_SHIM="$TMP/v142-dw-shim"
+rm -rf "$DW_SHIM" "$TMP/v142-dw"
+mkdir -p "$DW_SHIM"
+printf '#!/usr/bin/env bash\nfor a; do :; done\ncase "$1" in\n  -m) printf "Z:%%s\\n" "$a" ;;\n  -u) case "$a" in Z:*) printf "%%s\\n" "${a#Z:}" ;; *) printf "%%s\\n" "$a" ;; esac ;;\n  *) printf "%%s\\n" "$a" ;;\nesac\n' > "$DW_SHIM/cygpath"
+chmod +x "$DW_SHIM/cygpath"
+( umask 077 && mkdir -p "$TMP/v142-dw/w" )
+dw_w="$(cd "$TMP/v142-dw/w" 2>/dev/null && pwd -P)"
+if [ -z "$dw_w" ] || [ "$(PATH="$DW_SHIM:$PATH" cygpath -m /a/b)" != Z:/a/b ] || [ "$(PATH="$DW_SHIM:$PATH" cygpath -u Z:/a/b)" != /a/b ]; then
+  bad "mem-override-drive-walk: its folder or its cygpath stand-in could not be made"
+else
+  ran mem-override-drive-walk
+  for dw_first in 2 0; do
+    rm -f "$TMP/v142-dw.log" "$dw_w/pass-settings.json"
+    ( LC_ALL=C; export LC_ALL; PATH="$DW_SHIM:$PATH"; . "$RV/.claude/scripts/lib/runner-common.sh"; AGENT_BIN="$FAKE"
+      DW_FIRST="$dw_first"
+      path_under_by_identity() { case "$1" in Z:/*) return 1 ;; *) return "$DW_FIRST" ;; esac; }
+      memory_override "$RV" "${CASE_STATE:-$TMP/state}" "$dw_w" "$TMP/v142-dw.log" )
+    dw_rc=$?
+    if [ "$dw_first" = 2 ]; then
+      dw_want="ended with status 2, $MO_WALKST" dw_not=', resolves into the vault, and the memory override'
+    else
+      dw_want=', resolves into the vault, and the memory override' dw_not='ended with status'
+    fi
+    if [ "$dw_rc" -eq 1 ] && grep -F -- "$dw_want" "$TMP/v142-dw.log" 2>/dev/null | grep -q '^\[[^]]*\] ERROR: ' \
+       && ! grep -qF -- "$dw_not" "$TMP/v142-dw.log" 2>/dev/null && [ ! -e "$dw_w/pass-settings.json" ]; then
+      ok "mem-override-drive-walk: a first walk that answers $dw_first, then a drive walk that would answer not under -> memory_override refused (1) on the first walk's own line, nothing written"
+    else
+      bad "mem-override-drive-walk: a first walk that answers $dw_first, then a drive walk that would answer not under -- expected 1 on the first walk's own line and nothing written; got $dw_rc, file there: $([ -e "$dw_w/pass-settings.json" ] && echo yes || echo no): $(tr '\n' '|' < "$TMP/v142-dw.log" 2>/dev/null | cut -c1-300)"
+    fi
+  done
+fi
+rm -rf "$DW_SHIM" "$TMP/v142-dw" "$TMP/v142-dw.log"
+# memory_override takes the folder above the runner's folder physically. For a
+# folder directly under /, that folder is / itself, never the current folder:
+# run from a folder holding a private zz-<r>, with /zz-<r> not there, the pass
+# must be refused because the folder is not there (code 9), never by the check
+# that the resolved folder is the one given, which is what it meets if it
+# resolved ./zz-<r> instead. And CDPATH must not steer the resolving: off
+# Windows a folder given as C:rel/tmp.X matches the drive-letter shape and gets
+# no ./, so with CDPATH naming a decoy that holds C:rel/tmp.X too, the settings
+# file must still land in the one under the current folder.
+FA_B="$TMP/v142-fa"
+rm -rf "$FA_B"
+fa_r="zz-v142-$$"
+( umask 077 && mkdir -p "$FA_B/cwd/$fa_r" "$FA_B/cwd/C:rel/tmp.X" "$FA_B/decoy/C:rel/tmp.X" ) 2>/dev/null
+if [ -e "/$fa_r" ] || [ ! -d "$FA_B/cwd/$fa_r" ]; then
+  bad "mem-override-folder-above: its decoy could not be made, or /$fa_r is there"
+else
+  ran mem-override-folder-above
+  rm -f "$TMP/v142-fa.log"
+  ( cd "$FA_B/cwd" || exit 9
+    LC_ALL=C; export LC_ALL; . "$RV/.claude/scripts/lib/runner-common.sh"; AGENT_BIN="$FAKE"
+    memory_override "$RV" "${CASE_STATE:-$TMP/state}" "/$fa_r" "$TMP/v142-fa.log" )
+  fa_rc=$?
+  if [ "$fa_rc" -eq 1 ] && grep -F -- "folder for the pass, /$fa_r, is not there as a folder, though the runner made it" "$TMP/v142-fa.log" 2>/dev/null | grep -q '^\[[^]]*\] ERROR: ' \
+     && ! grep -qF 'is not the folder that resolving' "$TMP/v142-fa.log" 2>/dev/null && [ ! -e "$FA_B/cwd/$fa_r/pass-settings.json" ]; then
+    ok "mem-override-folder-above: a folder directly under /, not there, with a folder of its name in the current folder -> refused (1) as not there (code 9), resolved from /, nothing written"
+  else
+    bad "mem-override-folder-above: a folder directly under /, not there, with a folder of its name in the current folder -- expected 1 as not there (code 9) and no backstop line; got $fa_rc: $(tr '\n' '|' < "$TMP/v142-fa.log" 2>/dev/null | cut -c1-300)"
+  fi
+  if is_windows_host || command -v cygpath >/dev/null 2>&1; then
+    printf '  INFO  [mem-override-folder-above] the CDPATH leg runs off Windows only, with no cygpath on PATH, where C:rel is a relative folder (not counted)\n'
+  else
+    rm -f "$TMP/v142-fa.log"
+    ( cd "$FA_B/cwd" || exit 9
+      LC_ALL=C; export LC_ALL; CDPATH="$FA_B/decoy"; export CDPATH
+      . "$RV/.claude/scripts/lib/runner-common.sh"; AGENT_BIN="$FAKE"
+      memory_override "$RV" "${CASE_STATE:-$TMP/state}" "C:rel/tmp.X" "$TMP/v142-fa.log" )
+    fa_rc=$?
+    if [ "$fa_rc" -eq 0 ] && [ -f "$FA_B/cwd/C:rel/tmp.X/pass-settings.json" ] && [ ! -e "$FA_B/decoy/C:rel/tmp.X/pass-settings.json" ]; then
+      ok "mem-override-folder-above: CDPATH naming a decoy, the folder given as C:rel/tmp.X -> the settings file written under the current folder (0), nothing in the decoy"
+    else
+      bad "mem-override-folder-above: CDPATH naming a decoy, the folder given as C:rel/tmp.X -- expected 0 with the file under the current folder and none in the decoy; got $fa_rc, here: $([ -f "$FA_B/cwd/C:rel/tmp.X/pass-settings.json" ] && echo yes || echo no), decoy: $([ -e "$FA_B/decoy/C:rel/tmp.X/pass-settings.json" ] && echo yes || echo no): $(tr '\n' '|' < "$TMP/v142-fa.log" 2>/dev/null | cut -c1-300)"
+    fi
+  fi
+fi
+rm -rf "$FA_B" "$TMP/v142-fa.log"
 CASE_STATE="$v142_case_state"
 mo_k4_clean
 # A folder above the runner's folder for the pass whose name ends in a line

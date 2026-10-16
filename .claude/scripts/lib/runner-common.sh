@@ -3376,6 +3376,15 @@ runner_folder_ok() {
 # refused, on Windows only, for a vault on a drive path; other versions are
 # unmeasured.
 #
+# The same file turns every hook off for the pass (disableAllHooks): those in
+# the account's settings, those of enabled plugins and the vault's own, which
+# otherwise run inside an unattended pass as the account, with a shell the
+# agent's allowlist never sees. With the file, Claude Code 2.1.301 ran neither
+# a probe folder's own hooks nor the plugins' and still loaded the instructions
+# (without it, both ran, and a plugin's hook wrote a file outside the folder);
+# hooks from managed settings are not turned off (measured 2026-09-15), and MCP
+# servers and the commands settings name outside hooks still start.
+#
 # On Windows both paths are converted with cygpath under a UTF-8 locale: under
 # the runners' LC_ALL=C it cuts a path at its first character outside the ANSI
 # code page, which made the file name a folder outside the vault. Each converted
@@ -3668,7 +3677,7 @@ memory_override() {
       return 1
     fi
   done
-  line="{\"autoMemoryDirectory\":\"$vault/90-auto-memory/.pass-agent\"}"
+  line="{\"autoMemoryDirectory\":\"$vault/90-auto-memory/.pass-agent\",\"disableAllHooks\":true}"
   # Readable by this account only on POSIX hosts, whatever the umask, because
   # Claude Code runs the hooks a settings file names.
   if ! ( umask 077 && printf '%s\n' "$line" > "$work/pass-settings.new" ) \
@@ -3726,7 +3735,7 @@ run_agent() {
       # memory files of its own. That does not withdraw the agent's tools' grant
       # to a memory folder outside the vault. The --settings file memory_override
       # wrote does, by pointing the memory folder inside the fence (measured for
-      # Write, on Windows only).
+      # Write, on Windows only), and it turns every hook but managed ones off.
       #
       # Neither agent's allowlist names a tool that runs commands. --disallowedTools
       # denies Bash, PowerShell (which Claude Code offers on Windows) and Monitor
