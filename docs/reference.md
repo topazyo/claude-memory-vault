@@ -207,7 +207,9 @@ no-op.
 The stub is **not** a substitute for `/wrap-up` or `/obsidian-save`. Both the dream-agent and the
 `resume` skill deliberately exclude `compaction-*.md` from their scans, as does `vault-check.sh`:
 counting machine-written stubs as authored capture would feed the consolidation pass with its own
-output.
+output. `resume` skips `dream-*.md` journals for the same reason: they hold the dream pass's
+proposals, and a briefing built from them would hand the next session that pass's output as if it
+were the work.
 
 ### 3.2a `read-guard.sh` — pre-read secrets guard
 
@@ -1766,7 +1768,7 @@ and `allowed-tools` only mean something to Claude Code.
 | --- | --- | --- | --- |
 | `obsidian-save` | Summarizes the current session into a dated medium-term log under `20-projects/_logs/`, filling the **Promotion candidates** section honestly. | session → **medium** | No (`disable-model-invocation: true`) |
 | `wrap-up` | Produces a structured end-of-session summary: objective, changes, decisions, open questions, **what this session could not determine**, links. It does **not** write a log itself — the output is for a human, or for `obsidian-save`, to place. | none (authoring aid) | Yes |
-| `resume` | Reads the three most recent logs from `20-projects/_logs/` — skipping `templates/` and `compaction-*.md` — and produces a start-of-session briefing. Says so explicitly if a session-memory tool was unavailable. | **medium** → session | No (`disable-model-invocation: true`) |
+| `resume` | Reads the three most recent logs from `20-projects/_logs/` — skipping `templates/`, `compaction-*.md` and `dream-*.md` — and produces a start-of-session briefing. Says so explicitly if a session-memory tool was unavailable. | **medium** → session | No (`disable-model-invocation: true`) |
 | `preserve` | Scans **Promotion candidates** sections and proposes long-term notes into `31-standards/` or `40-llm-wiki/wiki/`, with backlinks. Candidates below the bar are reported as still-pending **with the reason**. | **medium → long** | No (`disable-model-invocation: true`) |
 | `onboard-project` | Wires a codebase into the vault: project slug, `PROJECT-INDEX.md` row and log subsection, `90-auto-memory/<slug>/`, and the first medium-term log. Reports anything it could not verify rather than assuming. | registers a project | Yes |
 
