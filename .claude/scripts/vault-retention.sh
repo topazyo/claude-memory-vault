@@ -114,6 +114,9 @@ export LC_ALL
 RUNNER=vault-retention
 SNAP_DIR=""
 LOG=""
+# The log as print_run names it: the vault's, or the state directory's once
+# log_outside_links has moved the log there.
+LOG_SHOWN=.claude/logs/vault-retention.log
 # This run's own copy of every line it logs, which is what print_run prints, and
 # the file the runner library logs into until lib_logged passes its lines on.
 # The log is shared with every other run, and nothing in it says which run wrote
@@ -179,6 +182,24 @@ say() {  # say <text> - one timestamped line in the log, and the same in RUN_LOG
   # of the line and never the lasting one.
   printf '%s' "$line" >> "$LOG"
   [ -z "$RUN_LOG" ] || printf '%s' "$line" >> "$RUN_LOG"
+}
+
+# log_check
+# A tripwire, or the passes' in-flight marker, means a pass ended without
+# containment, and a link it put in place of this runner's log may be there. The
+# run's lines then go to the state directory (log_outside_links), the library's
+# as well when it logs to the log itself, print_run names that log, and the
+# printed copy gets the WARNING. Called once the state directory is known and
+# again once the run lock is held; a second move is never made.
+log_check() {
+  local was="$LOG"
+  [ -z "${LOG_MOVED_NOTE:-}" ] || return 0
+  guard_exists "$ROOT" "$STATE" "$TRIPWIRE_REL" || guard_exists "$ROOT" "$STATE" "$INFLIGHT_REL" || return 0
+  log_outside_links "$ROOT" "$STATE" "$RUNNER"
+  [ -n "${LOG_MOVED_NOTE:-}" ] || return 0
+  [ "$LIB_LOG" = "$was" ] && LIB_LOG="$LOG"
+  LOG_SHOWN="$(shown_name "$LOG")"
+  [ -z "$RUN_LOG" ] || printf '[%s] WARNING: %s\n' "$(ts)" "$LOG_MOVED_NOTE" >> "$RUN_LOG"
 }
 
 # lib_logged
@@ -285,14 +306,14 @@ safe_name() {
 print_run() {
   local line lines
   if [ -z "$RUN_LOG" ]; then
-    printf 'vault-retention: no copy of what this run logged could be kept, so it is only in .claude/logs/vault-retention.log.\n'
+    printf 'vault-retention: no copy of what this run logged could be kept, so it is only in %s.\n' "$LOG_SHOWN"
   elif [ ! -r "$RUN_LOG" ]; then
-    printf 'vault-retention: this run'"'"'s copy of what it logged could not be read back, so it is only in .claude/logs/vault-retention.log.\n'
+    printf 'vault-retention: this run'"'"'s copy of what it logged could not be read back, so it is only in %s.\n' "$LOG_SHOWN"
   elif ! render_run > "$COPY_DIR/print" 2>/dev/null; then
     if lines="$(render_run 2>/dev/null)" && [ -n "$lines" ]; then
       printf '%s\n' "$lines"
     else
-      printf 'vault-retention: this run'"'"'s copy of what it logged could not be read back, so it is only in .claude/logs/vault-retention.log.\n'
+      printf 'vault-retention: this run'"'"'s copy of what it logged could not be read back, so it is only in %s.\n' "$LOG_SHOWN"
     fi
   else
     while IFS= read -r line; do printf '%s\n' "$line"; done < "$COPY_DIR/print"
@@ -3253,21 +3274,14 @@ main() {
     return 1
   fi
   STATE="$STATE_REAL"
-  # A tripwire or a marker means a pass ended without containment, and a link it
-  # put in place of this runner's log may still be there. This run's lines then
-  # go to the state directory (log_outside_links), the library's as well when it
-  # logs to the log itself, and the printed copy says so too.
-  if guard_exists "$ROOT" "$STATE" "$TRIPWIRE_REL" || guard_exists "$ROOT" "$STATE" "$INFLIGHT_REL"; then
-    LOG_WAS="$LOG"
-    log_outside_links "$ROOT" "$STATE" "$RUNNER"
-    [ "$LIB_LOG" = "$LOG_WAS" ] && LIB_LOG="$LOG"
-    if [ -n "${LOG_MOVED_NOTE:-}" ] && [ -n "$RUN_LOG" ]; then
-      printf '[%s] WARNING: %s\n' "$(ts)" "$LOG_MOVED_NOTE" >> "$RUN_LOG"
-    fi
-  fi
+  log_check
 
   run_lock_acquire "$STATE" "$ROOT" "$RUNNER" "$LIB_LOG" "$((GIT_TIMEOUT * 4 + WATCHDOG_GRACE + 900))"
   lock_rc=$?
+  # Again once the lock is held, and before the lines logged while waiting for it
+  # are passed on: the pass that held it may have put the link there, and set the
+  # tripwire, after the check above.
+  log_check
   lib_logged
   [ "$lock_rc" -eq 0 ] || return "$lock_rc"
 

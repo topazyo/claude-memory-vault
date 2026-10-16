@@ -173,8 +173,8 @@ on_exit() {
     fi
   fi
   # What a tripwire or stop report left when a signal cut it short.
-  [ -n "${STATE:-}" ] && rm -f "$STATE/tripwire-body.$$" "$STATE/kill-report.$$" "$STATE/runner-tripwire.tmp.$$" "$STATE/$RUNNER.interrupted.run.tmp.$$" "$STATE/signal-stop.$$" 2>/dev/null
-  [ -n "${ROOT:-}" ] && rm -f "$ROOT/$TRIPWIRE_REL.tmp.$$" 2>/dev/null
+  [ -n "${STATE:-}" ] && rm -f "$STATE/tripwire-body.$$" "$STATE/kill-report.$$" "$STATE/runner-tripwire.tmp.$$" "$STATE/$RUNNER.interrupted.run.tmp.$$" "$STATE/signal-stop.$$" "$STATE/signal-stop.$$.powershell" 2>/dev/null
+  [ -n "${ROOT:-}" ] && rm -f "$ROOT/$TRIPWIRE_REL.tmp.$$" "$ROOT/$TRIPWIRE_REL.tmp.$$".?????? 2>/dev/null
   [ -n "$SNAP_DIR" ] && [ "$SNAP_KEEP" -eq 0 ] && rm -rf "$SNAP_DIR"
   run_lock_release
 }
@@ -186,12 +186,13 @@ on_signal() {
   local report=""
   # The whole tree, so a child of the agent or of a git step cannot keep writing
   # after the exit. RUN_PID is set while such a command runs, and while the
-  # watchdog finishes stopping one that has ended (RUN_REAPED=1). The stop is
-  # recorded in the state directory, because a pass can remove the private
-  # temporary directory or put a link in its place. A stop that may have left a
+  # watchdog finishes stopping one that has ended (RUN_REAPED=1). It runs once the
+  # private temporary directory has been made, whether or not it is still there,
+  # and is recorded in the state directory, because a pass can remove that
+  # directory or put a link in its place. A stop that may have left a
   # process marks the run lock. Before containment the tripwire below is set, so
   # the stop's report goes into it as well.
-  if [ -n "${RUN_PID:-}" ]; then
+  if [ -n "${RUN_PID:-}" ] && [ -n "$SNAP_DIR" ]; then
     stop_tree "$RUN_PID" 2 "$STATE/signal-stop.$$" "${AGENT_SESSION_ID:-}" 1
     if grep -qE '^(alive|unknown)' "$STATE/signal-stop.$$" 2>/dev/null; then
       if [ "$INFLIGHT" -eq 1 ] && [ "$CONTAINMENT_CHECKED" -eq 0 ]; then
@@ -305,6 +306,11 @@ main() {
   run_lock_acquire "$STATE" "$ROOT" "$RUNNER" "$LOG" "$((TIMEOUT + WATCHDOG_GRACE + 900))"
   lock_rc=$?
   [ "$lock_rc" -eq 0 ] || exit "$lock_rc"
+  # Again once the lock is held: the pass that held it while this run waited may
+  # have put the link there, and set the tripwire, after the check above.
+  if guard_exists "$ROOT" "$STATE" "$TRIPWIRE_REL" || guard_exists "$ROOT" "$STATE" "$INFLIGHT_REL"; then
+    log_outside_links "$ROOT" "$STATE" "$RUNNER"
+  fi
 
   tripwire_check "$ROOT" "$STATE" "$RUNNER" "$LOG"
   guard_rc=$?

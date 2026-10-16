@@ -1225,11 +1225,14 @@ vault_logs_linked() {
 # write_file_atomic for a copy in the vault, where a pass can reach it. Nothing is
 # written while vault_logs_linked holds, and the temporary name comes from
 # mktemp, so a link a pass put at a name it could work out from the runner's pid
-# is not written through. Returns 1 when no copy is in place.
+# is not written through. A link at <path> itself is removed first, because mv
+# would move the copy into a folder it names, outside the vault. Returns 1 when
+# no copy is in place.
 write_vault_copy() {
   local root="$1" path="$2" src="$3" tmp
   vault_logs_linked "$root" && return 1
   mkdir -p "$(dirname "$path")" 2>/dev/null
+  [ -L "$path" ] && rm -f "$path" 2>/dev/null
   tmp="$(mktemp "$path.tmp.$$.XXXXXX" 2>/dev/null)" || return 1
   cp "$src" "$tmp" 2>/dev/null && mv -f "$tmp" "$path" 2>/dev/null
   rm -f "$tmp" 2>/dev/null
@@ -1333,6 +1336,9 @@ tripwire_text() {
       printf 'A .git deeper in the vault is a steering surface too, and diff -r shows a new\n'
       printf 'one only as a new folder above it: list every .git with find . -name .git, and\n'
       printf 'check the config and hooks of any you did not make.\n'
+      printf 'A link in .claude/logs is in neither the backup nor git: list them with\n'
+      printf 'find .claude/logs -type l, and remove any you did not make once you have\n'
+      printf 'checked what it names.\n'
       printf 'Then review the rest of the vault. Where it is a git repository, start with\n'
       printf 'git -c core.fsmonitor=false --no-pager status --ignore-submodules=all, which\n'
       printf 'starts no fsmonitor command or pager and stays out of repositories nested in it.\n'
@@ -1377,7 +1383,7 @@ mark_inflight() {
   local body rc
   body="$(mktemp 2>/dev/null || mktemp -t inflight)" || return 1
   printf 'runner=%s\npid=%s\nstarted=%s\n' "$3" "$$" "$(ts)" > "$body"
-  write_file_atomic "$1/$INFLIGHT_REL" "$body"
+  write_vault_copy "$1" "$1/$INFLIGHT_REL" "$body"
   write_file_atomic "$2/$(basename "$INFLIGHT_REL")" "$body"
   rc=$?
   rm -f "$body"

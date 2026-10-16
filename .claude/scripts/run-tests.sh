@@ -7449,6 +7449,9 @@ rm -rf "$FA_B" "$TMP/v142-fa.log"
 #   tmplink (off Windows) puts a link to the canary at the name write_file_atomic
 #           takes from the runner's pid, then sends its runner TERM: the canary
 #           as it was, the vault's tripwire a file
+#   twdirlink (off Windows) puts a link to a folder at the tripwire's own name,
+#           then sends its runner TERM: nothing moved into that folder, the
+#           vault's tripwire a file
 #   logdir  writes its journal, puts folders at both logs' names and removes the
 #           runner's folder: 78, the lines and a WARNING in the state directory's
 #           log, the tripwire saying the log was moved
@@ -7465,8 +7468,8 @@ rm -rf "$FA_B" "$TMP/v142-fa.log"
 # leg.
 # The dream runner takes every leg, the promotion runner rmdir, rmslow, hooks,
 # dirlink, runlink, rmstall, cksum, badname, loglink, sigterm, sigrunlink,
-# sigdirlink, sigtrap, sigrmdir, twlink, backupfail, backuplink, backupnone and
-# backupseed.
+# sigdirlink, sigtrap, sigrmdir, twlink, inflightlink, backupfail, backuplink,
+# backupnone and backupseed.
 SA_DIR="$TMP/v142-sa"
 SA_V="$SA_DIR/vault"
 SA_AGENT="$SA_DIR/agent"
@@ -7546,11 +7549,13 @@ d - nohooks" && rm -f "$s/before" && rmdir "$s/nohooks" ;;
     p="$(sed -n 's/^pid=//p' "$SA_STATE/runner-inflight" 2>/dev/null)"
     { [ -n "$p" ] && kill -TERM "$p"; } || { : > "$SA_FIX"; exit 0; }
     sleep 30 ;;
-  sigtrap|sigrmdir|tmplink)
+  sigtrap|sigrmdir|tmplink|twdirlink)
     journal
     p="$(sed -n 's/^pid=//p' "$SA_STATE/runner-inflight" 2>/dev/null)"
     [ -n "$p" ] || { : > "$SA_FIX"; exit 0; }
     case "$SA_MODE" in
+      # A link to a folder at the tripwire's own name, which mv would move into.
+      twdirlink) { mkdir -p "$SA_COPY" && ln -s "$SA_COPY" .claude/logs/runner-tripwire; } || { : > "$SA_FIX"; exit 0; } ;;
       # The links are made only when the runner's stop reaches this process.
       sigtrap) trap 'ln -sf "$SA_CANARY" .claude/logs/dream-agent.log; ln -sf "$SA_CANARY" .claude/logs/promotion-agent.log; exit 0' TERM ;;
       # This process and its sleep are noted, so the suite can tell whether the
@@ -7666,10 +7671,13 @@ SA_NOGITCMP='without git: unpack the'
 SA_NODEREF='with --no-dereference where your diff has it'
 SA_NESTED='list every .git with find . -name .git'
 SA_SAFEGIT='git -c core.fsmonitor=false --no-pager status --ignore-submodules=all'
+SA_LOGLINKS='find .claude/logs -type l, and remove any you did not make'
 # sa_advice <file> [nobackup] - the tripwire at <file> holds that advice, the
-# comparison and --no-dereference only where a backup is there to compare with.
+# links in .claude/logs among it, the comparison and --no-dereference only where
+# a backup is there to compare with.
 sa_advice() {
   grep -qF -- "$SA_AUTOGIT" "$1" 2>/dev/null && grep -qF -- "$SA_NESTED" "$1" && grep -qF -- "$SA_SAFEGIT" "$1" \
+    && grep -qF -- "$SA_LOGLINKS" "$1" \
     && { [ "${2:-}" = nobackup ] || { grep -qF -- "$SA_NOGITCMP" "$1" && grep -qF -- "$SA_NODEREF" "$1"; }; }
 }
 SA_RECERR="ERROR: the runner could not record its folder for the pass, "
@@ -7697,11 +7705,12 @@ ran snapshot-sealed
 for sa_leg in dream:plain dream:quiet dream:rmdir dream:rmslow dream:hide dream:hooks dream:link dream:linkbefore dream:newline \
     dream:hooksdark dream:gapslink dream:dirlink dream:runlink dream:rmstall dream:cksum dream:cksumrm dream:badname \
     dream:loglink dream:sigterm dream:sigrunlink dream:sigdirlink dream:backupfail dream:inflight \
-    dream:sigtrap dream:sigrmdir dream:tmplink dream:twlink dream:inflightlink dream:logdir dream:logsdirlink \
+    dream:sigtrap dream:sigrmdir dream:tmplink dream:twdirlink dream:twlink dream:inflightlink dream:logdir dream:logsdirlink \
     dream:logsfile dream:claudelink dream:backuplink dream:backupnone dream:backupseed \
     promotion:rmdir promotion:rmslow promotion:hooks promotion:dirlink promotion:runlink promotion:rmstall promotion:cksum \
     promotion:badname promotion:loglink promotion:sigterm promotion:sigrunlink promotion:sigdirlink promotion:backupfail \
-    promotion:sigtrap promotion:sigrmdir promotion:twlink promotion:backuplink promotion:backupnone promotion:backupseed; do
+    promotion:sigtrap promotion:sigrmdir promotion:twlink promotion:inflightlink promotion:backuplink promotion:backupnone \
+    promotion:backupseed; do
   sa_s="${sa_leg%%:*}-pass.sh" sa_m="${sa_leg#*:}" sa_timeout=3600 sa_stall= sa_path="$PATH" sa_mode="${sa_leg#*:}" sa_cpmode=
   case "$sa_m" in
     rmslow) sa_timeout=3 ;;
@@ -7721,7 +7730,7 @@ for sa_leg in dream:plain dream:quiet dream:rmdir dream:rmslow dream:hide dream:
       if [ "$sa_s" = promotion-pass.sh ]; then sa_mode=nothing; fi ;;
   esac
   case "$sa_m" in
-    link|linkbefore|newline|hooksdark|dirlink|runlink|loglink|sigrunlink|sigdirlink|sigtrap|sigrmdir|tmplink|twlink \
+    link|linkbefore|newline|hooksdark|dirlink|runlink|loglink|sigrunlink|sigdirlink|sigtrap|sigrmdir|tmplink|twdirlink|twlink \
       |inflightlink|logsdirlink|logsfile|claudelink|backuplink|backupseed)
       if is_windows_host; then
         printf '  INFO  [snapshot-sealed] the %s leg runs off Windows only, where a link, a name holding a line break or a folder that cannot be listed can be made (not counted)\n' "$sa_m"
@@ -7786,7 +7795,7 @@ for sa_leg in dream:plain dream:quiet dream:rmdir dream:rmslow dream:hide dream:
       else
         bad "snapshot-sealed: $sa_leg, a journal written with only cksum to take -- expected 0, the cksum WARNING, no UNVERIFIED and the stand-in started; got $sa_rc, WARNING $sa_ck, UNVERIFIED $sa_unv, started: $([ -e "$SA_DIR/started" ] && echo yes || echo no): $(tail -n 3 "$sa_log" 2>/dev/null | tr '\n' '|' | cut -c1-300)"
       fi ;;
-    sigterm|sigrunlink|sigdirlink|sigtrap|sigrmdir|tmplink)
+    sigterm|sigrunlink|sigdirlink|sigtrap|sigrmdir|tmplink|twdirlink)
       # Containment did not run, so the tripwire says nothing was restored and
       # no git command is run before the steering surfaces are checked, and how,
       # and never that files were restored from the backup.
@@ -7817,9 +7826,12 @@ for sa_leg in dream:plain dream:quiet dream:rmdir dream:rmslow dream:hide dream:
             || sa_extra="${sa_extra#ok}; no INTERRUPTED line in the state directory's log" ;;
         sigrmdir)
           # The stand-in and its sleep must be gone once the runner has exited.
-          # A process that has ended but not been reaped yet shows as Z.
+          # A process that has ended but not been reaped yet shows as Z. ps must
+          # first show this shell, or every process would read as gone.
           sa_alive=unknown
-          if [ -s "$SA_DIR/pids" ]; then
+          if ! ps -p "$$" -o stat= 2>/dev/null | tr -d ' ' | grep -q '^[^Z]'; then
+            sa_alive="unknown (fixture: ps -p -o stat= does not show this shell)"
+          elif [ -s "$SA_DIR/pids" ]; then
             sa_alive=no
             sa_i=0
             while [ "$sa_i" -lt 5 ]; do
@@ -7839,9 +7851,12 @@ for sa_leg in dream:plain dream:quiet dream:rmdir dream:rmslow dream:hide dream:
         tmplink)
           [ "$(cat "$SA_DIR/canary" 2>/dev/null)" = canary ] || sa_extra="the canary was written through the link at the tripwire's temporary name"
           { [ -f "$sa_tw" ] && [ ! -L "$sa_tw" ]; } || sa_extra="${sa_extra#ok}; the vault's tripwire is not a file" ;;
+        twdirlink)
+          [ -z "$(ls -A "$SA_DIR/copy" 2>/dev/null)" ] || sa_extra="the tripwire's copy was moved into the folder the link at its name named"
+          { [ -f "$sa_tw" ] && [ ! -L "$sa_tw" ]; } || sa_extra="${sa_extra#ok}; the vault's tripwire is not a file" ;;
       esac
       if [ "$sa_rc" -eq 143 ] && [ "$sa_why" = present ] && [ "$sa_mk" = none ] && [ "$sa_extra" = ok ]; then
-        ok "snapshot-sealed: $sa_leg, TERM to the runner while the agent ran -> 143, the tripwire in its uncontained shape in the vault and the state directory, no in-flight marker$([ "$sa_m" = sigterm ] && echo ', the lines in the log in the vault')$([ "$sa_m" = sigrunlink ] && echo ', nothing written or copied through the links at run and the log, the tripwire saying the log was moved')$([ "$sa_m" = sigdirlink ] && echo ', nothing copied or recorded through the link at the folder')$([ "$sa_m" = sigtrap ] && echo ', nothing written through links made after the signal, the tripwire saying the log was moved')$([ "$sa_m" = sigrmdir ] && echo ', the stand-in stopped with the folder gone')$([ "$sa_m" = tmplink ] && echo ', nothing written through a link at the temporary name')"
+        ok "snapshot-sealed: $sa_leg, TERM to the runner while the agent ran -> 143, the tripwire in its uncontained shape in the vault and the state directory, no in-flight marker$([ "$sa_m" = sigterm ] && echo ', the lines in the log in the vault')$([ "$sa_m" = sigrunlink ] && echo ', nothing written or copied through the links at run and the log, the tripwire saying the log was moved')$([ "$sa_m" = sigdirlink ] && echo ', nothing copied or recorded through the link at the folder')$([ "$sa_m" = sigtrap ] && echo ', nothing written through links made after the signal, the tripwire saying the log was moved')$([ "$sa_m" = sigrmdir ] && echo ', the stand-in stopped with the folder gone')$([ "$sa_m" = tmplink ] && echo ', nothing written through a link at the temporary name')$([ "$sa_m" = twdirlink ] && echo ', nothing moved into the folder linked at the name of the tripwire')"
       else
         bad "snapshot-sealed: $sa_leg, TERM to the runner while the agent ran -- expected 143, the tripwire in its uncontained shape and no marker; got $sa_rc, uncontained text $sa_why, marker $sa_mk, $sa_extra: $(tr '\n' '|' < "$sa_tw" 2>/dev/null | cut -c1-300)"
       fi ;;
@@ -8035,6 +8050,43 @@ else
   bad "snapshot-sealed: log_outside_links with .claude/logs a file and LOG_MOVED_NOTE exported before the library loaded -- expected the note cleared, the log moved once and one WARNING naming the vault's log; got $(printf '%s' "$sa_lo" | tr '\n' '|'), WARNING lines ${sa_low:-0}"
 fi
 rm -rf "$SA_DIR/lo"
+# Where no copy of the tripwire can be written (no temporary file to build it
+# in, and a folder where its body goes in the state directory), snap_untrusted
+# (folder) and tripwire_check with a dead pass's marker (marker) end 70 with a
+# TRIPWIRE-ERROR line that says to run no git command before the steering
+# surfaces have been checked. The shell's own pid names the body's folder,
+# because $$ in the row's subshell is still this shell's.
+SA_NOGITERR='Treat the vault as unverified, and run no git command in it before the steering surfaces have been checked.'
+mkdir -p "$SA_DIR/shim4"
+printf '#!/bin/sh\nexit 1\n' > "$SA_DIR/shim4/mktemp"
+chmod +x "$SA_DIR/shim4/mktemp"
+for sa_te in folder marker; do
+  rm -rf "$SA_DIR/te"
+  mkdir -p "$SA_DIR/te/vault/.claude/logs" "$SA_DIR/te/state/tripwire-body.$$" "$SA_DIR/te/snap"
+  [ "$sa_te" = marker ] && printf 'runner=dream-pass\npid=999999\nstarted=earlier\n' > "$SA_DIR/te/state/runner-inflight"
+  ( PATH="$SA_DIR/shim4:$PATH"
+    . "$RV/.claude/scripts/lib/runner-common.sh"
+    if [ "$sa_te" = folder ]; then
+      snap_untrusted "$SA_DIR/te/vault" "$SA_DIR/te/state" dream-pass "$SA_DIR/te/snap" "$SA_DIR/te/log"
+    else
+      tripwire_check "$SA_DIR/te/vault" "$SA_DIR/te/state" dream-pass "$SA_DIR/te/log"
+    fi ) 2>/dev/null
+  sa_rc=$?
+  sa_tex=ok
+  if [ -e "$SA_DIR/te/state/runner-tripwire" ] || [ -e "$SA_DIR/te/vault/.claude/logs/runner-tripwire" ]; then
+    sa_tex="fixture: a tripwire was written after all, so the row shows nothing"
+  elif ! grep -q '^\[[^]]*\] TRIPWIRE-ERROR: ' "$SA_DIR/te/log" 2>/dev/null; then
+    sa_tex="no TRIPWIRE-ERROR line"
+  elif ! grep '^\[[^]]*\] TRIPWIRE-ERROR: ' "$SA_DIR/te/log" | grep -qF -- "$SA_NOGITERR"; then
+    sa_tex="the TRIPWIRE-ERROR line does not say to run no git command before the check"
+  fi
+  if [ "$sa_rc" -eq 70 ] && [ "$sa_tex" = ok ]; then
+    ok "snapshot-sealed: $([ "$sa_te" = folder ] && echo snap_untrusted || echo "tripwire_check with a dead pass's marker") with no copy of the tripwire writable -> 70, the TRIPWIRE-ERROR line saying to run no git command before the steering surfaces are checked"
+  else
+    bad "snapshot-sealed: $([ "$sa_te" = folder ] && echo snap_untrusted || echo "tripwire_check with a dead pass's marker") with no copy of the tripwire writable -- expected 70 and the TRIPWIRE-ERROR line with its no-git sentence; got $sa_rc, $sa_tex: $(cut -c1-300 "$SA_DIR/te/log" 2>/dev/null | tr '\n' '|')"
+  fi
+done
+rm -rf "$SA_DIR/te" "$SA_DIR/shim4"
 # note_tripwire leaves the vault's copy alone while .claude/logs is a link: with
 # a file named runner-tripwire where the link points, the note goes to the state
 # directory's copy only, and with none there, none is written through the link.
@@ -8052,6 +8104,10 @@ else
     ln -s "$SA_DIR/nt/elsewhere" "$SA_DIR/nt/vault/.claude/logs"
     printf 'TRIPWIRE kept\n' > "$SA_DIR/nt/state/runner-tripwire"
     [ "$sa_nt" = file ] && printf 'elsewhere\n' > "$SA_DIR/nt/elsewhere/runner-tripwire"
+    if [ ! -L "$SA_DIR/nt/vault/.claude/logs" ]; then
+      bad "snapshot-sealed: fixture: the note_tripwire row ($sa_nt) could not make .claude/logs a link, so it shows nothing"
+      continue
+    fi
     ( . "$RV/.claude/scripts/lib/runner-common.sh"
       note_tripwire "$SA_DIR/nt/vault" "$SA_DIR/nt/state" "$SA_DIR/nt/log" "a note from the suite" )
     sa_rc=$?
@@ -8069,16 +8125,133 @@ else
     fi
   done
   rm -rf "$SA_DIR/nt"
+  # mark_inflight writes the vault's copy of its marker under a name mktemp
+  # picks, so a link a pass left at the name it could work out from a pid
+  # (runner-inflight.tmp.<pid>; $$ in the row's subshell is this shell's) is
+  # not written through.
+  rm -rf "$SA_DIR/mi"
+  mkdir -p "$SA_DIR/mi/vault/.claude/logs" "$SA_DIR/mi/state"
+  printf 'canary\n' > "$SA_DIR/mi/canary"
+  ln -s "$SA_DIR/mi/canary" "$SA_DIR/mi/vault/.claude/logs/runner-inflight.tmp.$$"
+  if [ ! -L "$SA_DIR/mi/vault/.claude/logs/runner-inflight.tmp.$$" ]; then
+    bad "snapshot-sealed: fixture: the mark_inflight row could not put its link in place, so it shows nothing"
+  else
+    ( . "$RV/.claude/scripts/lib/runner-common.sh"
+      mark_inflight "$SA_DIR/mi/vault" "$SA_DIR/mi/state" dream-pass )
+    sa_rc=$?
+    sa_mix=ok
+    [ "$(cat "$SA_DIR/mi/canary" 2>/dev/null)" = canary ] || sa_mix="the canary was written through the link"
+    { [ -f "$SA_DIR/mi/vault/.claude/logs/runner-inflight" ] && [ ! -L "$SA_DIR/mi/vault/.claude/logs/runner-inflight" ] \
+        && grep -qx 'runner=dream-pass' "$SA_DIR/mi/vault/.claude/logs/runner-inflight"; } \
+      || sa_mix="${sa_mix#ok}; the vault's marker is not a file holding the runner"
+    if [ "$sa_rc" -eq 0 ] && [ "$sa_mix" = ok ]; then
+      ok "snapshot-sealed: mark_inflight with a link at runner-inflight.tmp.<pid> -> 0, the vault's marker a file, the canary as it was"
+    else
+      bad "snapshot-sealed: mark_inflight with a link at runner-inflight.tmp.<pid> -- expected 0, the marker a file and the canary as it was; got $sa_rc, $sa_mix"
+    fi
+  fi
+  rm -rf "$SA_DIR/mi"
+  # A run that waited for the run lock checks the vault's log again once it
+  # holds it, so a link the pass that held the lock put there in the meantime
+  # takes none of its lines. The lock is held by a stand-in owner that is not
+  # aged, the vault holds a tripwire, and RUN_LOCK_WAIT is a value the runner
+  # warns about as it starts to wait, which shows the run is past its first check.
+  # Then the runner's log becomes a link to the canary and the lock goes: 78, the
+  # canary as it was, the refusal and a WARNING in the state directory's log.
+  # Retention warns into its own copy of its lines, which TMPDIR places.
+  for sa_lw in dream promotion retention; do
+    rm -rf "$SA_DIR/lw" "$SA_DIR/rtmp"
+    mkdir -p "$SA_DIR/lw" "$SA_DIR/rtmp"
+    printf 'canary\n' > "$SA_DIR/canary"
+    if [ "$sa_lw" = retention ]; then
+      sa_lv="$SA_DIR/lw/vault"
+      cp -R "$MO_K4_RV" "$sa_lv" 2>/dev/null
+      sa_ll="$sa_lv/.claude/logs/vault-retention.log"
+      sa_lr=vault-retention
+    else
+      sa_lv="$SA_V"
+      v142_vault "$SA_V"
+      sa_ll="$SA_V/.claude/logs/$sa_lw-agent.log"
+      sa_lr="$sa_lw-pass"
+    fi
+    sa_ls="$SA_DIR/lw/state"
+    mkdir -p "$sa_lv/.claude/logs"
+    printf 'TRIPWIRE set by the suite\n' > "$sa_lv/.claude/logs/runner-tripwire"
+    rm -f "$sa_ll"
+    ( umask 077 && mkdir -p "$sa_ls/run.lock" )
+    printf 'runner=dream-pass\npid=1\nwinpid=\nstarted=%s\nlongest=999999\nnonce=dream-pass-1-%s-1\n' "$(date +%s)" "$(date +%s)" \
+      > "$sa_ls/run.lock/owner"
+    if [ ! -f "$sa_lv/.claude/scripts/$sa_lr.sh" ] || [ ! -f "$sa_ls/run.lock/owner" ]; then
+      bad "snapshot-sealed: fixture: the $sa_lw lock-wait leg's vault or lock could not be made"
+      continue
+    fi
+    if [ "$sa_lw" = retention ]; then
+      ( env VAULT_STATE_DIR="$sa_ls" RUN_LOCK_WAIT=x RUN_LOCK_POLL=1 WATCHDOG_POLL=1 WATCHDOG_GRACE=2 TMPDIR="$SA_DIR/rtmp" \
+          bash "$sa_lv/.claude/scripts/vault-retention.sh" > /dev/null 2>&1
+        printf '%s\n' "$?" > "$SA_DIR/lw/rc" ) &
+    else
+      ( CASE_STATE="$sa_ls"
+        sa_lrc="$(RUNNER_VAULT="$SA_V" runner "$sa_lr.sh" journal VAULT_AGENT=command VAULT_AGENT_CMD="$SA_AGENT" \
+          VAULT_ALLOW_UNENFORCED_TOOLS=1 SA_MODE=journal RUN_LOCK_WAIT=x RUN_LOCK_POLL=1)"
+        printf '%s\n' "$sa_lrc" > "$SA_DIR/lw/rc" ) &
+    fi
+    sa_lwp=$!
+    sa_seen=no
+    sa_i=0
+    while [ "$sa_i" -lt 30 ]; do
+      if [ "$sa_lw" = retention ]; then
+        cat "$SA_DIR"/rtmp/vaultretention.*/lib.log 2>/dev/null | grep -qF 'RUN_LOCK_WAIT "x"' && sa_seen=yes
+      else
+        grep -qF 'RUN_LOCK_WAIT "x"' "$sa_ll" 2>/dev/null && sa_seen=yes
+      fi
+      [ "$sa_seen" = yes ] && break
+      sleep 1
+      sa_i=$((sa_i + 1))
+    done
+    if [ "$sa_seen" = yes ]; then
+      rm -f "$sa_ll"
+      ln -s "$SA_DIR/canary" "$sa_ll"
+    fi
+    rm -rf "$sa_ls/run.lock"
+    wait "$sa_lwp"
+    sa_rc="$(cat "$SA_DIR/lw/rc" 2>/dev/null)"
+    sa_rl="$sa_ls/$sa_lr.uncontained.log"
+    sa_extra=ok
+    if [ "$sa_seen" != yes ]; then
+      sa_extra="fixture: the run never warned that it was waiting for the lock, so the leg shows nothing"
+    else
+      [ "$(cat "$SA_DIR/canary" 2>/dev/null)" = canary ] || sa_extra="the canary was written through the link at the log"
+      grep -qF 'TRIPWIRE: refusing to run' "$sa_rl" 2>/dev/null || sa_extra="${sa_extra#ok}; no refusal in the state directory's log"
+      grep -F -- "$SA_MOVED" "$sa_rl" 2>/dev/null | grep -q '^\[[^]]*\] WARNING: ' || sa_extra="${sa_extra#ok}; no WARNING there that the log was moved"
+    fi
+    if [ "${sa_rc:-x}" = 78 ] && [ "$sa_extra" = ok ]; then
+      ok "snapshot-sealed: $sa_lw, its log made a link to the canary while it waited for the run lock -> 78, the canary as it was, the refusal and a WARNING in the state directory's log"
+    else
+      bad "snapshot-sealed: $sa_lw, its log made a link to the canary while it waited for the run lock -- expected 78, the canary as it was and the lines in the state directory's log; got ${sa_rc:-none}, $sa_extra"
+    fi
+  done
+  rm -rf "$SA_DIR/lw" "$SA_DIR/rtmp"
+  tripwire_clear
   SA_RV="$SA_DIR/rvault"
   SA_SHIM3="$SA_DIR/shim3"
   mkdir -p "$SA_SHIM3"
   printf '#!/bin/sh\nexit 1\n' > "$SA_SHIM3/mktemp"
   chmod +x "$SA_SHIM3/mktemp"
-  for sa_rt in copy nocopy; do
+  # copy and nocopy find a tripwire, marker a dead pass's in-flight marker.
+  for sa_rt in copy nocopy marker; do
     rm -rf "$SA_RV" "$SA_DIR/rstate"
     cp -R "$MO_K4_RV" "$SA_RV" 2>/dev/null
     mkdir -p "$SA_RV/.claude/logs"
-    printf 'TRIPWIRE set by the suite\n' > "$SA_RV/.claude/logs/runner-tripwire"
+    if [ "$sa_rt" = marker ]; then
+      printf 'runner=dream-pass\npid=999999\nstarted=earlier\n' > "$SA_RV/.claude/logs/runner-inflight"
+      sa_rwhat="a dead pass's in-flight marker"
+      sa_rline='TRIPWIRE: a previous pass never reached containment'
+    else
+      printf 'TRIPWIRE set by the suite\n' > "$SA_RV/.claude/logs/runner-tripwire"
+      sa_rwhat='a tripwire'
+      sa_rline='TRIPWIRE: refusing to run'
+    fi
+    [ "$sa_rt" = nocopy ] && sa_rwhat="$sa_rwhat, no temporary folder to be had"
     printf 'canary\n' > "$SA_DIR/canary"
     rm -f "$SA_RV/.claude/logs/vault-retention.log"
     ln -s "$SA_DIR/canary" "$SA_RV/.claude/logs/vault-retention.log"
@@ -8094,16 +8267,26 @@ else
     sa_rl="$SA_DIR/rstate/vault-retention.uncontained.log"
     sa_extra=ok
     [ "$(cat "$SA_DIR/canary" 2>/dev/null)" = canary ] || sa_extra="the canary was written through the link at the log"
-    grep -q '^\[[^]]*\] TRIPWIRE: refusing to run' "$sa_rl" 2>/dev/null || sa_extra="${sa_extra#ok}; no refusal in the state directory's log"
+    grep -qF -- "$sa_rline" "$sa_rl" 2>/dev/null || sa_extra="${sa_extra#ok}; no $sa_rline line in the state directory's log"
     grep -F -- "$SA_MOVED" "$sa_rl" 2>/dev/null | grep -q '^\[[^]]*\] WARNING: ' || sa_extra="${sa_extra#ok}; no WARNING there that the log was moved"
-    # With its own copy of the run's lines, the run prints the WARNING as well.
-    if [ "$sa_rt" = copy ]; then
+    if [ "$sa_rt" = nocopy ]; then
+      # With no copy of its lines, the run says so, which shows the stand-in took,
+      # and names the log the lines went to: the state directory's.
+      sa_rsd="$(cd "$SA_DIR/rstate" 2>/dev/null && pwd -P)"
+      grep -qF 'vault-retention: no copy of what this run logged could be kept, so it is only in' "$SA_DIR/rout" 2>/dev/null \
+        || sa_extra="${sa_extra#ok}; fixture: the run did not say it had no copy of its lines"
+      grep -qF "so it is only in $sa_rsd/vault-retention.uncontained.log." "$SA_DIR/rout" 2>/dev/null \
+        || sa_extra="${sa_extra#ok}; the printed line does not name the state directory's log"
+    else
+      # With its own copy of the run's lines, the run prints the WARNING as well,
+      # once, though it checks twice (before the run lock and once it holds it).
       grep -F -- "$SA_MOVED" "$SA_DIR/rout" 2>/dev/null | grep -q 'WARNING: ' || sa_extra="${sa_extra#ok}; the printed lines lack the WARNING"
+      [ "$(grep -cF -- "$SA_MOVED" "$SA_DIR/rout" 2>/dev/null)" = 1 ] || sa_extra="${sa_extra#ok}; the printed lines hold the WARNING more than once"
     fi
     if [ "$sa_rc" -eq 78 ] && [ "$sa_extra" = ok ]; then
-      ok "snapshot-sealed: retention, a tripwire and its log a link to the canary$([ "$sa_rt" = nocopy ] && echo ', no temporary folder to be had') -> 78, the canary as it was, the refusal and a WARNING in the state directory's log$([ "$sa_rt" = copy ] && echo ' and in the printed lines')"
+      ok "snapshot-sealed: retention, $sa_rwhat and its log a link to the canary -> 78, the canary as it was, the lines and a WARNING in the state directory's log, which the printed lines name or repeat"
     else
-      bad "snapshot-sealed: retention, a tripwire and its log a link to the canary$([ "$sa_rt" = nocopy ] && echo ', no temporary folder to be had') -- expected 78, the canary as it was and the refusal in the state directory's log; got $sa_rc, $sa_extra"
+      bad "snapshot-sealed: retention, $sa_rwhat and its log a link to the canary -- expected 78, the canary as it was and the lines in the state directory's log; got $sa_rc, $sa_extra"
     fi
   done
   rm -rf "$SA_RV" "$SA_DIR/rstate" "$SA_DIR/rout"
