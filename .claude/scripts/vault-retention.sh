@@ -38,12 +38,18 @@
 #   vault-retention.sh --adopt-legacy <report> move the legacy journals the report lists
 #
 # Output:
-#   Every line a run logs goes to .claude/logs/vault-retention.log and to a copy
-#   kept for that run alone, and the copy is printed on standard output as the
-#   run ends, as "vault-retention: <text>" without the timestamp. A run that
-#   ends with any code but 0 adds one last line saying which, apart from the few
-#   ends docs/reference.md 4.3.1 lists, which has the whole contract. Cron mails
-#   what it prints, where it can send mail. See print_run.
+#   Every line a run logs goes to .claude/logs/vault-retention.log, or, once
+#   the run has moved its log because the log, .claude or .claude/logs was a
+#   link or not what it should be (see log_check), to
+#   vault-retention.uncontained.log in the state directory, and to a copy kept
+#   for that run alone. The copy is printed on standard output as the run
+#   ends, as "vault-retention: <text>" without the timestamp, with the WARNING
+#   once when the log was moved. When no copy could be kept, or it could not be
+#   read back, the run prints one line saying so instead, naming the log the
+#   lines are in. A run that ends with any code but 0 adds one last line saying
+#   which, apart from the few ends docs/reference.md 4.3.1 lists, which has the
+#   whole contract. Cron mails what it prints, where it can send mail. See
+#   print_run.
 #
 # Environment:
 #   RETENTION_DAYS       days before a journal or stub may move (default 60)
