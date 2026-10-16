@@ -891,7 +891,8 @@ Around that call, each runner does several things an exit code cannot:
   stopped while waiting; otherwise they too go where the first check left the log (reasoned). A
   signal checks the log only after it has stopped the agent's process tree, so a link that a
   process the stop reaches puts there once it is reached is found too; a process that has left
-  the tree and its process group, as one started with `setsid` can, is neither stopped nor recorded (reasoned). On 1.4.1 a signal's lines were
+  the tree and its process group, as one started with `setsid` can, is neither stopped nor
+  recorded (reasoned). On 1.4.1 a signal's lines were
   written through a link at the log (measured; through a link at `.claude` or `.claude/logs`,
   reasoned), one the pass made once the stop reached it included (measured), and a later run's
   refusal was too (measured), a run that waited for the run lock included, through a link the log
@@ -1134,13 +1135,13 @@ Around that call, each runner does several things an exit code cannot:
   checked." The vault's copy is written into a file `mktemp` makes beside it (or, where `mktemp`
   fails or makes no file, so the copy does not depend on it, one made under a name from `$RANDOM`,
   refused when anything is already there, because a pass can read the clock and pid that seed
-  `$RANDOM`, and created with noclobber, which refuses a file or a dangling link put there after
-  that check but still opens a device or a FIFO, a race only a process still running could win,
-  all reasoned) and renamed into place, once a link at
-  the copy's own name has been removed, because `mv` would otherwise move the copy into a folder
-  the link names, outside the vault; when that link cannot be removed nothing is written
-  (reasoned). Nothing
-  is written there while `.claude` or `.claude/logs` is a link, and then only the state
+  `$RANDOM`, and created with noclobber, which refuses a file, a link to a file or a dangling link
+  put there after that check but still opens a device or a FIFO; the seed, and that race, which
+  only a process still running could win, are reasoned) and renamed into place, once a link at the
+  copy's own name has been removed, because `mv` would otherwise move the copy into a folder the
+  link names, outside the vault; when that link cannot be removed, as an immutable link on macOS
+  can make it (the cause reasoned), nothing is written. Nothing is written there while `.claude`
+  or `.claude/logs` is a link, and then only the state
   directory's copy is written, which the runners and `vault-check.sh` read too, so they still
   refuse. The vault's copy of the
   in-flight marker is written the same way. A note added to the tripwire leaves the vault's copy
@@ -1162,7 +1163,8 @@ Around that call, each runner does several things an exit code cannot:
   uncontained shape: "Nothing was moved or restored, because containment did not run.", then the
   advice the 78 row of the exit table gives, to check the steering surfaces without git before any
   git command, and to list the links in `.claude/logs` or at `.claude`, which are in neither the
-  backup nor git, and remove any you did not make. On 1.4.1 both said that changed files were moved to the
+  backup nor git, and remove any you did not make. On 1.4.1 both said that changed files were
+  moved to the
   quarantine and restored, and sent the owner to `git reflog` (measured), which honours the
   `core.pager` of a `.git/config` the pass may have changed, as `git status` runs its
   `core.fsmonitor` (reasoned). A marker found only in the
@@ -1777,7 +1779,8 @@ exits 2, which is why the hash is recorded rather than the report simply trusted
   copy of them, and otherwise name that log. It checks once its state directory is known and again
   once it holds the run lock, before it passes on the lines it logged while waiting, so those go to
   the state directory too when it could keep its own copy of its lines and was not stopped while
-  waiting (with no copy they are logged straight to the log path as they happen). On 1.4.1 it wrote its refusal through a link at the log (measured), as
+  waiting (with no copy they are logged straight to the log path as they happen). On 1.4.1 it
+  wrote its refusal through a link at the log (measured), as
   it did the line it writes from a dead pass's marker, and a refusal after waiting for the run lock
   while the log became a link (both measured).
 - **Script integrity.** The same shape, a `main` called on the last line, so a truncated download

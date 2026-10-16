@@ -8359,8 +8359,11 @@ else
     sa_rc="$(cat "$SA_DIR/lw/rc" 2>/dev/null)"
     sa_rl="$sa_ls/$sa_lr.uncontained.log"
     sa_extra=ok
-    if [ "$sa_seen" != yes ]; then
-      sa_extra="fixture: the run never warned that it was waiting for the lock, so the leg shows nothing"
+    if [ "$sa_seen" != yes ] && [ "${sa_rc:-x}" = 78 ]; then
+      sa_extra="the run refused (78) without warning that it was waiting for the lock: the fixture's lock was not seen as held, or the run did not wait"
+    elif [ "$sa_seen" != yes ]; then
+      # A run that ends otherwise before it warns has failed on its own.
+      sa_extra="the run ended (${sa_rc:-no status}) before it warned that it was waiting for the lock"
     else
       [ "$(cat "$SA_DIR/canary" 2>/dev/null)" = canary ] || sa_extra="the canary was written through the link at the log"
       grep -qF 'TRIPWIRE: refusing to run' "$sa_rl" 2>/dev/null || sa_extra="${sa_extra#ok}; no refusal in the state directory's log"

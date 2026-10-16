@@ -187,12 +187,13 @@ reports.
   copies of the tripwire and of the marker now go first into a file `mktemp` makes, or, where
   `mktemp` fails or makes no file, so the tripwire still does not depend on it, into one made under
   a name from `$RANDOM`, refused when anything is already there, because a pass can read the clock
-  and the pid that seed `$RANDOM`, and created with noclobber, which refuses a file or a dangling
-  link put there after that check but still opens a device or a FIFO, a race only a process still
-  running could win (all reasoned); neither copy nor a note is written while `.claude` or
-  `.claude/logs` is a link; a link at the copy's own name is removed before the copy is renamed
-  into place, because `mv` would otherwise move the copy into a folder the link names, and nothing
-  is written when that link cannot be removed (reasoned).
+  and the pid that seed `$RANDOM`, and created with noclobber, which refuses a file, a link to a
+  file or a dangling link put there after that check but still opens a device or a FIFO (the seed,
+  and the device and FIFO race, which only a process still running could win, reasoned); neither
+  copy nor a note is written while `.claude` or `.claude/logs` is a link; a link at the copy's own
+  name is removed before the copy is renamed into place, because `mv` would otherwise move the
+  copy into a folder the link names, and nothing is written when that link cannot be removed, as
+  an immutable link on macOS can make it (the cause reasoned).
   While `.claude` or `.claude/logs` is a link only the state directory's copies are written; the
   runners read both copies of each, and `vault-check.sh` the tripwire's, so they still refuse.
 - **A pass that removed the runner's folder and then signalled its runner was not stopped.** The
@@ -309,7 +310,7 @@ reports.
   at the copy's name), each first checking that its `mktemp` stand-in took; with a link to a
   folder at the copy's name that `rm` cannot remove (an `rm` stand-in that removes nothing:
   refused, nothing moved into the folder); with no `mktemp` and a link put at the `$RANDOM` name
-  between the refusal and the write, by a DEBUG trap the write's subshell inherits (refused, the
+  between the check and the write, by a DEBUG trap the write's subshell inherits (refused, the
   file the link named as it was); and, with no copy of
   the tripwire writable, `snap_untrusted`, and `tripwire_check` with a dead pass's marker (each
   70, the `TRIPWIRE-ERROR:` line saying to run no git command in the vault before the steering

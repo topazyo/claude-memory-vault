@@ -1227,9 +1227,9 @@ vault_logs_linked() {
 # under a name it picked, or, where mktemp fails or makes no file (the tripwire
 # must not depend on mktemp), one made here under a name from $RANDOM: refused
 # when anything is already there, which a pass could have put at a name it
-# guessed, and created with noclobber, which refuses a file or a dangling link put
-# there after that check but still opens a device or a FIFO (a process still
-# running could race it; nothing in shell closes that). A link at <path>
+# guessed, and created with noclobber, which refuses a file, a link to a file or a
+# dangling link put there after that check but still opens a device or a FIFO (a
+# process still running could race it; nothing in shell closes that). A link at <path>
 # itself is removed first, because mv would move the copy into a folder it
 # names, outside the vault; when it cannot be removed nothing is written.
 # Returns 1 when no copy is in place.
