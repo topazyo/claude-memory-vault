@@ -29,6 +29,45 @@ RUNNER_UNAME="$(uname -s 2>/dev/null)"
 # run_agent, even under a runner that never calls memory_override.
 unset AGENT_SETTINGS_FILE
 
+# Git's variables for one repository are cleared here, before any function
+# runs. GIT_DIR beats discovery and git -C changes only the working directory,
+# so with GIT_DIR exported a dream pass committed its journal into that other
+# repository (measured in command mode on 1.4.0 and 1.4.1), and git_preflight
+# could not see it: git then takes the vault as that repository's work tree. The
+# list is git's own, the names git rev-parse --local-env-vars prints (git
+# 2.55.0), which git clears itself when it moves into another repository. It is
+# written out rather than asked of git, so loading the library runs no git.
+# GIT_REPO_ENV_SET keeps the names that were set, for git_env_warning. This
+# reaches the three runners; vault-check.sh and vault-update.sh source the
+# library inside a subshell, so their own git calls are not covered.
+#
+# Kept: GIT_CEILING_DIRECTORIES and GIT_DISCOVERY_ACROSS_FILESYSTEM change only
+# where discovery stops, and a pass commits only when git's top level is the
+# vault itself (git_preflight), so they can make the vault read as no
+# repository, never move the commit. GIT_CONFIG_GLOBAL, GIT_CONFIG_SYSTEM,
+# GIT_CONFIG_NOSYSTEM, GIT_EXEC_PATH, GIT_SSH* and GIT_TRACE* are the account's
+# own configuration and tools, trusted as its ~/.gitconfig and PATH are. Such a
+# configuration can run commands, so it must lie outside the vault. GIT_NAMESPACE
+# names the refs a server advertises, and GIT_ATTR_SOURCE a tree of this
+# repository.
+#
+# The MSYS switches go too. Git Bash converts a POSIX path in an argument or an
+# environment variable before git.exe sees it. With MSYS2_ARG_CONV_EXCL covering
+# core., git was handed core.hooksPath=/c/... and looked for its hooks in a
+# folder under the drive root (measured in Git Bash); MSYS2_ENV_CONV_EXCL does
+# the same to the GIT_INDEX_FILE the retention runner hands git, and
+# MSYS_NO_PATHCONV=1 turns every conversion off. Each place this library wants
+# no conversion says so on the command itself.
+GIT_REPO_ENV_VARS="GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_CONFIG GIT_CONFIG_PARAMETERS
+  GIT_CONFIG_COUNT GIT_OBJECT_DIRECTORY GIT_DIR GIT_WORK_TREE GIT_IMPLICIT_WORK_TREE
+  GIT_GRAFT_FILE GIT_INDEX_FILE GIT_NO_REPLACE_OBJECTS GIT_REPLACE_REF_BASE GIT_PREFIX
+  GIT_SHALLOW_FILE GIT_COMMON_DIR"
+GIT_REPO_ENV_SET=
+for runner_git_var in $GIT_REPO_ENV_VARS; do
+  [ -n "${!runner_git_var+x}" ] && GIT_REPO_ENV_SET="${GIT_REPO_ENV_SET:+$GIT_REPO_ENV_SET }$runner_git_var"
+done
+unset runner_git_var $GIT_REPO_ENV_VARS MSYS_NO_PATHCONV MSYS2_ARG_CONV_EXCL MSYS2_ENV_CONV_EXCL
+
 # is_windows_bash
 # True under Git Bash, MSYS or Cygwin, where a native Windows process is stopped
 # with taskkill rather than a signal.
@@ -1829,6 +1868,15 @@ run_lock_release() {
     rmdir "$RUN_LOCK_DIR" 2>/dev/null
   fi
   RUN_LOCK_MADE=0
+}
+
+# git_env_warning <log>
+# Logs which of git's variables for one repository the library cleared at load
+# (GIT_REPO_ENV_SET), so a vault git found only through GIT_DIR, which now reads
+# as no repository, says why. Each runner calls it once its log is known.
+git_env_warning() {
+  [ -n "${GIT_REPO_ENV_SET:-}" ] || return 0
+  printf '[%s] WARNING: the environment set %s, git'"'"'s variables for one repository, and the runner cleared them, so git finds the vault'"'"'s repository from the vault itself. A vault git reached only through GIT_DIR now reads as no repository: give it a .git file that names its git directory (gitdir: <path>).\n' "$(ts)" "$GIT_REPO_ENV_SET" >> "$1"
 }
 
 # safe_git <empty-hooks-dir> <git args...>

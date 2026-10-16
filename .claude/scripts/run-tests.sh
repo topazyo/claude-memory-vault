@@ -6634,6 +6634,7 @@ fi
 # briefing that counted them would hand the next session the passes' own output
 # as if it were the work. Both copies of the skill, and the form spelled out in
 # docs/agent-onboarding.md, must name both kinds beside the compaction stubs.
+v142_case_state="${CASE_STATE:-}"
 ran resume-skips-pass-output
 rs_bad=
 for rs_f in .claude/skills/resume/SKILL.md .agents/skills/resume/SKILL.md docs/agent-onboarding.md; do
@@ -6647,6 +6648,141 @@ if [ -z "$rs_bad" ]; then
 else
   bad "resume: these do not name dream-*.md, promotion-*.md and compaction-*.md together, or could not be read:$rs_bad"
 fi
+# v142_vault <dir> - a vault of its own, built as RV is (both runners, their
+# agents, a standard and the steering surfaces), committed in a repository of its
+# own with the suite's identity. True when the repository was made.
+v142_vault() {
+  rm -rf "$1"
+  mkdir -p "$1/.claude/scripts/lib" "$1/.claude/agents" "$1/20-projects/_logs" "$1/31-standards" \
+    "$1/40-llm-wiki/wiki" "$1/.obsidian" "$1/.claude/githooks"
+  cp "$RV/.claude/scripts/dream-pass.sh" "$RV/.claude/scripts/promotion-pass.sh" "$RV/.claude/scripts/vault-check.sh" \
+    "$1/.claude/scripts/" 2>/dev/null \
+    && cp "$RV/.claude/scripts/lib/runner-common.sh" "$1/.claude/scripts/lib/" 2>/dev/null \
+    && cp "$RV/.claude/agents/dream-agent.md" "$RV/.claude/agents/promotion-agent.md" "$1/.claude/agents/" 2>/dev/null \
+    || return 1
+  printf -- '---\ntier: long\ntype: standard\n---\n\nexisting\n' > "$1/31-standards/existing.md"
+  printf '# vault\n' > "$1/CLAUDE.md"
+  printf '["dataview"]\n' > "$1/.obsidian/community-plugins.json"
+  printf '#!/bin/sh\nexit 0\n' > "$1/.claude/githooks/pre-commit"
+  command -v git >/dev/null 2>&1 || return 1
+  ( cd "$1" && git init -q . && git add -A && git config user.name suite && git config user.email suite@example.invalid \
+    && git config commit.gpgsign false && git commit -q -m init ) >/dev/null 2>&1
+}
+# git's variables for one repository, inherited by a runner, point its git at
+# another repository: with GIT_DIR exported a dream pass committed its journal
+# there. The library clears git's own list of them at load, with the MSYS
+# switches that leave a path unconverted for git.exe, and keeps the variables
+# that only change where discovery stops or name the account's own
+# configuration. In a child shell each is set, the library is sourced, and each
+# must be gone or kept as designed, with GIT_REPO_ENV_SET naming the cleared
+# ones. Then git's own list on this host must lie inside the library's, so a git
+# that adds a name fails here rather than reaching a pass.
+GE_CLEARED="GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_CONFIG GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT GIT_OBJECT_DIRECTORY GIT_DIR GIT_WORK_TREE GIT_IMPLICIT_WORK_TREE GIT_GRAFT_FILE GIT_INDEX_FILE GIT_NO_REPLACE_OBJECTS GIT_REPLACE_REF_BASE GIT_PREFIX GIT_SHALLOW_FILE GIT_COMMON_DIR"
+GE_MSYS="MSYS_NO_PATHCONV MSYS2_ARG_CONV_EXCL MSYS2_ENV_CONV_EXCL"
+GE_KEPT="GIT_CONFIG_GLOBAL GIT_NAMESPACE GIT_CEILING_DIRECTORIES"
+ran git-env-cleared
+ge_res="$(
+  for ge_v in $GE_CLEARED $GE_MSYS $GE_KEPT; do export "$ge_v=x"; done
+  . "$RV/.claude/scripts/lib/runner-common.sh"
+  for ge_v in $GE_CLEARED $GE_MSYS; do eval "[ -n \"\${$ge_v+x}\" ]" && printf 'left %s\n' "$ge_v"; done
+  for ge_v in $GE_KEPT; do eval "[ -n \"\${$ge_v+x}\" ]" || printf 'lost %s\n' "$ge_v"; done
+  for ge_v in $GE_CLEARED; do case " ${GIT_REPO_ENV_SET:-} " in *" $ge_v "*) ;; *) printf 'unnamed %s\n' "$ge_v" ;; esac; done
+  printf 'list %s\n' "$(printf '%s ' ${GIT_REPO_ENV_VARS:-})"
+)"
+ge_list="$(printf '%s\n' "$ge_res" | sed -n 's/^list //p')"
+ge_git="$(git rev-parse --local-env-vars 2>/dev/null)"
+ge_grc=$?
+ge_miss=
+for ge_v in $ge_git; do
+  case " $ge_list " in *" $ge_v "*) ;; *) ge_miss="$ge_miss $ge_v" ;; esac
+done
+ge_bad="$(printf '%s\n' "$ge_res" | grep -E '^(left|lost|unnamed) ' | tr '\n' ' ')"
+if [ -z "$ge_bad" ] && [ "$ge_grc" -eq 0 ] && printf '%s\n' "$ge_git" | grep -qx GIT_DIR \
+   && printf '%s\n' "$ge_git" | grep -qx GIT_INDEX_FILE && [ -z "$ge_miss" ]; then
+  ok "loading the library clears git's 15 variables for one repository and the 3 MSYS switches, keeps GIT_CONFIG_GLOBAL, GIT_NAMESPACE and GIT_CEILING_DIRECTORIES, names what it cleared, and covers every name git rev-parse --local-env-vars prints here"
+else
+  bad "the library's load did not clear git's variables for one repository as designed -- ${ge_bad:-none wrong}; git's own list rc $ge_grc, names missing from the library's list:${ge_miss:- none}"
+fi
+# With GIT_DIR naming another repository, a pass in command mode must still
+# commit into the vault, leave the other repository's HEAD, refs and index as
+# they were, and say on a WARNING line which variables it cleared. The dream
+# pass commits its journal; the promotion pass commits a new standard.
+GD_V="$TMP/v142-gitdir-vault"
+GD_O="$TMP/v142-gitdir-other"
+for gd_leg in dream promotion; do
+  if ! v142_vault "$GD_V" || ! v142_vault "$GD_O"; then
+    bad "git-dir-pass: the $gd_leg leg's vault or the other repository could not be made"
+    continue
+  fi
+  ran git-dir-pass
+  gd_o_before="$(git -C "$GD_O" rev-parse HEAD 2>/dev/null) $(git -C "$GD_O" for-each-ref 2>/dev/null | cksum) $(cksum < "$GD_O/.git/index")"
+  gd_v_head="$(git -C "$GD_V" rev-parse HEAD 2>/dev/null)"
+  CASE_STATE="$TMP/state-v142-gd-$gd_leg"
+  rm -rf "$CASE_STATE"
+  if [ "$gd_leg" = dream ]; then
+    gd_rc="$(RUNNER_VAULT="$GD_V" runner dream-pass.sh journal VAULT_AGENT=command VAULT_AGENT_CMD="$FAKE" \
+      VAULT_ALLOW_UNENFORCED_TOOLS=1 GIT_DIR="$GD_O/.git")"
+    gd_log="$GD_V/.claude/logs/dream-agent.log" gd_want='^20-projects/_logs/dream-'
+  else
+    gd_rc="$(RUNNER_VAULT="$GD_V" runner promotion-pass.sh promote-unique VAULT_AGENT=command VAULT_AGENT_CMD="$FAKE" \
+      VAULT_ALLOW_UNENFORCED_TOOLS=1 GIT_DIR="$GD_O/.git")"
+    gd_log="$GD_V/.claude/logs/promotion-agent.log" gd_want='^31-standards/promoted-unique\.md$'
+  fi
+  gd_o_after="$(git -C "$GD_O" rev-parse HEAD 2>/dev/null) $(git -C "$GD_O" for-each-ref 2>/dev/null | cksum) $(cksum < "$GD_O/.git/index")"
+  gd_new=no
+  [ "$(git -C "$GD_V" rev-parse HEAD 2>/dev/null)" != "$gd_v_head" ] \
+    && git -C "$GD_V" show --name-only --format= HEAD 2>/dev/null | grep -Eq -- "$gd_want" && gd_new=yes
+  gd_warn=absent
+  grep -F -- 'WARNING: the environment set GIT_DIR, ' "$gd_log" 2>/dev/null | grep -q '^\[[^]]*\] WARNING: ' && gd_warn=present
+  if [ "$gd_rc" -eq 0 ] && [ "$gd_new" = yes ] && [ "$gd_o_after" = "$gd_o_before" ] && [ "$gd_warn" = present ]; then
+    ok "git-dir-pass: the $gd_leg pass in command mode, GIT_DIR naming another repository -> committed in the vault (0), the other repository's HEAD, refs and index unchanged, the WARNING naming GIT_DIR"
+  else
+    bad "git-dir-pass: the $gd_leg pass in command mode, GIT_DIR naming another repository -- expected 0, a commit in the vault, the other repository unchanged and the WARNING; got $gd_rc, vault commit: $gd_new, other repository unchanged: $([ "$gd_o_after" = "$gd_o_before" ] && echo yes || echo no), WARNING: $gd_warn"
+  fi
+  tripwire_clear
+done
+rm -rf "$GD_V" "$GD_O" "$TMP/state-v142-gd-dream" "$TMP/state-v142-gd-promotion"
+# On Windows, MSYS2_ARG_CONV_EXCL covering core. left core.hooksPath in Git
+# Bash's form for git.exe, which read it as a folder under the drive root. A git
+# stand-in asks the real git, for every call that carries core.hooksPath, which
+# hooks folder it was handed, through the same conversion the pass's own calls
+# get: at least one such call, and each answer a drive path.
+if is_windows_host; then
+  MC_SHIM="$TMP/v142-msys-shim"
+  MC_V="$TMP/v142-msys-vault"
+  rm -rf "$MC_SHIM" "$TMP/v142-msys.log"
+  mkdir -p "$MC_SHIM"
+  cat > "$MC_SHIM/git" <<'MC_EOF'
+#!/usr/bin/env bash
+for a; do
+  case "$a" in core.hooksPath=*) "$MC_GIT" -c "$a" config --get core.hooksPath >> "$MC_LOG" 2>&1 ;; esac
+done
+exec "$MC_GIT" "$@"
+MC_EOF
+  chmod +x "$MC_SHIM/git"
+  if ! v142_vault "$MC_V"; then
+    bad "msys-conv-pass: its vault could not be made"
+  else
+    ran msys-conv-pass
+    CASE_STATE="$TMP/state-v142-msys"
+    rm -rf "$CASE_STATE"
+    mc_rc="$(RUNNER_VAULT="$MC_V" runner dream-pass.sh journal VAULT_AGENT=command VAULT_AGENT_CMD="$FAKE" \
+      VAULT_ALLOW_UNENFORCED_TOOLS=1 PATH="$MC_SHIM:$PATH" MC_GIT="$(command -v git)" MC_LOG="$TMP/v142-msys.log" \
+      MSYS2_ARG_CONV_EXCL=core.)"
+    mc_n="$(grep -c '' "$TMP/v142-msys.log" 2>/dev/null | tr -d ' ')"
+    mc_off="$(grep -cv '^[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]:/' "$TMP/v142-msys.log" 2>/dev/null | tr -d ' ')"
+    if [ "$mc_rc" -eq 0 ] && [ "${mc_n:-0}" -ge 1 ] && [ "${mc_off:-1}" -eq 0 ]; then
+      ok "msys-conv-pass: a dream pass with MSYS2_ARG_CONV_EXCL=core. inherited -> ran (0), and each of its $mc_n git calls carrying core.hooksPath handed git.exe a drive path"
+    else
+      bad "msys-conv-pass: a dream pass with MSYS2_ARG_CONV_EXCL=core. inherited -- expected 0 and every core.hooksPath git.exe received a drive path; got $mc_rc, $mc_n call(s), $mc_off not a drive path: $(head -n 3 "$TMP/v142-msys.log" 2>/dev/null | tr '\n' '|')"
+    fi
+    tripwire_clear
+  fi
+  rm -rf "$MC_SHIM" "$MC_V" "$TMP/v142-msys.log" "$TMP/state-v142-msys"
+else
+  skip msys-conv-pass 'MSYS converts paths for Windows programs only, so the switch that stops it matters only in Git Bash'
+fi
+CASE_STATE="$v142_case_state"
 mo_k4_clean
 # A folder above the runner's folder for the pass whose name ends in a line
 # break is cut by $(...), so resolving it gives another path, which the checks

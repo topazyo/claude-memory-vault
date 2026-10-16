@@ -243,6 +243,7 @@ main() {
   mkdir -p "$LOG_DIR" 2>/dev/null
   LOG="$LOG_DIR/dream-agent.log"
   RUN_OUT="$LOG_DIR/dream-agent.run.log"
+  git_env_warning "$LOG"
   # Settings that reach arithmetic are checked first. A value that is not a whole
   # number would abort the runner with nothing in the log, and bash evaluates a
   # variable in arithmetic as an expression.

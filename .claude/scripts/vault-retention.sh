@@ -3216,6 +3216,8 @@ main() {
   trap 'on_signal 130' INT
   trap 'on_signal 143' TERM
   trap 'on_signal 129' HUP
+  git_env_warning "$LIB_LOG"
+  lib_logged
   # Anything that reaches arithmetic is checked first, because the shell reads a
   # variable in arithmetic as an expression and a planted one would run.
   RETENTION_DAYS="$(uint_setting RETENTION_DAYS 60 1 "$LIB_LOG" days)"
