@@ -97,21 +97,54 @@ reports.
   place of 124 or 125, and the `TIMEOUT:` or `STALLED:` line is logged as well. Nothing is restored
   on that path, so `.git/config`, `.git/hooks` and `.obsidian/` may still hold what the pass
   planted: a `core.fsmonitor` command runs at the first `git status`, hooks run at git calls, and
-  Obsidian loads plugins (reasoned). The `UNVERIFIED:` line and the tripwire now say to run no git
-  command in the vault, and not to open it in Obsidian or an agent session, until the steering
-  surfaces have been compared with the pre-pass backup and the rest reviewed. The record holds each
-  file's digest (`sha256sum`, else `shasum`, else `cksum` with a `WARNING:`) and whether it has one
-  link or more, refuses any name outside letters, digits, dot, underscore and hyphen, and passes
-  the watchdog's `run` and `gaps` only as regular files with one link. Folders in it are recorded
+  Obsidian loads plugins (reasoned). The `UNVERIFIED:` line and the tripwire now say not to open
+  the vault in Obsidian or an agent session until it is reviewed, and to run no git command in it,
+  git that starts on its own in a shell prompt or an editor included, before the steering surfaces
+  have been compared with the pre-pass backup without git (unpacked into an empty folder with
+  `tar -xf`, then `diff -r`), or checked by hand when there is no backup; where `.git` is a file,
+  the git folder it names is outside the vault and the backup, and is checked by hand too. Then the
+  rest is reviewed, with `git status`. A backup an earlier pass kept is removed before the next
+  pass copies its own, and a copy that fails, or leaves something other than a regular file, now
+  refuses the pass with exit 1 before the in-flight marker and the agent; on 1.4.1 the copy was
+  unchecked and the agent ran after a failed one (measured), so an older backup could be named as
+  the pass's (reasoned). The record holds each file's digest (`sha256sum`, else `shasum`, else
+  `cksum` with a `WARNING:`) and whether it has one link or more, refuses any name outside letters,
+  digits, dot, underscore and hyphen, and passes the watchdog's `run` and `gaps` only as regular
+  files with one link. Folders in it are recorded
   as empty or not, never entered, and one that cannot be listed fails the record: on Linux a hooks
   folder made searchable but not readable (`chmod 100`) listed as empty while a hook in it still
   ran through its search bit (measured on Linux; on Windows `chmod` does not stop a listing,
   measured in Git Bash), so such a folder now refuses the pass with exit 1 before the agent starts
-  and ends it with 78 after. The library also clears `GLOBIGNORE` as it loads, because set before
-  then it would hide names from both records (bash 5.3 does not take it from the environment,
-  measured in Git Bash and on Linux; bash 3.2 is unmeasured). The record does not see a change
-  undone before the agent returns, or one made after the check by a process still running; with
-  `cksum`, anyone able to write the folder can forge a match.
+  (reasoned) and ends it with 78 after. The library also clears `GLOBIGNORE` as it loads, because
+  set before then it would hide names from both records (bash 5.3 does not take it from the
+  environment, measured in Git Bash and on Linux; bash 3.2 is unmeasured). The record does not see
+  a change undone before the agent returns, or one made after the check by a process still
+  running; with `cksum`, anyone able to write the folder can forge a match.
+- **The tripwire after a pass that never reached containment said the vault had been restored.**
+  The tripwire a signal writes before containment ran (`INTERRUPTED before containment. Tripwire
+  set.`, exit 130 or 143), and the one the next run writes from an in-flight marker a dead pass
+  left (exit 78), said that changed files were moved to the quarantine and restored from the
+  pre-pass backup, and sent the owner to `git reflog` (measured on 1.4.1). Containment never ran
+  on either path, so nothing was moved or restored, and `git reflog` honours the `core.pager`, as
+  `git status` runs the `core.fsmonitor`, of a `.git/config` the pass may have changed. Both now
+  open "Nothing was moved or restored, because containment did not run." and give the advice the
+  `UNVERIFIED:` tripwire gives: check the steering surfaces against the pre-pass backup without
+  git, before any git command.
+- **After a signal before containment, the runner wrote its log through a link the pass made.**
+  Containment had not run, so a link the pass put in place of `.claude/logs/<agent>.log`,
+  `.claude` or `.claude/logs` was still there, and the runner wrote the rest of its lines through
+  it (measured on 1.4.1), so a command-mode pass could make the runner append to any file the
+  account can write. The 78 path above leaves such a link in place too. On both, when the log or a
+  folder above it is a link, or the log is there and not a file, the runner now writes the rest of
+  that pass's lines to `dream-pass.uncontained.log` or `promotion-pass.uncontained.log` in the
+  state directory, with a `WARNING:` there, and the tripwire says so.
+- **A signal copied what a link at `run` named into the state directory.** Before the pass's
+  output reached the run log, the signal handler kept it by copying the runner's `run` file, and
+  followed a link put there to whatever it named (measured on 1.4.1), so a command-mode pass could
+  have the runner copy any file the account can read into the state directory. The signal handler
+  and the 78 path now keep no output when `run`, or the runner's folder itself, is a link, and the
+  78 path logs `WARNING: the run output, …, is missing, is not a regular file or is in a folder that
+  is a link, so it was not kept.`
 - **Hooks ran inside every claude-mode pass.** Hooks in the account's settings, in enabled plugins
   and in the vault's own settings ran inside the unattended pass, as the account, with a shell the
   agent's allowlist never sees. With 1.4.1's settings file, Claude Code 2.1.301 ran a probe folder's
@@ -137,7 +170,8 @@ reports.
   not part of one, U+2028, U+2029 and the bidirectional controls are printed as they are. The state
   directory's path, which the owner sets, now goes through `shown_name` in every runner's log line
   and in the library's own; on 1.4.1 a line break in it split the state-directory line (measured).
-  The tripwire file's text is unchanged.
+  The tripwire file still writes the paths it names as they are, apart from its note that the log
+  was moved.
 - The control suite holds each of these. New control ids, required on all four test jobs:
   `resume-skips-pass-output`, `git-env-cleared`, `git-dir-pass`, `vault-root-spelling`,
   `runner-folder`, `retention-tmp`, `mem-override-drive-walk`, `mem-override-folder-above`,
@@ -147,15 +181,29 @@ reports.
   a pass's `core.hooksPath` values reached `git.exe` in Git Bash's form), except
   `mem-override-drive-walk` and `mem-override-folder-above`, which hold guards that were right in
   1.4.1 (the drive-path walk's own guard, and resolving a folder above at `/` or with `CDPATH` set)
-  and were seen failing against mutants of them; the unit rows of
-  `vault-root-spelling` and `runner-folder`, whose functions 1.4.1 lacks, were seen failing against
-  mutants of this release. `snapshot-sealed` also covers a hooks folder that cannot be listed, the
-  folder replaced by a link and `run` replaced by a link (all three off Windows), `gaps` given a
-  second name outside the folder, a stall with the folder removed (dream and promotion), the
-  `cksum` path (a pass and a 78), a name outside the set before the record (exit 1, no agent) and
-  `GLOBIGNORE` at load; `state-shown` covers the tripwire refusal with a state directory named with
-  a line break and an escape (off Windows); and `git-dir-pass`'s retention leg needs the run's move
-  of an aged journal committed in the vault with its `Vault-Pass: retention` trailer. Eleven
+  and were seen failing against mutants of them; and the unit rows of `vault-root-spelling` and
+  `runner-folder`, and `snapshot-sealed`'s `GLOBIGNORE` row and its no-backup row, whose functions
+  1.4.1 lacks, were seen failing against mutants of this release instead.
+  `snapshot-sealed` also covers a hooks folder that cannot be listed (the stand-in checks that it
+  can no longer list it), the folder replaced by a link and `run` replaced by a link (all three off
+  Windows; the last two need a `WARNING:` that the run output was not kept, and nothing copied),
+  `gaps` given a second name outside the folder, a stall with the folder removed (dream and
+  promotion), the `cksum` path (a pass and a 78), a name outside the set before the record (exit
+  1, no agent), `GLOBIGNORE` at load, both runners' logs linked to a file outside before the
+  folder is removed (78, the lines in the state directory's log, the file as it was, off Windows),
+  a TERM to the runner before containment (143, the tripwire in its uncontained shape, no marker),
+  the same with `run` and the logs, or the folder, replaced by links first (nothing written or
+  copied through them, off Windows), a copy of the pre-pass backup that fails after leaving an old
+  one (exit 1, no agent, no backup left), an in-flight marker a dead pass left (78, the uncontained
+  shape, no agent) and `snap_untrusted` with no backup (a unit row). Every 78 leg also needs the
+  `UNVERIFIED:` line to say that no git command is run in the vault before the review. The
+  promotion runner now also takes the hooks, folder-link, `cksum`, name, log-link, TERM and
+  failed-copy legs. Each new runner leg was seen failing against 1.4.1's code on its own assertion.
+  `state-shown` covers all three forms of the tripwire refusal (a tripwire in the vault only, a
+  tripwire file in the state directory, and a folder where the state directory's copy goes) with a
+  state directory named with a line break and an escape (off Windows); and `git-dir-pass`'s
+  retention leg needs the run's move of an aged journal committed in the vault with its
+  `Vault-Pass: retention` trailer. Eleven
   existing comparisons of the settings file's exact bytes now expect the new line, and two existing
   controls, `mem-override-mixed-release` and `mem-override-settings-space`, now set
   `SNAP_SEALS=sealed` after loading the library, which takes them past `run_agent`'s new refusal.
@@ -189,26 +237,42 @@ reports.
 5. **A pass whose runner's folder changed while the agent ran now exits 78**, with `UNVERIFIED: the
    runner's own folder for the pass, …, was changed while the pass ran`. Nothing was moved or
    restored, so `.git/config`, `.git/hooks` and `.obsidian/` may still hold what the pass planted
-   (reasoned). Until you have reviewed the vault, run no git command in it and do not open it in
-   Obsidian or an agent session. First compare the steering surfaces, those three among them, with
-   the pre-pass backup in the state directory, `inflight-backup.tar` (copy it before you delete the
-   tripwire, because the next pass replaces it), and put back what differs; when the line says no
-   backup was made, check them by hand. Then review the rest of the vault, with `git status` where
-   it is a repository; the folder named in the line is kept for the review. Last, delete the
-   tripwire as for any other. When no tripwire could be written the exit is 70 instead, with a
-   `TRIPWIRE-ERROR:` line in place of the `UNVERIFIED:` one and the in-flight marker kept. A runner
-   that cannot record its folder before the agent starts exits 1 with `the runner could not record
-   its folder for the pass`, and the line names the four causes: a name in it outside letters,
-   digits, dot, underscore and hyphen, a file it could not checksum, a folder in it that could not
-   be listed, or no `sha256sum`, `shasum` or `cksum` found. Find what wrote into the runner's
-   folder, put `sha256sum` or `shasum` on the task's `PATH`, and point `TMPDIR` at a folder only
-   this account can change. A runner that finds no `sha256sum` or `shasum` logs a `WARNING:` and
-   checks the folder with `cksum`.
+   (reasoned). Until you have reviewed the vault, do not open it in Obsidian or an agent session,
+   and run no git command in it before the steering surfaces have been checked, git that starts on
+   its own included: a shell prompt that shows git state, or an editor with git integration. First
+   copy the pre-pass backup in the state directory, `inflight-backup.tar`, because the next pass
+   replaces it. Compare the steering surfaces, those three among them, with it without git: unpack
+   the copy into an empty folder with `tar -xf`, compare that folder with the vault with `diff -r`,
+   and put back what differs. When the line says no backup was made, check them by hand. Where
+   `.git` is a file (a linked worktree), the git folder it names is outside the vault and outside
+   the backup, so check its config and hooks by hand as well. Then review the rest of the vault,
+   with `git status` where it is a repository; the folder named in the line is kept for the review.
+   Last, delete the tripwire as for any other. When no tripwire could be written the exit is 70
+   instead, with a `TRIPWIRE-ERROR:` line in place of the `UNVERIFIED:` one and the in-flight
+   marker kept; the vault is as unrestored as at 78, so review it the same way, because that line
+   says only "Treat the vault as unverified". A tripwire set by a signal before containment (the
+   log says `INTERRUPTED before containment. Tripwire set.`), or from an in-flight marker a pass
+   that died left, now says "Nothing was moved or restored, because containment did not run." and
+   gives the same advice: follow it before any git command. On those paths and at 78, when the
+   vault's log, `.claude` or `.claude/logs` is a link, or the log is not a file, the rest of the
+   pass's lines are in `dream-pass.uncontained.log` or `promotion-pass.uncontained.log` in the
+   state directory. A runner that cannot record its folder before the agent starts exits 1 with
+   `the runner could not record its folder for the pass`, and the line names the six causes: the
+   folder missing or a link, a name in it outside letters, digits, dot, underscore and hyphen, a
+   file it could not checksum, a folder in it that could not be listed, no `sha256sum`, `shasum` or
+   `cksum` found, or a record that came out empty. Find what wrote into the runner's folder, put
+   `sha256sum` or `shasum` on the task's `PATH`, and point `TMPDIR` at a folder only this account
+   can change. A runner that finds no `sha256sum` or `shasum` logs a `WARNING:` and checks the
+   folder with `cksum`. A runner that cannot copy the pre-pass backup to the state directory exits 1
+   with `could not copy the pre-pass backup of the steering surfaces to the state directory`, before
+   the in-flight marker and the agent: free space there, or remove what is at the path the line
+   names once you have checked that it holds nothing you still need.
 6. **Hooks are off in claude-mode passes.** That includes the account's own user-level hooks, any
    guard hook among them, plugins' hooks and the vault's own: the agent no longer gets
    `vault-lint.sh`'s advice after each write (the runner still checks the notes a pass wrote with
    `vault-check.sh` before committing them), and no compaction stub is written during a pass. Hooks
-   from managed settings still run, and so do MCP servers (reasoned). Command mode is unchanged: a
+   from managed settings still run (measured on an earlier version), and so do MCP servers
+   (reasoned). Command mode is unchanged: a
    wrapper that starts Claude Code gets neither the memory override nor the hook switch.
 7. **Settings a parent git passed down with `-c` (in `GIT_CONFIG_PARAMETERS`), and those set
    through `GIT_CONFIG_COUNT`, no longer reach a pass, `safe.directory` among them**; put such a
