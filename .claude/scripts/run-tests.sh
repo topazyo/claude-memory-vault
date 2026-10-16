@@ -7303,7 +7303,10 @@ rm -rf "$FA_B" "$TMP/v142-fa.log"
 #           to a canary outside, which an earlier build writes through
 #   linkbefore (off Windows) writes its journal and replaces the snapshot with a
 #           link to a copy of the same bytes
-#   newline (off Windows) writes its journal and makes a name holding a line break
+#   newline (off Windows) writes its journal, copies the snapshot to a name that
+#           holds a line break and spells the record's next line, then removes
+#           the snapshot and nohooks, so a record taken name by name would read
+#           the same as before
 # The dream runner takes every leg, the promotion runner rmdir.
 SA_DIR="$TMP/v142-sa"
 SA_V="$SA_DIR/vault"
@@ -7341,8 +7344,10 @@ case "$SA_MODE" in
     done ;;
   link) journal; ln -s "$SA_CANARY" "$s/after" ;;
   linkbefore) journal; cp "$s/before" "$SA_COPY" && rm -f "$s/before" && ln -s "$SA_COPY" "$s/before" ;;
-  newline) journal; : > "$s/x
-y" ;;
+  newline)
+    journal
+    cp "$s/before" "$s/before
+d - nohooks" && rm -f "$s/before" && rmdir "$s/nohooks" ;;
 esac
 printf 'PROMOTION-SUMMARY: promoted=0 pending=0\n'
 exit 0
