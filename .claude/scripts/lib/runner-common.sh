@@ -31,6 +31,9 @@ unset AGENT_SETTINGS_FILE
 # Set only by a runner, from snap_manifest, so a value from the environment
 # cannot stand in for the record of its folder that run_agent requires.
 unset SNAP_SEALS
+# Set only by log_outside_links, so a value from the environment can neither put
+# a note into a tripwire nor keep the log from being moved.
+unset LOG_MOVED_NOTE
 
 # Git's variables for one repository are cleared here, before any function
 # runs. GIT_DIR beats discovery and git -C changes only the working directory,
@@ -1211,6 +1214,28 @@ write_file_atomic() {
   [ -f "$path" ] && [ ! -L "$path" ]
 }
 
+# vault_logs_linked <root>
+# True when .claude or .claude/logs in the vault is a link, which a pass may have
+# made, so a write into .claude/logs would land wherever the link points.
+vault_logs_linked() {
+  [ -L "$1/.claude" ] || [ -L "$1/.claude/logs" ]
+}
+
+# write_vault_copy <root> <path> <content-file>
+# write_file_atomic for a copy in the vault, where a pass can reach it. Nothing is
+# written while vault_logs_linked holds, and the temporary name comes from
+# mktemp, so a link a pass put at a name it could work out from the runner's pid
+# is not written through. Returns 1 when no copy is in place.
+write_vault_copy() {
+  local root="$1" path="$2" src="$3" tmp
+  vault_logs_linked "$root" && return 1
+  mkdir -p "$(dirname "$path")" 2>/dev/null
+  tmp="$(mktemp "$path.tmp.$$.XXXXXX" 2>/dev/null)" || return 1
+  cp "$src" "$tmp" 2>/dev/null && mv -f "$tmp" "$path" 2>/dev/null
+  rm -f "$tmp" 2>/dev/null
+  [ -f "$path" ] && [ ! -L "$path" ]
+}
+
 # guard_exists <root> <state-dir> <relative-name>
 # True when the named guard file exists, or is a symlink (even a dangling one),
 # in the vault or in the state directory.
@@ -1237,7 +1262,7 @@ write_tripwire() {
   # The state directory copy first. A signal handler takes that copy as proof
   # that this run set the tripwire, and adds to it instead of replacing it.
   write_file_atomic "$state/$(basename "$TRIPWIRE_REL")" "$body" && ok=0
-  write_file_atomic "$1/$TRIPWIRE_REL" "$body" && ok=0
+  write_vault_copy "$1" "$1/$TRIPWIRE_REL" "$body" && ok=0
   rm -f "$body"
   return "$ok"
 }
@@ -1297,14 +1322,20 @@ tripwire_text() {
         printf 'backup of them at\n%s\n' "$state/inflight-backup.tar"
         printf '(copy it first, because the next pass replaces it), without git: unpack the\n'
         printf 'copy into an empty folder with tar -xf, compare that folder with the vault\n'
-        printf 'with diff -r, and put back what differs.\n'
+        printf 'with diff -r (with --no-dereference where your diff has it, so a link is\n'
+        printf 'compared rather than followed), and put back what differs.\n'
       else
         printf 'No pre-pass backup of the steering surfaces is there to compare against, so\n'
         printf 'check those three by hand.\n'
       fi
       printf 'Where .git is a file, the git folder it names is outside the vault and outside\n'
       printf 'the backup: check its config and hooks by hand as well.\n'
-      printf "Then review the rest of the vault, with 'git status' where it is a git repository.\n"
+      printf 'A .git deeper in the vault is a steering surface too, and diff -r shows a new\n'
+      printf 'one only as a new folder above it: list every .git with find . -name .git, and\n'
+      printf 'check the config and hooks of any you did not make.\n'
+      printf 'Then review the rest of the vault. Where it is a git repository, start with\n'
+      printf 'git -c core.fsmonitor=false --no-pager status --ignore-submodules=all, which\n'
+      printf 'starts no fsmonitor command or pager and stays out of repositories nested in it.\n'
       if [ "$shape" = unverified ]; then
         printf "The runner's folder for the pass is kept, for the review, at\n%s.\n" "$qdir"
       fi
@@ -2929,7 +2960,7 @@ snap_untrusted() {
   if ! write_tripwire "$root" "$state" "$runner" \
        "the runner's own folder for the pass, which holds its snapshot of the vault, its backup of the steering surfaces and git's hooks folder, was changed while the pass ran, so what the pass wrote could not be checked or contained" \
        "$snap" /dev/null "" unverified; then
-    printf '[%s] TRIPWIRE-ERROR: the runner'"'"'s own folder for the pass, %s, was changed while the pass ran and no tripwire could be written. Treat the vault as unverified. The in-flight marker is kept.\n' "$(ts)" "$(shown_name "$snap")" >> "$log"
+    printf '[%s] TRIPWIRE-ERROR: the runner'"'"'s own folder for the pass, %s, was changed while the pass ran and no tripwire could be written. Treat the vault as unverified, and run no git command in it before the steering surfaces have been checked. The in-flight marker is kept.\n' "$(ts)" "$(shown_name "$snap")" >> "$log"
     return 70
   fi
   CONTAINED=1
@@ -2947,19 +2978,22 @@ snap_untrusted() {
 # log_outside_links <root> <state-dir> <runner>
 # Where containment never runs, or has not run yet, a link the pass put in place
 # of the vault's log, or of a folder above it, is still there, and the runner's
-# next line would be written through it to whatever it names. When LOG, .claude
-# or .claude/logs is a link, or LOG is there and not a file, LOG becomes
-# <state-dir>/<runner>.uncontained.log, which the pass cannot reach, and
-# LOG_MOVED_NOTE says so, for that log and for the tripwire. Changes nothing
-# otherwise. It sets globals, so call it directly, never in $(...).
+# next line would be written through it to whatever it names. So is a link an
+# earlier pass left, for a run that finds its tripwire or its marker. When LOG,
+# .claude or .claude/logs is a link, either folder is not a folder, or LOG is
+# there and not a file, LOG becomes <state-dir>/<runner>.uncontained.log, which
+# no pass can reach, and LOG_MOVED_NOTE says so, for that log and for the
+# tripwire. Changes nothing otherwise, or once LOG has been moved. It sets
+# globals, so call it directly, never in $(...).
 log_outside_links() {
   local root="$1" state="$2" runner="$3" was="$LOG"
-  if [ ! -L "$root/.claude" ] && [ ! -L "$root/.claude/logs" ] && [ ! -L "$LOG" ] \
-     && { [ ! -e "$LOG" ] || [ -f "$LOG" ]; }; then
+  [ -n "${LOG_MOVED_NOTE:-}" ] && return 0
+  if [ ! -L "$root/.claude" ] && [ -d "$root/.claude/logs" ] && [ ! -L "$root/.claude/logs" ] \
+     && [ ! -L "$LOG" ] && { [ ! -e "$LOG" ] || [ -f "$LOG" ]; }; then
     return 0
   fi
   LOG="$state/$runner.uncontained.log"
-  LOG_MOVED_NOTE="The vault's log, $(shown_name "$was"), or a folder above it, was a link or not a file, which the pass may have made, so the runner wrote the rest of this pass's lines to $(shown_name "$LOG") instead."
+  LOG_MOVED_NOTE="The vault's log, $(shown_name "$was"), or a folder above it, was a link or not a file, which a pass may have made, so the runner wrote the rest of this run's lines to $(shown_name "$LOG") instead."
   printf '[%s] WARNING: %s\n' "$(ts)" "$LOG_MOVED_NOTE" >> "$LOG"
 }
 
@@ -3413,11 +3447,13 @@ $(sed 's/^/  /' "$list")"; then
 # note_tripwire <root> <state-dir> <log> <text>
 # Adds <text> as a paragraph to each copy of the tripwire that is a regular file,
 # then writes a missing copy from the one that is there. Returns 1 when neither
-# copy is a regular file, so the caller writes a whole tripwire instead.
+# copy is a regular file, so the caller writes a whole tripwire instead. The
+# vault's copy is left alone while vault_logs_linked holds.
 note_tripwire() {
   local root="$1" state="$2" log="$3" text="$4" f="" found=1 vault="$1/$TRIPWIRE_REL" kept="$2/$(basename "$TRIPWIRE_REL")"
   for f in "$vault" "$kept"; do
     [ -f "$f" ] && [ ! -L "$f" ] || continue
+    [ "$f" = "$vault" ] && vault_logs_linked "$root" && continue
     found=0
     printf '\n%s\n' "$text" >> "$f" 2>/dev/null \
       || printf '[%s] TRIPWIRE-ERROR: a note could not be added to %s, which is still set.\n' "$(ts)" "$(shown_name "$f")" >> "$log"
@@ -3427,7 +3463,7 @@ note_tripwire() {
     write_file_atomic "$kept" "$vault" \
       || printf '[%s] WARNING: the tripwire could not be copied to the state directory %s.\n' "$(ts)" "$(shown_name "$state")" >> "$log"
   elif [ ! -f "$vault" ] || [ -L "$vault" ]; then
-    write_file_atomic "$vault" "$kept" \
+    write_vault_copy "$root" "$vault" "$kept" \
       || printf '[%s] WARNING: the tripwire could not be copied to %s.\n' "$(ts)" "$(shown_name "$vault")" >> "$log"
   fi
   return 0

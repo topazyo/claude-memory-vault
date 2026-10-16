@@ -3253,6 +3253,18 @@ main() {
     return 1
   fi
   STATE="$STATE_REAL"
+  # A tripwire or a marker means a pass ended without containment, and a link it
+  # put in place of this runner's log may still be there. This run's lines then
+  # go to the state directory (log_outside_links), the library's as well when it
+  # logs to the log itself, and the printed copy says so too.
+  if guard_exists "$ROOT" "$STATE" "$TRIPWIRE_REL" || guard_exists "$ROOT" "$STATE" "$INFLIGHT_REL"; then
+    LOG_WAS="$LOG"
+    log_outside_links "$ROOT" "$STATE" "$RUNNER"
+    [ "$LIB_LOG" = "$LOG_WAS" ] && LIB_LOG="$LOG"
+    if [ -n "${LOG_MOVED_NOTE:-}" ] && [ -n "$RUN_LOG" ]; then
+      printf '[%s] WARNING: %s\n' "$(ts)" "$LOG_MOVED_NOTE" >> "$RUN_LOG"
+    fi
+  fi
 
   run_lock_acquire "$STATE" "$ROOT" "$RUNNER" "$LIB_LOG" "$((GIT_TIMEOUT * 4 + WATCHDOG_GRACE + 900))"
   lock_rc=$?

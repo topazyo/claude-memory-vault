@@ -173,7 +173,7 @@ on_exit() {
     fi
   fi
   # What a tripwire or stop report left when a signal cut it short.
-  [ -n "${STATE:-}" ] && rm -f "$STATE/tripwire-body.$$" "$STATE/kill-report.$$" "$STATE/runner-tripwire.tmp.$$" "$STATE/$RUNNER.interrupted.run.tmp.$$" 2>/dev/null
+  [ -n "${STATE:-}" ] && rm -f "$STATE/tripwire-body.$$" "$STATE/kill-report.$$" "$STATE/runner-tripwire.tmp.$$" "$STATE/$RUNNER.interrupted.run.tmp.$$" "$STATE/signal-stop.$$" 2>/dev/null
   [ -n "${ROOT:-}" ] && rm -f "$ROOT/$TRIPWIRE_REL.tmp.$$" 2>/dev/null
   [ -n "$SNAP_DIR" ] && [ "$SNAP_KEEP" -eq 0 ] && rm -rf "$SNAP_DIR"
   run_lock_release
@@ -184,26 +184,29 @@ on_exit() {
 # next pass's baseline.
 on_signal() {
   local report=""
-  # Before containment the pass may have put a link in place of the vault's log,
-  # so the lines below go to the state directory then (log_outside_links).
-  if [ "$INFLIGHT" -eq 1 ] && [ "$CONTAINMENT_CHECKED" -eq 0 ]; then
-    log_outside_links "$ROOT" "$STATE" "$RUNNER"
-  fi
   # The whole tree, so a child of the agent or of a git step cannot keep writing
   # after the exit. RUN_PID is set while such a command runs, and while the
-  # watchdog finishes stopping one that has ended (RUN_REAPED=1). Then the private
-  # temporary directory exists. A stop that may have left a process marks the run
-  # lock. Before containment the tripwire below is set, so the stop's report goes
-  # into it as well.
-  if [ -n "${RUN_PID:-}" ] && [ -n "$SNAP_DIR" ] && [ -d "$SNAP_DIR" ]; then
-    stop_tree "$RUN_PID" 2 "$SNAP_DIR/signal-stop" "${AGENT_SESSION_ID:-}" 1
-    if grep -qE '^(alive|unknown)' "$SNAP_DIR/signal-stop" 2>/dev/null; then
+  # watchdog finishes stopping one that has ended (RUN_REAPED=1). The stop is
+  # recorded in the state directory, because a pass can remove the private
+  # temporary directory or put a link in its place. A stop that may have left a
+  # process marks the run lock. Before containment the tripwire below is set, so
+  # the stop's report goes into it as well.
+  if [ -n "${RUN_PID:-}" ]; then
+    stop_tree "$RUN_PID" 2 "$STATE/signal-stop.$$" "${AGENT_SESSION_ID:-}" 1
+    if grep -qE '^(alive|unknown)' "$STATE/signal-stop.$$" 2>/dev/null; then
       if [ "$INFLIGHT" -eq 1 ] && [ "$CONTAINMENT_CHECKED" -eq 0 ]; then
-        report="$(cat "$SNAP_DIR/signal-stop")"
+        report="$(cat "$STATE/signal-stop.$$")"
       else
-        mark_kill_failed "$LOG" "$(cat "$SNAP_DIR/signal-stop")"
+        mark_kill_failed "$LOG" "$(cat "$STATE/signal-stop.$$")"
       fi
     fi
+  fi
+  # Before containment the pass may have put a link in place of the vault's log,
+  # so the lines below go to the state directory then (log_outside_links). The
+  # log is checked once the tree is stopped, so a pass cannot put the link there
+  # after the check.
+  if [ "$INFLIGHT" -eq 1 ] && [ "$CONTAINMENT_CHECKED" -eq 0 ]; then
+    log_outside_links "$ROOT" "$STATE" "$RUNNER"
   fi
   record_session_once
   # Before its output reached the run log, the pass's stream would go with the
@@ -228,7 +231,7 @@ on_signal() {
       printf '[%s] INTERRUPTED before containment. Tripwire set.\n' "$(ts)" >> "$LOG"
     else
       # With no tripwire the marker stays, so the next run still refuses.
-      printf '[%s] TRIPWIRE-ERROR: interrupted before containment and no tripwire could be written. The in-flight marker is kept.\n' "$(ts)" >> "$LOG"
+      printf '[%s] TRIPWIRE-ERROR: interrupted before containment and no tripwire could be written. Treat the vault as unverified, and run no git command in it before the steering surfaces have been checked. The in-flight marker is kept.\n' "$(ts)" >> "$LOG"
     fi
   fi
   # A stop by the watchdog that may have left a process, and that the runner had
@@ -286,6 +289,12 @@ main() {
     exit 1
   fi
   STATE="$STATE_REAL"
+  # A tripwire or a marker means an earlier pass ended without containment, and a
+  # link it put in place of the vault's log may still be there. This run's lines
+  # then go to the state directory (log_outside_links).
+  if guard_exists "$ROOT" "$STATE" "$TRIPWIRE_REL" || guard_exists "$ROOT" "$STATE" "$INFLIGHT_REL"; then
+    log_outside_links "$ROOT" "$STATE" "$RUNNER"
+  fi
 
   # One pass at a time per vault. The traps come first, so a signal that lands
   # while the lock is being taken still releases it. The lock is taken before any
