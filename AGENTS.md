@@ -219,7 +219,8 @@ of its own git steps could not be stopped it marks that lock so no later pass st
 `docs/reference.md` §4.3. When a pass changes a steering or execution surface (Obsidian plugins,
 `.claude/`, harness configs, instruction files, memory, git config or hooks), the runner restores
 it, quarantines what the pass wrote outside the vault, and sets `.claude/logs/runner-tripwire`. It
-sets the same tripwire when a stopped pass may have left a process running (`KILL_FAILED`).
+sets the same tripwire when a stopped pass may have left a process running (`KILL_FAILED`), or
+when the runner's own folder changed while the pass ran (exit 78).
 **If that file exists, stop and tell the owner.** Runners exit 78, or 75 after `KILL_FAILED`, and
 `vault-check.sh` refuses with the same 78 until the owner has done what the tripwire says and
 deleted it. Never delete it yourself.

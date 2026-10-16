@@ -68,8 +68,12 @@ for the Write tool on Windows only, for a vault on a drive path, on the Claude C
 ignored the file for a vault reached as `//localhost/c$/...` (the host's own administrative share)
 or `//wsl.localhost/...`, so on Windows the runner refuses a vault on any `//` network path (a
 share on another server is unmeasured). Managed settings outrank the file, and a pass refuses to
-start when the folder already holds anything but a plain `.DS_Store` file. `docs/reference.md` § 4.3, in the
-dream and promotion runners' **Write fence** item, has the limits.
+start when the folder already holds anything but a plain `.DS_Store` file. The same file holds
+`"disableAllHooks":true`, so no hook runs inside a claude-mode pass but those of managed settings
+(measured on Claude Code 2.1.301 only): not the account's, not an enabled plugin's and not the
+vault's own, so the pass gets no lint advice and writes no compaction stub. MCP servers still
+start, and command mode is unchanged. `docs/reference.md` § 4.3, in the dream and promotion
+runners' **Write fence** item, has the limits.
 
 ## Sources
 
