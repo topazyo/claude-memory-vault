@@ -25,6 +25,169 @@ bash .claude/scripts/vault-update.sh --check --from ../template-new
 
 ---
 
+## 1.4.2 — 2026-10-16
+
+A hardening release for the scheduled runners, and a fix for `/resume`. Each runner now refuses
+the inherited settings and the spellings under which git worked on another folder or another
+repository than the runner meant, checks its own temporary folder before trusting what it holds,
+and, in claude mode, starts Claude Code with every hook but managed ones turned off. `/resume` no
+longer briefs from the scheduled passes' own journals and reports.
+
+### Security
+
+- **An inherited `GIT_DIR` sent a pass's commit into another repository.** With `GIT_DIR` naming
+  a second repository, a dream pass and a promotion pass in command mode on 1.4.1 each exited 0
+  with their commit landed there (measured on Linux), and nothing in the runner could see it:
+  git took the vault as that repository's work tree. The library now clears, as it loads, git's
+  own list of the variables that belong to one repository (the 15 names `git rev-parse
+  --local-env-vars` prints, git 2.55.0), and each runner logs a `WARNING:` naming the ones it
+  cleared. The variables that only change where git's search for a repository stops are kept,
+  because a pass commits only when git's top level is the vault itself, and so are those naming
+  the account's own configuration and tools. `vault-check.sh` and `vault-update.sh` load the
+  library in a subshell, so their own git calls still honour inherited values.
+- **On Windows, an inherited `MSYS2_ARG_CONV_EXCL` covering `core.` left git's `core.hooksPath`
+  in Git Bash's form**, so `git.exe` looked for its hooks in a folder under the drive root, which
+  another account could make (measured in Git Bash on 1.4.0 and 1.4.1's code). The library clears
+  `MSYS_NO_PATHCONV`, `MSYS2_ARG_CONV_EXCL` and `MSYS2_ENV_CONV_EXCL` as it loads; the last does the
+  same to the `GIT_INDEX_FILE` the retention runner hands git (reasoned). A `MSYS_NO_PATHCONV=1`
+  set for the whole account, which made every pass fail at its first git step, now lets it run
+  (measured in Git Bash with a dream pass in command mode).
+- **A vault spelled with a part ending in a dot made git read another folder's repository.** On
+  Windows, or wherever a `cygpath` is found on `PATH`, Win32 drops such a dot, so with a folder `v`
+  beside a vault `v.` git read the repository in `v` (measured in Git Bash). Every runner, in every
+  mode, now refuses such a vault, and one whose path holds a colon that is not a drive letter's or
+  whose last part ends in a space (both reasoned), before the state directory, the run lock or any
+  git call. On 1.4.1 a dream pass and a promotion pass in command mode, and the retention runner,
+  each ran on such a vault and called git (measured on Linux, the platform read as Windows through
+  a `cygpath` stand-in).
+- **A relative `TMPDIR` put the runner's own folder inside the vault.** `mktemp` returns a relative
+  path when `TMPDIR` is relative or starts with `~` (measured in Git Bash and on Linux), and the
+  runners have moved into the vault by then, so on 1.4.1 every runner made its folder there and
+  called git with that folder's hooks folder (measured on Linux, through a `mktemp` stand-in); in
+  command mode the dream and promotion agents then started. Every runner, in every mode, now
+  refuses a temporary folder that is not an absolute path (a drive path counts only under Git
+  Bash, MSYS or Cygwin), and, on Windows or wherever a `cygpath` is found, one holding a colon that
+  is not a drive letter's: NTFS reads a part such as `x::$INDEX_ALLOCATION` as the folder `x`, and
+  MSYS leaves a path with a colon unconverted (reasoned; on 1.4.1 a dream pass in command mode ran
+  with such a folder, measured on Linux through the stand-ins).
+- **The retention runner could make its folders, and its temporary files, inside the vault.** When
+  neither `$TMPDIR` nor `/tmp` could hold a folder it fell back to a plain `mktemp -d`, which reads
+  `TMPDIR` itself, a relative one included; and the library's own temporary files, the watchdog's
+  among them, took a relative `TMPDIR` as given (measured on 1.4.1, through stand-ins). The
+  fallback is gone, so such a run refuses, and the runner sets `TMPDIR` to `/tmp` for the whole run
+  when it does not start with `/`.
+- **The fence trusted a folder the pass could change.** The runner keeps its snapshot of the vault,
+  its backup of the steering surfaces and git's hooks folder in its own temporary folder. Measured
+  on 1.4.1 with stand-in agents in command mode, on Linux: with that folder removed the pass exited
+  1, its writes kept and no tripwire set; with its write added to the snapshot, the snapshot
+  replaced by a link, or a name holding a line break forging the folder's listing, it exited 0;
+  hooks planted in the hooks folder ran at the runner's commit; and a link put at the name of the
+  "after" snapshot had a file outside the vault written through. Each runner now records the
+  folder before the agent starts and again as soon as it returns, before writing anything there.
+  When the two differ, or the second cannot be made, the pass ends with exit 78: an `UNVERIFIED:`
+  line, the tripwire in a shape that says nothing was moved or restored, no in-flight marker, and
+  the pre-pass backup and the folder kept for review. When the watchdog also stopped the agent, 78
+  takes the place of 124 or 125, and the `TIMEOUT:` or `STALLED:` line is logged as well. The
+  record holds each file's digest (`sha256sum`, else `shasum`, else `cksum` with a `WARNING:`) and
+  link count, refuses any name outside letters, digits, dot, underscore and hyphen, and passes the
+  watchdog's `run` and `gaps` only as regular files with one link. It does not see a change undone
+  before the agent returns, or one made after the check by a process still running; with `cksum`,
+  anyone able to write the folder can forge a match.
+- **Hooks ran inside every claude-mode pass.** Hooks in the account's settings, in enabled plugins
+  and in the vault's own settings ran inside the unattended pass, as the account, with a shell the
+  agent's allowlist never sees. With 1.4.1's settings file, Claude Code 2.1.301 ran a probe folder's
+  own hooks and plugins' `SessionStart` and `Stop` hooks, one of which wrote a file outside the
+  folder; with the runner's file now holding `"disableAllHooks":true`, it ran none and still loaded
+  the instructions (measured on Windows, `-p`). Hooks from managed settings are not turned off
+  (measured 2026-09-15 on an earlier version), and MCP servers, and the commands a settings file
+  names outside hooks, still start. The new line is measured on 2.1.301 only.
+
+### Changed
+
+- **`/resume` skips the dream journals and promotion reports.** It read the three newest files in
+  `20-projects/_logs/`, skipping only templates and compaction stubs, so in a vault where the
+  passes run it briefed from their proposals and results as if they were the last session's work.
+  Both copies of the skill, `docs/agent-onboarding.md`'s spelled-out form and `docs/reference.md`
+  now name `dream-*.md` and `promotion-*.md` too.
+- **Log lines show C1 control characters and the state directory safely.** `shown_name` mapped C0
+  control characters and DEL only, because under the runners' C locale `[:cntrl:]` matches nothing
+  else, so a NEL or a CSI (U+0085, U+009B) in a name reached the log as it was (measured on Linux on
+  1.4.1). It now maps the UTF-8 encodings of U+0080 to U+009F too; a raw byte 0x80 to 0x9F that is
+  not part of one, U+2028, U+2029 and the bidirectional controls are printed as they are. The state
+  directory's path, which the owner sets, now goes through `shown_name` in every runner's log line
+  and in the library's own; on 1.4.1 a line break in it split the state-directory line (measured).
+  The tripwire file's text is unchanged.
+- The control suite holds each of these. New control ids, required on all four test jobs:
+  `resume-skips-pass-output`, `git-env-cleared`, `git-dir-pass`, `vault-root-spelling`,
+  `runner-folder`, `retention-tmp`, `mem-override-drive-walk`, `mem-override-folder-above`,
+  `shown-name-c1`, `state-shown` and `snapshot-sealed`; `msys-conv-pass` is required on the Windows
+  job only, where MSYS converts paths. Each was seen failing against 1.4.1's code on its own
+  assertion (on Linux; `msys-conv-pass`'s leg in Git Bash, run outside the suite, where all 18 of
+  a pass's `core.hooksPath` values reached `git.exe` in Git Bash's form), except
+  `mem-override-drive-walk` and `mem-override-folder-above`, which hold guards that were right in
+  1.4.1 (the drive-path walk's own guard, and resolving a folder above at `/` or with `CDPATH` set)
+  and were seen failing against mutants of them; the unit rows of
+  `vault-root-spelling` and `runner-folder`, whose functions 1.4.1 lacks, were seen failing against
+  mutants of this release. Eleven existing comparisons of the settings file's exact bytes now expect
+  the new line.
+
+### Adopting this
+
+1. **Take `.claude/scripts/lib/runner-common.sh`, `dream-pass.sh`, `promotion-pass.sh` and
+   `vault-retention.sh` together.** With the 1.4.2 library and 1.4.1's dream or promotion runner,
+   every pass, in either mode, exits 1 before its agent starts, with no tripwire, and the run log
+   (`.claude/logs/dream-agent.run.log` or `promotion-agent.run.log`) says `no record of the
+   runner's folder for the pass was taken before the agent started`; in claude mode the memory
+   override is written first. 1.4.1's retention runner runs with the 1.4.2 library, and gets
+   neither its refusals nor its `TMPDIR` rule. With 1.4.1's library and a 1.4.2 runner, every runner
+   exits 1 before its agent, with `git_env_warning: command not found` and `vault_root_spelling_ok:
+   command not found` on its stderr, not in its log. (All measured on Linux, for each runner and
+   mode, with 1.4.1's files.)
+2. **Nothing to configure for most vaults.**
+3. **A runner refuses to start while the vault's path, on Windows or with a `cygpath` on `PATH`,
+   holds a part ending in a dot, a colon that is not a drive letter's, or a last part ending in a
+   space.** The log says `ERROR: the vault, …, is spelled with a part that ends in a dot`. Rename the
+   folder, or reach the vault through a path with none of these. The `.cmd` wrappers cannot reach
+   such a vault; a Git Bash prompt can.
+4. **A runner refuses to start while its temporary folder is not an absolute path, or, on Windows,
+   holds a colon that is not a drive letter's.** The log says `is not an absolute path, so it was
+   made inside the vault` or `is spelled with a colon that is not a drive letter's`. Point `TMPDIR`
+   at an absolute folder outside the vault, or leave it unset. The retention runner uses `TMPDIR`
+   only when it starts with `/` (otherwise `/tmp`, now for its temporary files too), so it cannot
+   meet the first line through `TMPDIR`.
+5. **A pass whose runner's folder changed while the agent ran now exits 78**, with `UNVERIFIED: the
+   runner's own folder for the pass, …, was changed while the pass ran`. Nothing was moved or
+   restored. Do not open the vault in an agent session until you have reviewed it: compare the
+   steering surfaces with the pre-pass backup in the state directory, `inflight-backup.tar` (copy it
+   before you delete the tripwire, because the next pass replaces it), and the rest of the vault
+   with git where there is one; the folder named in the line is kept for the review. Then delete the
+   tripwire as for any other. A runner that cannot record its folder before the agent starts exits
+   1 with `the runner could not record its folder for the pass`; a name in it outside letters,
+   digits, dot, underscore and hyphen, or a file it could not checksum, is the cause. A runner that
+   finds no `sha256sum` or `shasum` logs a `WARNING:` and checks the folder with `cksum`.
+6. **Hooks are off in claude-mode passes.** That includes the account's own user-level hooks, any
+   guard hook among them, plugins' hooks and the vault's own: the agent no longer gets
+   `vault-lint.sh`'s advice after each write (the runner still checks the notes a pass wrote with
+   `vault-check.sh` before committing them), and no compaction stub is written during a pass. Hooks
+   from managed settings still run, and so do MCP servers. Command mode is unchanged: a wrapper that
+   starts Claude Code gets neither the memory override nor the hook switch.
+7. **Settings passed to git through `GIT_CONFIG_COUNT` or a `git -c` wrapper no longer reach a
+   pass, `safe.directory` among them**; put such a setting in the account's global git
+   configuration. A vault git reached only through `GIT_DIR`, with no `.git` entry of its own, now
+   reads as no repository: dream and promotion passes run without committing, and the retention
+   runner refuses. A `.git` file in the vault naming its git directory (`gitdir: <path>`, with no
+   part ending in a dot) would let git find it (reasoned). The runner's `WARNING:` names the
+   variables it cleared.
+8. **`/resume`**: take both copies of `.claude/skills/resume/SKILL.md` (`.claude/` and `.agents/`)
+   together, as the control suite requires them byte-identical.
+9. The shipped files this release touches: `.claude/scripts/lib/runner-common.sh`,
+   `.claude/scripts/dream-pass.sh`, `.claude/scripts/promotion-pass.sh`,
+   `.claude/scripts/vault-retention.sh`, `.claude/scripts/run-tests.sh`,
+   `.claude/skills/resume/SKILL.md`, `.agents/skills/resume/SKILL.md`, `docs/reference.md`,
+   `docs/setup.md`, `docs/agent-onboarding.md`, `docs/harnesses/claude-code.md`, `AGENTS.md`,
+   `.claude/scripts/vault-check.sh` (a comment), besides `VERSION` and `CHANGELOG.md`, which move
+   on every release.
+
 ## 1.4.1 — 2026-10-13
 
 A security fix for the dream and promotion passes in claude mode. Claude Code's memory folder for
