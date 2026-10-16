@@ -599,17 +599,20 @@ a lint that does nothing and a lint that found nothing wrong print the same thin
   tripwire's copy used to take from the runner's pid, then a TERM, leaves the file outside as it
   was and the vault's tripwire a file; a link to a folder at the tripwire's own name, then a TERM,
   has nothing moved into that folder and leaves the vault's tripwire a file; `.claude/logs` moved
-  and a link to it in its place, `.claude/logs` a file, and `.claude` a link to a copy of itself each end a pass whose folder is
-  removed 78 with the lines in the state directory's log, only the state directory's tripwire and
+  and a link to it in its place, `.claude/logs` a file, and `.claude` a link to a copy of itself
+  each end a pass whose folder is removed 78 with the lines in the state directory's log, only the
+  state directory's tripwire and
   nothing written through a link; a copy of the pre-pass backup that succeeds leaving a link at its
   name refuses the pass (1) with its `ERROR:` line, no agent and nothing left there; and a link to a
   file outside already at that name, in a state directory made before the run, is not followed, the
   pass ending 0 with the file as it was. On every platform, folders at both logs' names end a pass
   whose folder is removed 78 with the lines and a `WARNING:` in the state directory's log and the
-  tripwire saying so, and a copy of the backup that succeeds leaving nothing at its name is refused
-  as the link is. The tripwire of every 78 leg, every signal leg and the marker leg gives the advice:
-  git that starts on its own, the comparison without git with `--no-dereference` where a backup is
-  there, the line on a `.git` deeper in the vault, the line on links in `.claude/logs`, and the
+  tripwire saying so, a copy of the backup that succeeds leaving nothing at its name is refused
+  as the link is, and a TERM with folders where both copies of the tripwire go ends the pass 143
+  with the `TRIPWIRE-ERROR:` line and its no-git sentence, the in-flight marker kept. The tripwire
+  of every 78 leg, every signal leg and the marker leg gives the advice: git that starts on its
+  own, the comparison without git with `--no-dereference` where a backup is there, the line on a
+  `.git` deeper in the vault, the line on links in `.claude/logs` or at `.claude`, and the
   first `git -c core.fsmonitor=false` status. A pass that leaves the folder alone is contained as
   before (2), or ends 0 with no `UNVERIFIED:` line while the watchdog writes `run` and `gaps`, with
   only `cksum` too; a name outside the record's set put in the folder before the record makes the
@@ -627,7 +630,9 @@ a lint that does nothing and a lint that found nothing wrong print the same thin
   only and writes nothing through the link, whether or not a tripwire file is where it points, and
   `mark_inflight`, with a link at `runner-inflight.tmp.<pid>`, leaves the vault's marker a file and
   the file the link named as it was, and so does `write_vault_copy` with no `mktemp` and a link at
-  `runner-tripwire.tmp.<pid>`. The dream runner takes every leg; the promotion runner the
+  `runner-tripwire.tmp.<pid>`, while a link already at the name `$RANDOM` gives, seeded, makes it
+  refuse with nothing at the copy's name (each first checking that its `mktemp` stand-in took).
+  The dream runner takes every leg; the promotion runner the
   folder removed (with and without a stop), the hooks, the folder, `run` and logs replaced by
   links, `cksum` for a pass, the name outside the set, a TERM with nothing, `run` and the logs, or
   the folder, replaced by links, the links made in the stand-in's TERM handler, the folder removed
@@ -873,11 +878,13 @@ Around that call, each runner does several things an exit code cannot:
   `vault-retention.uncontained.log`; its printed lines carry the `WARNING:` once when the run could
   keep its own copy of them, and otherwise say that the lines are only in that file, and name it.
   A line logged before the state directory is known, a setting's warning or the state-directory
-  error, still goes to the vault's log path, and for the dream and promotion runners so does a
-  line logged while waiting for the lock (a stale-lock line, or the `LOCKED` line when the wait
-  runs out); the retention runner passes on the lines it logged while waiting only after its
-  second check, so they go to the state directory too. A signal checks the log only after it has
-  stopped the agent's process tree, so a link that a process the stop reaches puts there once it
+  error, still goes to the vault's log path, and opening the log there may create, empty, a file
+  a link at it names; for the dream and promotion runners so does a line logged while waiting for
+  the lock (a stale-lock line, or the `LOCKED` line when the wait runs out). The retention runner
+  passes on the lines it logged while waiting only after its second check, so they go to the state
+  directory too, when it could keep its own copy of its lines and was not stopped while waiting;
+  otherwise they go to the vault's log path as for the other two (reasoned). A signal checks the
+  log only after it has stopped the agent's process tree, so a link that a process the stop reaches puts there once it
   is reached is found too; a process that has left the tree and its process group, as one started
   with `setsid` can, is neither stopped nor recorded (reasoned). On 1.4.1 a signal's lines were
   written through a link at the log (measured; through a link at `.claude` or `.claude/logs`,
@@ -1119,12 +1126,15 @@ Around that call, each runner does several things an exit code cannot:
   keyword and keeps its marker too, but exits with the signal's code, 130 or 143. The `TRIPWIRE-ERROR:`
   line for a changed folder, the one a signal logs and the one for a dead pass's marker say "Treat
   the vault as unverified, and run no git command in it before the steering surfaces have been
-  checked." The vault's copy is written under a temporary name `mktemp` picks beside it (or, where
-  `mktemp` fails or makes no file, one made from `$RANDOM`, so the copy does not depend on
-  `mktemp`) and renamed into place, once a link at the copy's own name has been removed, because `mv` would
-  otherwise move the copy into a folder the link names, outside the vault; nothing is written there
-  while `.claude` or `.claude/logs` is a link, and then only the state directory's copy is written,
-  which the runners and `vault-check.sh` read too, so they still refuse. The vault's copy of the
+  checked." The vault's copy is written into a file `mktemp` makes beside it (or, where `mktemp`
+  fails or makes no file, so the copy does not depend on it, one made under a name from `$RANDOM`,
+  refused when anything is already there and created only if it does not exist, because a pass
+  can read the clock and pid that seed `$RANDOM`, reasoned) and renamed into place, once a link at
+  the copy's own name has been removed, because `mv` would otherwise move the copy into a folder
+  the link names, outside the vault; when that link cannot be removed nothing is written. Nothing
+  is written there while `.claude` or `.claude/logs` is a link, and then only the state
+  directory's copy is written, which the runners and `vault-check.sh` read too, so they still
+  refuse. The vault's copy of the
   in-flight marker is written the same way. A note added to the tripwire leaves the vault's copy
   alone in the same case. On 1.4.1 the vault's copy went through `runner-tripwire.tmp.<pid>`, a
   name a pass could work out from the runner's pid in the vault's in-flight marker, and a link
@@ -1758,7 +1768,8 @@ exits 2, which is why the hash is recorded rather than the report simply trusted
   with a `WARNING:` there. Its printed lines carry the `WARNING:` once when it could keep its own
   copy of them, and otherwise name that log. It checks once its state directory is known and again
   once it holds the run lock, before it passes on the lines it logged while waiting, so those go to
-  the state directory too. On 1.4.1 it wrote its refusal through a link at the log (measured), as
+  the state directory too when it could keep its own copy of its lines and was not stopped while
+  waiting (with no copy they are logged straight to the log path as they happen). On 1.4.1 it wrote its refusal through a link at the log (measured), as
   it did the line it writes from a dead pass's marker, and a refusal after waiting for the run lock
   while the log became a link (both measured).
 - **Script integrity.** The same shape, a `main` called on the last line, so a truncated download
@@ -1846,7 +1857,7 @@ Known limits, each failing in the quiet direction:
 | `64` | `VAULT_AGENT` is neither `claude` nor `command` |
 | `70` | TRIPWIRE-ERROR: containment was needed, or the runner's own folder for the pass was changed while it ran, but neither copy of the tripwire could be written. The in-flight marker is left, so the next run refuses. When the folder was changed, or an earlier pass's marker could not be turned into a tripwire, nothing was moved or restored, as at 78: review the vault as the 78 row says before any git command, because the `TRIPWIRE-ERROR:` line does not say how: it says only "Treat the vault as unverified, and run no git command in it before the steering surfaces have been checked." |
 | `75` | LOCKED: the run lock stayed held, or git's `index.lock` stayed, for `RUN_LOCK_WAIT` seconds, the run lock is marked `KILL_FAILED` (this exits at once), the `index.lock` is older than 10 minutes, another runner took the lock over before the pass started, a git merge, rebase, cherry-pick, revert or bisect is in progress, or HEAD is detached. The agent was not started |
-| `78` | TRIPWIRE: a tripwire exists, or an earlier pass died before containment and this run turned its marker into one, in a shape that says nothing was moved or restored because containment did not run; the agent was not started. Also UNVERIFIED: the agent ran, and the runner's own folder for the pass was changed while it ran or could not be recorded again when it returned. Nothing was moved or restored, the tripwire is set in a shape that says so, the in-flight marker is cleared, and the pre-pass backup (`inflight-backup.tar` in the state directory) and the folder are kept for review. In both shapes `.git/config`, `.git/hooks` and `.obsidian/` may still hold what the pass planted (reasoned), so until the vault is reviewed do not open it in Obsidian or an agent session, and run no git command in it, git that starts on its own in a shell prompt or an editor included, before the steering surfaces have been checked: copy the backup first, because the next pass replaces it, unpack the copy into an empty folder with `tar -xf`, compare that folder with the vault with `diff -r` (with `--no-dereference` where your `diff` has it, so a link is compared rather than followed) and put back what differs; with no backup, check those three by hand. Where `.git` is a file, the git folder it names is outside the vault and the backup, so check its config and hooks by hand as well. A `.git` deeper in the vault is a steering surface too, and `diff -r` shows a new one only as a new folder above it: list every `.git` with `find . -name .git`, and check the config and hooks of any you did not make. A link in `.claude/logs` is in neither the backup nor git: list them with `find .claude/logs -type l`, and remove any you did not make once you have checked what it names. Then review the rest; where the vault is a git repository, start with `git -c core.fsmonitor=false --no-pager status --ignore-submodules=all`, which starts no fsmonitor command or pager and stays out of repositories nested in it, because a nested repository's own config would run at a plain `git status` (reasoned). On the UNVERIFIED path the run output is kept in the state directory as `<runner>.interrupted.run`; when `run` is missing, is not a regular file or is in a folder that is a link, it is not kept, and the log says `WARNING: the run output, …, is missing, is not a regular file or is in a folder that is a link, so it was not kept.` When the vault's log, `.claude` or `.claude/logs` is a link there, `.claude/logs` is not a folder, or the log is there and not a file, the runner writes the rest of the run's lines to `<runner>.uncontained.log` in the state directory, with a `WARNING:` there, and a tripwire it writes says so; a run that refuses at a tripwire, or turns a marker into one, does the same, its refusal included |
+| `78` | TRIPWIRE: a tripwire exists, or an earlier pass died before containment and this run turned its marker into one, in a shape that says nothing was moved or restored because containment did not run; the agent was not started. Also UNVERIFIED: the agent ran, and the runner's own folder for the pass was changed while it ran or could not be recorded again when it returned. Nothing was moved or restored, the tripwire is set in a shape that says so, the in-flight marker is cleared, and the pre-pass backup (`inflight-backup.tar` in the state directory) and the folder are kept for review. In both shapes `.git/config`, `.git/hooks` and `.obsidian/` may still hold what the pass planted (reasoned), so until the vault is reviewed do not open it in Obsidian or an agent session, and run no git command in it, git that starts on its own in a shell prompt or an editor included, before the steering surfaces have been checked: copy the backup first, because the next pass replaces it, unpack the copy into an empty folder with `tar -xf`, compare that folder with the vault with `diff -r` (with `--no-dereference` where your `diff` has it, so a link is compared rather than followed) and put back what differs; with no backup, check those three by hand. Where `.git` is a file, the git folder it names is outside the vault and the backup, so check its config and hooks by hand as well. A `.git` deeper in the vault is a steering surface too, and `diff -r` shows a new one only as a new folder above it: list every `.git` with `find . -name .git`, and check the config and hooks of any you did not make. A link in `.claude/logs`, or `.claude` itself as a link, is in neither the backup nor git: list them with `find .claude -type l`, and remove any you did not make once you have checked what it names. Then review the rest; where the vault is a git repository, start with `git -c core.fsmonitor=false --no-pager status --ignore-submodules=all`, which starts no fsmonitor command or pager and stays out of repositories nested in it, because a nested repository's own config would run at a plain `git status` (reasoned). On the UNVERIFIED path the run output is kept in the state directory as `<runner>.interrupted.run`; when `run` is missing, is not a regular file or is in a folder that is a link, it is not kept, and the log says `WARNING: the run output, …, is missing, is not a regular file or is in a folder that is a link, so it was not kept.` When the vault's log, `.claude` or `.claude/logs` is a link there, `.claude/logs` is not a folder, or the log is there and not a file, the runner writes the rest of the run's lines to `<runner>.uncontained.log` in the state directory, with a `WARNING:` there, and a tripwire it writes says so; a run that refuses at a tripwire, or turns a marker into one, does the same, its refusal included |
 | `124` | TIMEOUT: the watchdog killed the run and everything it started. With `KILL_FAILED` in the log, a process may still be running, the run lock is kept and the tripwire is set. When the runner's own folder for the pass was also changed while the agent ran, the pass exits 78 (UNVERIFIED) instead, with or without `KILL_FAILED`, and the log holds both the `UNVERIFIED:` and the `TIMEOUT:` line; or it exits 70 when no tripwire could be written, with a `TRIPWIRE-ERROR:` line in place of the `UNVERIFIED:` one and the in-flight marker kept |
 | `125` | STALLED: the run's output stopped growing for the stall threshold (claude mode, or command mode with `RUNNER_STALL_SECONDS` set), and the watchdog killed the run and everything it started. `KILL_FAILED` means the same as for 124, and so does a runner's folder changed while the agent ran (78, or 70), with the `STALLED:` line beside the `UNVERIFIED:` or `TRIPWIRE-ERROR:` one |
 | `127` | the `claude` binary, the `VAULT_AGENT_CMD` wrapper, or (from a `.cmd`) Git Bash was not found |
