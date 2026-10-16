@@ -7295,6 +7295,8 @@ rm -rf "$FA_B" "$TMP/v142-fa.log"
 #   quiet   writes its journal after several silent polls, so the watchdog writes
 #           run and gaps while it runs: the pass ends 0, never a false 78
 #   rmdir   writes a steering file, then removes the folder
+#   rmslow  the same, then sleeps past a 3-second timeout: the TIMEOUT line is
+#           logged as well as the 78
 #   hide    writes a steering file, then adds its line to the snapshot (with the
 #           library's fence_find), so the comparison would not see it
 #   hooks   writes its journal and plants eight client hooks in nohooks, which an
@@ -7307,7 +7309,7 @@ rm -rf "$FA_B" "$TMP/v142-fa.log"
 #           holds a line break and spells the record's next line, then removes
 #           the snapshot and nohooks, so a record taken name by name would read
 #           the same as before
-# The dream runner takes every leg, the promotion runner rmdir.
+# The dream runner takes every leg, the promotion runner rmdir and rmslow.
 SA_DIR="$TMP/v142-sa"
 SA_V="$SA_DIR/vault"
 SA_AGENT="$SA_DIR/agent"
@@ -7332,6 +7334,7 @@ case "$SA_MODE" in
   plain) steer ;;
   quiet) printf 'working\n'; sleep 4; printf 'still working\n'; sleep 3; journal ;;
   rmdir) steer; rm -rf "$s" ;;
+  rmslow) steer; rm -rf "$s"; sleep 30 ;;
   hide)
     steer; journal
     ( . .claude/scripts/lib/runner-common.sh; fence_find ./31-standards/CLAUDE.md ) >> "$s/before"
@@ -7371,7 +7374,7 @@ sa_run() {
   CASE_STATE="$sa_state"
   sa_rc="$(RUNNER_VAULT="$SA_V" runner "$script" journal VAULT_AGENT=command VAULT_AGENT_CMD="$SA_AGENT" \
     VAULT_ALLOW_UNENFORCED_TOOLS=1 SA_MODE="$mode" SA_FIX="$SA_DIR/fixture" SA_MARK="$SA_DIR/mark" \
-    SA_CANARY="$SA_DIR/canary" SA_COPY="$SA_DIR/copy")"
+    SA_CANARY="$SA_DIR/canary" SA_COPY="$SA_DIR/copy" DREAM_PASS_TIMEOUT="$sa_timeout" PROMOTION_PASS_TIMEOUT="$sa_timeout")"
   return 0
 }
 sa_tripwire_why() {  # the vault's and the state directory's tripwire copies both hold D1's reason
@@ -7379,8 +7382,9 @@ sa_tripwire_why() {  # the vault's and the state directory's tripwire copies bot
     && grep -qF -- "$SA_WHY" "$sa_state/runner-tripwire" 2>/dev/null
 }
 ran snapshot-sealed
-for sa_leg in dream:plain dream:quiet dream:rmdir dream:hide dream:hooks dream:link dream:linkbefore dream:newline promotion:rmdir; do
-  sa_s="${sa_leg%%:*}-pass.sh" sa_m="${sa_leg#*:}"
+for sa_leg in dream:plain dream:quiet dream:rmdir dream:rmslow dream:hide dream:hooks dream:link dream:linkbefore dream:newline promotion:rmdir promotion:rmslow; do
+  sa_s="${sa_leg%%:*}-pass.sh" sa_m="${sa_leg#*:}" sa_timeout=3600
+  [ "$sa_m" = rmslow ] && sa_timeout=3
   case "$sa_m" in
     link|linkbefore|newline)
       if is_windows_host; then
@@ -7420,6 +7424,8 @@ for sa_leg in dream:plain dream:quiet dream:rmdir dream:hide dream:hooks dream:l
       case "$sa_m" in
         hooks) [ -e "$SA_DIR/mark" ] && sa_extra="a planted hook ran: $(tr '\n' ' ' < "$SA_DIR/mark")" ;;
         link) [ "$(cat "$SA_DIR/canary" 2>/dev/null)" = canary ] || sa_extra="the canary outside was written through" ;;
+        rmslow) grep -F -- "TIMEOUT: ${sa_s%-pass.sh}-agent exceeded 3s and was killed" "$sa_log" 2>/dev/null | grep -q '^\[[^]]*\] TIMEOUT: ' \
+                  || sa_extra="no TIMEOUT line for the stopped agent" ;;
       esac
       if [ "$sa_rc" -eq 78 ] && [ "$sa_unv" = present ] && sa_tripwire_why && [ "$sa_mk" = none ] \
          && [ -s "$sa_state/inflight-backup.tar" ] && [ "$sa_extra" = ok ]; then

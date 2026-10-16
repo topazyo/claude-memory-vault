@@ -48,10 +48,12 @@
 #                           git's hooks folder and, in claude mode,
 #                           pass-settings.json, which Claude Code reads as
 #                           settings, hooks and other commands among them. Keep
-#                           it a folder only this account can change, named with
-#                           no link, no .. and no part ending in a dot (on
-#                           Windows, or wherever a cygpath is found on PATH, a
-#                           pass refuses a .. or a part ending in a dot, in
+#                           it an absolute folder only this account can change,
+#                           named with no link, no .., no part ending in a dot
+#                           and no colon but a drive letter's (a pass refuses a
+#                           folder that is not an absolute path, and on Windows,
+#                           or wherever a cygpath is found on PATH, one with a
+#                           .., a part ending in a dot or another colon, in
 #                           every mode, before its first git call); on Windows
 #                           schedule the task as your own account, and leave it
 #                           unset unless a long path needs a shorter folder
@@ -74,7 +76,12 @@
 #        or the runner could not set itself up (temp dir, state directory, backup,
 #        prompt file, git state file, run lock, in-flight marker, git status), or
 #        git cannot read the vault's repository, or in claude mode the memory
-#        override refused the pass (memory_override in lib/runner-common.sh)
+#        override refused the pass (memory_override in lib/runner-common.sh),
+#        or, on Windows or wherever a cygpath is found, the vault's path holds
+#        a part ending in a dot, a colon that is not a drive letter's or a last
+#        part ending in a space, or the temporary folder is refused (above), or
+#        the runner could not record its folder for the pass, or its library
+#        comes from another release (no record of that folder was taken)
 #   2    VIOLATION: files outside the allowed write areas changed during the run
 #        (steering surfaces among them are contained and the tripwire is set),
 #        or the pass changed a long-tier note or promotion report that already
@@ -90,14 +97,19 @@
 #        note the pass changed was put back as it was before the pass, except
 #        any the log lists as left as it is
 #   64   VAULT_AGENT is not claude or command
-#   70   TRIPWIRE-ERROR: containment was needed but no tripwire could be written
+#   70   TRIPWIRE-ERROR: containment was needed, or the runner's folder changed
+#        while the agent ran, but no tripwire could be written
 #   75   LOCKED: another pass held the run lock, or git's index.lock stayed, for
 #        RUN_LOCK_WAIT seconds, the run lock is marked KILL_FAILED, the
 #        index.lock is more than 10 minutes old,
 #        another runner took the lock over before the pass started, a git
 #        merge, rebase, cherry-pick, revert or bisect is in progress, or HEAD is
 #        detached
-#   78   TRIPWIRE: a tripwire is set, or an earlier pass died before containment
+#   78   TRIPWIRE: a tripwire is set, or an earlier pass died before containment,
+#        or UNVERIFIED: the runner's own folder for the pass changed while the
+#        agent ran, so nothing was moved or restored and the tripwire is set
+#        (also when the run timed out or stalled: 78 then takes the place of
+#        124 or 125, and the TIMEOUT or STALLED line is logged as well)
 #   124  TIMEOUT: the watchdog killed a run that exceeded PROMOTION_PASS_TIMEOUT,
 #        and everything it started
 #   125  STALLED: the watchdog killed a run whose output stopped growing for the
@@ -475,6 +487,13 @@ main() {
     snap_untrusted "$ROOT" "$STATE" "$RUNNER" "$SNAP_DIR" "$LOG"
     snap_rc=$?
     [ "$snap_rc" -eq 78 ] && INFLIGHT=0
+    if [ "$RUN_TIMED_OUT" -eq 1 ]; then
+      printf '[%s] TIMEOUT: promotion-agent exceeded %ss and was killed (status %s)\n' \
+        "$(ts)" "$TIMEOUT" "$RUN_RC" >> "$LOG"
+    elif [ "$RUN_STALLED" -eq 1 ]; then
+      printf '[%s] STALLED: promotion-agent wrote no output for %ss (%s) and was killed (status %s)\n' \
+        "$(ts)" "$AGENT_STALL_SECONDS" "$AGENT_STALL_NOTE" "$RUN_RC" >> "$LOG"
+    fi
     if [ "$RUN_TIMED_OUT" -eq 1 ] || [ "$RUN_STALLED" -eq 1 ]; then
       report_stop "$LOG" promotion-agent "$ROOT" "$STATE" "$RUNNER"
     fi
