@@ -631,12 +631,16 @@ a lint that does nothing and a lint that found nothing wrong print the same thin
   `mark_inflight`, with a link at `runner-inflight.tmp.<pid>`, leaves the vault's marker a file and
   the file the link named as it was, and so does `write_vault_copy` with no `mktemp` and a link at
   `runner-tripwire.tmp.<pid>`, while a link already at the name `$RANDOM` gives, seeded, makes it
-  refuse with nothing at the copy's name (each first checking that its `mktemp` stand-in took).
+  refuse with nothing at the copy's name (each first checking that its `mktemp` stand-in took);
+  a link to a folder at the copy's name that `rm` cannot remove (an `rm` stand-in) makes it refuse
+  with nothing moved into the folder, and a link put at the `$RANDOM` name just before the write
+  (by a DEBUG trap the write's subshell inherits) is not written through.
   The dream runner takes every leg; the promotion runner the
   folder removed (with and without a stop), the hooks, the folder, `run` and logs replaced by
   links, `cksum` for a pass, the name outside the set, a TERM with nothing, `run` and the logs, or
   the folder, replaced by links, the links made in the stand-in's TERM handler, the folder removed
-  before a TERM, a tripwire, or a dead pass's marker, with both logs linked, the log made a link
+  before a TERM, a TERM with folders where both copies of the tripwire go, a tripwire, or a dead
+  pass's marker, with both logs linked, the log made a link
   while it waits for the run lock, the failed copy of the backup, a copy leaving a link or
   nothing, and a link already at the backup's name.
   `resume-skips-pass-output`: both copies of the `/resume` skill and `docs/agent-onboarding.md`
@@ -879,14 +883,15 @@ Around that call, each runner does several things an exit code cannot:
   keep its own copy of them, and otherwise say that the lines are only in that file, and name it.
   A line logged before the state directory is known, a setting's warning or the state-directory
   error, still goes to the vault's log path, and opening the log there may create, empty, a file
-  a link at it names; for the dream and promotion runners so does a line logged while waiting for
-  the lock (a stale-lock line, or the `LOCKED` line when the wait runs out). The retention runner
-  passes on the lines it logged while waiting only after its second check, so they go to the state
-  directory too, when it could keep its own copy of its lines and was not stopped while waiting;
-  otherwise they go to the vault's log path as for the other two (reasoned). A signal checks the
-  log only after it has stopped the agent's process tree, so a link that a process the stop reaches puts there once it
-  is reached is found too; a process that has left the tree and its process group, as one started
-  with `setsid` can, is neither stopped nor recorded (reasoned). On 1.4.1 a signal's lines were
+  a link at it names. A line a dream or promotion run logs while waiting for the lock (a
+  stale-lock line, or the `LOCKED` line when the wait runs out) goes where the first check left
+  the log: to the state directory when that check moved it, otherwise to the vault's log path.
+  The retention runner passes on the lines it logged while waiting only after its second check, so
+  they go to the state directory too, when it could keep its own copy of its lines and was not
+  stopped while waiting; otherwise they too go where the first check left the log (reasoned). A
+  signal checks the log only after it has stopped the agent's process tree, so a link that a
+  process the stop reaches puts there once it is reached is found too; a process that has left
+  the tree and its process group, as one started with `setsid` can, is neither stopped nor recorded (reasoned). On 1.4.1 a signal's lines were
   written through a link at the log (measured; through a link at `.claude` or `.claude/logs`,
   reasoned), one the pass made once the stop reached it included (measured), and a later run's
   refusal was too (measured), a run that waited for the run lock included, through a link the log
@@ -1128,10 +1133,13 @@ Around that call, each runner does several things an exit code cannot:
   the vault as unverified, and run no git command in it before the steering surfaces have been
   checked." The vault's copy is written into a file `mktemp` makes beside it (or, where `mktemp`
   fails or makes no file, so the copy does not depend on it, one made under a name from `$RANDOM`,
-  refused when anything is already there and created only if it does not exist, because a pass
-  can read the clock and pid that seed `$RANDOM`, reasoned) and renamed into place, once a link at
+  refused when anything is already there, because a pass can read the clock and pid that seed
+  `$RANDOM`, and created with noclobber, which refuses a file or a dangling link put there after
+  that check but still opens a device or a FIFO, a race only a process still running could win,
+  all reasoned) and renamed into place, once a link at
   the copy's own name has been removed, because `mv` would otherwise move the copy into a folder
-  the link names, outside the vault; when that link cannot be removed nothing is written. Nothing
+  the link names, outside the vault; when that link cannot be removed nothing is written
+  (reasoned). Nothing
   is written there while `.claude` or `.claude/logs` is a link, and then only the state
   directory's copy is written, which the runners and `vault-check.sh` read too, so they still
   refuse. The vault's copy of the
@@ -1153,8 +1161,8 @@ Around that call, each runner does several things an exit code cannot:
   containment (`INTERRUPTED before containment. Tripwire set.`, exit 130 or 143), are in the
   uncontained shape: "Nothing was moved or restored, because containment did not run.", then the
   advice the 78 row of the exit table gives, to check the steering surfaces without git before any
-  git command, and to list the links in `.claude/logs`, which are in neither the backup nor git,
-  and remove any you did not make. On 1.4.1 both said that changed files were moved to the
+  git command, and to list the links in `.claude/logs` or at `.claude`, which are in neither the
+  backup nor git, and remove any you did not make. On 1.4.1 both said that changed files were moved to the
   quarantine and restored, and sent the owner to `git reflog` (measured), which honours the
   `core.pager` of a `.git/config` the pass may have changed, as `git status` runs its
   `core.fsmonitor` (reasoned). A marker found only in the

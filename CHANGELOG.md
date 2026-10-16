@@ -164,15 +164,16 @@ reports.
   either copy, and again once it holds the lock, because the pass holding the lock could make the
   link, and set the tripwire, while the run waited. A line logged before the first check, a
   setting's warning or the state-directory error, still goes to the vault's log path, and opening
-  the log there may create, empty, a file a link at it names; for the dream and promotion runners
-  so does a line logged while waiting for the lock (a stale-lock line, or the `LOCKED` line when
-  the wait runs out). The retention runner passes on the lines it logged while waiting only after
-  its second check, so they go to the state directory too, when it could keep its own copy of its
-  lines and was not stopped while waiting; otherwise they go to the vault's log path as for the
-  other two (reasoned). The signal
-  handler checks only after it has stopped the agent's process tree, so a link that a process the
-  stop reaches makes once it is reached is found too, where 1.4.1 wrote its lines through such a
-  link (measured on 1.4.1); a process that has left the tree and its process group is neither
+  the log there may create, empty, a file a link at it names. A line a dream or promotion run logs
+  while waiting for the lock (a stale-lock line, or the `LOCKED` line when the wait runs out) goes
+  where the first check left the log: to the state directory when that check moved it, otherwise
+  to the vault's log path. The retention runner passes on the lines it logged while waiting only
+  after its second check, so they go to the state directory too, when it could keep its own copy of
+  its lines and was not stopped while waiting; otherwise they too go where the first check left the
+  log (reasoned). The signal handler checks only after it has stopped the agent's process tree,
+  so a link that a process the stop reaches makes once it is reached is found too, where 1.4.1
+  wrote its lines through such a link (measured on 1.4.1); a process that has left the tree and
+  its process group is neither
   stopped nor recorded (reasoned).
 - **The vault's copy of the tripwire was written through a name a pass could work out.** The
   runner copied it first to `runner-tripwire.tmp.<pid>`, a name a command-mode pass could work out
@@ -185,11 +186,13 @@ reports.
   outside the vault, leaving the vault's tripwire not a file (measured on 1.4.1). The vault's
   copies of the tripwire and of the marker now go first into a file `mktemp` makes, or, where
   `mktemp` fails or makes no file, so the tripwire still does not depend on it, into one made under
-  a name from `$RANDOM`, refused when anything is already there and created only if it does not
-  exist, because a pass can read the clock and the pid that seed `$RANDOM` (reasoned); neither
-  copy nor a note is written while `.claude` or `.claude/logs` is a link; a link at the copy's
-  own name is removed before the copy is renamed into place, because `mv` would otherwise move
-  the copy into a folder the link names, and nothing is written when that link cannot be removed.
+  a name from `$RANDOM`, refused when anything is already there, because a pass can read the clock
+  and the pid that seed `$RANDOM`, and created with noclobber, which refuses a file or a dangling
+  link put there after that check but still opens a device or a FIFO, a race only a process still
+  running could win (all reasoned); neither copy nor a note is written while `.claude` or
+  `.claude/logs` is a link; a link at the copy's own name is removed before the copy is renamed
+  into place, because `mv` would otherwise move the copy into a folder the link names, and nothing
+  is written when that link cannot be removed (reasoned).
   While `.claude` or `.claude/logs` is a link only the state directory's copies are written; the
   runners read both copies of each, and `vault-check.sh` the tripwire's, so they still refuse.
 - **A pass that removed the runner's folder and then signalled its runner was not stopped.** The
@@ -293,7 +296,7 @@ reports.
   `backupseed`, a link to a file outside already at the backup's name, in a state directory made
   before the run (the pass ends 0, the file as it was). `sigdirlink` now also needs nothing of the
   stop recorded through the link at the folder, and `sigterm` its lines in the vault's log and no
-  moved-log note, a control that the log is not moved when nothing is a link. Eight unit rows hold
+  moved-log note, a control that the log is not moved when nothing is a link. Ten unit rows hold
   `log_outside_links` with `.claude/logs` a file and `LOG_MOVED_NOTE` exported before the library
   loads (cleared at load, the log moved once, a second call changing nothing, one `WARNING:` naming
   the vault's log); `note_tripwire` with `.claude/logs` a link, in one row with a tripwire file
@@ -303,16 +306,21 @@ reports.
   the link named as it was); `write_vault_copy` with no `mktemp` and a link at
   `runner-tripwire.tmp.<pid>` (the copy a file, the file the link named as it was), and with no
   `mktemp` and a link to `/dev/null` already at the name `$RANDOM` gives, seeded (refused, nothing
-  at the copy's name), each first checking that its `mktemp` stand-in took; and, with no copy of
+  at the copy's name), each first checking that its `mktemp` stand-in took; with a link to a
+  folder at the copy's name that `rm` cannot remove (an `rm` stand-in that removes nothing:
+  refused, nothing moved into the folder); with no `mktemp` and a link put at the `$RANDOM` name
+  between the refusal and the write, by a DEBUG trap the write's subshell inherits (refused, the
+  file the link named as it was); and, with no copy of
   the tripwire writable, `snap_untrusted`, and `tripwire_check` with a dead pass's marker (each
   70, the `TRIPWIRE-ERROR:` line saying to run no git command in the vault before the steering
   surfaces have been checked). Of the legs and rows named from `twlink` on, these run on Windows:
   `logdir`, both runners' `backupnone` and `sigtwfail`, `sigterm`'s new requirements, the
-  `log_outside_links` row and the two `TRIPWIRE-ERROR:` rows; the rest run off Windows only. Every 78 leg also needs the `UNVERIFIED:` line to say that no git command is
-  run in the vault before the steering surfaces are checked, and the tripwire of every 78 leg,
+  `log_outside_links` row and the two `TRIPWIRE-ERROR:` rows; the rest run off Windows only.
+  Every 78 leg also needs the `UNVERIFIED:` line to say that no git command is run in the vault
+  before the steering surfaces are checked, and the tripwire of every 78 leg,
   every signal leg and the `inflight` leg now needs the advice: git that starts on its own, the
   comparison without git with `--no-dereference` (where a backup is there), the line on a `.git`
-  deeper in the vault, the line on links in `.claude/logs`, and the first
+  deeper in the vault, the line on links in `.claude/logs` or at `.claude`, and the first
   `git -c core.fsmonitor=false` status. The promotion runner takes the `rmdir`, `rmslow`, `hooks`,
   `dirlink`, `runlink`, `rmstall`, `cksum`, `badname`, `loglink`, `sigterm`, `sigrunlink`,
   `sigdirlink`, `backupfail`, `sigtrap`, `sigrmdir`, `sigtwfail`, `twlink`, `inflightlink`,
@@ -322,7 +330,7 @@ reports.
   that sentence), except `logdir`, `logsdirlink`, `logsfile` and `claudelink`, which reach 78
   through the folder check 1.4.1 lacks, so they say nothing about 1.4.1's log (a write through a
   link at `.claude` or `.claude/logs` is reasoned for 1.4.1); the `log_outside_links` row,
-  `snap_untrusted`'s `TRIPWIRE-ERROR:` row and the two `write_vault_copy` rows, whose functions
+  `snap_untrusted`'s `TRIPWIRE-ERROR:` row and the four `write_vault_copy` rows, whose functions
   1.4.1 lacks, were seen failing against mutants of this release.
   `state-shown` covers all three forms of the tripwire refusal (a tripwire in the vault only, a
   tripwire file in the state directory, and a folder where the state directory's copy goes) with a
@@ -394,11 +402,12 @@ reports.
    vault's log, `.claude` or `.claude/logs` is a link, `.claude/logs` is not a folder, or the log is
    there and not a file, the rest of the run's lines are in `dream-pass.uncontained.log`,
    `promotion-pass.uncontained.log` or `vault-retention.uncontained.log` in the state directory. A
-   later run checks before it takes the run lock and again once it holds it; the lines any runner
-   logs before its first check (a setting's warning or the state-directory error), and those a
-   dream or promotion run, or a retention run that could keep no copy of its lines or was stopped
-   while waiting, logs while it waits for the lock, still go to the vault's log path. A runner that cannot record its
-   folder before the agent starts exits 1 with
+   later run checks before it takes the run lock and again once it holds it. The lines any runner
+   logs before its first check (a setting's warning or the state-directory error) still go to the
+   vault's log path, and so do those a dream or promotion run, or a retention run that could keep
+   no copy of its lines or was stopped while waiting, logs while it waits for the lock, unless the
+   first check already moved the log. A runner that cannot record its folder before the agent
+   starts exits 1 with
    `the runner could not record its folder for the pass`, and the line names the six causes: the
    folder missing or a link, a name in it outside letters, digits, dot, underscore and hyphen, a
    file it could not checksum, a folder in it that could not be listed, no `sha256sum`, `shasum` or
