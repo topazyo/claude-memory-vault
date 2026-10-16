@@ -1437,7 +1437,7 @@ tripwire_check() {
       "(none, because containment did not run. A pre-pass backup may be in the state directory.)" "$empty" "" uncontained && wrote=0
     rm -f "$empty"
     if [ "$wrote" -ne 0 ]; then
-      printf '[%s] TRIPWIRE-ERROR: a previous pass never reached containment and no tripwire could be written. The in-flight marker is kept. Refusing to run.\n' "$(ts)" >> "$log"
+      printf '[%s] TRIPWIRE-ERROR: a previous pass never reached containment and no tripwire could be written. Treat the vault as unverified, and run no git command in it before the steering surfaces have been checked. The in-flight marker is kept. Refusing to run.\n' "$(ts)" >> "$log"
       return 70
     fi
     clear_inflight "$root" "$state"
