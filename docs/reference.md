@@ -456,9 +456,9 @@ a lint that does nothing and a lint that found nothing wrong print the same thin
   the decoy untouched.
 - **Memory override** — in claude mode both runners pass one `--settings` file, in the runner's own
   folder for the pass, which the pass removes when it ends, that names the vault's own
-  `90-auto-memory/.pass-agent` and turns every hook off (`"disableAllHooks":true`); command mode
-  writes none. A file an earlier build left in the state
-  directory is removed. A pass refuses with exit 1 and an `ERROR:` line when that folder holds
+  `90-auto-memory/.pass-agent` and turns every hook off (`"disableAllHooks":true`; for the
+  account's own hooks, reasoned); command mode writes none. A file an earlier build left in the
+  state directory is removed. A pass refuses with exit 1 and an `ERROR:` line when that folder holds
   anything but a plain `.DS_Store` (a file, a hidden file, a folder, a FIFO, a link, a second hard
   link, an entry that lists before it) or cannot be listed, when it or `90-auto-memory` is a link or
   not a folder, when the runner's folder for the pass lies inside the vault (by name, or by
@@ -567,8 +567,9 @@ a lint that does nothing and a lint that found nothing wrong print the same thin
   each ends 78 with the `UNVERIFIED:` line and the tripwire's reason in both copies, the line and
   the tripwire each saying to run no git command in the vault before the steering surfaces are
   checked, no in-flight marker and the pre-pass backup kept, the tripwire saying the runner's folder
-  for the pass is kept for the review and that folder still there after the run (or the link the leg
-  put in its place) unless the leg removed it, no planted hook run and the link's
+  for the pass is kept for the review, naming it, and that folder still there after the run with its
+  steering backup in it (through the link the leg put in its place, where it did) unless the leg
+  removed it, no planted hook run and the link's
   target untouched, and with only `cksum` to take, its `WARNING:` (the link, line-break and
   unreadable-folder legs off Windows only). The leg that writes to the snapshot and the hooks leg
   also keep the run output in the state directory; where `run` is missing, a link, or in a folder
@@ -605,7 +606,7 @@ a lint that does nothing and a lint that found nothing wrong print the same thin
   has nothing moved into that folder and leaves the vault's tripwire a file; `.claude/logs` moved
   and a link to it in its place, `.claude/logs` a file, and `.claude` a link to a copy of itself
   each end a pass whose folder is removed 78 with the lines in the state directory's log, only the
-  state directory's tripwire, which says the runner's folder is kept for the review, and
+  state directory's tripwire, which says the runner's folder is kept for the review, naming it, and
   nothing written through a link; a copy of the pre-pass backup that succeeds leaving a link at its
   name refuses the pass (1) with its `ERROR:` line, no agent and nothing left there; and a link to a
   file outside already at that name, in a state directory made before the run, is not followed, the
@@ -909,16 +910,22 @@ Around that call, each runner does several things an exit code cannot:
   reasoned), one the pass made once the stop reached it included (measured), and a later run's
   refusal was too (measured), a run that waited for the run lock included, through a link the log
   became while it waited (measured, for each runner), so a command-mode pass could have the runner
-  append to any file the account can write through a symbolic link. That route is closed but for the
-  last case below; these are still open, and carried to a later release, each needing a command-mode
-  pass with a shell, which `docs/setup.md` says not to give it: a hard link at a log, which has the
-  runner append its lines, names the pass chose included, to the file it shares, and one at
-  `.claude/logs/dream-pass.git-state.txt`, which has the next dream run empty that file and write
-  `git status` into it; a FIFO at either, which blocks the next dream run before any check while it
-  holds the run lock, so a promotion run is refused with 75 and every later dream run blocks the
-  same way; and a symbolic link containment cannot move, as in a `.claude/logs` made read-only,
-  which the runner still writes through (measured with 1.4.2; 1.4.1 behaves the same, the FIFO at a
-  log by reading). Once the runner's folder for the pass has been made, a
+  append to any file the account can write through a symbolic link. That route is now closed for
+  the lines logged after the first check, but for the last case below; the lines logged before it,
+  listed above, still reach such a link. These are still open too, and carried to a later release,
+  each needing a command-mode pass with a shell, which `docs/setup.md` says not to give it: a hard
+  link at a log, which has the runner append its lines, names the pass chose included, to the file
+  it shares, and one at `.claude/logs/dream-pass.git-state.txt`, which has the next dream run empty
+  that file and write `git status`, those names included, into it; a FIFO at a log, which blocks
+  every later run of that runner at the log's first write, before any check, and one at the
+  git-state file, which blocks the next dream run while it holds the run lock, so a promotion run is
+  refused with 75 and every later dream run blocks the same way, each with no tripwire until an
+  outside time limit ends the run; and a symbolic link containment cannot move, as in a
+  `.claude/logs` made read-only, which the runner still writes through (measured with 1.4.2; 1.4.1
+  behaves the same; the FIFO at a log measured for the dream runner only, and on 1.4.1 by reading).
+  A process that outlives the pass can also give the vault's `runner-tripwire` a second name, and a
+  later note is then appended to the file it shares (reasoned). Once the runner's
+  folder for the pass has been made, a
   signal stops the agent's process tree whether or not that folder is still there, and records the
   stop in the state directory as `signal-stop.<pid>`. On 1.4.1 a pass that removed that folder and
   then sent its runner TERM was not stopped and was still running after the runner exited
@@ -1145,10 +1152,11 @@ Around that call, each runner does several things an exit code cannot:
   could not be contained, and the quarantine, and a second copy in the state directory. While either
   copy exists, both runners exit **78** without starting an agent, `vault-check.sh` exits the same
   **78** without checking anything, and `/resume` shows the vault's copy instead of a briefing.
-  While `.claude` or `.claude/logs` is a link, no vault copy is written (see below), so `/resume`
-  stops there instead and says a tripwire may be set in the state directory only, which it does not
-  read. Clear it by reviewing the paths and then deleting both copies. The refusal names the state
-  directory copy when it is a
+  While `.claude` or `.claude/logs` is a link, no vault copy is written (see below), nor while
+  `.claude/logs` is a file or a folder the runner cannot write, so `/resume` stops instead whenever
+  `ls -ld .claude .claude/logs` shows either as anything but a folder it can write, and says a
+  tripwire may be set in the state directory only, which it does not read. Clear it by reviewing
+  the paths and then deleting both copies. The refusal names the state directory copy when it is a
   file, because a pass cannot write it. When only the vault's copy is there, the runners and
   `vault-check.sh` name that copy and say a pass may have written it, so check its reason against
   the runner log before you follow anything it says. When neither copy is a file, they say so and
