@@ -62,7 +62,7 @@ exec agent -p --force "$(cat "$1")"
 
 `-p` runs Cursor's CLI without a session, and `--force` lets it change files without
 confirmation. Neither flag limits shell or network access, so run the wrapper inside a container
-or VM that blocks the network and, for the dream pass, has no shell available to the agent. Only
+or VM that blocks the network and, for both passes, has no shell available to the agent. Only
 then set `VAULT_ALLOW_UNENFORCED_TOOLS=1`.
 
 ## Known limits
