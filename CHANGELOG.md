@@ -25,14 +25,16 @@ bash .claude/scripts/vault-update.sh --check --from ../template-new
 
 ---
 
-## 1.4.2 — 2026-10-16
+## 1.4.2 — 2026-10-17
 
 A hardening release for the scheduled runners, and a fix for `/resume`. Each runner now clears
 the inherited git settings that pointed git at another repository (with a `WARNING:`), refuses the
 spellings under which git read another folder than the runner meant, checks its own temporary
 folder before trusting what it holds, and, in claude mode, starts Claude Code with every hook but
-managed ones turned off. `/resume` no longer briefs from the scheduled passes' own journals and
-reports.
+managed ones turned off (measured for the vault's and plugins' hooks; for the account's own,
+reasoned). `/resume` no longer briefs from the scheduled passes' own journals and reports, and stops
+when `.claude` or `.claude/logs` is a link, because a tripwire may then be set in the state
+directory only.
 
 ### Security
 
@@ -144,17 +146,18 @@ reports.
   Both now say "Nothing was moved or restored, because containment did not run." and give the
   advice the `UNVERIFIED:` tripwire gives: check the steering surfaces against the pre-pass backup
   without git, before any git command.
-- **After a signal before containment, the runner wrote its log through a link the pass made.**
-  Containment had not run, so a link the pass put in place of `.claude/logs/<agent>.log` was still
-  there, and the runner wrote the rest of its lines through it (measured on 1.4.1; through a link
-  at `.claude` or `.claude/logs`, reasoned), so a command-mode pass could make the runner append to
-  any file the account can write. The 78 path above leaves such a link in place too, and so does a
-  pass that ended there or died, for the next run: on 1.4.1 that run wrote its `TRIPWIRE:` refusal,
-  or the line it writes from a dead pass's in-flight marker, through a link at the log, and a run
-  that waited for the run lock wrote its refusal through a link the log became while it waited
-  (measured on 1.4.1, each for every runner). On all three paths, when the log, `.claude` or
-  `.claude/logs` is a link, `.claude/logs` is not a folder, or the log is there and not a file, the
-  runner now writes the rest of the run's lines to `dream-pass.uncontained.log`,
+- **After a signal before containment, the runner wrote its log through a symbolic link the pass
+  made.** Containment had not run, so a symbolic link the pass put in place of
+  `.claude/logs/<agent>.log` was still there, and the runner wrote the rest of its lines through it
+  (measured on 1.4.1; through a link at `.claude` or `.claude/logs`, reasoned), so a command-mode
+  pass could make the runner append to any file the account can write through a symbolic link. The
+  78 path above leaves such a link in place too, and so does a pass that ended there or died, for
+  the next run: on 1.4.1 that run wrote its `TRIPWIRE:` refusal, or the line it writes from a dead
+  pass's in-flight marker, through a link at the log, and a run that waited for the run lock wrote
+  its refusal through a link the log became while it waited (measured on 1.4.1, each for every
+  runner). On all three paths, when the log, `.claude` or `.claude/logs` is a symbolic link,
+  `.claude/logs` is not a folder, or the log is there and not a file, the runner now writes the rest
+  of the run's lines to `dream-pass.uncontained.log`,
   `promotion-pass.uncontained.log` or `vault-retention.uncontained.log` in the state directory,
   with a `WARNING:` there, and a tripwire it writes says so. The retention runner's printed lines
   carry the `WARNING:` once when the run could keep its own copy of them; when it could keep none,
@@ -162,8 +165,10 @@ reports.
   log, and names it. A later run checks as soon as its state directory is known, before its run
   lock, whenever the tripwire or the passes' in-flight marker (`runner-inflight`) is there in
   either copy, and again once it holds the lock, because the pass holding the lock could make the
-  link, and set the tripwire, while the run waited. A line logged before the first check, a
-  setting's warning or the state-directory error, still goes to the vault's log path, and opening
+  link, and set the tripwire, while the run waited. A line logged before the first check, in every
+  runner (a setting's warning, the state-directory error, the `WARNING:` naming the git variables
+  the runner cleared, or the `ERROR:` refusing the vault's spelling), still goes to the vault's log
+  path, and opening
   the log there may create, empty, a file a link at it names. A line a dream or promotion run logs
   while waiting for the lock (a stale-lock line, or the `LOCKED` line when the wait runs out) goes
   where the first check left the log: to the state directory when that check moved it, otherwise
@@ -175,6 +180,15 @@ reports.
   wrote its lines through such a link (measured on 1.4.1); a process that has left the tree and
   its process group is neither
   stopped nor recorded (reasoned).
+  This closes the symbolic-link route, but for the last case below, and no other. Still open, and
+  carried to a later release, each needing a command-mode pass with a shell, which `docs/setup.md`
+  says not to give it: a hard link at a log, which has the runner append its lines, names the pass
+  chose included, to the file it shares, and one at `.claude/logs/dream-pass.git-state.txt`, which
+  has the next dream run empty that file and write `git status` into it; a FIFO at either, which
+  blocks the next dream run before any check while it holds the run lock, so a promotion run is
+  refused with 75 and every later dream run blocks the same way; and a symbolic link containment
+  cannot move, as in a `.claude/logs` made read-only, which the runner still writes through
+  (measured with this release; 1.4.1 behaves the same, the FIFO at a log by reading).
 - **The vault's copy of the tripwire was written through a name a pass could work out.** The
   runner copied it first to `runner-tripwire.tmp.<pid>`, a name a command-mode pass could work out
   from the runner's pid in the vault's in-flight marker, and `cp` followed a link planted there: a
@@ -211,13 +225,16 @@ reports.
   and the 78 path now keep no output when `run`, or the runner's folder itself, is a link, and the
   78 path logs `WARNING: the run output, …, is missing, is not a regular file or is in a folder that
   is a link, so it was not kept.`
-- **Hooks ran inside every claude-mode pass.** Hooks in the account's settings, in enabled plugins
+- **Hooks ran inside every claude-mode pass.** Hooks in enabled plugins
   and in the vault's own settings ran inside the unattended pass, as the account, with a shell the
-  agent's allowlist never sees. With 1.4.1's settings file, Claude Code 2.1.301 ran a probe folder's
+  agent's allowlist never sees, and so, by the same route, would hooks in the account's own settings
+  (reasoned). With 1.4.1's settings file, Claude Code 2.1.301 ran a probe folder's
   own hooks and plugins' `SessionStart` and `Stop` hooks, one of which wrote a file outside the
   folder; with the runner's file now holding `"disableAllHooks":true`, it ran none, and the
   account's `CLAUDE.md` was still sent in the request (measured on Windows, `-p`); a live dream
-  pass through the 1.4.2 runner ran to its journal (measured). Hooks from managed settings are not
+  pass through the 1.4.2 runner ran to its journal (measured). The probe held no hook in the
+  account's user settings, nor in an agent's or a skill's frontmatter, so that the line turns those
+  off too is reasoned, not measured. Hooks from managed settings are not
   turned off (measured 2026-09-15 on an earlier version), and MCP servers, and the commands a
   settings file names outside hooks, still start (reasoned). The new line is measured on 2.1.301
   only.
@@ -229,7 +246,14 @@ reports.
   passes run it briefed from their proposals and results as if they were the last session's work.
   Both copies of the skill, `docs/agent-onboarding.md`'s spelled-out form and `docs/reference.md`
   now name `dream-*.md` and `promotion-*.md` too.
-- **Log lines show C1 control characters and the state directory safely.** `shown_name` mapped C0
+- **`/resume` stops when `.claude` or `.claude/logs` is a link.** While either is one, the runners
+  write their tripwire to the state directory only, so `/resume`, which reads the vault's copy,
+  briefed as if none were set. Both copies of the skill, `AGENTS.md` and a new first step in
+  `docs/agent-onboarding.md`'s spelled-out form now check with `ls -ld .claude .claude/logs` and
+  stop on a link, without running any of the vault's scripts, which a pass may have changed.
+- **The lines `shown_name` prints show C1 control characters, and the state directory, safely.** The
+  `VIOLATION` list still prints the names it lists as they are (measured with U+009B on this release
+  and on 1.4.1). `shown_name` mapped C0
   control characters and DEL only, because under the runners' C locale `[:cntrl:]` matches nothing
   else, so a NEL or a CSI (U+0085, U+009B) in a name reached the log as it was (measured on Linux on
   1.4.1). It now maps the UTF-8 encodings of U+0080 to U+009F too; a raw byte 0x80 to 0x9F that is
@@ -317,12 +341,20 @@ reports.
   surfaces have been checked). Of the legs and rows named from `twlink` on, these run on Windows:
   `logdir`, both runners' `backupnone` and `sigtwfail`, `sigterm`'s new requirements, the
   `log_outside_links` row and the two `TRIPWIRE-ERROR:` rows; the rest run off Windows only.
-  Every 78 leg also needs the `UNVERIFIED:` line to say that no git command is run in the vault
-  before the steering surfaces are checked, and the tripwire of every 78 leg,
-  every signal leg and the `inflight` leg now needs the advice: git that starts on its own, the
+  The legs that end 78 because the runner's folder changed, with a tripwire in the vault, also need
+  the `UNVERIFIED:` line to say that no git command is run in the vault before the steering surfaces
+  are checked, and their tripwire, that of every signal leg that writes one and that of the
+  `inflight` leg now need the advice: git that starts on its own, the
   comparison without git with `--no-dereference` (where a backup is there), the line on a `.git`
   deeper in the vault, the line on links in `.claude/logs` or at `.claude`, and the first
-  `git -c core.fsmonitor=false` status. The promotion runner takes the `rmdir`, `rmslow`, `hooks`,
+  `git -c core.fsmonitor=false` status. Of the other 78 legs, `logsdirlink`, `logsfile` and
+  `claudelink` need the no-git sentence in the state directory's tripwire, the only copy written,
+  but not the advice, `inflightlink` needs neither, and `twlink` refuses a tripwire the suite wrote,
+  so neither applies. The first kind also need the tripwire to say that the runner's folder for the
+  pass is kept for the review, and that folder still there once the runner has exited, unless the
+  leg removed it itself; `logsdirlink`, `logsfile` and `claudelink`, whose legs remove it, need the
+  sentence. `sigterm` needs each runner's run output kept in the state directory, its stand-in first
+  printing a line and seeing it in `run`. The promotion runner takes the `rmdir`, `rmslow`, `hooks`,
   `dirlink`, `runlink`, `rmstall`, `cksum`, `badname`, `loglink`, `sigterm`, `sigrunlink`,
   `sigdirlink`, `backupfail`, `sigtrap`, `sigrmdir`, `sigtwfail`, `twlink`, `inflightlink`,
   `backuplink`, `backupnone` and `backupseed` legs. Each new runner leg was seen failing against
@@ -332,7 +364,10 @@ reports.
   through the folder check 1.4.1 lacks, so they say nothing about 1.4.1's log (a write through a
   link at `.claude` or `.claude/logs` is reasoned for 1.4.1); the `log_outside_links` row,
   `snap_untrusted`'s `TRIPWIRE-ERROR:` row and the four `write_vault_copy` rows, whose functions
-  1.4.1 lacks, were seen failing against mutants of this release.
+  1.4.1 lacks, were seen failing against mutants of this release. So were the kept-folder
+  requirement (with `on_exit` removing the folder, in either runner, and with the sentence changed)
+  and `sigterm`'s run output (with promotion's signal path keeping none), which hold promises 1.4.1
+  does not make.
   `state-shown` covers all three forms of the tripwire refusal (a tripwire in the vault only, a
   tripwire file in the state directory, and a folder where the state directory's copy goes) with a
   state directory named with a line break and an escape (off Windows); and `git-dir-pass`'s
@@ -355,6 +390,7 @@ reports.
    command not found` on its stderr, not in its log. (All measured on Linux, for each runner and
    mode, with 1.4.1's files.)
 2. **Nothing to configure for most vaults.**
+  A vault whose `.claude` or `.claude/logs` is a link reads step 8 first.
 3. **A runner refuses to start while the vault's path, on Windows or with a `cygpath` on `PATH`,
    holds a part ending in a dot, a colon that is not a drive letter's, or a last part ending in a
    space.** The log says `ERROR: the vault, …, is spelled with a part that ends in a dot`. Rename the
@@ -400,11 +436,16 @@ reports.
    left, now says "Nothing was moved or restored, because containment did not run." and gives the
    same advice: follow it before any git command. After a signal before containment, at 78, and on
    a later run that finds the tripwire or the passes' in-flight marker (`runner-inflight`), when the
-   vault's log, `.claude` or `.claude/logs` is a link, `.claude/logs` is not a folder, or the log is
+   vault's log, `.claude` or `.claude/logs` is a symbolic link, `.claude/logs` is not a folder, or
+   the log is
    there and not a file, the rest of the run's lines are in `dream-pass.uncontained.log`,
    `promotion-pass.uncontained.log` or `vault-retention.uncontained.log` in the state directory. A
-   later run checks before it takes the run lock and again once it holds it. The lines any runner
-   logs before its first check (a setting's warning or the state-directory error) still go to the
+   hard link or a FIFO at a log or at `dream-pass.git-state.txt`, and a symbolic link containment
+   cannot move, are still open and carried to a later release (see Security); keep command-mode
+   passes without a shell, as `docs/setup.md` says. A later run checks before it takes the run lock
+   and again once it holds it. The lines any runner logs before its first check (a setting's
+   warning, the state-directory error, the `WARNING:` naming the git variables it cleared, or the
+   `ERROR:` refusing the vault's spelling) still go to the
    vault's log path, and so do those a dream or promotion run, or a retention run that could keep
    no copy of its lines or was stopped while waiting, logs while it waits for the lock, unless the
    first check already moved the log. A runner that cannot record its folder before the agent
@@ -419,8 +460,10 @@ reports.
    with `could not copy the pre-pass backup of the steering surfaces to the state directory`, before
    the in-flight marker and the agent: free space there, or remove what is at the path the line
    names once you have checked that it holds nothing you still need.
-6. **Hooks are off in claude-mode passes.** That includes the account's own user-level hooks, any
-   guard hook among them, plugins' hooks and the vault's own: the agent no longer gets
+6. **Hooks are off in claude-mode passes.** That includes plugins' hooks and the vault's own
+   (measured on 2.1.301), and the account's own user-level hooks, any guard hook among them
+   (reasoned: the probe held none, nor any in an agent's or a skill's frontmatter, so do not count
+   on a user-level guard hook running in a pass, or on its being off): the agent no longer gets
    `vault-lint.sh`'s advice after each write (the runner still checks the notes a pass wrote with
    `vault-check.sh` before committing them), and no compaction stub is written during a pass. Hooks
    from managed settings still run (measured on an earlier version), and so do MCP servers
@@ -439,11 +482,18 @@ reports.
    sets it itself.
 8. **`/resume`**: take both copies of `.claude/skills/resume/SKILL.md` (`.claude/` and `.agents/`)
    together, as the control suite requires them byte-identical.
+   **If your `.claude` or `.claude/logs` is a link** (to keep the logs out of a sync, for example),
+   `/resume` now stops at its first step on every run, and so does an agent that follows
+   `AGENTS.md`, because the runners write their tripwire to the state directory only while either is
+   a link. Look for `runner-tripwire` in the state directory yourself before you start a session
+   there, or make the folder a real one.
 9. The shipped files this release touches: `.claude/scripts/lib/runner-common.sh`,
    `.claude/scripts/dream-pass.sh`, `.claude/scripts/promotion-pass.sh`,
    `.claude/scripts/vault-retention.sh`, `.claude/scripts/run-tests.sh`,
    `.claude/skills/resume/SKILL.md`, `.agents/skills/resume/SKILL.md`, `docs/reference.md`,
-   `docs/setup.md`, `docs/agent-onboarding.md`, `docs/harnesses/claude-code.md`, `AGENTS.md`,
+   `docs/setup.md`, `docs/agent-onboarding.md`, `docs/harnesses/claude-code.md`,
+   `docs/harnesses/README.md`, `docs/harnesses/copilot.md`, `docs/harnesses/cursor.md`,
+   `docs/harnesses/hermes.md`, `AGENTS.md`,
    `.claude/scripts/vault-check.sh` (a comment), besides `VERSION` and `CHANGELOG.md`, which move
    on every release.
 
