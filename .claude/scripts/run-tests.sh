@@ -7956,9 +7956,12 @@ for sa_leg in dream:plain dream:quiet dream:rmdir dream:rmslow dream:hide dream:
       { grep -qF -- "$SA_WHY" "$sa_state/runner-tripwire" 2>/dev/null && grep -qF -- "$SA_NOGIT" "$sa_state/runner-tripwire" \
           && grep -qF -- "$SA_MOVED" "$sa_state/runner-tripwire"; } \
         || sa_extra="${sa_extra#ok}; the state directory's tripwire lacks its reason, the no-git line or the moved-log note"
-      # The stand-in removed the runner's folder, so only the tripwire's word is held here.
-      grep -qF -- "$SA_KEPT" "$sa_state/runner-tripwire" 2>/dev/null \
-        || sa_extra="${sa_extra#ok}; the state directory's tripwire does not say the runner's folder is kept for the review"
+      # The stand-in removed the runner's folder, so only the tripwire's word is held
+      # here: the sentence, and the folder it names on the line after it.
+      sa_sd="$(cat "$SA_DIR/sdir" 2>/dev/null)"
+      { grep -qF -- "$SA_KEPT" "$sa_state/runner-tripwire" 2>/dev/null && [ -n "$sa_sd" ] \
+          && grep -qxF -- "$sa_sd." "$sa_state/runner-tripwire"; } \
+        || sa_extra="${sa_extra#ok}; the state directory's tripwire does not say the runner's folder (${sa_sd:-not recorded}) is kept for the review"
       sa_cd="$SA_DIR/copy"
       [ "$sa_m" = claudelink ] && sa_cd="$SA_DIR/copy/logs"
       if [ "$sa_m" != logsfile ]; then
@@ -8021,16 +8024,17 @@ for sa_leg in dream:plain dream:quiet dream:rmdir dream:rmslow dream:hide dream:
       case "$sa_m" in
         hide|hooks) [ -s "$sa_state/${sa_s%.sh}.interrupted.run" ] || sa_extra="${sa_extra#ok}; the run output was not kept in the state directory" ;;
       esac
-      # The tripwire says the runner's folder for the pass is kept for the review,
-      # and it is still there before sa_cleanup (the link, where the leg put one in
-      # its place), unless the leg removed it.
-      grep -qF -- "$SA_KEPT" "$sa_tw" 2>/dev/null \
-        || sa_extra="${sa_extra#ok}; the tripwire does not say the runner's folder is kept for the review"
+      # The tripwire says the runner's folder for the pass is kept for the review, and
+      # names it on the line after; unless the leg removed it, the folder is still
+      # there before sa_cleanup with its steering backup in it (through the link,
+      # where the leg put one in its place).
+      sa_sd="$(cat "$SA_DIR/sdir" 2>/dev/null)"
+      { grep -qF -- "$SA_KEPT" "$sa_tw" 2>/dev/null && [ -n "$sa_sd" ] && grep -qxF -- "$sa_sd." "$sa_tw"; } \
+        || sa_extra="${sa_extra#ok}; the tripwire does not say the runner's folder (${sa_sd:-not recorded}) is kept for the review"
       case "$sa_mode" in
         rmdir|rmslow|loglink|logdir) ;;
         *)
-          sa_sd="$(cat "$SA_DIR/sdir" 2>/dev/null)"
-          { [ -n "$sa_sd" ] && { [ -d "$sa_sd" ] || [ -L "$sa_sd" ]; }; } \
+          { [ -n "$sa_sd" ] && [ -f "$sa_sd/steering.tar" ]; } \
             || sa_extra="${sa_extra#ok}; the runner's folder for the pass (${sa_sd:-not recorded}) was not kept" ;;
       esac
       if [ "$sa_rc" -eq 78 ] && [ "$sa_unv" = present ] && sa_tripwire_why && [ "$sa_mk" = none ] \
