@@ -89,8 +89,8 @@ exec opencode run --dir . "$(cat "$1")"
 
 `opencode run` is non-interactive. Its `--auto` flag approves every permission not explicitly
 denied, so if you add it, first deny what each pass must not have. OpenCode agents take per-agent
-`permission` settings: an agent for the dream pass with `bash` and `webfetch` denied, selected
-with `--agent`, keeps that pass off the shell and the web. Network access through other routes is
+`permission` settings: an agent for each pass with `bash` and `webfetch` denied, selected
+with `--agent`, keeps both passes off the shell and the web. Network access through other routes is
 not covered by permissions, so still run the wrapper in a container that blocks the network before
 setting `VAULT_ALLOW_UNENFORCED_TOOLS=1`.
 

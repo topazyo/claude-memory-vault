@@ -68,15 +68,13 @@ A wrapper for command mode (`docs/setup.md` § 8):
 #!/usr/bin/env bash
 # codex-vault-agent.sh <prompt-file>
 set -u
-case "$1" in
-  *dream-pass*) exec codex exec --profile vault-dream --sandbox workspace-write "$(cat "$1")" ;;
-  *)            exec codex exec --sandbox workspace-write "$(cat "$1")" ;;
-esac
+exec codex exec --profile vault-dream --sandbox workspace-write "$(cat "$1")"
 ```
 
 `codex exec` defaults to a read-only sandbox, and `--sandbox workspace-write` lets it write the
-vault. The dream pass must also have no shell. Codex's shell tool is the `features.shell_tool`
-setting, so create a profile file `$CODEX_HOME/vault-dream.config.toml` containing:
+vault. Both passes must also have no shell. Codex's shell tool is the `features.shell_tool`
+setting, so create a profile file `$CODEX_HOME/vault-dream.config.toml` containing the following;
+the wrapper uses it for the promotion pass too:
 
 ```toml
 [features]
