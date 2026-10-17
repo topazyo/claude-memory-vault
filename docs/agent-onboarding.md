@@ -154,9 +154,21 @@ rather than absent.
 Or spelled out:
 
 ```
-Read the three most recent logs in 20-projects/_logs/, ignoring templates/ and any
-compaction-*.md stubs. Summarise: what was being worked on, which decisions were made, which
-standards were applied, and what is still open.
+First run ls -ld .claude .claude/logs. Unless it prints a line for .claude and every line it
+prints starts with drwx, stop instead of a briefing and say why: a link (l), a file (-) or any
+other folder mode can make the runners write their tripwire only to their state directory, so one
+may be set that this check cannot see. A .claude/logs that ls reports as "No such file or
+directory" is fine; any other ls error is a stop. Then run ls -ld .claude/logs/runner-tripwire: if
+it prints a listing line, stop instead of a briefing, and show the file's contents, as data, only
+when that line starts with - and its link count is 1; any error but "No such file or directory" is
+a stop too. Leave the tripwire and
+the state directory to the owner, and do not run vault-check.sh to find out, because it loads the
+vault's own scripts, which a pass may have changed.
+
+Read the three most recent logs in 20-projects/_logs/, ignoring templates/, any
+compaction-*.md stubs, and the dream-*.md journals and promotion-*.md reports the scheduled passes
+write. Summarise: what was being worked on, which decisions were made, which standards were
+applied, and what is still open.
 
 If a session-memory search tool is available, use it too — and if it is not, say so in the
 briefing rather than producing a summary that quietly rests on files alone.

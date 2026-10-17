@@ -72,9 +72,10 @@ exec copilot -p "$(cat "$1")"
 ```
 
 `-p` runs Copilot CLI in programmatic mode. Add the tool-approval options your installed version
-documents (`copilot --help`), because a programmatic run cannot answer approval prompts. Those options
-are not a sandbox, so run the wrapper in a container that blocks the network and, for the dream
-pass, gives the agent no shell. Only then set `VAULT_ALLOW_UNENFORCED_TOOLS=1`.
+documents (`copilot --help`), because a programmatic run cannot answer approval prompts. Those
+options are not a sandbox, so run the wrapper in a container that blocks the network and, for both
+passes, gives the agent no shell and mounts only the vault writable. Only then set
+`VAULT_ALLOW_UNENFORCED_TOOLS=1`.
 
 ## Known limits
 

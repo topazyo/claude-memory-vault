@@ -38,20 +38,27 @@
 #   vault-retention.sh --adopt-legacy <report> move the legacy journals the report lists
 #
 # Output:
-#   Every line a run logs goes to .claude/logs/vault-retention.log and to a copy
-#   kept for that run alone, and the copy is printed on standard output as the
-#   run ends, as "vault-retention: <text>" without the timestamp. A run that
-#   ends with any code but 0 adds one last line saying which, apart from the few
-#   ends docs/reference.md 4.3.1 lists, which has the whole contract. Cron mails
-#   what it prints, where it can send mail. See print_run.
+#   Every line a run logs goes to .claude/logs/vault-retention.log, or, once
+#   the run has moved its log because the log, .claude or .claude/logs was a
+#   link or not what it should be (see log_check), to
+#   vault-retention.uncontained.log in the state directory, and to a copy kept
+#   for that run alone. The copy is printed on standard output as the run
+#   ends, as "vault-retention: <text>" without the timestamp, with the WARNING
+#   once when the log was moved. When no copy could be kept, or it could not be
+#   read back, the run prints one line saying so instead, naming the log the
+#   lines are in. A run that ends with any code but 0 adds one last line saying
+#   which, apart from the few ends docs/reference.md 4.3.1 lists, which has the
+#   whole contract. Cron mails what it prints, where it can send mail. See
+#   print_run.
 #
 # Environment:
 #   RETENTION_DAYS       days before a journal or stub may move (default 60)
 #   RETENTION_MAX_MOVES  the most files one run moves (default 50, at most 50)
 #   VAULT_STATE_DIR      per-vault state outside the vault (see dream-pass.sh)
-#   TMPDIR               where the run makes its folders, when it starts with /
-#                        and a folder can be made there (otherwise /tmp, and
-#                        failing that mktemp's own default)
+#   TMPDIR               where the run makes its folders and temporary files,
+#                        when it starts with / (otherwise /tmp for the whole
+#                        run); a folder that cannot be made there is made in
+#                        /tmp, and a run that can make neither refuses
 #   RUN_LOCK_WAIT        seconds to wait for another runner's lock (default 1800)
 #   RUN_LOCK_POLL        seconds between checks while waiting (default 30)
 #   RUNNER_GIT_TIMEOUT   seconds each watched git step may take (default 120)
@@ -61,14 +68,14 @@
 #        20-projects/_logs folder
 #   1    setup failure, 20-projects/_logs cannot be listed or entered, git
 #        cannot read the vault, the vault is not the top of its own
-#        repository, a shallow clone, grafts, or a sparse checkout, or, on
-#        Windows or wherever a cygpath is found on PATH, the temporary folder
-#        whose path git is given spelled with .. or a part ending in a dot
-#        (git there can read it as another folder; the run uses TMPDIR when it
-#        starts with / and a folder can be made there, otherwise /tmp, and
-#        when no folder can be made there either, mktemp's own default).
-#        Also this script failing in itself, such as on an unset variable,
-#        which bash ends with 1
+#        repository, a shallow clone, grafts, or a sparse checkout, a
+#        temporary folder that could not be made in TMPDIR or /tmp, or is not
+#        an absolute path, or, on Windows or wherever a cygpath is found on
+#        PATH, the vault or the temporary folder whose path git is given
+#        spelled with .., a part ending in a dot or a colon that is not a drive
+#        letter's, or a vault whose last part ends in a space (git there can
+#        read it as another folder). Also this script failing in itself, such
+#        as on an unset variable, which bash ends with 1
 #   2    REPORT-REFUSED: the report was not written by this runner, or changed
 #   3    PARTIAL: the move failed and the vault was put back to HEAD, or an
 #        archive folder could not be made, or turned out to be a link or not a
@@ -113,6 +120,9 @@ export LC_ALL
 RUNNER=vault-retention
 SNAP_DIR=""
 LOG=""
+# The log as print_run names it: the vault's, or the state directory's once
+# log_outside_links has moved the log there.
+LOG_SHOWN=.claude/logs/vault-retention.log
 # This run's own copy of every line it logs, which is what print_run prints, and
 # the file the runner library logs into until lib_logged passes its lines on.
 # The log is shared with every other run, and nothing in it says which run wrote
@@ -178,6 +188,24 @@ say() {  # say <text> - one timestamped line in the log, and the same in RUN_LOG
   # of the line and never the lasting one.
   printf '%s' "$line" >> "$LOG"
   [ -z "$RUN_LOG" ] || printf '%s' "$line" >> "$RUN_LOG"
+}
+
+# log_check
+# A tripwire, or the passes' in-flight marker, means a pass ended without
+# containment, and a link it put in place of this runner's log may be there. The
+# run's lines then go to the state directory (log_outside_links), the library's
+# as well when it logs to the log itself, print_run names that log, and the
+# printed copy gets the WARNING. Called once the state directory is known and
+# again once the run lock is held; a second move is never made.
+log_check() {
+  local was="$LOG"
+  [ -z "${LOG_MOVED_NOTE:-}" ] || return 0
+  guard_exists "$ROOT" "$STATE" "$TRIPWIRE_REL" || guard_exists "$ROOT" "$STATE" "$INFLIGHT_REL" || return 0
+  log_outside_links "$ROOT" "$STATE" "$RUNNER"
+  [ -n "${LOG_MOVED_NOTE:-}" ] || return 0
+  [ "$LIB_LOG" = "$was" ] && LIB_LOG="$LOG"
+  LOG_SHOWN="$(shown_name "$LOG")"
+  [ -z "$RUN_LOG" ] || printf '[%s] WARNING: %s\n' "$(ts)" "$LOG_MOVED_NOTE" >> "$RUN_LOG"
 }
 
 # lib_logged
@@ -284,14 +312,14 @@ safe_name() {
 print_run() {
   local line lines
   if [ -z "$RUN_LOG" ]; then
-    printf 'vault-retention: no copy of what this run logged could be kept, so it is only in .claude/logs/vault-retention.log.\n'
+    printf 'vault-retention: no copy of what this run logged could be kept, so it is only in %s.\n' "$LOG_SHOWN"
   elif [ ! -r "$RUN_LOG" ]; then
-    printf 'vault-retention: this run'"'"'s copy of what it logged could not be read back, so it is only in .claude/logs/vault-retention.log.\n'
+    printf 'vault-retention: this run'"'"'s copy of what it logged could not be read back, so it is only in %s.\n' "$LOG_SHOWN"
   elif ! render_run > "$COPY_DIR/print" 2>/dev/null; then
     if lines="$(render_run 2>/dev/null)" && [ -n "$lines" ]; then
       printf '%s\n' "$lines"
     else
-      printf 'vault-retention: this run'"'"'s copy of what it logged could not be read back, so it is only in .claude/logs/vault-retention.log.\n'
+      printf 'vault-retention: this run'"'"'s copy of what it logged could not be read back, so it is only in %s.\n' "$LOG_SHOWN"
     fi
   else
     while IFS= read -r line; do printf '%s\n' "$line"; done < "$COPY_DIR/print"
@@ -2525,7 +2553,7 @@ do_moves() {
     mark_kill_failed "$LIB_LOG" "${RUN_KILL_REPORT:-}"
     lib_logged
     write_recovery kill-failed
-    say "RECOVERY-NEEDED: the move was stopped and a git process of it may still be running, so nothing is put back. $STATE/retention-inflight says what was being moved."
+    say "RECOVERY-NEEDED: the move was stopped and a git process of it may still be running, so nothing is put back. $(shown_name "$STATE")/retention-inflight says what was being moved."
     MOVING=0
     return 71
   fi
@@ -2591,7 +2619,7 @@ put_back() {
   pb_head="$(rgit rev-parse -q --verify 'HEAD^{commit}' 2>/dev/null)"
   if [ -z "$pb_head" ] || [ "$pb_head" != "$HEAD_BEFORE" ]; then
     write_recovery putback-head-moved
-    say "RECOVERY-NEEDED: HEAD is not where this run started, so nothing is put back. A commit made while this run was working may hold the moves, and undoing them would undo whatever else it carried. $STATE/retention-inflight says where each file belongs."
+    say "RECOVERY-NEEDED: HEAD is not where this run started, so nothing is put back. A commit made while this run was working may hold the moves, and undoing them would undo whatever else it carried. $(shown_name "$STATE")/retention-inflight says where each file belongs."
     return 1
   fi
   index_lock_wait
@@ -2601,7 +2629,7 @@ put_back() {
   # and that is the one outcome here no later run can resolve.
   if ! index_of_moves; then
     write_recovery putback-unreadable-index
-    say "RECOVERY-NEEDED: the index could not be read, so nothing is put back rather than putting files back where git would not see them. $STATE/retention-inflight says where each file belongs."
+    say "RECOVERY-NEEDED: the index could not be read, so nothing is put back rather than putting files back where git would not see them. $(shown_name "$STATE")/retention-inflight says where each file belongs."
     return 1
   fi
   while [ "$k" -lt "${#SRCS[@]}" ]; do
@@ -2661,7 +2689,7 @@ put_back() {
     mark_kill_failed "$LIB_LOG" "${RUN_KILL_REPORT:-}"
     lib_logged
     write_recovery kill-failed
-    say "RECOVERY-NEEDED: a git command of the put-back was stopped and may still be running, so nothing further was touched. $STATE/retention-inflight says where each file belongs."
+    say "RECOVERY-NEEDED: a git command of the put-back was stopped and may still be running, so nothing further was touched. $(shown_name "$STATE")/retention-inflight says where each file belongs."
     while IFS= read -r line; do say "    git: $line"; done < "$SNAP_DIR/git.err"
     return 1
   fi
@@ -2677,7 +2705,7 @@ put_back() {
   # restore a journal they had deliberately deleted.
   if ! head_of_sources; then
     write_recovery putback-unverified
-    say "RECOVERY-NEEDED: the files may be back, but HEAD could not be read to check them, so this run does not claim either way. $STATE/retention-inflight says where each file belongs."
+    say "RECOVERY-NEEDED: the files may be back, but HEAD could not be read to check them, so this run does not claim either way. $(shown_name "$STATE")/retention-inflight says where each file belongs."
     return 1
   fi
   k=0
@@ -2702,7 +2730,7 @@ put_back() {
     return 0
   fi
   write_recovery putback-failed
-  say "RECOVERY-NEEDED: the vault could not be put back. $STATE/retention-inflight says where each file should be. Put them back, then run again."
+  say "RECOVERY-NEEDED: the vault could not be put back. $(shown_name "$STATE")/retention-inflight says where each file should be. Put them back, then run again."
   while IFS= read -r line; do say "    git: $line"; done < "$SNAP_DIR/git.err"
   return 1
 }
@@ -2892,14 +2920,14 @@ settle_outcome() {
     mark_kill_failed "$LIB_LOG" "${RUN_KILL_REPORT:-}"
     lib_logged
     write_recovery kill-failed
-    say "RECOVERY-NEEDED: a git command of this run was stopped and may still be running, so what it did is not known and nothing is put back. $STATE/retention-inflight says what was being moved."
+    say "RECOVERY-NEEDED: a git command of this run was stopped and may still be running, so what it did is not known and nothing is put back. $(shown_name "$STATE")/retention-inflight says what was being moved."
     MOVING=0
     return 71
   fi
   head_now="$(rgit rev-parse -q --verify 'HEAD^{commit}' 2>/dev/null)"
   if [ -z "$head_now" ]; then
     write_recovery head-unreadable
-    say "RECOVERY-NEEDED: HEAD could not be read after the move, so what this run did is not known. $STATE/retention-inflight says what was being moved."
+    say "RECOVERY-NEEDED: HEAD could not be read after the move, so what this run did is not known. $(shown_name "$STATE")/retention-inflight says what was being moved."
     MOVING=0
     return 71
   fi
@@ -2929,9 +2957,9 @@ settle_outcome() {
     # the owner the first when it was the second sends them looking for a
     # disagreement that may not exist.
     if [ "$HEAD_HOLDS_UNKNOWN" -eq 1 ]; then
-      say "RECOVERY-NEEDED: the commit was made and whether HEAD holds what was judged could not be established, so it is left alone. $STATE/retention-inflight says what was being moved."
+      say "RECOVERY-NEEDED: the commit was made and whether HEAD holds what was judged could not be established, so it is left alone. $(shown_name "$STATE")/retention-inflight says what was being moved."
     else
-      say "RECOVERY-NEEDED: the commit was made but HEAD does not hold what was judged, so it is left alone. $STATE/retention-inflight says what was being moved."
+      say "RECOVERY-NEEDED: the commit was made but HEAD does not hold what was judged, so it is left alone. $(shown_name "$STATE")/retention-inflight says what was being moved."
     fi
     MOVING=0
     return 71
@@ -2955,7 +2983,7 @@ settle_outcome() {
     return 0
   fi
   write_recovery head-moved
-  say "RECOVERY-NEEDED: HEAD moved to $head_now while this run was working and it does not hold the moves, so nothing is put back. $STATE/retention-inflight says what was being moved."
+  say "RECOVERY-NEEDED: HEAD moved to $head_now while this run was working and it does not hold the moves, so nothing is put back. $(shown_name "$STATE")/retention-inflight says what was being moved."
   MOVING=0
   return 71
 }
@@ -2969,7 +2997,7 @@ recovery_check() {
   local f="$STATE/retention-inflight" key rest rhead rnonce headnow undone=1 n=0 rdone=0
   [ -e "$f" ] || return 0
   if [ ! -f "$f" ] || [ ! -r "$f" ]; then
-    say "TRIPWIRE: $f is not a readable file, so what an earlier run was doing cannot be established. Look at it, then remove it."
+    say "TRIPWIRE: $(shown_name "$f") is not a readable file, so what an earlier run was doing cannot be established. Look at it, then remove it."
     return 78
   fi
   rhead=""
@@ -2999,7 +3027,7 @@ recovery_check() {
   done < "$f"
   headnow="$(rgit rev-parse -q --verify 'HEAD^{commit}' 2>/dev/null)"
   if [ "$n" -eq 0 ] || [ -z "$rhead" ] || [ -z "$headnow" ]; then
-    say "TRIPWIRE: $f does not say what an earlier run was moving, so it cannot be cleared here. Look at it, then remove it."
+    say "TRIPWIRE: $(shown_name "$f") does not say what an earlier run was moving, so it cannot be cleared here. Look at it, then remove it."
     return 78
   fi
   # The commit landed, and HEAD holds every destination and no source.
@@ -3087,7 +3115,7 @@ recovery_check() {
     return 0
   fi
   say "TRIPWIRE: an earlier run could not say what its moves did, and the vault does not yet show either outcome. Nothing is moved until this is settled."
-  say "  the record is $f, and HEAD was $rhead when it was written"
+  say "  the record is $(shown_name "$f"), and HEAD was $rhead when it was written"
   # Said carefully. The marker means the rename reported success, not that
   # files moved, and its absence covers a rename that never ran as well as one
   # that ran and reported failure. A git mv that moved some of its files and
@@ -3104,7 +3132,7 @@ recovery_check() {
     say "  $(printf '%s' "${DSTS[$k]}") work tree $([ -e "$ROOT/${DSTS[$k]}" ] && echo present || echo absent), index $(idx_blob "${DSTS[$k]}")"
     k=$((k + 1))
   done
-  say "  put every file back where the record says it belongs, or finish the move by hand, then remove $f"
+  say "  put every file back where the record says it belongs, or finish the move by hand, then remove $(shown_name "$f")"
   return 78
 }
 
@@ -3120,13 +3148,15 @@ usage() {
 # puts the folder in the per-user folder the system names and not in TMPDIR, so
 # a caller who points TMPDIR somewhere would find the run's folders elsewhere.
 # TMPDIR counts only when it is an absolute path: the run has already moved
-# into the vault, where a relative one would put the folders. /tmp is the
-# fallback when TMPDIR cannot be used, and the plain form the last resort.
+# into the vault, where a relative one would put the folders, and main sets it
+# to /tmp for the whole run when it is not one. /tmp is the fallback when
+# TMPDIR cannot be used. There is no plain mktemp -d after it: that form reads
+# TMPDIR itself, and when neither folder can be made the run refuses instead.
 tmp_dir() {
   local base=/tmp
   case "${TMPDIR:-}" in /*) base="$TMPDIR" ;; esac
   mktemp -d "$base/vaultretention.XXXXXXXX" 2>/dev/null \
-    || mktemp -d /tmp/vaultretention.XXXXXXXX 2>/dev/null || mktemp -d 2>/dev/null
+    || mktemp -d /tmp/vaultretention.XXXXXXXX 2>/dev/null
 }
 
 main() {
@@ -3194,6 +3224,11 @@ main() {
   done
   [ -n "$OUT_FD" ] || OUT_FD=9
   { eval "exec $OUT_FD>&1"; } 2>/dev/null
+  # Every temporary file of the run is made where its folders are. The run has
+  # moved into the vault, so a TMPDIR that does not start with / would put the
+  # library's own temporary files, the watchdog's among them, inside the vault
+  # while its git steps run: it is replaced by /tmp for the whole run.
+  case "${TMPDIR:-}" in ''|/*) ;; *) TMPDIR=/tmp; export TMPDIR ;; esac
   # This run's own copy of what it logs, made before anything can fail, in a
   # folder of its own. When it cannot be made the run goes on logging to the log
   # alone, and print_run says so in place of the lines. It is not the folder the
@@ -3216,6 +3251,15 @@ main() {
   trap 'on_signal 130' INT
   trap 'on_signal 143' TERM
   trap 'on_signal 129' HUP
+  git_env_warning "$LIB_LOG"
+  lib_logged
+  # On Windows git reads the vault's folder as it is spelled, so a spelling it
+  # reads as another folder is refused before the state directory, the lock or
+  # any git call.
+  vault_root_spelling_ok "$ROOT" "$LIB_LOG"
+  rc=$?
+  lib_logged
+  [ "$rc" -eq 0 ] || return 1
   # Anything that reaches arithmetic is checked first, because the shell reads a
   # variable in arithmetic as an expression and a planted one would run.
   RETENTION_DAYS="$(uint_setting RETENTION_DAYS 60 1 "$LIB_LOG" days)"
@@ -3232,13 +3276,18 @@ main() {
   STATE_REAL="$(state_dir_ready "$STATE" "$ROOT")"
   state_rc=$?
   if [ "$state_rc" -ne 0 ]; then
-    say "ERROR: the state directory $STATE $(state_dir_problem "$state_rc"). Refusing to run."
+    say "ERROR: the state directory $(shown_name "$STATE") $(state_dir_problem "$state_rc"). Refusing to run."
     return 1
   fi
   STATE="$STATE_REAL"
+  log_check
 
   run_lock_acquire "$STATE" "$ROOT" "$RUNNER" "$LIB_LOG" "$((GIT_TIMEOUT * 4 + WATCHDOG_GRACE + 900))"
   lock_rc=$?
+  # Again once the lock is held, and before the lines logged while waiting for it
+  # are passed on: the pass that held it may have put the link there, and set the
+  # tripwire, after the check above.
+  log_check
   lib_logged
   [ "$lock_rc" -eq 0 ] || return "$lock_rc"
 
@@ -3257,6 +3306,10 @@ main() {
   # On Windows git reads this folder as TMPDIR spells it, so a spelling it reads
   # as another folder is refused before the first git call.
   temp_dir_spelling_ok "$SNAP_DIR" "$LIB_LOG"
+  rc=$?
+  lib_logged
+  [ "$rc" -eq 0 ] || return 1
+  runner_folder_ok "$SNAP_DIR" "$LIB_LOG"
   rc=$?
   lib_logged
   [ "$rc" -eq 0 ] || return 1
@@ -3353,7 +3406,7 @@ main() {
 
   RETENTION_NONCE="$(new_uuid)"
   write_recovery moving || {
-    say "ERROR: the record of what is about to move could not be written to $STATE, so nothing was moved."
+    say "ERROR: the record of what is about to move could not be written to $(shown_name "$STATE"), so nothing was moved."
     log_verdicts
     return 1
   }
@@ -3378,7 +3431,7 @@ main() {
   fi
   if ! real_dir_ok "$LOGS_REL" || ! real_dir_ok "$ARCH_REL"; then
     write_recovery folders-changed
-    say "RECOVERY-NEEDED: a folder on the path changed while this run was moving, so nothing further is done. $STATE/retention-inflight says what was moved."
+    say "RECOVERY-NEEDED: a folder on the path changed while this run was moving, so nothing further is done. $(shown_name "$STATE")/retention-inflight says what was moved."
     MOVING=0
     log_verdicts
     return 71

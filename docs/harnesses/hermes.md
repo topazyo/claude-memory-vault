@@ -76,9 +76,9 @@ exec hermes chat -q "$(cat "$1")"
 ```
 
 `hermes chat -q` answers one query and exits. Because Hermes's own guards are not a hard boundary,
-run the wrapper in a container that blocks the network. For the dream pass, also remove the
-terminal tool, for example through `agent.disabled_toolsets` (check `hermes tools` for the toolset
-that provides it). Only then set `VAULT_ALLOW_UNENFORCED_TOOLS=1`.
+run the wrapper in a container that blocks the network. For both passes, also remove the terminal
+tool, for example through `agent.disabled_toolsets` (check `hermes tools` for the toolset that
+provides it), and mount only the vault writable. Only then set `VAULT_ALLOW_UNENFORCED_TOOLS=1`.
 
 ## Known limits
 

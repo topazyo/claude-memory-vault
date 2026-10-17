@@ -79,7 +79,8 @@ set -u
 exec aider --config aider-scheduled.conf.yml --message-file "$1" --yes-always
 ```
 
-Run it in a container that blocks the network before setting `VAULT_ALLOW_UNENFORCED_TOOLS=1`.
+Run it in a container that blocks the network and mounts only the vault writable before setting
+`VAULT_ALLOW_UNENFORCED_TOOLS=1`.
 
 ## Sources (checked 2026-09-13)
 
