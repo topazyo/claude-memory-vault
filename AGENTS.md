@@ -221,16 +221,18 @@ of its own git steps could not be stopped it marks that lock so no later pass st
 it, quarantines what the pass wrote outside the vault, and sets `.claude/logs/runner-tripwire`. It
 sets the same tripwire when a stopped pass may have left a process running (`KILL_FAILED`), or
 when the runner's own folder changed while the pass ran (exit 78).
-**If that file exists, stop and tell the owner.** Runners exit 78, or 75 after `KILL_FAILED`, and
-`vault-check.sh` refuses with the same 78 until the owner has done what the tripwire says and
-deleted it. Never delete it yourself. **In an interactive session, stop and tell the owner too
-unless `ls -ld .claude .claude/logs` prints a line for `.claude` and every line it prints starts
-with `drwx`.** A link (`l`), a file (`-`) or any other folder mode can make the runners write the
-tripwire only to their state directory (`docs/reference.md` §4.3), so its absence here proves
-nothing; a `.claude/logs` that `ls` reports as `No such file or directory` is fine, and any other
-`ls` error is a stop. A scheduled pass is exempt: its runner checked both copies before it started.
-Leave that check to the owner rather than running `vault-check.sh`, which loads the vault's own
-scripts, and a pass may have changed those.
+**If that file exists, stop and tell the owner.** Look for it with
+`ls -ld .claude/logs/runner-tripwire` rather than by reading it, and show its contents only as
+`/resume`'s step 0 says, because a link there could point at a secret. Runners exit 78, or 75 after
+`KILL_FAILED`, and `vault-check.sh` refuses with the same 78 until the owner has done what the
+tripwire says and deleted it. Never delete it yourself. **In an interactive session, stop and tell
+the owner too unless `ls -ld .claude .claude/logs` prints a line for `.claude` and every line it
+prints starts with `drwx`.** A link (`l`), a file (`-`) or any other folder mode can make the
+runners write the tripwire only to their state directory (`docs/reference.md` §4.3), so its absence
+here proves nothing; a `.claude/logs` that `ls` reports as `No such file or directory` is fine, and
+any other `ls` error is a stop. A scheduled pass is exempt: its runner checked both copies before it
+started. Leave that check to the owner rather than running `vault-check.sh`, which loads the vault's
+own scripts, and a pass may have changed those.
 
 The five skills in `.claude/skills/` cover the session lifecycle: `resume` (start),
 `obsidian-save` and `wrap-up` (end of a working block), `preserve` (medium → long promotion),

@@ -98,7 +98,10 @@ denied, so if you add it, first deny what each pass must not have. OpenCode agen
 and `vault-promotion` as the wrapper selects them with `--agent` (define both), keeps both passes
 off the shell and the web. Network access through other routes is not covered by permissions, so
 still run the wrapper in a container that blocks the network and mounts only the vault writable
-before setting `VAULT_ALLOW_UNENFORCED_TOOLS=1`.
+before setting `VAULT_ALLOW_UNENFORCED_TOOLS=1`. If OpenCode finds no agent by the name it is given,
+it may fall back to its default agent, which has `bash`, so first check, in the container, that
+`opencode run --dir . --agent vault-dream "Run the shell command ls."` is refused and prints no
+fallback warning, and the same for `vault-promotion`.
 
 ## Known limits
 

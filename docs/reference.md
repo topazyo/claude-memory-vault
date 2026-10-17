@@ -1152,7 +1152,9 @@ Around that call, each runner does several things an exit code cannot:
   Any of this writes the tripwire `.claude/logs/runner-tripwire`, listing each path, anything that
   could not be contained, and the quarantine, and a second copy in the state directory. While either
   copy exists, both runners exit **78** without starting an agent, `vault-check.sh` exits the same
-  **78** without checking anything, and `/resume` shows the vault's copy instead of a briefing.
+  **78** without checking anything. `/resume` stops instead of a briefing when it finds the vault's
+  copy, showing it when `ls -ld` lists it as a regular file with one link and the listing line
+  otherwise; it cannot see a copy that is only in the state directory.
   While `.claude` or `.claude/logs` is a link, no vault copy is written (see below), nor while
   `.claude/logs` is a file or a folder the runner cannot write, so `/resume` stops instead whenever
   `ls -ld .claude .claude/logs` shows either as anything but a folder it can write, and says a

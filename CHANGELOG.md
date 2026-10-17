@@ -257,11 +257,11 @@ tripwire may then be set in the state directory only.
   write.** While either is a link, the runners now write their tripwire to the state directory only
   (see Security), as they do when `.claude/logs` is a file or a folder they cannot write, so
   `/resume`, which reads the vault's copy, would brief as if none were set. Both copies of the
-  skill, `AGENTS.md` and a new first step in `docs/agent-onboarding.md`'s spelled-out form now run
+  skill and a new first step in `docs/agent-onboarding.md`'s spelled-out form now run
   `ls -ld .claude .claude/logs` first and stop unless it prints a line for `.claude` and every line
-  starts with `drwx` (a missing `.claude/logs` is fine), and look at the tripwire with `ls -l`
-  before reading it, without running any of the vault's scripts,
-  which a pass may have changed.
+  starts with `drwx` (a missing `.claude/logs` is fine), and look at the tripwire with `ls -ld`
+  before reading it, without running any of the vault's scripts, which a pass may have changed.
+  `AGENTS.md` adds the same folder check for an interactive session.
 - **The command-mode sandbox text covers both passes.** The Codex, Copilot, Cursor, Hermes and
   OpenCode guides took the shell away for the dream pass only, against `docs/setup.md`, which asks
   it for the dream pass and the promotion pass alike; they now say both passes, and the Codex
@@ -510,13 +510,16 @@ tripwire may then be set in the state directory only.
    folder, `VAULT_STATE_DIR` when you set it, or, when neither can be used,
    `claude-memory-vault-state-<id>` under `TMPDIR` or `/tmp` (`docs/reference.md` §4.3), so
    `ls <state folder>/claude-memory-vault/*/runner-tripwire`,
-   `ls "$VAULT_STATE_DIR/runner-tripwire"` or `ls /tmp/claude-memory-vault-state-*/runner-tripwire`
+   `ls "<the VAULT_STATE_DIR the scheduled task sets>/runner-tripwire"` or
+   `ls "${TMPDIR:-/tmp}"/claude-memory-vault-state-*/runner-tripwire` (the scheduler's `TMPDIR`)
    finds it (the globs list every vault's folder). Clear one as for any other. Making the folder a
    real one afterwards stops `/resume` stopping, but does not show a tripwire set before.
 9. **A command-mode wrapper built from the Codex, Copilot, Cursor, Hermes or OpenCode guide** may
    have left the promotion pass a shell, because those guides took it away for the dream pass
    only. Take it away for both passes, as `docs/setup.md` asks: the Codex guide's wrapper now
-   gives both passes its no-shell profile. Keep each pass's tools writing only inside the vault.
+   gives both passes its no-shell profile, and the OpenCode guide's wrapper selects the agents
+   `vault-dream` and `vault-promotion`: define both, with `bash` and `webfetch` denied, before you
+   take it. Keep each pass's tools writing only inside the vault.
 10. The shipped files this release touches: `.claude/scripts/lib/runner-common.sh`,
    `.claude/scripts/dream-pass.sh`, `.claude/scripts/promotion-pass.sh`,
    `.claude/scripts/vault-retention.sh`, `.claude/scripts/run-tests.sh`,
