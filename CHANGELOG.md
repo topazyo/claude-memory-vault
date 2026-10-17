@@ -33,8 +33,8 @@ spellings under which git read another folder than the runner meant, checks its 
 folder before trusting what it holds, and, in claude mode, starts Claude Code with every hook but
 managed ones turned off (measured for the vault's and plugins' hooks; for the account's own,
 reasoned). `/resume` no longer briefs from the scheduled passes' own journals and reports, and stops
-when `.claude` or `.claude/logs` is a link or not a folder it can write, because a tripwire may then
-be set in the state directory only.
+when `.claude` or `.claude/logs` is a link or not a folder the runners can write, because a
+tripwire may then be set in the state directory only.
 
 ### Security
 
@@ -180,8 +180,7 @@ be set in the state directory only.
   wrote its lines through such a link (measured on 1.4.1); a process that has left the tree and
   its process group is neither
   stopped nor recorded (reasoned).
-  This keeps the lines a runner logs after its first check out of a symbolic link, but for the last
-  case below; the lines logged before it, listed above, still reach one. Still open, and
+  Besides the lines listed above as still going to the vault's log path, these are still open, and
   carried to a later release, each needing a command-mode pass with a shell, which `docs/setup.md`
   says not to give it: a hard link at a log, which has the runner append its lines, names the pass
   chose included, to the file it shares, and one at `.claude/logs/dream-pass.git-state.txt`, which
@@ -189,11 +188,14 @@ be set in the state directory only.
   a FIFO at a log, which blocks every later run of that runner at the log's first write, before any
   check, and one at the git-state file, which blocks the next dream run while it holds the run lock,
   so a promotion run is refused with 75 and every later dream run blocks the same way, each with no
-  tripwire until an outside time limit ends the run; and a symbolic link containment cannot move,
-  as in a `.claude/logs` made read-only, which the runner still writes through (measured with this
+  tripwire at all, an outside time limit ending each run; and a symbolic link containment cannot
+  move, as in a `.claude/logs` made read-only, which the runner still writes through (measured with
+  this
   release; 1.4.1 behaves the same; the FIFO at a log measured for the dream runner only, and on
   1.4.1 by reading). A process that outlives the pass can also give the vault's `runner-tripwire` a
-  second name, and a later note is then appended to the file it shares (reasoned).
+  second name, and a later note is then appended to the file it shares, and, after a stop that
+  could not end it, put a link at the log once containment has run, so the runner's later lines go
+  through it (both reasoned).
 - **The vault's copy of the tripwire was written through a name a pass could work out.** The
   runner copied it first to `runner-tripwire.tmp.<pid>`, a name a command-mode pass could work out
   from the runner's pid in the vault's in-flight marker, and `cp` followed a link planted there: a
@@ -251,19 +253,21 @@ be set in the state directory only.
   passes run it briefed from their proposals and results as if they were the last session's work.
   Both copies of the skill, `docs/agent-onboarding.md`'s spelled-out form and `docs/reference.md`
   now name `dream-*.md` and `promotion-*.md` too.
-- **`/resume` stops when `.claude` or `.claude/logs` is a link or not a folder it can write.**
-  While either is a link, the runners now write their tripwire to the state directory only (see
-  Security), as they do when `.claude/logs` is a file or a folder they cannot write, so `/resume`,
-  which reads the vault's copy, would brief as if none were set. Both copies of the skill,
-  `AGENTS.md` and a new first step in `docs/agent-onboarding.md`'s spelled-out form now run
+- **`/resume` stops when `.claude` or `.claude/logs` is a link or not a folder the runners can
+  write.** While either is a link, the runners now write their tripwire to the state directory only
+  (see Security), as they do when `.claude/logs` is a file or a folder they cannot write, so
+  `/resume`, which reads the vault's copy, would brief as if none were set. Both copies of the
+  skill, `AGENTS.md` and a new first step in `docs/agent-onboarding.md`'s spelled-out form now run
   `ls -ld .claude .claude/logs` first and stop unless it prints a line for `.claude` and every line
-  starts with `drw` (a missing `.claude/logs` is fine), without running any of the vault's
-  scripts, which a pass may have changed.
+  starts with `drwx` (a missing `.claude/logs` is fine), and look at the tripwire with `ls -l`
+  before reading it, without running any of the vault's scripts,
+  which a pass may have changed.
 - **The command-mode sandbox text covers both passes.** The Codex, Copilot, Cursor, Hermes and
   OpenCode guides took the shell away for the dream pass only, against `docs/setup.md`, which asks
   it for the dream pass and the promotion pass alike; they now say both passes, and the Codex
-  guide's wrapper gives both its no-shell profile. `AGENTS.md` and the harness README now also say
-  that each pass may write only inside the vault.
+  guide's wrapper gives both its no-shell profile, and the OpenCode wrapper picks an agent for each.
+  `AGENTS.md`, the harness README and the Aider, Codex, Copilot, Cursor, Gemini CLI, Hermes and
+  OpenCode guides now also say that each pass's tools may write only inside the vault.
 - **The lines `shown_name` prints show C1 control characters, and the state directory, safely.** The
   `VIOLATION` list still prints the names it lists as they are (measured with U+009B on this release
   and on 1.4.1). `shown_name` mapped C0
@@ -404,8 +408,8 @@ be set in the state directory only.
    exits 1 before its agent, with `git_env_warning: command not found` and `vault_root_spelling_ok:
    command not found` on its stderr, not in its log. (All measured on Linux, for each runner and
    mode, with 1.4.1's files.)
-2. **Nothing to configure for most vaults.** A vault whose `.claude` or `.claude/logs` is a link
-   reads step 8 first.
+2. **Nothing to configure for most vaults.** A vault whose `.claude` or `.claude/logs` is a link,
+   or not a folder the runners can write, reads step 8 first.
 3. **A runner refuses to start while the vault's path, on Windows or with a `cygpath` on `PATH`,
    holds a part ending in a dot, a colon that is not a drive letter's, or a last part ending in a
    space.** The log says `ERROR: the vault, …, is spelled with a part that ends in a dot`. Rename the
@@ -498,25 +502,29 @@ be set in the state directory only.
 8. **`/resume`**: take both copies of `.claude/skills/resume/SKILL.md` (`.claude/` and `.agents/`)
    together, as the control suite requires them byte-identical.
    **If your `.claude` or `.claude/logs` is a link** (to keep the logs out of a sync, for example),
-   `/resume` now stops at its first step on every run, and so does an agent that follows
-   `AGENTS.md`, because the runners write their tripwire to the state directory only while either is
-   a link. Look for `runner-tripwire` in the state directory yourself before you start a session
-   there, without running any of the vault's scripts: the state directory is a folder under
-   `claude-memory-vault/` in the account's state folder, or `VAULT_STATE_DIR` when you set it
-   (`docs/reference.md` §4.3), so `ls <state folder>/claude-memory-vault/*/runner-tripwire` finds
-   it. Clear one as for any other. Making the folder a real one afterwards stops `/resume` stopping,
-   but does not show a tripwire set before.
+   **or not a folder the runners can write**, `/resume` now stops at its first step on every run,
+   and so does an agent that follows `AGENTS.md` in an interactive session, because the runners
+   may then write their tripwire to the state directory only. Look for `runner-tripwire` in the
+   state directory yourself before you start a session there, without running any of the vault's
+   scripts: the state directory is a folder under `claude-memory-vault/` in the account's state
+   folder, `VAULT_STATE_DIR` when you set it, or, when neither can be used,
+   `claude-memory-vault-state-<id>` under `TMPDIR` or `/tmp` (`docs/reference.md` §4.3), so
+   `ls <state folder>/claude-memory-vault/*/runner-tripwire`,
+   `ls "$VAULT_STATE_DIR/runner-tripwire"` or `ls /tmp/claude-memory-vault-state-*/runner-tripwire`
+   finds it (the globs list every vault's folder). Clear one as for any other. Making the folder a
+   real one afterwards stops `/resume` stopping, but does not show a tripwire set before.
 9. **A command-mode wrapper built from the Codex, Copilot, Cursor, Hermes or OpenCode guide** may
    have left the promotion pass a shell, because those guides took it away for the dream pass
    only. Take it away for both passes, as `docs/setup.md` asks: the Codex guide's wrapper now
-   gives both passes its no-shell profile. Keep each pass able to write only inside the vault.
+   gives both passes its no-shell profile. Keep each pass's tools writing only inside the vault.
 10. The shipped files this release touches: `.claude/scripts/lib/runner-common.sh`,
    `.claude/scripts/dream-pass.sh`, `.claude/scripts/promotion-pass.sh`,
    `.claude/scripts/vault-retention.sh`, `.claude/scripts/run-tests.sh`,
    `.claude/skills/resume/SKILL.md`, `.agents/skills/resume/SKILL.md`, `docs/reference.md`,
    `docs/setup.md`, `docs/agent-onboarding.md`, `docs/harnesses/claude-code.md`,
-   `docs/harnesses/README.md`, `docs/harnesses/codex.md`, `docs/harnesses/copilot.md`,
-   `docs/harnesses/cursor.md`, `docs/harnesses/hermes.md`, `docs/harnesses/opencode.md`,
+   `docs/harnesses/README.md`, `docs/harnesses/aider.md`, `docs/harnesses/codex.md`,
+   `docs/harnesses/copilot.md`, `docs/harnesses/cursor.md`, `docs/harnesses/gemini-cli.md`,
+   `docs/harnesses/hermes.md`, `docs/harnesses/opencode.md`,
    `AGENTS.md`, `.claude/scripts/vault-check.sh` (a comment), besides `VERSION` and
    `CHANGELOG.md`, which move on every release.
 

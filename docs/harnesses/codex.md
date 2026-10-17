@@ -81,9 +81,11 @@ the wrapper uses it for the promotion pass too:
 shell_tool = false
 ```
 
-Before you set `VAULT_ALLOW_UNENFORCED_TOOLS=1`, confirm two things: that
-`codex exec --profile vault-dream "List the tools you can use."` offers no shell tool, and that
-network access is off in your Codex sandbox settings.
+Before you set `VAULT_ALLOW_UNENFORCED_TOOLS=1`, confirm three things: that
+`codex exec --profile vault-dream "List the tools you can use."` offers no shell tool, that
+network access is off in your Codex sandbox settings, and that the sandbox lets the pass write
+only inside the vault. This guide does not yet name the setting for the last; check your Codex
+version's sandbox documentation for the folders `workspace-write` opens besides the vault.
 
 ## Known limits
 

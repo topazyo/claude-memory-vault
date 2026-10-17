@@ -910,21 +910,22 @@ Around that call, each runner does several things an exit code cannot:
   reasoned), one the pass made once the stop reached it included (measured), and a later run's
   refusal was too (measured), a run that waited for the run lock included, through a link the log
   became while it waited (measured, for each runner), so a command-mode pass could have the runner
-  append to any file the account can write through a symbolic link. That route is now closed for
-  the lines logged after the first check, but for the last case below; the lines logged before it,
-  listed above, still reach such a link. These are still open too, and carried to a later release,
+  append to any file the account can write through a symbolic link. Besides the lines listed above
+  as still going to the vault's log path, these are still open, and carried to a later release,
   each needing a command-mode pass with a shell, which `docs/setup.md` says not to give it: a hard
   link at a log, which has the runner append its lines, names the pass chose included, to the file
   it shares, and one at `.claude/logs/dream-pass.git-state.txt`, which has the next dream run empty
   that file and write `git status`, those names included, into it; a FIFO at a log, which blocks
   every later run of that runner at the log's first write, before any check, and one at the
   git-state file, which blocks the next dream run while it holds the run lock, so a promotion run is
-  refused with 75 and every later dream run blocks the same way, each with no tripwire until an
-  outside time limit ends the run; and a symbolic link containment cannot move, as in a
+  refused with 75 and every later dream run blocks the same way, each with no tripwire at all, an
+  outside time limit ending each run; and a symbolic link containment cannot move, as in a
   `.claude/logs` made read-only, which the runner still writes through (measured with 1.4.2; 1.4.1
   behaves the same; the FIFO at a log measured for the dream runner only, and on 1.4.1 by reading).
   A process that outlives the pass can also give the vault's `runner-tripwire` a second name, and a
-  later note is then appended to the file it shares (reasoned). Once the runner's
+  later note is then appended to the file it shares, and, after a stop that could not end it, put a
+  link at the log once containment has run, so the runner's later lines go through it (both
+  reasoned). Once the runner's
   folder for the pass has been made, a
   signal stops the agent's process tree whether or not that folder is still there, and records the
   stop in the state directory as `signal-stop.<pid>`. On 1.4.1 a pass that removed that folder and

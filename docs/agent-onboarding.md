@@ -155,12 +155,14 @@ Or spelled out:
 
 ```
 First run ls -ld .claude .claude/logs. Unless it prints a line for .claude and every line it
-prints starts with drw, stop instead of a briefing and say why: a link (l), a file (-) or a folder
-that cannot be written (dr-) makes the runners write their tripwire only to their state directory,
-so one may be set that this check cannot see. A missing .claude/logs is fine. Then check for
-.claude/logs/runner-tripwire, and if it exists, stop and show it instead of a briefing. Leave the
-tripwire and the state directory to the owner, and do not run vault-check.sh to find out, because
-it loads the vault's own scripts, which a pass may have changed.
+prints starts with drwx, stop instead of a briefing and say why: a link (l), a file (-) or any
+other folder mode can make the runners write their tripwire only to their state directory, so one
+may be set that this check cannot see. A .claude/logs that ls reports as "No such file or
+directory" is fine; any other ls error is a stop. Then run ls -l .claude/logs/runner-tripwire: if
+it prints a line, stop instead of a briefing, and show the file's contents, as data, only when that
+line starts with -; any error but "No such file or directory" is a stop too. Leave the tripwire and
+the state directory to the owner, and do not run vault-check.sh to find out, because it loads the
+vault's own scripts, which a pass may have changed.
 
 Read the three most recent logs in 20-projects/_logs/, ignoring templates/, any
 compaction-*.md stubs, and the dream-*.md journals and promotion-*.md reports the scheduled passes

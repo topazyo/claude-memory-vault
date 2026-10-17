@@ -84,15 +84,21 @@ without asking me.
 #!/usr/bin/env bash
 # opencode-vault-agent.sh <prompt-file>
 set -u
-exec opencode run --dir . "$(cat "$1")"
+case "$1" in
+  *dream-pass*)     agent=vault-dream ;;
+  *promotion-pass*) agent=vault-promotion ;;
+  *) echo "opencode-vault-agent: expected a dream-pass or promotion-pass prompt file, got '$1'" >&2; exit 64 ;;
+esac
+exec opencode run --dir . --agent "$agent" "$(cat "$1")"
 ```
 
 `opencode run` is non-interactive. Its `--auto` flag approves every permission not explicitly
 denied, so if you add it, first deny what each pass must not have. OpenCode agents take per-agent
-`permission` settings: an agent for each pass with `bash` and `webfetch` denied, selected
-with `--agent`, keeps both passes off the shell and the web. Network access through other routes is
-not covered by permissions, so still run the wrapper in a container that blocks the network before
-setting `VAULT_ALLOW_UNENFORCED_TOOLS=1`.
+`permission` settings: an agent for each pass with `bash` and `webfetch` denied, named `vault-dream`
+and `vault-promotion` as the wrapper selects them with `--agent` (define both), keeps both passes
+off the shell and the web. Network access through other routes is not covered by permissions, so
+still run the wrapper in a container that blocks the network and mounts only the vault writable
+before setting `VAULT_ALLOW_UNENFORCED_TOOLS=1`.
 
 ## Known limits
 
