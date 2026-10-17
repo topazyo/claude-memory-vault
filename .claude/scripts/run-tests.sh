@@ -7539,6 +7539,12 @@ d - nohooks" && rm -f "$s/before" && rmdir "$s/nohooks" ;;
       && rm -rf "$s"; } || : > "$SA_FIX" ;;
   sigterm|sigrunlink|sigdirlink)
     journal
+    # The handler keeps only output that is there, so sigterm's run gets a line,
+    # seen in run before the signal.
+    if [ "$SA_MODE" = sigterm ]; then
+      printf 'working\n'
+      [ -s "$s/run" ] || { : > "$SA_FIX"; exit 0; }
+    fi
     if [ "$SA_MODE" = sigrunlink ]; then
       { rm -f "$s/run" && ln -s "$SA_CANARY" "$s/run" && ln -sf "$SA_CANARY" .claude/logs/dream-agent.log \
         && ln -sf "$SA_CANARY" .claude/logs/promotion-agent.log; } || { : > "$SA_FIX"; exit 0; }
@@ -7692,6 +7698,8 @@ SA_RECERR="ERROR: the runner could not record its folder for the pass, "
 SA_BKERR='ERROR: could not copy the pre-pass backup of the steering surfaces to the state directory as '
 SA_CKWARN='WARNING: no sha256sum or shasum was found, so the runner checks its folder for the pass with cksum'
 SA_RUNWARN='is missing, is not a regular file or is in a folder that is a link, so it was not kept'
+# What the tripwire of a pass that ended UNVERIFIED says of the runner's folder.
+SA_KEPT="The runner's folder for the pass is kept, for the review, at"
 # sa_cleanup - on every way out of a leg. The runner keeps its folder for the
 # pass after a 78, outside $TMP, so the suite removes it: a link left in its
 # place, or a folder holding the runner's steering backup, and nothing else.
@@ -7824,6 +7832,8 @@ for sa_leg in dream:plain dream:quiet dream:rmdir dream:rmslow dream:hide dream:
           # says the log was moved.
           grep -q '^\[[^]]*\] INTERRUPTED before containment\. Tripwire set\.' "$sa_log" 2>/dev/null || sa_extra="no INTERRUPTED line in the vault's log"
           grep -qF -- "$SA_MOVED" "$sa_tw" 2>/dev/null && sa_extra="${sa_extra#ok}; the tripwire says the log was moved, with no link there"
+          # Each runner's signal path keeps the pass output, promotion's as dream's.
+          [ -s "$sa_state/${sa_s%.sh}.interrupted.run" ] || sa_extra="${sa_extra#ok}; the run output was not kept in the state directory"
           [ -e "$sa_state/${sa_s%.sh}.uncontained.log" ] && sa_extra="${sa_extra#ok}; the state directory got a log, with no link there" ;;
         sigrunlink)
           [ "$(cat "$SA_DIR/canary" 2>/dev/null)" = canary ] || sa_extra="the canary was written through a link"
@@ -7946,6 +7956,9 @@ for sa_leg in dream:plain dream:quiet dream:rmdir dream:rmslow dream:hide dream:
       { grep -qF -- "$SA_WHY" "$sa_state/runner-tripwire" 2>/dev/null && grep -qF -- "$SA_NOGIT" "$sa_state/runner-tripwire" \
           && grep -qF -- "$SA_MOVED" "$sa_state/runner-tripwire"; } \
         || sa_extra="${sa_extra#ok}; the state directory's tripwire lacks its reason, the no-git line or the moved-log note"
+      # The stand-in removed the runner's folder, so only the tripwire's word is held here.
+      grep -qF -- "$SA_KEPT" "$sa_state/runner-tripwire" 2>/dev/null \
+        || sa_extra="${sa_extra#ok}; the state directory's tripwire does not say the runner's folder is kept for the review"
       sa_cd="$SA_DIR/copy"
       [ "$sa_m" = claudelink ] && sa_cd="$SA_DIR/copy/logs"
       if [ "$sa_m" != logsfile ]; then
@@ -8007,6 +8020,18 @@ for sa_leg in dream:plain dream:quiet dream:rmdir dream:rmslow dream:hide dream:
       # The run output of a pass that ended 78 is kept outside the vault.
       case "$sa_m" in
         hide|hooks) [ -s "$sa_state/${sa_s%.sh}.interrupted.run" ] || sa_extra="${sa_extra#ok}; the run output was not kept in the state directory" ;;
+      esac
+      # The tripwire says the runner's folder for the pass is kept for the review,
+      # and it is still there before sa_cleanup (the link, where the leg put one in
+      # its place), unless the leg removed it.
+      grep -qF -- "$SA_KEPT" "$sa_tw" 2>/dev/null \
+        || sa_extra="${sa_extra#ok}; the tripwire does not say the runner's folder is kept for the review"
+      case "$sa_mode" in
+        rmdir|rmslow|loglink|logdir) ;;
+        *)
+          sa_sd="$(cat "$SA_DIR/sdir" 2>/dev/null)"
+          { [ -n "$sa_sd" ] && { [ -d "$sa_sd" ] || [ -L "$sa_sd" ]; }; } \
+            || sa_extra="${sa_extra#ok}; the runner's folder for the pass (${sa_sd:-not recorded}) was not kept" ;;
       esac
       if [ "$sa_rc" -eq 78 ] && [ "$sa_unv" = present ] && sa_tripwire_why && [ "$sa_mk" = none ] \
          && [ -s "$sa_state/inflight-backup.tar" ] && [ "$sa_extra" = ok ]; then
