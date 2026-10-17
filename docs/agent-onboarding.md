@@ -154,6 +154,13 @@ rather than absent.
 Or spelled out:
 
 ```
+First check for .claude/logs/runner-tripwire, and run ls -ld .claude .claude/logs. If the
+tripwire exists, stop and show it instead of a briefing. If either folder is a link (its line
+starts with l), stop too and say so: the runners then write the tripwire only to their state
+directory, so one may be set that this check cannot see. Leave the tripwire and the state
+directory to the owner, and do not run vault-check.sh to find out, because it loads the vault's
+own scripts, which a pass may have changed.
+
 Read the three most recent logs in 20-projects/_logs/, ignoring templates/, any
 compaction-*.md stubs, and the dream-*.md journals and promotion-*.md reports the scheduled passes
 write. Summarise: what was being worked on, which decisions were made, which standards were

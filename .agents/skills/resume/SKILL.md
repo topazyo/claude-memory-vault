@@ -12,6 +12,12 @@ shell: bash
    briefing: a scheduled pass changed a steering or execution surface, and the files it names were
    quarantined. Say that nothing else in this skill ran, and that the owner clears it by reading the
    quarantined files and deleting the tripwire. Do not delete it yourself.
+   Then run `ls -ld .claude .claude/logs`. If either line starts with `l`, that folder is a link,
+   and while it is one the runners write their tripwire only to their state directory
+   (`docs/reference.md` §4.3 says where), so one may be set that this check cannot see. Stop the
+   same way: say that, and that nothing else in this skill ran, and leave the state directory to the
+   owner. Do not run `vault-check.sh` to find out, because it loads the vault's own scripts, which a
+   pass may have changed and the runner may not have put back.
 1. Read the most recent 3 log files from `20-projects/_logs/`, ignoring `templates/`, any
    `compaction-*.md` stubs, and the `dream-*.md` journals and `promotion-*.md` reports the scheduled
    passes write. Those hold a pass's proposals and results, not a record of work, and a dream
