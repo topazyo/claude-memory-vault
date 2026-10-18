@@ -79,7 +79,8 @@ exec hermes chat -q "$(cat "$1")"
 run the wrapper in a container that blocks the network. For both passes, also remove the terminal
 tool, for example through `agent.disabled_toolsets` (check `hermes tools` for the toolset that
 provides it), and mount only the vault writable, with its `.claude/` and `.git` read-only and an
-empty file read-only over its `.env`. The lint snippet from Setup runs `bash` on
+empty file from outside the vault read-only over its `.env` (if the vault has no `.env`, create an
+empty one there first, as the README says). The lint snippet from Setup runs `bash` on
 `.claude/hooks/vault-lint.sh` after every `write_file` and `patch`, in every session, so a pass that
 rewrote that script would get a shell through its next write (reasoned): give the container a Hermes
 configuration with no `hooks:` entry, rather than your `~/.hermes/config.yaml`, and run the check in

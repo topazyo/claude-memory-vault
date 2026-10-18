@@ -103,8 +103,8 @@ filter does not name a root `.env`, and whether a `.env` or `--config` wins is n
 
 ```bash
 #!/usr/bin/env bash
-# aider-vault-agent.sh <prompt-file>: keep it, like its config, outside the vault, where a pass
-# cannot write it, because the --config path below is what the switch rests on
+# aider-vault-agent.sh <prompt-file>: keep it, like its config, outside the vault and every folder
+# a pass can write, because the --config path below is what the switch rests on
 set -u
 exec aider --config /absolute/path/outside/the/vault/aider-scheduled.conf.yml \
   --message-file "$1" --yes-always
@@ -142,9 +142,10 @@ the check tests `git: false` alone:
    step 3's. If `hook-canary` exists, or `git log` shows a commit after step 3's, the check is
    FAILED, and `VAULT_ALLOW_UNENFORCED_TOOLS` stays unset. A control that did not fire leaves the
    check NOT VERIFIED, never PASS (the README's step 3). If step 2's control fired by the commit
-   alone, a PASS shows only that Aider made no commit in step 4; that any git it ran could load
-   nothing a pass wrote then rests on the read-only `.git` and `.claude/` mounts below, which step 5
-   of the README's check confirms.
+   alone, a PASS shows only that Aider made no commit in step 4; that any git it ran could reach
+   nothing a pass wrote of the class `docs/setup.md` names in its `UNVERIFIED` troubleshooting row
+   then rests on the read-only `.git` and `.claude/` mounts below, which step 5 of the README's
+   check confirms.
 
 Remove the second canary from the copy's git configuration afterwards. If the scheduled runs do not
 show the rules in the chat, check the absolute `read:` paths.

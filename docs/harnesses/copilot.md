@@ -84,7 +84,8 @@ script would get a shell through its next edit (reasoned). Keep them out of the 
 `.github/` read-only with its `hooks/vault.json` from a copy that has no hooks (Copilot also reads
 `.github/copilot/settings.json`, which a pass could otherwise create), `.claude/` read-only with its
 `settings.json`, and any `settings.local.json`, from a copy without their hooks, the vault's `.git`
-read-only, and an empty file read-only over its `.env`, load none of your home configuration
+read-only, and an empty file from outside the vault read-only over its `.env` (if the vault has no
+`.env`, create an empty one there first, as the README says), load none of your home configuration
 (Copilot reads hooks from `~/.copilot/` too), and run the check in `docs/harnesses/README.md`, "No
 vault hook in a scheduled pass", which shows that the vault's hook scripts do not run and that
 writes into `.git` and `.claude/` are refused. Copilot also documents a `disableAllHooks` setting;

@@ -66,8 +66,8 @@ A wrapper for command mode (`docs/setup.md` § 8):
 
 ```bash
 #!/usr/bin/env bash
-# codex-vault-agent.sh <prompt-file>: keep it, like the profile it names, outside the vault, where a
-# pass cannot write it, because its --profile and --sandbox flags are what the switches rest on
+# codex-vault-agent.sh <prompt-file>: keep it, like the profile it names, outside the vault and every
+# folder a pass can write, because its --profile and --sandbox flags are what the switches rest on
 set -u
 exec codex exec --profile vault-dream --sandbox workspace-write "$(cat "$1")"
 ```
@@ -77,8 +77,10 @@ vault. Both passes must also have no shell tool and run no hook: the vault's own
 `.codex/hooks.json` runs `bash` on `.claude/hooks/vault-lint.sh` after every `apply_patch`, so a
 pass that patched that script would get a shell through the next edit, whatever its shell tool says
 (reasoned). Codex's shell tool is the `features.shell_tool` setting and its hooks the
-`features.hooks` setting, so create a profile file `$CODEX_HOME/vault-dream.config.toml` containing
-the following; the wrapper uses it for the promotion pass too:
+`features.hooks` setting, so create a profile file `$CODEX_HOME/vault-dream.config.toml` (with
+`$CODEX_HOME` outside every folder `workspace-write` lets a pass write, which the third point below
+asks you to check; if you cannot confirm that, use the README's container) containing the following;
+the wrapper uses it for the promotion pass too:
 
 ```toml
 [features]
@@ -99,11 +101,12 @@ only inside the vault, and that the vault's hook scripts do not run, by the chec
 setting for the third; check your Codex version's sandbox documentation for the folders
 `workspace-write` opens besides the vault. Whether `workspace-write` leaves the vault's `.git`
 writable to a pass, or, with the commit gate on, its `.claude/`, is still to check too: step 5 of
-that check confirms it, by a probe through the wrapper that asks Codex's own write tool for one file
-under the copy's `.git/` and one under its `.claude/`. If either is written, or that step is not
-verified, run the wrapper in the README's container instead, which mounts both read-only. This
-recipe uses Codex's sandbox rather than a container, so a hook that ran would run wherever Codex
-runs its hooks, which its documentation does not say.
+that check confirms it, by a probe through the wrapper that has each of Codex's own tools for
+creating files write a control file in `01-inbox/` and one file under each of the copy's `.git/` and
+`.claude/`, judged by Codex's own record of its tool calls and by the disk. If either of the two is
+written, or that step is not verified, run the wrapper in the README's container instead, which
+mounts both read-only. This recipe uses Codex's sandbox rather than a container, so a hook that ran
+would run wherever Codex runs its hooks, which its documentation does not say.
 
 ## Known limits
 

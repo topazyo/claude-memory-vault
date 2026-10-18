@@ -919,8 +919,8 @@ Around that call, each runner does several things an exit code cannot:
   `git: false` (not measured for this release), the container recipes mount the vault's `.claude/`
   and `.git` read-only, and `docs/setup.md` now asks for hooks off too, and for the vault's `.git`,
   and with the commit gate on its `.claude/`, out of a pass's reach, with a check in
-  `docs/harnesses/README.md`, while whether the Codex and Gemini CLI sandboxes leave those folders
-  writable is carried): a hard link at a log, which has the runner
+  `docs/harnesses/README.md`, while whether the Codex and Gemini CLI sandboxes leave
+  those folders writable is carried): a hard link at a log, which has the runner
   append its lines, names the pass chose included, to the file it shares, and one at
   `.claude/logs/dream-pass.git-state.txt`, which has the next dream run empty that file and write
   `git status`, those names included, into it; a FIFO at a log, which blocks every later run of that

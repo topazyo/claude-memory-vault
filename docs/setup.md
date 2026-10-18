@@ -522,8 +522,8 @@ prompt_file="$1"
 exec your-harness-cli <its-non-interactive-flag> "$(cat "$prompt_file")"
 ```
 
-Keep the wrapper, the container definition it starts and every file they name (a profile, a config,
-a settings copy) outside the vault and outside every folder a pass can write: the runner starts what
+Keep the wrapper, the container definition and every file they name (a profile, a config, a settings
+copy) outside the vault and outside every folder a pass can write: the runner starts what
 `VAULT_AGENT_CMD` names (the wrapper, or the command that starts its container) outside every
 sandbox, and several guides' switches live there.
 
@@ -558,8 +558,8 @@ the **promotion pass** alike:
 - where the harness itself can run git during a pass, which you should assume of every harness,
   cannot write the vault's `.git`, or, with the commit gate on, its `.claude/`, which hold the class
   the `UNVERIFIED` troubleshooting row below names (reasoned). `docs/harnesses/README.md`, "No vault
-  hook in a scheduled pass", says which recipes mount both read-only, and how to confirm that they
-  refuse a pass's writes.
+  hook in a scheduled pass", says which recipes mount both read-only, and how to confirm (for both
+  folders either way, since the gate can be turned on later) that they refuse a pass's writes.
 
 Once opted in, every run still logs a `WARNING` line saying the allowlist is not enforced by the
 runner. The write fence, the watchdog and the artifact assertion work exactly as they do under

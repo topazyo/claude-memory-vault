@@ -174,8 +174,8 @@ without asking me.
 
 ```bash
 #!/usr/bin/env bash
-# pi-vault-agent.sh <prompt-file>: keep it outside the vault, where a pass cannot write it, because
-# its flags below are the switches this recipe rests on
+# pi-vault-agent.sh <prompt-file>: keep it outside the vault and every folder a pass can write,
+# because its flags below are the switches this recipe rests on
 set -u
 case "${1:-}" in
   *dream-pass*)     tools=read,grep,find,ls,write ;;
