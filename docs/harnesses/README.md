@@ -205,8 +205,9 @@ vault is, from the copy's root and in the environment the schedule uses:
    through would land in the vault's own folders, so first confirm that what the container or the
    harness sees is the copy: a canary from step 1 in place (`.claude/hooks/vault-lint.sh`, or, for
    the Aider guide's check, `.claude/githooks/pre-commit`), and the copy's own `.git`, not the
-   vault's (for example, an empty file you put in the copy's `.git/` beforehand, seen from where the
-   harness runs). Stop if either is not. The step writes three files, in this order:
+   vault's (for example, an empty file with another name, such as `copy-marker`, that you put in the
+   copy's `.git/` beforehand, seen from where the harness runs). Stop if either is not: this step is
+   NOT VERIFIED until what is seen is the copy. The step writes three files, in this order:
    `01-inbox/probe-ro.md`, which a pass may write and which must be written, then `.git/probe-ro`
    and `.claude/probe-ro`, which must be refused.
    - In a container, start the schedule's own container definition with only the vault's path
@@ -233,8 +234,10 @@ vault is, from the copy's root and in the environment the schedule uses:
    exist, and step 5 wrote its first file and had every write into `.git` and `.claude/` refused (in
    a container, with a read-only error), in every run. If `hook-canary` exists, a hook ran: FAILED,
    whatever the guide says. If a write into `.git` or `.claude/` went through, FAILED as well: in a
-   container until the mounts hold, and on a switch route the container is the way on. A step 5 that
-   is NOT VERIFIED leaves the check NOT VERIFIED.
+   container until the mounts hold, and on a switch route the container is the way on. FAILED takes
+   precedence: a `hook-canary`, or any write into `.git` or `.claude/` that went through, is FAILED
+   whatever else a run shows. A step 5 that is NOT VERIFIED leaves the check NOT VERIFIED, and so
+   does any other result short of PASS.
 
 The canary does not depend on where a hook logs. It depends on step 1 for any variable a hook's
 command reads: the shipped `.claude/settings.json` names its scripts through
