@@ -79,21 +79,22 @@ Approval covers tool calls, not hooks: the vault's `.gemini/settings.json` runs 
 `.claude/hooks/vault-lint.sh` after every `write_file` and `replace`, so a pass that rewrote that
 script would get a shell through its next write (reasoned). Turn hooks off for scheduled runs with
 `hooksConfig.enabled: false` in a settings file outside the vault, in a folder the sandbox does not
-let a pass write, that outranks the project's (H2 names that key as what stops the lint), or run the
-wrapper in a container as `docs/harnesses/README.md`, "No vault hook in a scheduled pass",
-describes, and run that section's check, which shows that the vault's hook scripts do not run and
-that writes into `.git` and `.claude/` are refused, before setting `VAULT_ALLOW_UNENFORCED_TOOLS=1`.
-Whether the sandbox leaves the vault's `.git` writable to a pass, or, with the commit gate on, its
-`.claude/`, is still to check: step 5 of that check confirms it, by a probe through the wrapper that
-has each of Gemini CLI's own tools for creating files write a control file in `01-inbox/` and one
-file under each of the copy's `.git/` and `.claude/`, judged by Gemini CLI's own record of its tool
-calls and by the disk; if either of the two is written, or that step is not verified, use the
-container. This guide has not checked which settings layers outrank the project's for that key, and
-a pass could write `"hooksConfig": {"enabled": true}` into the vault's own `.gemini/settings.json`.
-So, on the switch route, add exactly that to the scratch copy's `.gemini/settings.json` before the
-check's step 4: the hooks must stay off even then. If they do not, use the container, with
-`.gemini/`, `.claude/` and `.git` read-only, and an empty file read-only over the vault's `.env`, as
-the README says.
+let a pass write (if you cannot confirm that, use the container), that outranks the project's (H2
+names that key as what stops the lint), or run the wrapper in a container as
+`docs/harnesses/README.md`, "No vault hook in a scheduled pass", describes, and run that section's
+check, which shows that the vault's hook scripts do not run and that writes into `.git` and
+`.claude/` are refused, before setting `VAULT_ALLOW_UNENFORCED_TOOLS=1`. Whether the sandbox leaves
+the vault's `.git` writable to a pass, or, with the commit gate on, its `.claude/`, is still to
+check: step 5 of that check confirms it, by a probe through the wrapper that has each of Gemini
+CLI's own tools for creating files write a control file in `01-inbox/` and one file under each of
+the copy's `.git/` and `.claude/`, judged by Gemini CLI's own record of its tool calls and by the
+disk; if either of the two is written, or that step is not verified, use the container. This guide
+has not checked which settings layers outrank the project's for that key, and a pass could write
+`"hooksConfig": {"enabled": true}` into the vault's own `.gemini/settings.json`. So, on the switch
+route, add exactly that to the scratch copy's `.gemini/settings.json` before the check's step 4: the
+hooks must stay off even then. If they do not, use the container, with `.gemini/`, `.claude/` and
+`.git` read-only, and an empty file from outside the vault read-only over the vault's `.env` (if the
+vault has none, create an empty one there first), as the README says.
 
 ## Known limits
 

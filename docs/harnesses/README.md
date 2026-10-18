@@ -205,7 +205,8 @@ vault is, from the copy's root and in the environment the schedule uses:
    through would land in the vault's own folders, so first confirm that what the container or the
    harness sees is the copy: a canary from step 1 in place (`.claude/hooks/vault-lint.sh`, or, for
    the Aider guide's check, `.claude/githooks/pre-commit`), and the copy's own `.git`, not the
-   vault's. Stop if either is not. The step writes three files, in this order:
+   vault's (for example, an empty file you put in the copy's `.git/` beforehand, seen from where the
+   harness runs). Stop if either is not. The step writes three files, in this order:
    `01-inbox/probe-ro.md`, which a pass may write and which must be written, then `.git/probe-ro`
    and `.claude/probe-ro`, which must be refused.
    - In a container, start the schedule's own container definition with only the vault's path
@@ -224,8 +225,10 @@ vault is, from the copy's root and in the environment the schedule uses:
      `.claude/` attempted and refused, and neither file there. Delete the first file with `rm` after
      each run. If either of the other two is written, use the container and run this check there. If
      a run leaves no record of its tool calls, its record does not show those writes attempted, or
-     the first file was not written, this step is NOT VERIFIED, never PASS: use the container. Any
-     other result in either branch is NOT VERIFIED too.
+     the first file was not written, this step is NOT VERIFIED, never PASS: use the container.
+
+   Any other result in either branch, apart from a write into `.git` or `.claude/` that went through
+   (FAILED, step 6), is NOT VERIFIED too.
 6. PASS only if step 3's control fired, each run in step 4 wrote the probe, `hook-canary` does not
    exist, and step 5 wrote its first file and had every write into `.git` and `.claude/` refused (in
    a container, with a read-only error), in every run. If `hook-canary` exists, a hook ran: FAILED,

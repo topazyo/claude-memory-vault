@@ -196,12 +196,12 @@ exec pi --print --no-session --no-approve --no-extensions --no-skills --offline 
   already carries the agent's instructions. `--no-extensions` and `--no-skills` keep your personal
   extensions and skills out as well, and `--offline` stops Pi's own automatic network requests.
 - **No extension loads, this vault's included, so nothing refuses a read of `.env` or `secrets/`
-  during a pass.** Keep them out of the container: mount an empty file read-only over the vault's
-  `.env`, as the README's container rule says, and over every other `.env` and `.env.*` at any
-  depth, and an empty folder over every `secrets/` folder. Adding `-e .claude/adapters/pi/vault.js`
-  would load the guard, since Pi loads an extension named with `-e` even with `--no-extensions`, but
-  it would also lint every write and could record a compaction into `20-projects/_logs/` during the
-  pass.
+  during a pass.** Keep them out of the container: mount an empty file from outside the vault
+  read-only over the vault's `.env`, as the README's container rule says, and over every other
+  `.env` and `.env.*` at any depth, and an empty folder over every `secrets/` folder. Adding
+  `-e .claude/adapters/pi/vault.js` would load the guard, since Pi loads an extension named with
+  `-e` even with `--no-extensions`, but it would also lint every write and could record a compaction
+  into `20-projects/_logs/` during the pass.
 - Pi still loads its global `~/.pi/agent/AGENTS.md` and any `AGENTS.override.md`, `AGENTS.md` or
   `CLAUDE.md` in the folders above the vault. Those steer the pass, and the fence cannot see them.
   `--no-context-files` would drop them, but it drops the vault's own `AGENTS.md` as well, so the

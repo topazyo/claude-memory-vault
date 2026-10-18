@@ -95,11 +95,12 @@ changes (default: True)"). A config inside the vault would be a file the pass co
 which is why it lives outside, and its `read:` paths are absolute paths to the vault's files,
 because how Aider resolves a relative one there is not in the sources (reasoned). Aider also loads
 options from a `.env` file in the git root and in the current directory (its dotenv page), and a
-pass could write one: in the container, mount an empty file read-only over the vault's `.env`. The
-mount is what keeps this config's switches in force for later runs, because the runner's steering
-filter does not name a root `.env`, and whether a `.env` or `--config` wins is not in the sources
-(reasoned). If the vault has none, create the empty file yourself before the first scheduled run:
-`.claude/rules/security.md` forbids an agent to create a `.env`, so that step is the owner's.
+pass could write one: in the container, mount an empty file from outside the vault read-only over
+the vault's `.env`. The mount is what keeps this config's switches in force for later runs, because
+the runner's steering filter does not name a root `.env`, and whether a `.env` or `--config` wins is
+not in the sources (reasoned). If the vault has no `.env`, create an empty one there yourself before
+the first scheduled run, so that the mount has a target: `.claude/rules/security.md` forbids an
+agent to create a `.env`, so that step is the owner's.
 
 ```bash
 #!/usr/bin/env bash
@@ -142,10 +143,10 @@ the check tests `git: false` alone:
    step 3's. If `hook-canary` exists, or `git log` shows a commit after step 3's, the check is
    FAILED, and `VAULT_ALLOW_UNENFORCED_TOOLS` stays unset. A control that did not fire leaves the
    check NOT VERIFIED, never PASS (the README's step 3). If step 2's control fired by the commit
-   alone, a PASS shows only that Aider made no commit in step 4; that any git it ran could reach
-   nothing a pass wrote of the class `docs/setup.md` names in its `UNVERIFIED` troubleshooting row
-   then rests on the read-only `.git` and `.claude/` mounts below, which step 5 of the README's
-   check confirms.
+   alone, a PASS shows only that Aider made no commit in step 4. That any git it ran could reach
+   nothing of the class `docs/setup.md` names in its `UNVERIFIED` troubleshooting row that a pass
+   wrote then rests on the read-only `.git` and `.claude/` mounts below, which step 5 of the
+   README's check confirms.
 
 Remove the second canary from the copy's git configuration afterwards. If the scheduled runs do not
 show the rules in the chat, check the absolute `read:` paths.
