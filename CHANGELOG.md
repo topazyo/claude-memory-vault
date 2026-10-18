@@ -587,8 +587,8 @@ in one and that those folders refuse a pass's writes, and the Aider guide's sche
    check that each refuses a shell command with no fallback warning, before you take it. Keep
    each pass's tools writing only inside the vault. **Any command-mode wrapper**, from any guide,
    must also run with no hook, because a pass can change the script a hook runs and get a shell
-   through it (reasoned); keep the wrapper, the container definition it starts and every file they
-   name outside the vault and every folder a pass can write, because the runner starts what
+   through it (reasoned); keep the wrapper, the container definition and every file they name
+   outside the vault and every folder a pass can write, because the runner starts what
    `VAULT_AGENT_CMD` names outside every sandbox (`docs/setup.md` §8). Remove
    `VAULT_ALLOW_UNENFORCED_TOOLS=1` from the scheduled task (or disable the task), follow your
    harness's guide, and set it again only once the check in `docs/harnesses/README.md`, "No vault
@@ -601,16 +601,16 @@ in one and that those folders refuse a pass's writes, and the Aider guide's sche
    both refused, use the README's container. The Copilot, Cursor, Hermes and OpenCode guides keep
    the hooks out of their container (Copilot's and Cursor's mount `.claude/` with its
    `settings.json`, and any `settings.local.json`, from hook-free copies) and mount the vault's
-   `.claude/` and `.git` read-only there, and an empty file read-only over its `.env` (if the vault
-   has none, create an empty one there yourself first; OpenCode all of `.opencode/` and
-   `opencode.json` too); a Pi schedule mounts `.claude/` and `.git` read-only as well, and empty
-   files read-only over its `.env` files, and runs the check with the vault's extension as its
-   positive control; an Aider schedule moves `aider-scheduled.conf.yml` outside the vault with
-   absolute `read:` paths, takes its new `git: false`, `auto-lint: false`,
-   `git-commit-verify: false` and `auto-commits: false` lines, mounts the vault's `.claude/` and
-   `.git` read-only and an empty file read-only over its `.env` (if the vault has none, create an
-   empty one there yourself first), and runs the guide's check with its `pre-commit` canary, its
-   git-configuration one, and the control that turns git back on.
+   `.claude/` and `.git` read-only there (OpenCode all of `.opencode/` and `opencode.json` too), and
+   an empty file read-only over its `.env` (if the vault has none, create an empty one there
+   yourself first); a Pi schedule mounts `.claude/` and `.git` read-only as well, and empty files
+   read-only over its `.env` files, and runs the check with the vault's extension as its positive
+   control; an Aider schedule moves `aider-scheduled.conf.yml` outside the vault with absolute
+   `read:` paths, takes its new `git: false`, `auto-lint: false`, `git-commit-verify: false` and
+   `auto-commits: false` lines, mounts the vault's `.claude/` and `.git` read-only and an empty file
+   read-only over its `.env` (if the vault has none, create an empty one there yourself first), and
+   runs the guide's check with its `pre-commit` canary, its git-configuration one, and the control
+   that turns git back on.
 10. The shipped files this release touches: `.claude/scripts/lib/runner-common.sh`,
    `.claude/scripts/dream-pass.sh`, `.claude/scripts/promotion-pass.sh`,
    `.claude/scripts/vault-retention.sh`, `.claude/scripts/run-tests.sh`,
