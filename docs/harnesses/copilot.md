@@ -83,12 +83,13 @@ in `-p` mode in a folder it trusts (measured 2026-10-18), so a pass that rewrote
 get a shell through its next edit (reasoned). Keep them out of the container: mount `.github/`
 read-only with its `hooks/vault.json` from a copy that has no hooks (Copilot also reads
 `.github/copilot/settings.json`, which a pass could otherwise create), `.claude/` read-only with its
-`settings.json` from a copy without its hooks, and the vault's `.git` read-only, load none of your
-home configuration (Copilot reads hooks from `~/.copilot/` too), and run the check in
-`docs/harnesses/README.md`, "No vault hook in a scheduled pass", which shows that the vault's hook
-scripts do not run. Copilot also documents a `disableAllHooks` setting; this guide does not use it,
-because the file it would sit in is one a pass could write, or one a mount would create inside the
-vault. Only then set `VAULT_ALLOW_UNENFORCED_TOOLS=1`.
+`settings.json`, and any `settings.local.json`, from a copy without their hooks, the vault's `.git`
+read-only, and an empty file read-only over its `.env`, load none of your home configuration
+(Copilot reads hooks from `~/.copilot/` too), and run the check in `docs/harnesses/README.md`, "No
+vault hook in a scheduled pass", which shows that the vault's hook scripts do not run. Copilot also
+documents a `disableAllHooks` setting; this guide does not use it, because the file it would sit in
+is one a pass could write, or one a mount would create inside the vault. Only then set
+`VAULT_ALLOW_UNENFORCED_TOOLS=1`.
 
 ## Known limits
 

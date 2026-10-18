@@ -80,12 +80,13 @@ Unlike the interactive config, this one stops Aider using git. Aider's YAML conf
 `git` among "*all* the valid configuration entries" ("Enable/disable looking for a git repo
 (default: True)"), and its git page says `--no-git` "will completely stop aider from using git on
 your files", so a pass's Aider should neither commit nor run git in the vault (Aider's
-documentation; not measured for this release, and the check below is what shows it). The runner
-commits the pass's notes itself. With git on, Aider's git calls would run what the vault's git
-configuration and hooks name, and a pass can write both (reasoned): the commit gate's
-`.claude/githooks/pre-commit`, for one, runs `vault-check.sh`, which loads the vault's library, all
-files a pass can change (`docs/harnesses/README.md`, "No vault hook in a scheduled pass"; the rest
-is the class `docs/setup.md` names in its `UNVERIFIED` troubleshooting row).
+documentation; not measured for this release: the check below shows whether Aider commits, and, if
+step 2's git-configuration canary fired, whether it runs git). The runner commits the pass's notes
+itself. With git on, Aider's git calls would run what the vault's git configuration and hooks name,
+and a pass can write both (reasoned): the commit gate's `.claude/githooks/pre-commit`, for one, runs
+`vault-check.sh`, which loads the vault's library, all files a pass can change
+(`docs/harnesses/README.md`, "No vault hook in a scheduled pass"; the rest is the class
+`docs/setup.md` names in its `UNVERIFIED` troubleshooting row).
 `git-commit-verify: false` and `auto-commits: false` matter only with git on; they stay, but do
 not rely on them alone, because Aider's other git behaviour, `dirty-commits` among it ("commits
 when repo is found dirty (default: True)"), would still run git in the vault. `auto-lint: false`
@@ -102,7 +103,8 @@ filter does not name a root `.env`, and whether a `.env` or `--config` wins is n
 
 ```bash
 #!/usr/bin/env bash
-# aider-vault-agent.sh <prompt-file>
+# aider-vault-agent.sh <prompt-file>: keep it, like its config, outside the vault, where a pass
+# cannot write it, because the --config path below is what the switch rests on
 set -u
 exec aider --config /absolute/path/outside/the/vault/aider-scheduled.conf.yml \
   --message-file "$1" --yes-always
@@ -120,29 +122,38 @@ the check tests `git: false` alone:
    the canary script in the copy's `.claude/hooks/`, by its absolute path as the container sees it.
    Run `git status` in the copy by hand, inside the container: `hook-canary` must appear, naming the
    second canary. Delete it.
-2. Positive control for the switch: change a tracked note in the copy without committing it, and
-   run the wrapper on `probe.dream-pass.md` with the scheduled config but `git: true`. Look for
+2. Positive control for the switch: change a tracked note in the copy without committing it, and run
+   a copy of the wrapper that names a copy of the scheduled config with `git: true` on
+   `probe.dream-pass.md` (the scheduled config itself stays read-only and unchanged). Look for
    `hook-canary` before you run any git command in the copy, because your own `git status` there
    fires the second canary. `hook-canary` must name the second canary, or `git log` must show a new
-   commit. If neither, the check is NOT VERIFIED, never PASS, and `VAULT_ALLOW_UNENFORCED_TOOLS=1`
-   waits until it fires (the README's step 3).
-3. Control for the commit gate: delete `hook-canary` and the probe, and run the wrapper again with
-   `git: true`, `git-commit-verify: true` and `auto-commits: true`: `hook-canary` must name
-   `pre-commit`.
-4. Delete `hook-canary` and the probe, change a tracked note again (so that, were git on, Aider
-   would find the repository dirty), and run the wrapper with the scheduled config on each probe
-   prompt in turn, deleting the probe between them.
+   commit; note which of the two fired. If neither, the check is NOT VERIFIED, never PASS, and
+   `VAULT_ALLOW_UNENFORCED_TOOLS=1` waits until it fires (the README's step 3).
+3. Control for the commit gate: delete the probe with `rm`, not git, and then `hook-canary`, and run
+   that copy of the wrapper again with `git: true`, `git-commit-verify: true` and
+   `auto-commits: true` in the copied config: `hook-canary` must name `pre-commit`. Here and below,
+   delete probes with `rm` and `hook-canary` last, after any git command of yours: your own git
+   commands in the copy fire the second canary, and would leave a false FAILED.
+4. Delete the probe and then `hook-canary`, as in step 3, change a tracked note again (so that, were
+   git on, Aider would find the repository dirty), and run the wrapper with the scheduled config on
+   each probe prompt in turn, deleting the probe with `rm` between them.
 5. Look for `hook-canary` first, as in step 2. PASS only if the controls in steps 1 to 3 fired, each
    run in step 4 wrote the probe, `hook-canary` does not exist, and `git log` shows no commit after
-   step 3's. A control that did not fire leaves the check NOT VERIFIED, never PASS (the README's
-   step 3).
+   step 3's. If `hook-canary` exists, or `git log` shows a commit after step 3's, the check is
+   FAILED, and `VAULT_ALLOW_UNENFORCED_TOOLS` stays unset. A control that did not fire leaves the
+   check NOT VERIFIED, never PASS (the README's step 3). If step 2's control fired by the commit
+   alone, a PASS shows only that Aider made no commit in step 4; that it ran no git then rests on
+   the read-only `.git` and `.claude/` mounts below.
 
 Remove the second canary from the copy's git configuration afterwards. If the scheduled runs do not
 show the rules in the chat, check the absolute `read:` paths.
 
-Run the schedule in a container that blocks the network and mounts only the vault writable, with
-the vault's `.claude/` and `.git` read-only as well, as the README's container rule says, which
-costs a pass nothing with `git: false` (reasoned), before setting `VAULT_ALLOW_UNENFORCED_TOOLS=1`.
+Run the schedule in a container that blocks the network and mounts only the vault writable, with the
+vault's `.claude/` and `.git` read-only as well, which costs a pass nothing with `git: false`
+(reasoned), and the empty file read-only over its `.env`, as the README's container rule says.
+Before setting `VAULT_ALLOW_UNENFORCED_TOOLS=1`, confirm in that container, with all its mounts,
+that writes into the scratch copy's `.git` and `.claude/` are refused, by step 5 of the README's
+check: the check above runs without the `.git` mount, so only that step shows the mounts hold.
 
 ## Sources (checked 2026-09-13; the YAML config, options, git and `.env` pages read 2026-10-18)
 
