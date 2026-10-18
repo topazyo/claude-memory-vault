@@ -915,11 +915,11 @@ Around that call, each runner does several things an exit code cannot:
   needing a command-mode pass with a shell, which `docs/setup.md` says not to give it (what the
   harness itself runs during a pass could give one all the same, reasoned: the vault's own hooks,
   where the wrapper left them on, git, which runs what the vault's git configuration and hooks name,
-  or a tool the harness starts by itself; so `docs/setup.md` now asks for hooks off too, with a
-  check in `docs/harnesses/README.md`, the Aider guide turns Aider's git off and the container
-  recipes mount the vault's `.git` read-only, while the Codex and Gemini CLI sandboxes and the tools
-  a harness starts by itself are carried): a hard link at a log, which has the runner append its
-  lines, names the pass chose included, to the file it shares, and one at
+  or a tool the harness starts by itself (carried); so the Aider guide turns Aider's git off, the
+  container recipes mount the vault's `.claude/` and `.git` read-only, and `docs/setup.md` now asks
+  for hooks off too, with a check in `docs/harnesses/README.md`, while whether the Codex and Gemini
+  CLI sandboxes leave those folders writable is carried): a hard link at a log, which has the runner
+  append its lines, names the pass chose included, to the file it shares, and one at
   `.claude/logs/dream-pass.git-state.txt`, which has the next dream run empty that file and write
   `git status`, those names included, into it; a FIFO at a log, which blocks every later run of that
   runner at the log's first write, before any check, and one at the git-state file, which blocks the

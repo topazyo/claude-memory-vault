@@ -94,8 +94,10 @@ changes (default: True)"). A config inside the vault would be a file the pass co
 which is why it lives outside, and its `read:` paths are absolute paths to the vault's files,
 because how Aider resolves a relative one there is not in the sources (reasoned). Aider also loads
 options from a `.env` file in the git root and in the current directory (its dotenv page), and a
-pass could write one: in the container, mount an empty file read-only over the vault's `.env`. If
-the vault has none, create the empty file yourself before the first scheduled run:
+pass could write one: in the container, mount an empty file read-only over the vault's `.env`. The
+mount is what keeps this config's switches in force for later runs, because the runner's steering
+filter does not name a root `.env`, and whether a `.env` or `--config` wins is not in the sources
+(reasoned). If the vault has none, create the empty file yourself before the first scheduled run:
 `.claude/rules/security.md` forbids an agent to create a `.env`, so that step is the owner's.
 
 ```bash
@@ -114,14 +116,15 @@ the check tests `git: false` alone:
 1. Replace `.claude/githooks/pre-commit` with the README's canary. Add a second canary in the
    copy's own git configuration, of the class `docs/setup.md` names in its `UNVERIFIED`
    troubleshooting row: point the copy's `core.fsmonitor`, the setting that row names, at a copy of
-   the canary script in the copy's `.claude/hooks/`, by its absolute path. Run `git status` in the
-   copy by hand: `hook-canary` must appear, naming the second canary. Delete it.
+   the canary script in the copy's `.claude/hooks/`, by its absolute path as the container sees it.
+   Run `git status` in the copy by hand, inside the container: `hook-canary` must appear, naming
+   the second canary. Delete it.
 2. Positive control for the switch: change a tracked note in the copy without committing it, and
    run the wrapper on `probe.dream-pass.md` with the scheduled config but `git: true`. Look for
    `hook-canary` before you run any git command in the copy, because your own `git status` there
    fires the second canary. `hook-canary` must name the second canary, or `git log` must show a new
-   commit. If neither, the check is NOT VERIFIED, never PASS, and `git: false` rests on Aider's
-   documentation and the read-only mounts alone.
+   commit. If neither, the check is NOT VERIFIED, never PASS, and `VAULT_ALLOW_UNENFORCED_TOOLS=1`
+   waits until it fires (the README's step 3).
 3. Control for the commit gate: delete `hook-canary` and the probe, and run the wrapper again with
    `git: true`, `git-commit-verify: true` and `auto-commits: true`: `hook-canary` must name
    `pre-commit`.

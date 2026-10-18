@@ -86,7 +86,7 @@ hooks = false
 ```
 
 The project's own `.codex/config.toml` sets `hooks = true`, and this guide has not checked which
-of the two wins, so the check below is what tells you the hooks are off. Never add
+of the two wins, so the check below is what shows whether the vault's hook scripts run. Never add
 `--dangerously-bypass-hook-trust` to the wrapper: it runs enabled hooks without the trust Codex
 records for them.
 
@@ -96,9 +96,10 @@ network access is off in your Codex sandbox settings, that the sandbox lets the 
 only inside the vault, and that the vault's hook scripts do not run, by the check in
 `docs/harnesses/README.md`, "No vault hook in a scheduled pass". This guide does not yet name the
 setting for the third; check your Codex version's sandbox documentation for the folders
-`workspace-write` opens besides the vault. Whether `workspace-write` leaves the vault's `.git`
-writable to a pass is still to check too; where you cannot confirm it is not, run the wrapper in
-the README's container instead, which mounts `.git` read-only. This recipe uses Codex's sandbox
+`workspace-write` opens besides the vault. Whether `workspace-write` leaves the vault's `.git`,
+and with the commit gate on `.claude/githooks/`, writable to a pass is still to check too; where
+you cannot confirm that it leaves neither writable, run the wrapper in the README's container
+instead, which mounts both read-only. This recipe uses Codex's sandbox
 rather than a container, so a hook that ran would run wherever Codex runs its hooks, which its
 documentation does not say.
 
