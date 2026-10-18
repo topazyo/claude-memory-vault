@@ -911,17 +911,19 @@ Around that call, each runner does several things an exit code cannot:
   refusal was too (measured), a run that waited for the run lock included, through a link the log
   became while it waited (measured, for each runner), so a command-mode pass could have the runner
   append to any file the account can write through a symbolic link. Besides the lines listed above
-  as still going to the vault's log path, these are still open, and carried to a later release,
-  each needing a command-mode pass with a shell, which `docs/setup.md` says not to give it: a hard
-  link at a log, which has the runner append its lines, names the pass chose included, to the file
-  it shares, and one at `.claude/logs/dream-pass.git-state.txt`, which has the next dream run empty
-  that file and write `git status`, those names included, into it; a FIFO at a log, which blocks
-  every later run of that runner at the log's first write, before any check, and one at the
-  git-state file, which blocks the next dream run while it holds the run lock, so a promotion run is
-  refused with 75 and every later dream run blocks the same way, each with no tripwire at all, an
-  outside time limit ending each run; and a symbolic link containment cannot move, as in a
-  `.claude/logs` made read-only, which the runner still writes through (measured with 1.4.2; 1.4.1
-  behaves the same; the FIFO at a log measured for the dream runner only, and on 1.4.1 by reading).
+  as still going to the vault's log path, these are still open, and carried to a later release, each
+  needing a command-mode pass with a shell, which `docs/setup.md` says not to give it (the vault's
+  own hooks could give one to a pass whose wrapper left them on, reasoned, so `docs/setup.md` now
+  asks for them off too, with a check in `docs/harnesses/README.md`): a hard link at a log, which
+  has the runner append its lines, names the pass chose included, to the file it shares, and one at
+  `.claude/logs/dream-pass.git-state.txt`, which has the next dream run empty that file and write
+  `git status`, those names included, into it; a FIFO at a log, which blocks every later run of that
+  runner at the log's first write, before any check, and one at the git-state file, which blocks the
+  next dream run while it holds the run lock, so a promotion run is refused with 75 and every later
+  dream run blocks the same way, each with no tripwire at all, an outside time limit ending each
+  run; and a symbolic link containment cannot move, as in a `.claude/logs` made read-only, which the
+  runner still writes through (measured with 1.4.2; 1.4.1 behaves the same; the FIFO at a log
+  measured for the dream runner only, and on 1.4.1 by reading).
   A process that outlives the pass can also give the vault's `runner-tripwire` a second name, and a
   later note is then appended to the file it shares, and, after a stop that could not end it, put a
   link at the log once containment has run, so the runner's later lines go through it (both
@@ -1151,23 +1153,24 @@ Around that call, each runner does several things an exit code cannot:
 
   Any of this writes the tripwire `.claude/logs/runner-tripwire`, listing each path, anything that
   could not be contained, and the quarantine, and a second copy in the state directory. While either
-  copy exists, both runners exit **78** without starting an agent, `vault-check.sh` exits the same
-  **78** without checking anything. `/resume` stops instead of a briefing when it finds the vault's
-  copy, showing it when `ls -ld` lists it as a regular file with one link and the listing line
-  otherwise; it cannot see a copy that is only in the state directory.
-  While `.claude` or `.claude/logs` is a link, no vault copy is written (see below), nor while
-  `.claude/logs` is a file or a folder the runner cannot write, so `/resume` stops instead whenever
-  `ls -ld .claude .claude/logs` shows either as anything but a folder it can write, and says a
-  tripwire may be set in the state directory only, which it does not read. Clear it by reviewing
-  the paths and then deleting both copies. The refusal names the state directory copy when it is a
-  file, because a pass cannot write it. When only the vault's copy is there, the runners and
-  `vault-check.sh` name that copy and say a pass may have written it, so check its reason against
-  the runner log before you follow anything it says. When neither copy is a file, they say so and
-  send you to the log instead. If no copy can be written, the runner exits **70**
-  (TRIPWIRE-ERROR) and leaves its in-flight marker, so the next run still refuses. When a signal
-  stops a pass and no copy of the tripwire can be written, the runner logs the same TRIPWIRE-ERROR
-  keyword and keeps its marker too, but exits with the signal's code, 130 or 143. The
-  `TRIPWIRE-ERROR:`
+  copy exists, both runners exit **78** without starting an agent, and `vault-check.sh` exits the
+  same **78** without checking anything. `/resume` stops instead of a briefing when it finds the
+  vault's copy, showing it when `ls -ld` lists it as a regular file with one link and the listing
+  line otherwise; it cannot see a copy that is only in the state directory. While `.claude` or
+  `.claude/logs` is a link, no vault copy is written (see below), nor while `.claude/logs` is a file
+  or a folder the runner cannot write, so `/resume` stops instead whenever
+  `ls -ld .claude .claude/logs` shows either as anything but `drwx`, and says a tripwire may be set
+  in the state directory only, which it does not read. That test reads the mode bits `ls` prints, so
+  a folder that lists as `drwx` but refuses the runner (a Windows ACL, a macOS `uchg` flag, or a
+  folder another account owns) is not caught. Clear a tripwire by reviewing the paths and then
+  deleting both copies. The refusal names the state directory copy when it is a file, because a pass
+  cannot write it. When only the vault's copy is there, the runners and `vault-check.sh` name that
+  copy and say a pass may have written it, so check its reason against the runner log before you
+  follow anything it says. When neither copy is a file, they say so and send you to the log instead.
+  If no copy can be written, the runner exits **70** (TRIPWIRE-ERROR) and leaves its in-flight
+  marker, so the next run still refuses. When a signal stops a pass and no copy of the tripwire can
+  be written, the runner logs the same TRIPWIRE-ERROR keyword and keeps its marker too, but exits
+  with the signal's code, 130 or 143. The `TRIPWIRE-ERROR:`
   line for a changed folder, the one a signal logs and the one for a dead pass's marker say "Treat
   the vault as unverified, and run no git command in it before the steering surfaces have been
   checked." The vault's copy is written into a file `mktemp` makes beside it (or, where `mktemp`

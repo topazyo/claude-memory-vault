@@ -10,7 +10,7 @@ shell: bash
 
 0. Run `ls -ld .claude .claude/logs` first. Stop, instead of a briefing, unless it prints a line for
    `.claude` and every line it prints starts with `drwx`. A line that starts with `l` is a link, `-`
-   a file and anything else a folder the runners cannot write into, and in each case they may write
+   a file and anything else not a folder its owner can write, and in each case the runners may write
    their tripwire only to their state directory (`docs/reference.md` §4.3 says where), so one may be
    set that this skill cannot see. A `.claude/logs` that `ls` reports as `No such file or directory`
    is fine, because the runners make it; any other error from `ls` is a stop. Say why you stopped
