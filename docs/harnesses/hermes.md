@@ -84,7 +84,8 @@ empty file read-only over its `.env`. The lint snippet from Setup runs `bash` on
 rewrote that script would get a shell through its next write (reasoned): give the container a Hermes
 configuration with no `hooks:` entry, rather than your `~/.hermes/config.yaml`, and run the check in
 `docs/harnesses/README.md`, "No vault hook in a scheduled pass", which shows that the vault's hook
-scripts do not run. Only then set `VAULT_ALLOW_UNENFORCED_TOOLS=1`.
+scripts do not run and that writes into `.git` and `.claude/` are refused. Only then set
+`VAULT_ALLOW_UNENFORCED_TOOLS=1`.
 
 ## Known limits
 

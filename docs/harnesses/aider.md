@@ -142,18 +142,20 @@ the check tests `git: false` alone:
    step 3's. If `hook-canary` exists, or `git log` shows a commit after step 3's, the check is
    FAILED, and `VAULT_ALLOW_UNENFORCED_TOOLS` stays unset. A control that did not fire leaves the
    check NOT VERIFIED, never PASS (the README's step 3). If step 2's control fired by the commit
-   alone, a PASS shows only that Aider made no commit in step 4; that it ran no git then rests on
-   the read-only `.git` and `.claude/` mounts below.
+   alone, a PASS shows only that Aider made no commit in step 4; that any git it ran could load
+   nothing a pass wrote then rests on the read-only `.git` and `.claude/` mounts below, which step 5
+   of the README's check confirms.
 
 Remove the second canary from the copy's git configuration afterwards. If the scheduled runs do not
 show the rules in the chat, check the absolute `read:` paths.
 
 Run the schedule in a container that blocks the network and mounts only the vault writable, with the
-vault's `.claude/` and `.git` read-only as well, which costs a pass nothing with `git: false`
-(reasoned), and the empty file read-only over its `.env`, as the README's container rule says.
-Before setting `VAULT_ALLOW_UNENFORCED_TOOLS=1`, confirm in that container, with all its mounts,
-that writes into the scratch copy's `.git` and `.claude/` are refused, by step 5 of the README's
-check: the check above runs without the `.git` mount, so only that step shows the mounts hold.
+vault's `.claude/` and `.git` read-only and the empty file read-only over its `.env`, as the
+README's container rule says; the read-only `.git` costs a pass nothing with `git: false`
+(reasoned). Before setting `VAULT_ALLOW_UNENFORCED_TOOLS=1`, confirm in that container, with all its
+mounts, that writes into the scratch copy's `.git` and `.claude/` are refused, by step 5 of the
+README's check: the check above runs without the `.git` mount, so only that step shows the mounts
+hold.
 
 ## Sources (checked 2026-09-13; the YAML config, options, git and `.env` pages read 2026-10-18)
 

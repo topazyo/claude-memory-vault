@@ -109,9 +109,10 @@ a wrapper for its harness. Three points apply to all of them:
 - Set `VAULT_ALLOW_UNENFORCED_TOOLS=1` only after the harness's own sandbox leaves both passes with
   no shell and no network, with tools that can write only inside the vault (the runner does the git
   work itself, and its write fence sees only the vault), with no hook running, and, where the
-  harness itself can run git, with neither the vault's `.git` nor, with the commit gate on, its
-  `.claude/` writable to a pass. The guides say which settings do that where the harness documents
-  them. Where it does not, run the harness in a container that enforces it.
+  harness itself can run git, which you should assume of every harness, with neither the vault's
+  `.git` nor, with the commit gate on, its `.claude/` writable to a pass. The guides say which
+  settings do that where the harness documents them. Where it does not, run the harness in a
+  container that enforces it.
 - Run the next section's check, which shows that the vault's hook scripts do not run and that writes
   into `.git` and `.claude/` are refused, before you set it.
 
@@ -132,28 +133,31 @@ runs the vault's repository hooks in `-p` mode in a folder it trusts (measured o
 2026-10-18). Assume every harness does. A harness can also run git during a pass, and git runs what
 the vault's git configuration and hooks name, which a pass's tools could write as well (the class
 `docs/setup.md` names in its `UNVERIFIED` troubleshooting row; reasoned). Aider documents its git
-use, and its guide turns it off.
+use, and its guide sets `git: false`, which Aider documents as stopping it (not measured for this
+release).
 
 So a scheduled pass runs no hook from any source, and nothing the pass can write may turn one on.
-Use the harness's own switch where its guide names one, set in a file outside the vault where a pass
-cannot write it, or else run the wrapper in a container that loads none of your home configuration,
-mounts `.claude/` read-only with its `settings.json`, and any `settings.local.json`, from a copy
-without their hooks, mounts the harness's own folder in the vault (`.codex/`, `.cursor/`,
-`.gemini/`, `.github/`, `.opencode/`, with OpenCode's `opencode.json`) read-only from a copy with
-its hooks and plugins removed, mounts the vault's `.git` read-only, and mounts an empty file
-read-only over the vault's `.env`, which also keeps your own `.env` away from the pass (create the
-empty file yourself first if there is none: `.claude/rules/security.md` forbids an agent to create a
-`.env`). Keep the wrapper, the container definition and every file they name outside the vault as
-well, where a pass cannot write them: the runner starts the wrapper outside every sandbox, and
-several guides' switches live in it (`docs/setup.md` § 8). The runner commits from outside the
-container, with a hooks folder of its own outside the vault, so a pass needs no git inside it
-(reasoned). Codex and Gemini CLI take a switch rather than the container, and whether their
-sandboxes leave the vault's `.git` writable to a pass, or, with the commit gate on, its `.claude/`,
-is still to check: step 5 of the check below confirms it, and where it does not confirm both
-refused, use the container. The check below shows that the vault's hook scripts did not run in a
-pass, and that writes into the copy's `.git` and `.claude/` are refused. It cannot see a hook of the
-account's own. That nothing the pass writes turns a hook on rests on the wrapper and the files it
-names (the switch file, the container definition) lying outside what the pass can write, and on the
+Use the harness's own switch where its guide names one, set in a file outside the vault and outside
+every folder a pass can write, or else run the wrapper in a container that loads none of your home
+configuration, mounts `.claude/` read-only with its `settings.json`, and any `settings.local.json`,
+from a copy without their hooks, mounts the harness's own folder in the vault (`.codex/`,
+`.cursor/`, `.gemini/`, `.github/`, `.opencode/`, with OpenCode's `opencode.json`) read-only from a
+copy with its hooks and plugins removed, mounts the vault's `.git` read-only, and mounts an empty
+file from outside the vault read-only over the vault's `.env`, which also keeps your own `.env` away
+from the pass (if the vault has no `.env`, create an empty one there yourself before the first
+scheduled run, so that the mount has a target and creates nothing during a pass:
+`.claude/rules/security.md` forbids an agent to create a `.env`). Keep the wrapper, the container
+definition and every file they name outside the vault and every folder a pass can write as well: the
+runner starts what `VAULT_AGENT_CMD` names (the wrapper, or the command that starts its container)
+outside every sandbox, and several guides' switches live there (`docs/setup.md` § 8). The runner
+commits from outside the container, with a hooks folder of its own outside the vault, so a pass
+needs no git inside it (reasoned). Codex and Gemini CLI take a switch rather than the container, and
+whether their sandboxes leave the vault's `.git` writable to a pass, or, with the commit gate on,
+its `.claude/`, is still to check: step 5 of the check below confirms it, and where it does not
+confirm both refused, use the container. The check below shows that the vault's hook scripts did not
+run in a pass, and that writes into the copy's `.git` and `.claude/` are refused. It cannot see a
+hook of the account's own. That nothing the pass writes turns a hook on rests on the wrapper, the
+container definition and every file they name lying outside what the pass can write, and on the
 mounts, with the runner's fence restoring a harness config a pass leaves changed before a later run
 loads it (`docs/setup.md`, the `contained` troubleshooting row), except a root `.env` (in the
 container, its mount covers it), `.hermes.md` and, should OpenCode read one, a project
@@ -195,23 +199,36 @@ uses:
    mounts do not rest on the switch, and run this check there.
 4. Delete `hook-canary` and the probe, put the measure back, and run the wrapper on each prompt file
    in turn, deleting the probe between them.
-5. Confirm, on the same copy, that writes into its `.git` and `.claude/` are refused. Never run this
-   step against the vault: a write the mounts or the sandbox let through would land in the vault's
-   own folders. In a container, start the schedule's own container definition with only the vault's
-   path swapped for the copy's and every mount kept (the Aider guide's check leaves the `.git` mount
-   out; this step does not), and from a shell of your own in it try to create one file under the
-   copy's `.git/` and one under its `.claude/`: both must be refused. On a switch route (Codex,
-   Gemini CLI), a shell test of your own may not show what the harness's own file tool can write, so
-   write a prompt file `probe-ro.dream-pass.md` that asks the harness's write tool for one file
-   under the copy's `.git/` and one under its `.claude/`, and a copy named
-   `probe-ro.promotion-pass.md`, and run the wrapper on each with the measure in place. Each run's
-   output must show both writes attempted, and both must be refused. If either file is written, use
-   the container and run this check there; if a run did not attempt both, this step is NOT VERIFIED,
-   never PASS.
+5. Confirm, on the same copy, that writes into its `.git` and `.claude/` are refused, both of them
+   whether or not the commit gate is on now, since it can be turned on later without this check
+   being run again. Never run this step against the vault: a write the mounts or the sandbox let
+   through would land in the vault's own folders, so first confirm that
+   `.claude/hooks/vault-lint.sh`, as the container or the harness sees it, is the canary, and stop
+   if it is not. The step writes three files, in this order: `01-inbox/probe-ro.md`, which a pass
+   may write and which must be written, then `.git/probe-ro` and `.claude/probe-ro`, which must be
+   refused.
+   - In a container, start the schedule's own container definition with only the vault's path
+     swapped for the copy's and every mount kept (the Aider guide's check leaves the `.git` mount
+     out; this step does not), and from a shell of your own in it, as the user the harness runs as,
+     create the three files: the first must be written (then delete it with `rm`), and the other two
+     must each fail with a read-only error, not a missing folder.
+   - On a switch route (Codex, Gemini CLI), a shell test of your own may not show what the harness's
+     own file tools can write, so write a prompt file `probe-ro.dream-pass.md` that asks the harness
+     to create the three files by the copy's absolute paths with its own tool for creating files
+     (with each such tool in turn, if it has more than one), and a copy named
+     `probe-ro.promotion-pass.md`, and run the wrapper on each with the measure in place. Judge each
+     run by the harness's own record of its tool calls and their results, never by the model's
+     account, and by what is on disk: the first file written, each write under `.git/` and
+     `.claude/` attempted and refused, and neither file there. Delete the first file with `rm` after
+     each run. If either of the other two is written, use the container and run this check there. If
+     a run's record does not show those writes attempted, this step is NOT VERIFIED, never PASS: use
+     the container.
 6. PASS only if step 3's control fired, each run in step 4 wrote the probe, `hook-canary` does not
-   exist, and every write in step 5 was refused. If `hook-canary` exists, a hook ran: FAILED,
-   whatever the guide says. If a write in step 5 went through in the container, FAILED as well,
-   until the mounts hold.
+   exist, and step 5 wrote its first file and had every write into `.git` and `.claude/` refused, in
+   every run. If `hook-canary` exists, a hook ran: FAILED, whatever the guide says. If a write into
+   `.git` or `.claude/` went through, FAILED as well: in a container until the mounts hold, and on a
+   switch route the container is the way on. A step 5 that is NOT VERIFIED leaves the check NOT
+   VERIFIED.
 
 The canary does not depend on where a hook logs. It depends on step 1 for any variable a hook's
 command reads: the shipped `.claude/settings.json` names its scripts through
@@ -220,5 +237,5 @@ with the variable naming the vault, it runs the vault's script rather than the c
 the check could pass while that hook still runs. The probe fires the hooks that run after a write;
 the ones at a compaction or a commit go with them only because every measure above turns all hooks
 off at once, so do not swap in a measure that names events. Aider has no hook system, and its guide
-turns its git off: it says how to apply the same check to `pre-commit` and to git's own
-configuration.
+sets Aider's documented `git: false`: it says how to apply the same check to `pre-commit` and to
+git's own configuration.

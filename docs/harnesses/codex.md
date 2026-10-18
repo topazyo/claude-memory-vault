@@ -66,7 +66,8 @@ A wrapper for command mode (`docs/setup.md` § 8):
 
 ```bash
 #!/usr/bin/env bash
-# codex-vault-agent.sh <prompt-file>
+# codex-vault-agent.sh <prompt-file>: keep it, like the profile it names, outside the vault, where a
+# pass cannot write it, because its --profile and --sandbox flags are what the switches rest on
 set -u
 exec codex exec --profile vault-dream --sandbox workspace-write "$(cat "$1")"
 ```

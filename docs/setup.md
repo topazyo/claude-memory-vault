@@ -523,8 +523,9 @@ exec your-harness-cli <its-non-interactive-flag> "$(cat "$prompt_file")"
 ```
 
 Keep the wrapper, the container definition it starts and every file they name (a profile, a config,
-a settings copy) outside the vault, where a pass cannot write them: the runner starts the wrapper
-outside every sandbox, and several guides' switches live in it.
+a settings copy) outside the vault and outside every folder a pass can write: the runner starts what
+`VAULT_AGENT_CMD` names (the wrapper, or the command that starts its container) outside every
+sandbox, and several guides' switches live there.
 
 A Windows batch wrapper receives the same forward-slash relative path, which cmd built-ins such
 as `type` read as a switch. Expand it to an absolute path first, with `%~f1`.
@@ -554,10 +555,11 @@ the **promotion pass** alike:
   whatever its shell tool says (reasoned). `docs/harnesses/README.md`, "No vault hook in a
   scheduled pass", says how to turn them off, gives a check that the vault's hook scripts do not
   run, and says what the rest rests on.
-- where the harness itself can run git during a pass, cannot write the vault's `.git`, or, with the
-  commit gate on, its `.claude/`, which hold the class the `UNVERIFIED` troubleshooting row below
-  names (reasoned). `docs/harnesses/README.md`, "No vault hook in a scheduled pass", says which
-  recipes mount both read-only, and how to confirm that they refuse a pass's writes.
+- where the harness itself can run git during a pass, which you should assume of every harness,
+  cannot write the vault's `.git`, or, with the commit gate on, its `.claude/`, which hold the class
+  the `UNVERIFIED` troubleshooting row below names (reasoned). `docs/harnesses/README.md`, "No vault
+  hook in a scheduled pass", says which recipes mount both read-only, and how to confirm that they
+  refuse a pass's writes.
 
 Once opted in, every run still logs a `WARNING` line saying the allowlist is not enforced by the
 runner. The write fence, the watchdog and the artifact assertion work exactly as they do under
