@@ -525,7 +525,7 @@ exec your-harness-cli <its-non-interactive-flag> "$(cat "$prompt_file")"
 Keep the wrapper, the container definition and every file they name (a profile, a config, a settings
 copy) outside the vault and outside every folder a pass can write: the runner starts what
 `VAULT_AGENT_CMD` names (the wrapper, or the command that starts its container) outside every
-sandbox, and several guides' switches live there.
+sandbox, and several guides' switches live in those files.
 
 A Windows batch wrapper receives the same forward-slash relative path, which cmd built-ins such
 as `type` read as a switch. Expand it to an absolute path first, with `%~f1`.

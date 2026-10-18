@@ -916,9 +916,9 @@ Around that call, each runner does several things an exit code cannot:
   harness itself runs during a pass could give one all the same, reasoned: the vault's own hooks,
   where the wrapper left them on, git, which runs what the vault's git configuration and hooks name,
   or a tool the harness starts by itself (carried); so the Aider guide sets Aider's documented
-  `git: false` (not measured for this release), the container recipes mount the vault's `.claude/`
-  and `.git` read-only, and `docs/setup.md` now asks for hooks off too, and for the vault's `.git`,
-  and with the commit gate on its `.claude/`, out of a pass's reach, with a check in
+  `git: false` (not measured for this release), the container recipes mount `.claude/` and the
+  vault's `.git` read-only, and `docs/setup.md` now asks for hooks off too, and for the vault's
+  `.git`, and, with the commit gate on, its `.claude/`, out of a pass's reach, with a check in
   `docs/harnesses/README.md`, while whether the Codex and Gemini CLI sandboxes leave
   those folders writable is carried): a hard link at a log, which has the runner
   append its lines, names the pass chose included, to the file it shares, and one at
