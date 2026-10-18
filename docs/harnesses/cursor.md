@@ -68,11 +68,12 @@ edit, and Cursor can load Claude Code hooks too, so a pass that rewrote that scr
 shell through its next edit (reasoned). This guide names no Cursor setting that turns project hooks
 off, so in the container mount `.cursor/` read-only from a copy whose `hooks.json` has no hooks,
 `.claude/` read-only with its `settings.json`, and any `settings.local.json`, from a copy without
-their hooks, so a pass can add no hook file either, the vault's `.git` read-only, and an empty file
-from outside the vault read-only over its `.env` (if the vault has no `.env`, create an empty one
-there first, as the README says), load none of your home configuration (`~/.cursor/hooks.json`
-included), and follow the rest of `docs/harnesses/README.md`, "No vault hook in a scheduled pass",
-including its check. Only then set `VAULT_ALLOW_UNENFORCED_TOOLS=1`.
+their hooks, so a pass can add no hook file either (run the check again whenever a
+`settings.local.json` appears or changes), the vault's `.git` read-only, and an empty file from
+outside the vault read-only over its `.env` (if the vault has no `.env`, create an empty one there
+first, as the README says), load none of your home configuration (`~/.cursor/hooks.json` included),
+and follow the rest of `docs/harnesses/README.md`, "No vault hook in a scheduled pass", including
+its check. Only then set `VAULT_ALLOW_UNENFORCED_TOOLS=1`.
 
 ## Known limits
 
@@ -84,6 +85,7 @@ including its check. Only then set `VAULT_ALLOW_UNENFORCED_TOOLS=1`.
 - Rules and AGENTS.md: <https://cursor.com/docs/context/rules>
 - Hooks (project `hooks.json`, working directory, `afterFileEdit`, `preCompact`, common input, exit codes): <https://cursor.com/docs/agent/hooks>
 - Third-party hooks ("Cursor supports loading hooks from third-party tools like Claude Code"; checked 2026-10-18): <https://cursor.com/docs/agent/third-party-hooks>
+- Third-party hooks reference (the Claude Code files Cursor loads hooks from, `.claude/settings.local.json` among them; read 2026-10-19): <https://cursor.com/docs/reference/third-party-hooks>
 - Ignore file: <https://cursor.com/docs/context/ignore-files>
 - Headless CLI (`-p`, `--force`): <https://cursor.com/docs/cli/headless>
 - Skills (skill directories): <https://cursor.com/docs/context/skills>

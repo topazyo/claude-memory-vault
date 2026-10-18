@@ -82,7 +82,8 @@ without asking me.
 
 ```bash
 #!/usr/bin/env bash
-# opencode-vault-agent.sh <prompt-file>
+# opencode-vault-agent.sh <prompt-file>: keep it, like the container definition, outside the
+# vault and every folder a pass can write (docs/harnesses/README.md)
 set -u
 case "$1" in
   *dream-pass*)     agent=vault-dream ;;
@@ -118,8 +119,10 @@ plugins and no tools, `opencode.json` read-only from a copy with no `plugin` opt
 (create `.opencode/`, empty, in the vault before the first scheduled run if it is not there, and an
 empty `.env` if there is none, as the README says: a mount at a missing path would create it during
 a pass, and the runner would see a new path, reasoned), load none of your home configuration (its
-global plugins included), and run the check in `docs/harnesses/README.md`, "No vault hook in a
-scheduled pass", which shows that the vault's hook scripts do not run and that writes into `.git`
+global plugins included), start a new container for each run, whose own filesystem is discarded at
+exit, as the README's container rule says, so that a global plugin a pass wrote in the container's
+home cannot load at the next run, and run the check in `docs/harnesses/README.md`, "No vault hook in
+a scheduled pass", which shows that the vault's hook scripts do not run and that writes into `.git`
 and `.claude/` are refused. OpenCode also "supports both JSON and JSONC", and its config page does
 not say whether a project `opencode.jsonc` is read; if it is, a pass could add one beside
 `opencode.json` that neither this mount nor the runner's steering filter names (reasoned; carried to
