@@ -113,12 +113,13 @@ the vault that is a clone with its own git folder, with the gate enabled there a
 commit. Run it in the container the schedule uses, but without its read-only `.git` mount, so that
 the check tests `git: false` alone:
 
-1. Replace `.claude/githooks/pre-commit` with the README's canary. Add a second canary in the
-   copy's own git configuration, of the class `docs/setup.md` names in its `UNVERIFIED`
+1. Before you start the container, whose `.claude/` mount is read-only, replace
+   `.claude/githooks/pre-commit` in the copy with the README's canary, and add a second canary in
+   the copy's own git configuration, of the class `docs/setup.md` names in its `UNVERIFIED`
    troubleshooting row: point the copy's `core.fsmonitor`, the setting that row names, at a copy of
    the canary script in the copy's `.claude/hooks/`, by its absolute path as the container sees it.
-   Run `git status` in the copy by hand, inside the container: `hook-canary` must appear, naming
-   the second canary. Delete it.
+   Run `git status` in the copy by hand, inside the container: `hook-canary` must appear, naming the
+   second canary. Delete it.
 2. Positive control for the switch: change a tracked note in the copy without committing it, and
    run the wrapper on `probe.dream-pass.md` with the scheduled config but `git: true`. Look for
    `hook-canary` before you run any git command in the copy, because your own `git status` there

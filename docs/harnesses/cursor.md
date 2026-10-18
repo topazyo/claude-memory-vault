@@ -69,9 +69,8 @@ shell through its next edit (reasoned). This guide names no Cursor setting that 
 off, so in the container mount `.cursor/` read-only from a copy whose `hooks.json` has no hooks,
 `.claude/` read-only with its `settings.json` from a copy without its hooks, so a pass can add no
 hook file either, and the vault's `.git` read-only, load none of your home configuration
-(`~/.cursor/hooks.json` included), and
-follow the rest of `docs/harnesses/README.md`, "No vault hook in a scheduled pass", including its
-check. Only then set `VAULT_ALLOW_UNENFORCED_TOOLS=1`.
+(`~/.cursor/hooks.json` included), and follow the rest of `docs/harnesses/README.md`, "No vault hook
+in a scheduled pass", including its check. Only then set `VAULT_ALLOW_UNENFORCED_TOOLS=1`.
 
 ## Known limits
 

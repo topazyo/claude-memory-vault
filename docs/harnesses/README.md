@@ -141,9 +141,9 @@ vault (`.codex/`, `.cursor/`, `.gemini/`, `.github/`, `.opencode/`, with OpenCod
 read-only from a copy with its hooks and plugins removed, and mounts the vault's `.git` read-only.
 The runner commits from outside the container, with a hooks folder of its own outside the vault,
 so a pass needs no git inside it (reasoned). Codex and Gemini CLI take a switch rather than the
-container, and whether their sandboxes leave the vault's `.git`, and with the commit gate on
-`.claude/githooks/`, writable to a pass is still to check; where you cannot confirm that they leave
-neither writable, use the container. The check below shows that the vault's hook scripts did not
+container, and whether their sandboxes leave the vault's `.git` writable to a pass, or, with the
+commit gate on, its `.claude/`, is still to check; where you cannot confirm that they leave neither
+writable, use the container. The check below shows that the vault's hook scripts did not
 run in a pass. It cannot see a hook of the account's own. That nothing the pass writes turns a hook
 on rests on the switch file, or the mounts, lying outside what the pass can write, with the
 runner's fence restoring a harness config a pass leaves changed before a later run loads it
@@ -156,9 +156,10 @@ vault is, from the vault root and in the environment the schedule uses:
 1. Make the copy a clone with its own `.git`, so no hook reaches the vault's. For every run of this
    check, set `CLAUDE_PROJECT_DIR` to the copy, so that `.claude/settings.json`'s hooks reach the
    copy's canaries (left unset, they reach no script and go untested, though they do not reach the
-   vault either: reasoned, and seen with Copilot CLI 1.0.86), and point any hook configured with an
-   absolute path (Hermes's snippet) at the copy. Then replace every script in `.claude/hooks/`, and
-   `.claude/githooks/pre-commit`, with a canary that records it ran and does nothing else:
+   vault either: reasoned, and seen with Copilot CLI 1.0.86 on Windows), and point any hook
+   configured with an absolute path (Hermes's snippet) at the copy. Then replace every script in
+   `.claude/hooks/`, and `.claude/githooks/pre-commit`, with a canary that records it ran and does
+   nothing else:
 
    ```bash
    #!/usr/bin/env bash
