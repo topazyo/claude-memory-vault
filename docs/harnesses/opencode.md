@@ -114,10 +114,14 @@ trust prompt, so a pass could also add one. OpenCode also takes the singular `.o
 custom tools from `.opencode/tools/`, which "can invoke scripts written in any language". Whether or
 not you enabled the plugin, mount `.opencode/` read-only in the container from a copy with no
 plugins and no tools, `opencode.json` read-only from a copy with no `plugin` option, and the vault's
-`.git` read-only (create `.opencode/`, empty, in the vault before the first scheduled run if it is
-not there: a mount at a missing path would create it during a pass, and the runner would see a new
-steering path, reasoned), load none of your home configuration (its global plugins included), and
-prove it with the check in `docs/harnesses/README.md`, "No vault hook in a scheduled pass".
+`.claude/` and `.git` read-only (create `.opencode/`, empty, in the vault before the first
+scheduled run if it is not there: a mount at a missing path would create it during a pass, and the
+runner would see a new steering path, reasoned), load none of your home configuration (its global
+plugins included), and run the check in `docs/harnesses/README.md`, "No vault hook in a scheduled
+pass", which shows that the vault's hook scripts do not run. OpenCode also "supports both JSON and
+JSONC", and its config page does not say whether a project `opencode.jsonc` is read; if it is, a
+pass could add one beside `opencode.json` that neither this mount nor the runner's steering filter
+names (reasoned; carried to a later release).
 
 ## Known limits
 
@@ -129,7 +133,7 @@ prove it with the check in `docs/harnesses/README.md`, "No vault hook in a sched
 ## Sources (checked 2026-09-13; config, plugins and custom tools read again 2026-10-18)
 
 - Rules, AGENTS.md and Claude Code compatibility: <https://opencode.ai/docs/rules/>
-- Config (`instructions`; singular folder names, read 2026-10-18): <https://opencode.ai/docs/config/>
+- Config (`instructions`; singular folder names and JSONC, read 2026-10-18): <https://opencode.ai/docs/config/>
 - Permissions (keys, default `.env` deny): <https://opencode.ai/docs/permissions/> and <https://opencode.ai/docs/agents/>
 - Plugins (`.opencode/plugins/`, `tool.execute.before`, `$`, `session.compacted`; the `plugin` option and load order, read 2026-10-18): <https://opencode.ai/docs/plugins/>
 - Custom tools (`.opencode/tools/`), read 2026-10-18: <https://opencode.ai/docs/custom-tools/>

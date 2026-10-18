@@ -80,9 +80,11 @@ Approval covers tool calls, not hooks: the vault's `.gemini/settings.json` runs 
 script would get a shell through its next write (reasoned). Turn hooks off for scheduled runs with
 `hooksConfig.enabled: false` in a settings file outside the vault that outranks the project's (H2
 names that key as what stops the lint), or run the wrapper in a container as
-`docs/harnesses/README.md`, "No vault hook in a scheduled pass", describes, and prove it with that
-section's check before setting `VAULT_ALLOW_UNENFORCED_TOOLS=1`. This guide has not checked which
-settings layers outrank the project's for that key, and a pass could write
+`docs/harnesses/README.md`, "No vault hook in a scheduled pass", describes, and run that section's
+check, which shows that the vault's hook scripts do not run, before setting
+`VAULT_ALLOW_UNENFORCED_TOOLS=1`. Whether the sandbox leaves the vault's `.git` writable to a pass
+is still to check; where you cannot confirm it is not, use the container. This guide has not checked
+which settings layers outrank the project's for that key, and a pass could write
 `"hooksConfig": {"enabled": true}` into the vault's own `.gemini/settings.json`. So, on the switch
 route, add exactly that to the scratch copy's `.gemini/settings.json` before the check's step 4: the
 hooks must stay off even then. If they do not, use the container, with `.gemini/`, `.claude/` and

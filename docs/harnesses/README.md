@@ -111,7 +111,8 @@ a wrapper for its harness. Three points apply to all of them:
   work itself, and its write fence sees only the vault), and with no hook running. The guides say
   which settings do that where the harness documents them. Where it does not, run the harness in a
   container that enforces it.
-- Prove that the hooks are off, as the next section says, before you set it.
+- Run the next section's check, which shows that the vault's hook scripts do not run, before you
+  set it.
 
 ### No vault hook in a scheduled pass
 
@@ -140,18 +141,22 @@ vault (`.codex/`, `.cursor/`, `.gemini/`, `.github/`, `.opencode/`, with OpenCod
 read-only from a copy with its hooks and plugins removed, and mounts the vault's `.git` read-only.
 The runner commits from outside the container, with a hooks folder of its own outside the vault,
 so a pass needs no git inside it (reasoned). Codex and Gemini CLI take a switch rather than the
-container, and whether their sandboxes leave the git folder writable to a pass is still to check.
-The check below shows that the vault's hook scripts did not run in a pass. It cannot see a hook of
-the account's own. That nothing the pass writes turns a hook on rests on the switch file, or the
-mounts, lying outside what the pass can write, with the runner's fence restoring a harness config a
-pass leaves changed before a later run loads it (`docs/setup.md`, the `contained` troubleshooting
-row). Run the check before you set `VAULT_ALLOW_UNENFORCED_TOOLS=1`, on a scratch copy of the
+container, and whether their sandboxes leave the git folder writable to a pass is still to check;
+where you cannot confirm it, use the container. The check below shows that the vault's hook
+scripts did not run in a pass. It cannot see a hook of the account's own. That nothing the pass
+writes turns a hook on rests on the switch file, or the mounts, lying outside what the pass can
+write, with the runner's fence restoring a harness config a pass leaves changed before a later run
+loads it (`docs/setup.md`, the `contained` troubleshooting row), except a root `.env` and
+`.hermes.md`, which its steering filter does not name (carried to a later release). Run the check
+before you set `VAULT_ALLOW_UNENFORCED_TOOLS=1`, on a scratch copy of the
 vault, trusted by the harness as the vault is, from the vault root and in the environment the
 schedule uses:
 
 1. Make the copy a clone with its own `.git`, so no hook reaches the vault's. For every run of this
-   check, leave `CLAUDE_PROJECT_DIR` unset or set it to the copy, and point any hook configured with
-   an absolute path (Hermes's snippet) at the copy. Then replace every script in `.claude/hooks/`,
+   check, set `CLAUDE_PROJECT_DIR` to the copy, so that `.claude/settings.json`'s hooks reach the
+   copy's canaries (left unset, they reach no script and go untested, though they do not reach the
+   vault either), and point any hook configured with an absolute path (Hermes's snippet) at the
+   copy. Then replace every script in `.claude/hooks/`,
    and `.claude/githooks/pre-commit`, with a canary that records it ran and does nothing else:
 
    ```bash
