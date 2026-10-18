@@ -80,8 +80,8 @@ pass that patched that script would get a shell through the next edit, whatever 
 (reasoned). Codex's shell tool is the `features.shell_tool` setting and its hooks the
 `features.hooks` setting, so create a profile file `$CODEX_HOME/vault-dream.config.toml` (with
 `$CODEX_HOME` outside every folder `workspace-write` lets a pass write, which the third point below
-asks you to check; if you cannot confirm that, use the README's container) containing the following;
-the wrapper uses it for the promotion pass too:
+asks you to check and step 5 of the README's check confirms; if it does not confirm that, use the
+README's container) containing the following; the wrapper uses it for the promotion pass too:
 
 ```toml
 [features]
@@ -101,13 +101,15 @@ only inside the vault, and that the vault's hook scripts do not run, by the chec
 `docs/harnesses/README.md`, "No vault hook in a scheduled pass". This guide does not yet name the
 setting for the third; check your Codex version's sandbox documentation for the folders
 `workspace-write` opens besides the vault. Whether `workspace-write` leaves the vault's `.git`
-writable to a pass, or, with the commit gate on, its `.claude/`, is still to check too: step 5 of
-that check confirms it, by a probe through the wrapper that has each of Codex's own tools for
-creating files write a control file in `01-inbox/` and one file under each of the copy's `.git/` and
-`.claude/`, judged by Codex's own record of its tool calls and by the disk. If either of the two is
-written, or that step is not verified, run the wrapper in the README's container instead, which
-mounts both read-only. This recipe uses Codex's sandbox rather than a container, so a hook that ran
-would run wherever Codex runs its hooks, which its documentation does not say.
+writable to a pass, or, with the commit gate on, its `.claude/`, or the folders that hold this
+profile and the wrapper, is still to check too: step 5 of that check confirms it, by a probe through
+the wrapper that has each of Codex's own tools for creating files write a control file of its own in
+`01-inbox/`, one file under each of the copy's `.git/` and `.claude/`, and one new file in
+`$CODEX_HOME` and in the wrapper's folder, judged by Codex's own record of its tool calls and by the
+disk. If any of the last four is written, or that step is not verified, run the wrapper in the
+README's container instead, which mounts the vault's `.git` and `.claude/` read-only and only the
+vault writable. This recipe uses Codex's sandbox rather than a container, so a hook that ran would
+run wherever Codex runs its hooks, which its documentation does not say.
 
 ## Known limits
 
