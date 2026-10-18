@@ -128,13 +128,13 @@ stand-in agent that was itself a shell). Whether each harness runs project hooks
 non-interactive mode was not measured, so assume it does.
 
 So a scheduled pass runs no hook from any source, and nothing the pass can write may turn one on.
-Use the harness's own switch where its guide names one, set in a file outside the vault, or else
-run the wrapper in a container that loads none of your home configuration, mounts `.claude/`
-read-only with its `settings.json` from a copy without its hooks, and mounts the harness's own
-folder in the vault (`.codex/`, `.cursor/`, `.gemini/`,
-`.github/`, `.opencode/plugins/`) read-only from a copy with its hooks removed. Then prove
-it, before you set `VAULT_ALLOW_UNENFORCED_TOOLS=1`, on a scratch copy of the vault, trusted by the
-harness as the vault is, from the vault root and in the environment the schedule uses:
+Use the harness's own switch where its guide names one, set in a file outside the vault, or else run
+the wrapper in a container that loads none of your home configuration, mounts `.claude/` read-only
+with its `settings.json` from a copy without its hooks, and mounts the harness's own folder in the
+vault (`.codex/`, `.cursor/`, `.gemini/`, `.github/`, `.opencode/plugins/`) read-only from a copy
+with its hooks removed. Then prove it, before you set `VAULT_ALLOW_UNENFORCED_TOOLS=1`, on a scratch
+copy of the vault, trusted by the harness as the vault is, from the vault root and in the
+environment the schedule uses:
 
 1. In the copy, replace every script in `.claude/hooks/`, and `.claude/githooks/pre-commit`, with a
    canary that records it ran and does nothing else:
@@ -144,7 +144,8 @@ harness as the vault is, from the vault root and in the environment the schedule
    printf '%s\n' "$0" >> "$(dirname "$0")/../../hook-canary"
    ```
 
-   Keep each one executable (`chmod +x`), run it once by hand from the copy's root, as its hook's
+   Point any hook configured with an absolute path (Hermes's snippet) at the copy first. Keep each
+   canary executable (`chmod +x`), run it once by hand from the copy's root, as its hook's
    own command line spells it, to see `hook-canary` appear, and delete `hook-canary` again.
 
 2. Write a prompt file named `probe.dream-pass.md` that asks for O4's write
@@ -156,8 +157,8 @@ harness as the vault is, from the vault root and in the environment the schedule
    outside the copy, so make the copy a clone with its own `.git`, unset `CLAUDE_PROJECT_DIR`, point
    any hook configured with an absolute path (Hermes's snippet) at the copy, and renew the harness's
    trust in the copy where it records trust per hook (Codex does). Only if the canary still does not
-   appear has this harness run no project hook in that mode on this version; note that, and keep the
-   measure anyway, because a later version may.
+   appear has this harness probably run no project hook in that mode on this version; note that, and
+   keep the measure anyway, because a later version may.
 4. Delete `hook-canary` and the probe, put the measure back, and run the wrapper on each prompt file
    in turn, deleting the probe between them.
 5. PASS if each run wrote the probe and `hook-canary` does not exist. If it exists, a hook ran:

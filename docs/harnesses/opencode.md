@@ -111,9 +111,9 @@ shell through its next write, and OpenCode runs any file in `.opencode/plugins/`
 prompt, so a pass could also add one. Whether or not you enabled it, mount an empty folder read-only
 over `.opencode/plugins/` in the container (create the folder, empty, in the vault before the first
 scheduled run if it is not there: a mount at a missing path would create it during a pass, and the
-runner would see a new steering path), load none of your home configuration (its global plugins
-included), and prove it with the check in `docs/harnesses/README.md`, "No vault hook in a scheduled
-pass".
+runner would see a new steering path, reasoned), load none of your home configuration (its global
+plugins included), and prove it with the check in `docs/harnesses/README.md`, "No vault hook in a
+scheduled pass".
 
 ## Known limits
 

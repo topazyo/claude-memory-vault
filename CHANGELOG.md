@@ -273,21 +273,22 @@ now also requires that a pass runs no hook, and the harness guides say how to pr
   an agent for each. `AGENTS.md`, the harness README and the Aider, Codex, Copilot, Cursor, Gemini
   CLI, Hermes and OpenCode guides now also say that each pass's tools may write only inside the
   vault.
-- **The command-mode sandbox keeps every hook off.** The hooks the template ships for interactive
-  sessions (`.claude/settings.json`, `.codex/hooks.json`, `.cursor/hooks.json`,
+- **The command-mode sandbox now requires every hook off.** The hooks the template ships for
+  interactive sessions (`.claude/settings.json`, `.codex/hooks.json`, `.cursor/hooks.json`,
   `.github/hooks/vault.json`, `.gemini/settings.json`, `.windsurf/hooks.json`, Hermes's snippet,
-  OpenCode's plugin and Pi's extension once enabled, and the commit gate's `pre-commit`) run
-  scripts inside the vault after a write, at a compaction or at a commit. A command-mode pass whose
-  tools can write the vault could change such a script and get a shell through the next hook,
-  whatever its shell tool was set to, so taking the shell tool away, as the guides did, was not
-  enough (reasoned). With a stand-in agent that was itself a shell, on Linux, a script changed and
-  put back before the agent returned left the runner nothing to see (exit 0, no tripwire); left
-  changed, it was contained with a tripwire (measured). Whether each harness runs project hooks in
-  its non-interactive mode was not measured. `docs/setup.md`, `AGENTS.md` and the harness README
-  now require that a scheduled pass runs no hook and can write nothing that turns one on, and the
-  README gives a check every recipe must pass: on a scratch copy of the vault whose hook scripts are
-  canaries, the wrapper fires none, where the same wrapper with the measure taken away fires one.
-  The Codex guide turns hooks off in its profile (`features.hooks`), the Gemini CLI guide with
+  OpenCode's plugin and Pi's extension once enabled, and the commit gate's `pre-commit`) run scripts
+  inside the vault after a write, at a compaction or at a commit. A command-mode pass whose tools
+  can write the vault could change such a script and get a shell through the next hook, whatever its
+  shell tool was set to, so taking the shell tool away, as the guides did, was not enough
+  (reasoned). With a stand-in agent that was itself a shell, on Linux, a script changed and put back
+  before the agent returned left the runner nothing to see (exit 0, no tripwire); left changed, it
+  was contained with a tripwire (measured). Whether each harness runs project hooks in its
+  non-interactive mode was not measured. `docs/setup.md`, `AGENTS.md` and the harness README now
+  require that a scheduled pass runs no hook and can write nothing that turns one on, and the README
+  gives a check every recipe must pass: on a scratch copy of the vault whose hook scripts are
+  canaries, the wrapper fires none, where the same wrapper with the measure taken away fires one (if
+  it fires none even then, the check is not verified until the README's causes are ruled out). The
+  Codex guide turns hooks off in its profile (`features.hooks`), the Gemini CLI guide with
   `hooksConfig.enabled`, and the Aider guide's scheduled config, now kept outside the vault, with
   `git-commit-verify: false` and `auto-commits: false`; the Copilot, Cursor, Hermes and OpenCode
   guides keep the hooks out of their container. Which settings layer wins for Codex and Gemini CLI
@@ -485,13 +486,13 @@ now also requires that a pass runs no hook, and the harness guides say how to pr
    `promotion-pass.uncontained.log` or `vault-retention.uncontained.log` in the state directory. A
    hard link or a FIFO at a log or at `dream-pass.git-state.txt`, and a symbolic link containment
    cannot move, are still open and carried to a later release (see Security); keep command-mode
-   passes without a shell, and with the vault's hooks off, as `docs/setup.md` and step 9 say. A
+   passes without a shell, and with no hook running, as `docs/setup.md` and step 9 say. A
    later run checks before it takes the run lock and again once it holds it. The lines any runner
    logs before its first check (a setting's warning, the state-directory error, the `WARNING:`
    naming the git variables it cleared, or the `ERROR:` refusing the vault's spelling) still go to
    the vault's log path, and so do those a dream or promotion run, or a retention run that could
-   keep
-   no copy of its lines or was stopped while waiting, logs while it waits for the lock, unless the
+   keep no copy of its lines or was stopped while waiting, logs while it waits for the lock, unless
+   the
    first check already moved the log. A runner that cannot record its folder before the agent
    starts exits 1 with
    `the runner could not record its folder for the pass`, and the line names the six causes: the
@@ -545,8 +546,8 @@ now also requires that a pass runs no hook, and the harness guides say how to pr
    only. Take it away for both passes, as `docs/setup.md` asks: the Codex guide's wrapper now
    gives both passes its profile with the shell tool off, and the OpenCode guide's wrapper selects
    the agents `vault-dream` and `vault-promotion`: define both, with `bash` and `webfetch` denied,
-   and run the guide's check that each refuses a shell command with no fallback warning, before you
-   take it, and deny any other tool an agent lists that can run a command or reach the web. Keep
+   deny any other tool an agent lists that can run a command or reach the web, and run the guide's
+   check that each refuses a shell command with no fallback warning, before you take it. Keep
    each pass's tools writing only inside the vault. **Any command-mode wrapper**, from any guide,
    must also run with no hook, because a pass can change the script a hook runs and get a shell
    through it. Remove `VAULT_ALLOW_UNENFORCED_TOOLS=1` from the scheduled task (or disable the

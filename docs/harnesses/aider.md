@@ -82,8 +82,7 @@ on, a pass that changed one of them would get a shell at its next commit
 be a file the pass could change too, which is why it lives outside. Aider also reads settings from
 a `.env` file in the repository by default, which a pass could write as well (reasoned; `.env` is
 not in the sources below): in the container, mount an empty file read-only over the vault's `.env`,
-creating an empty one first if there is none, or point Aider at an empty file outside the vault as
-`aider --help` documents for your version.
+creating an empty one first if there is none.
 
 ```bash
 #!/usr/bin/env bash
