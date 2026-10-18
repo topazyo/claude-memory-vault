@@ -35,9 +35,10 @@ managed ones turned off (measured for the vault's and plugins' hooks; for the ac
 reasoned). `/resume` no longer briefs from the scheduled passes' own journals and reports, and stops
 when `.claude` or `.claude/logs` is a link or does not list as a folder whose owner can write it
 (`drwx`), because a tripwire may then be set in the state directory only. The command-mode sandbox
-now also requires that a pass runs no hook, the harness README gives a check that the vault's hook
-scripts do not run in one, and the Aider guide's scheduled config sets Aider's documented
-`git: false` (not measured for this release).
+now also requires that a pass runs no hook and cannot write the vault's `.git` (or, with the commit
+gate on, its `.claude/`), the harness README gives a check that the vault's hook scripts do not run
+in one and that those folders refuse a pass's writes, and the Aider guide's scheduled config sets
+`git: false`, which Aider documents as stopping its use of git (not measured for this release).
 
 ### Security
 
@@ -188,21 +189,23 @@ scripts do not run in one, and the Aider guide's scheduled config sets Aider's d
   says not to give it (what the harness itself runs during a pass could give one all the same,
   reasoned: the vault's own hooks, where the wrapper left them on, git, which runs what the vault's
   git configuration and hooks name, or a tool the harness starts by itself (carried); so
-  `docs/setup.md` now asks for hooks off too, the Aider guide turns Aider's git off and the
-  container recipes mount the vault's `.claude/` and `.git` read-only, while whether the Codex and
-  Gemini CLI sandboxes leave them writable is carried; see Changed): a hard link at a log, which has
-  the runner append its lines, names the pass chose included, to the file it shares, and one at
-  `.claude/logs/dream-pass.git-state.txt`, which has the next dream run empty that file and write
-  `git status`, those names included, into it; a FIFO at a log, which blocks every later run of that
-  runner at the log's first write, before any check, and one at the git-state file, which blocks the
-  next dream run while it holds the run lock, so a promotion run is refused with 75 and every later
-  dream run blocks the same way, each with no tripwire at all, an outside time limit ending each
-  run; and a symbolic link containment cannot move, as in a `.claude/logs` made read-only, which the
-  runner still writes through (measured with this release; 1.4.1 behaves the same; the FIFO at a log
-  measured for the dream runner only, and on 1.4.1 by reading). A process that outlives the pass can
-  also give the vault's `runner-tripwire` a second name, and a later note is then appended to the
-  file it shares, and, after a stop that could not end it, put a link at the log once containment
-  has run, so the runner's later lines go through it (both reasoned).
+  `docs/setup.md` now asks for hooks off too, and for the vault's `.git`, and with the commit gate
+  on its `.claude/`, out of a pass's reach, the Aider guide sets Aider's documented `git: false`
+  (not measured for this release) and the container recipes mount the vault's `.claude/` and `.git`
+  read-only, while whether the Codex and Gemini CLI sandboxes leave those folders writable is
+  carried; see Changed): a hard link at a log, which has the runner append its lines, names the pass
+  chose included, to the file it shares, and one at `.claude/logs/dream-pass.git-state.txt`, which
+  has the next dream run empty that file and write `git status`, those names included, into it; a
+  FIFO at a log, which blocks every later run of that runner at the log's first write, before any
+  check, and one at the git-state file, which blocks the next dream run while it holds the run lock,
+  so a promotion run is refused with 75 and every later dream run blocks the same way, each with no
+  tripwire at all, an outside time limit ending each run; and a symbolic link containment cannot
+  move, as in a `.claude/logs` made read-only, which the runner still writes through (measured with
+  this release; 1.4.1 behaves the same; the FIFO at a log measured for the dream runner only, and on
+  1.4.1 by reading). A process that outlives the pass can also give the vault's `runner-tripwire` a
+  second name, and a later note is then appended to the file it shares, and, after a stop that could
+  not end it, put a link at the log once containment has run, so the runner's later lines go through
+  it (both reasoned).
 - **The vault's copy of the tripwire was written through a name a pass could work out.** The
   runner copied it first to `runner-tripwire.tmp.<pid>`, a name a command-mode pass could work out
   from the runner's pid in the vault's in-flight marker, and `cp` followed a link planted there: a
@@ -294,35 +297,39 @@ scripts do not run in one, and the Aider guide's scheduled config sets Aider's d
   2026-10-18). A harness can also run git during a pass, and git runs what the vault's git
   configuration and hooks name, which a pass could write too (reasoned). `docs/setup.md`,
   `AGENTS.md` and the harness README now require that a scheduled pass runs no hook and can write
-  nothing that turns one on, nor, where the harness itself can run git, the vault's `.git` or, with
-  the commit gate on, its `.claude/`, and the README gives a check every recipe must pass: on a
-  scratch copy of the vault whose hook scripts are canaries, the wrapper fires none, where the same
-  wrapper with the measure taken away fires one. A control that fires no canary leaves the check not
-  verified, never passed, and on a switch route the container is then the way on, where the check is
-  run again. The check shows that the vault's hook scripts did not run, and that writes into the
-  copy's `.git` and `.claude/` are refused (from a shell in the schedule's own container, or, on a
-  switch route, through the harness's own write tool); it cannot see a hook of the account's own.
-  That nothing a pass writes turns one on rests on the wrapper and the files it names (the switch
-  file, the container definition) lying outside what the pass can write, and on the mounts, with the
-  runner's fence restoring a harness config a pass leaves changed before a later run loads it (a
-  root `.env`, `.hermes.md` and, should OpenCode read one, a project `opencode.jsonc` excepted,
-  reasoned and carried). The Codex guide turns hooks off in its profile (`features.hooks`) and the
-  Gemini CLI guide with `hooksConfig.enabled`. The Aider guide's scheduled config, now kept outside
-  the vault, turns Aider's git off (`git: false`) and its lint after a change (`auto-lint: false`),
-  so a pass's Aider should neither commit nor run git in the vault (Aider's documentation; not
-  measured for this release); its check adds a canary in the copy's git configuration to the
-  `pre-commit` one, with a control that turns git back on. The Copilot, Cursor, Hermes and OpenCode
-  guides keep the hooks out of their containers; those containers, and the Aider and Pi ones, now
+  nothing that turns one on, nor, where the harness itself can run git (assume any can), the vault's
+  `.git` or, with the commit gate on, its `.claude/`, and the README gives a check every recipe must
+  pass: on a scratch copy of the vault whose hook scripts are canaries, the wrapper fires none,
+  where the same wrapper with the measure taken away fires one. A control that fires no canary
+  leaves the check not verified, never passed, and on a switch route the container is then the way
+  on, where the check is run again. The check shows that the vault's hook scripts did not run, and
+  that writes into the copy's `.git` and `.claude/` are refused, with a write the pass may make as
+  that step's control (from a shell in the schedule's own container, or, on a switch route, through
+  the harness's own file tools, judged by the harness's record of its tool calls; this step was not
+  run on any harness for this release); it cannot see a hook of the account's own. That nothing a
+  pass writes turns one on rests on the wrapper, the container definition and every file they name
+  lying outside what the pass can write, and on the mounts, with the runner's fence restoring a
+  harness config a pass leaves changed before a later run loads it (a root `.env`, `.hermes.md` and,
+  should OpenCode read one, a project `opencode.jsonc` excepted, reasoned and carried). The Codex
+  guide turns hooks off in its profile (`features.hooks`) and the Gemini CLI guide with
+  `hooksConfig.enabled`. The Aider guide's scheduled config, now kept outside the vault, turns
+  Aider's git off (`git: false`) and its lint after a change (`auto-lint: false`), so a pass's Aider
+  should neither commit nor run git in the vault (Aider's documentation; not measured for this
+  release); its check adds a canary in the copy's git configuration to the `pre-commit` one, with a
+  control that turns git back on, and says that a control fired by a commit alone shows only that
+  Aider made no commit. The Copilot, Cursor, Hermes and OpenCode guides keep the hooks out of their
+  containers (Copilot's and Cursor's mount `.claude/` with its `settings.json`, and any
+  `settings.local.json`, from hook-free copies); those containers, and the Aider and Pi ones, now
   also mount the vault's `.git` read-only, the Hermes, OpenCode, Aider and Pi ones `.claude/` too,
-  and OpenCode's all of `.opencode/` and `opencode.json`; every one of them but Pi's, which leaves
-  `.env` out, also mounts an empty file read-only over the vault's `.env` (create it yourself first
-  if there is none), so that a pass can neither read the vault's `.env` nor leave one for a later
-  run to load (reasoned). The Pi guide's wrapper loads no extension, and its check uses the vault's
-  extension as the positive control. Whether the Codex and Gemini CLI sandboxes leave the vault's
-  `.git` writable to a pass, or, with the commit gate on, its `.claude/`, and which settings layer
-  wins for those two, was not checked; the check's new step is how to confirm the first, and where
-  it does not confirm both refused, their guides now point to the container. The route is not new:
-  1.4.1's hooks and guides left it open in the same way.
+  and OpenCode's all of `.opencode/` and `opencode.json`; every one of them also mounts an empty
+  file read-only over the vault's `.env` (if the vault has none, create an empty one there yourself
+  first), so that a pass can neither read the vault's `.env` nor leave one for a later run to load
+  (reasoned). The Pi guide's wrapper loads no extension, and its check uses the vault's extension as
+  the positive control. Whether the Codex and Gemini CLI sandboxes leave the vault's `.git` writable
+  to a pass, or, with the commit gate on, its `.claude/`, and which settings layer wins for those
+  two, was not checked; the check's new step is how to confirm whether either folder is writable,
+  and where it does not confirm both refused, their guides now point to the container. The route is
+  not new: 1.4.1's hooks and guides left it open in the same way.
 - **The lines `shown_name` prints show C1 control characters, and the state directory, safely.** The
   `VIOLATION` list still prints the names it lists as they are (measured with U+009B on this release
   and on 1.4.1). `shown_name` mapped C0
@@ -516,15 +523,15 @@ scripts do not run in one, and the Aider guide's scheduled config sets Aider's d
    `promotion-pass.uncontained.log` or `vault-retention.uncontained.log` in the state directory. A
    hard link or a FIFO at a log or at `dream-pass.git-state.txt`, and a symbolic link containment
    cannot move, are still open and carried to a later release (see Security); keep command-mode
-   passes without a shell, with no hook running and, where the harness itself can run git, unable to
-   write the vault's `.git` or, with the commit gate on, its `.claude/`, as `docs/setup.md` and step
-   9 say. A later run checks before it takes the run lock and again once it holds it. The lines any
-   runner logs before its first check (a setting's warning, the state-directory error, the
-   `WARNING:` naming the git variables it cleared, or the `ERROR:` refusing the vault's spelling)
-   still go to the vault's log path, and so do those a dream or promotion run, or a retention run
-   that could keep no copy of its lines or was stopped while waiting, logs while it waits for the
-   lock, unless the first check already moved the log. A runner that cannot record its folder before
-   the agent starts exits 1 with
+   passes without a shell, with no hook running and, where the harness itself can run git (assume
+   any can), unable to write the vault's `.git` or, with the commit gate on, its `.claude/`, as
+   `docs/setup.md` and step 9 say. A later run checks before it takes the run lock and again once it
+   holds it. The lines any runner logs before its first check (a setting's warning, the
+   state-directory error, the `WARNING:` naming the git variables it cleared, or the `ERROR:`
+   refusing the vault's spelling) still go to the vault's log path, and so do those a dream or
+   promotion run, or a retention run that could keep no copy of its lines or was stopped while
+   waiting, logs while it waits for the lock, unless the first check already moved the log. A runner
+   that cannot record its folder before the agent starts exits 1 with
    `the runner could not record its folder for the pass`, and the line names the six causes: the
    folder missing or a link, a name in it outside letters, digits, dot, underscore and hyphen, a
    file it could not checksum, a folder in it that could not be listed, no `sha256sum`, `shasum` or
@@ -580,8 +587,9 @@ scripts do not run in one, and the Aider guide's scheduled config sets Aider's d
    check that each refuses a shell command with no fallback warning, before you take it. Keep
    each pass's tools writing only inside the vault. **Any command-mode wrapper**, from any guide,
    must also run with no hook, because a pass can change the script a hook runs and get a shell
-   through it (reasoned); keep it, the container definition it starts and every file they name
-   outside the vault, where a pass cannot write them (`docs/setup.md` §8). Remove
+   through it (reasoned); keep the wrapper, the container definition it starts and every file they
+   name outside the vault and every folder a pass can write, because the runner starts what
+   `VAULT_AGENT_CMD` names outside every sandbox (`docs/setup.md` §8). Remove
    `VAULT_ALLOW_UNENFORCED_TOOLS=1` from the scheduled task (or disable the task), follow your
    harness's guide, and set it again only once the check in `docs/harnesses/README.md`, "No vault
    hook in a scheduled pass", passes, including its new step that confirms, on the scratch copy,
@@ -589,17 +597,20 @@ scripts do not run in one, and the Aider guide's scheduled config sets Aider's d
    the wrapper never passes `--dangerously-bypass-hook-trust`); the Gemini CLI guide sets
    `hooksConfig.enabled` to false outside the vault; for both, whether the sandbox leaves the
    vault's `.git` writable to a pass, or, with the commit gate on, its `.claude/`, is still to
-   check: that step confirms it through the harness's own write tool, and where it does not confirm
+   check: that step confirms it through the harness's own file tools, and where it does not confirm
    both refused, use the README's container. The Copilot, Cursor, Hermes and OpenCode guides keep
-   the hooks out of their container and mount the vault's `.claude/` and `.git` read-only there, and
-   an empty file read-only over its `.env`, which you create first if there is none (OpenCode all of
-   `.opencode/` and `opencode.json` too); a Pi schedule mounts `.claude/` and `.git` read-only as
-   well and runs the check with the vault's extension as its positive control; an Aider schedule
-   moves `aider-scheduled.conf.yml` outside the vault with absolute `read:` paths, takes its new
-   `git: false`, `auto-lint: false`, `git-commit-verify: false` and `auto-commits: false` lines,
-   mounts the vault's `.claude/` and `.git` read-only and an empty file read-only over its `.env`
-   (create the empty file yourself first if there is none), and runs the guide's check with its
-   `pre-commit` canary, its git-configuration one, and the control that turns git back on.
+   the hooks out of their container (Copilot's and Cursor's mount `.claude/` with its
+   `settings.json`, and any `settings.local.json`, from hook-free copies) and mount the vault's
+   `.claude/` and `.git` read-only there, and an empty file read-only over its `.env` (if the vault
+   has none, create an empty one there yourself first; OpenCode all of `.opencode/` and
+   `opencode.json` too); a Pi schedule mounts `.claude/` and `.git` read-only as well, and empty
+   files read-only over its `.env` files, and runs the check with the vault's extension as its
+   positive control; an Aider schedule moves `aider-scheduled.conf.yml` outside the vault with
+   absolute `read:` paths, takes its new `git: false`, `auto-lint: false`,
+   `git-commit-verify: false` and `auto-commits: false` lines, mounts the vault's `.claude/` and
+   `.git` read-only and an empty file read-only over its `.env` (if the vault has none, create an
+   empty one there yourself first), and runs the guide's check with its `pre-commit` canary, its
+   git-configuration one, and the control that turns git back on.
 10. The shipped files this release touches: `.claude/scripts/lib/runner-common.sh`,
    `.claude/scripts/dream-pass.sh`, `.claude/scripts/promotion-pass.sh`,
    `.claude/scripts/vault-retention.sh`, `.claude/scripts/run-tests.sh`,
