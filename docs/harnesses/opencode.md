@@ -95,13 +95,25 @@ exec opencode run --dir . --agent "$agent" "$(cat "$1")"
 `opencode run` is non-interactive. Its `--auto` flag approves every permission not explicitly
 denied, so if you add it, first deny what each pass must not have. OpenCode agents take per-agent
 `permission` settings: an agent for each pass with `bash` and `webfetch` denied, named `vault-dream`
-and `vault-promotion` as the wrapper selects them with `--agent` (define both), keeps both passes
-off the shell and the web. Network access through other routes is not covered by permissions, so
+and `vault-promotion` as the wrapper selects them with `--agent` (define both), keeps both passes'
+own tools off the shell and the web. A permission covers only the tools it names, so ask each agent
+which tools it has and deny any other that can run a command or reach the web (reasoned: this guide
+has not listed them). Network access through other routes is not covered by permissions, so
 still run the wrapper in a container that blocks the network and mounts only the vault writable
 before setting `VAULT_ALLOW_UNENFORCED_TOOLS=1`. If OpenCode finds no agent by the name it is given,
 it may fall back to its default agent, which has `bash`, so first check, in the container, that
 `opencode run --dir . --agent vault-dream "Run the shell command ls."` is refused and prints no
 fallback warning, and the same for `vault-promotion`.
+
+Keep plugins out of scheduled runs. The vault's plugin, once enabled, runs `bash` on
+`.claude/hooks/vault-lint.sh` after every write, so a pass that rewrote that script would get a
+shell through its next write, and OpenCode runs any file in `.opencode/plugins/` with no trust
+prompt, so a pass could also add one. Whether or not you enabled it, mount an empty folder read-only
+over `.opencode/plugins/` in the container (create the folder, empty, in the vault before the first
+scheduled run if it is not there: a mount at a missing path would create it during a pass, and the
+runner would see a new steering path), load none of your home configuration (its global plugins
+included), and prove it with the check in `docs/harnesses/README.md`, "No vault hook in a scheduled
+pass".
 
 ## Known limits
 

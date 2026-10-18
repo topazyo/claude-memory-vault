@@ -63,7 +63,14 @@ exec agent -p --force "$(cat "$1")"
 `-p` runs Cursor's CLI without a session, and `--force` lets it change files without confirmation.
 Neither flag limits shell or network access, so run the wrapper inside a container or VM that blocks
 the network and, for both passes, has no shell available to the agent, and mounts only the vault
-writable. Only then set `VAULT_ALLOW_UNENFORCED_TOOLS=1`.
+writable. The vault's `.cursor/hooks.json` runs `bash` on `.claude/hooks/vault-lint.sh` after every
+edit, and Cursor can load Claude Code hooks too, so a pass that rewrote that script would get a
+shell through its next edit. This guide names no Cursor setting that turns project hooks off, so in
+the container mount `.cursor/` read-only from a copy whose `hooks.json` has no hooks, and `.claude/`
+read-only with its `settings.json` from a copy without its hooks, so a pass can add no hook file
+either, load none of your home configuration (`~/.cursor/hooks.json` included), and
+follow the rest of `docs/harnesses/README.md`, "No vault hook in a scheduled pass", including its
+check. Only then set `VAULT_ALLOW_UNENFORCED_TOOLS=1`.
 
 ## Known limits
 
@@ -74,6 +81,7 @@ writable. Only then set `VAULT_ALLOW_UNENFORCED_TOOLS=1`.
 
 - Rules and AGENTS.md: <https://cursor.com/docs/context/rules>
 - Hooks (project `hooks.json`, working directory, `afterFileEdit`, `preCompact`, common input, exit codes): <https://cursor.com/docs/agent/hooks>
+- Third-party hooks ("Cursor supports loading hooks from third-party tools like Claude Code"; checked 2026-10-18): <https://cursor.com/docs/agent/third-party-hooks>
 - Ignore file: <https://cursor.com/docs/context/ignore-files>
 - Headless CLI (`-p`, `--force`): <https://cursor.com/docs/cli/headless>
 - Skills (skill directories): <https://cursor.com/docs/context/skills>

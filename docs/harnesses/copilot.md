@@ -74,7 +74,18 @@ exec copilot -p "$(cat "$1")"
 `-p` runs Copilot CLI in programmatic mode. Add the tool-approval options your installed version
 documents (`copilot --help`), because a programmatic run cannot answer approval prompts. Those
 options are not a sandbox, so run the wrapper in a container that blocks the network and, for both
-passes, gives the agent no shell and mounts only the vault writable. Only then set
+passes, gives the agent no shell and mounts only the vault writable.
+
+Copilot CLI also runs the vault's hooks: `.github/hooks/vault.json`, and the hooks in
+`.claude/settings.json` and `.claude/settings.local.json`, which its hooks reference says it reads
+too. Each runs a script inside the vault, so a pass that rewrote it would get a shell through its
+next edit. Keep them out of the container: mount `.github/` read-only with its `hooks/vault.json`
+from a copy that has no hooks (Copilot also reads `.github/copilot/settings.json`, which a pass
+could otherwise create), and `.claude/` read-only with its `settings.json` from a copy without
+its hooks, load none of your home configuration (Copilot reads hooks from `~/.copilot/` too), and
+prove it with the check in `docs/harnesses/README.md`, "No vault hook in a scheduled pass". Copilot
+also documents a `disableAllHooks` setting; this guide does not use it, because the file it would
+sit in is one a pass could write, or one a mount would create inside the vault. Only then set
 `VAULT_ALLOW_UNENFORCED_TOOLS=1`.
 
 ## Known limits
@@ -87,6 +98,7 @@ passes, gives the agent no shell and mounts only the vault writable. Only then s
 
 - Repository instructions and AGENTS.md: <https://docs.github.com/en/copilot/how-tos/configure-custom-instructions/add-repository-instructions>
 - Hooks (file format, `bash`/`powershell`, payload formats, matchers): <https://docs.github.com/en/copilot/how-tos/use-copilot-agents/coding-agent/use-hooks> and <https://docs.github.com/en/copilot/reference/hooks-configuration>
+- Hooks reference (hook sources incl. `.claude/settings.json` and `~/.copilot/`, `disableAllHooks`; checked 2026-10-18): <https://docs.github.com/en/copilot/reference/hooks-reference>
 - Copilot CLI (`-p`, trusted directories, AGENTS.md): <https://docs.github.com/en/copilot/how-tos/use-copilot-agents/use-copilot-cli>
 - Agent skills (skill directories): <https://docs.github.com/en/copilot/concepts/agents/about-agent-skills>
 - VS Code instructions (`chat.useAgentsMdFile`, `.claude/rules`): <https://code.visualstudio.com/docs/copilot/customization/custom-instructions>

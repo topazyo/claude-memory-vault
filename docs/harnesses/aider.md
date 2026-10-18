@@ -60,24 +60,50 @@ Not recommended. Aider edits files you add to its chat and suggests shell comman
 config so interactive sessions keep their defaults:
 
 ```yaml
-# aider-scheduled.conf.yml (pass it with --config, which loads only this file)
+# aider-scheduled.conf.yml: keep it outside the vault, read-only, and pass its absolute path with
+# --config, which loads only this file
 read:
   - AGENTS.md
   - .claude/rules/security.md
   - .claude/rules/untrusted-captures.md
   - .claude/rules/vault-notes.md
   - .claude/rules/verification.md
-git-commit-verify: true
+git-commit-verify: false
+auto-commits: false
 suggest-shell-commands: false
 detect-urls: false
 ```
+
+Unlike the interactive config, this one turns the commit gate's hook off and stops Aider
+committing: the runner commits a pass's notes itself, and the gate's `.claude/githooks/pre-commit`
+runs `vault-check.sh`, which loads the vault's library, all files a pass can change. With the gate
+on, a pass that changed one of them would get a shell at its next commit
+(`docs/harnesses/README.md`, "No vault hook in a scheduled pass"). A config inside the vault would
+be a file the pass could change too, which is why it lives outside. Aider also reads settings from
+a `.env` file in the repository by default, which a pass could write as well (reasoned; `.env` is
+not in the sources below): in the container, mount an empty file read-only over the vault's `.env`,
+creating an empty one first if there is none, or point Aider at an empty file outside the vault as
+`aider --help` documents for your version.
 
 ```bash
 #!/usr/bin/env bash
 # aider-vault-agent.sh <prompt-file>
 set -u
-exec aider --config aider-scheduled.conf.yml --message-file "$1" --yes-always
+exec aider --config /absolute/path/outside/the/vault/aider-scheduled.conf.yml \
+  --message-file "$1" --yes-always
 ```
+
+Aider has no lint hook, so apply the README's check to the commit gate alone, on a scratch copy of
+the vault with the gate enabled and git able to commit there: replace `.claude/githooks/pre-commit`
+with the canary. As the positive control, run the wrapper on `probe.dream-pass.md` with a config
+that has `git-commit-verify: true` and `auto-commits: true`: `hook-canary` must appear. Then, with
+the scheduled config, change a tracked note in the copy without committing it (Aider may commit
+files that were already changed when it started, with `auto-commits` off; the sources below do not
+say), and run the wrapper on both probe prompts: PASS if each run wrote the probe,
+`hook-canary` does not exist, and `git log` shows no new commit. The config now lives outside the
+vault, and how Aider resolves a relative `read:` path there is not in the sources either, so write
+those paths as absolute paths to the vault's files, or confirm in a scheduled run that the rules
+were read.
 
 Run it in a container that blocks the network and mounts only the vault writable before setting
 `VAULT_ALLOW_UNENFORCED_TOOLS=1`.

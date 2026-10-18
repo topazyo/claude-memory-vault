@@ -544,7 +544,11 @@ the **promotion pass** alike:
 
 - cannot run shell commands, `git` included
 - cannot reach the network
-- can write only inside the vault.
+- can write only inside the vault
+- run no hook, and can write nothing that turns one on. Each hook the vault ships runs a script
+  inside the vault, so a pass that changed the script would get a shell through the next hook,
+  whatever its shell tool says. `docs/harnesses/README.md`, "No vault hook in a scheduled pass",
+  says how to turn them off and how to prove it.
 
 Once opted in, every run still logs a `WARNING` line saying the allowlist is not enforced by the
 runner. The write fence, the watchdog and the artifact assertion work exactly as they do under

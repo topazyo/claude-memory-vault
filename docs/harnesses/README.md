@@ -102,12 +102,69 @@ settings, without asking first.
 
 `docs/setup.md` § 8 explains command mode: `VAULT_AGENT=command`, a wrapper named by
 `VAULT_AGENT_CMD`, and a refusal (exit 3) until `VAULT_ALLOW_UNENFORCED_TOOLS=1`. Each guide gives
-a wrapper for its harness. Two points apply to all of them:
+a wrapper for its harness. Three points apply to all of them:
 
 - The wrapper receives the prompt file path as `$1`. Its name contains `dream-pass` or
   `promotion-pass`, so one wrapper can set up each pass differently.
-- Set `VAULT_ALLOW_UNENFORCED_TOOLS=1` only after the harness's own sandbox leaves both passes
-  with no shell and no network, and with tools that can write only inside the vault (the runner
-  does the git work itself, and its write fence sees only the vault). The guides say
-  which settings do that where the harness documents them. Where it does not, run the harness in
-  a container that enforces it.
+- Set `VAULT_ALLOW_UNENFORCED_TOOLS=1` only after the harness's own sandbox leaves both passes with
+  no shell and no network, with tools that can write only inside the vault (the runner does the git
+  work itself, and its write fence sees only the vault), and with no hook running. The guides say
+  which settings do that where the harness documents them. Where it does not, run the harness in a
+  container that enforces it.
+- Prove that the hooks are off, as the next section says, before you set it.
+
+### No vault hook in a scheduled pass
+
+The hooks this template ships for interactive sessions run scripts inside the vault:
+`.claude/settings.json` (Claude Code's, which Copilot CLI also reads, and Cursor can load Claude
+Code hooks), `.codex/hooks.json`, `.cursor/hooks.json`, `.github/hooks/vault.json`,
+`.gemini/settings.json` and `.windsurf/hooks.json` after a write or at a compaction, Hermes's
+snippet from its user configuration, OpenCode's plugin and Pi's extension once you enable them,
+and the commit gate's `.claude/githooks/pre-commit` at a commit. A pass whose tools can write the
+vault could change one of those scripts, or add a hook of its own, and the next hook would then run
+what it wrote with a shell, whatever the harness's shell tool is set to. If the pass puts the file
+back before it returns, the runner's fence sees nothing (measured on Linux on 1.4.2, with a
+stand-in agent that was itself a shell). Whether each harness runs project hooks in its
+non-interactive mode was not measured, so assume it does.
+
+So a scheduled pass runs no hook from any source, and nothing the pass can write may turn one on.
+Use the harness's own switch where its guide names one, set in a file outside the vault, or else
+run the wrapper in a container that loads none of your home configuration, mounts `.claude/`
+read-only with its `settings.json` from a copy without its hooks, and mounts the harness's own
+folder in the vault (`.codex/`, `.cursor/`, `.gemini/`,
+`.github/`, `.opencode/plugins/`) read-only from a copy with its hooks removed. Then prove
+it, before you set `VAULT_ALLOW_UNENFORCED_TOOLS=1`, on a scratch copy of the vault, trusted by the
+harness as the vault is, from the vault root and in the environment the schedule uses:
+
+1. In the copy, replace every script in `.claude/hooks/`, and `.claude/githooks/pre-commit`, with a
+   canary that records it ran and does nothing else:
+
+   ```bash
+   #!/usr/bin/env bash
+   printf '%s\n' "$0" >> "$(dirname "$0")/../../hook-canary"
+   ```
+
+   Keep each one executable (`chmod +x`), run it once by hand from the copy's root, as its hook's
+   own command line spells it, to see `hook-canary` appear, and delete `hook-canary` again.
+
+2. Write a prompt file named `probe.dream-pass.md` that asks for O4's write
+   (`01-inbox/harness-probe.md`, holding the line `probe` and no frontmatter), and a copy of it
+   named `probe.promotion-pass.md`.
+3. Positive control: with the hooks-off measure taken away (the profile line, the setting or the
+   mounts), run the wrapper on `probe.dream-pass.md`. `hook-canary` must appear at the copy's root.
+   If it does not, the check is NOT VERIFIED until you find out why: a hook may be reaching a script
+   outside the copy, so make the copy a clone with its own `.git`, unset `CLAUDE_PROJECT_DIR`, point
+   any hook configured with an absolute path (Hermes's snippet) at the copy, and renew the harness's
+   trust in the copy where it records trust per hook (Codex does). Only if the canary still does not
+   appear has this harness run no project hook in that mode on this version; note that, and keep the
+   measure anyway, because a later version may.
+4. Delete `hook-canary` and the probe, put the measure back, and run the wrapper on each prompt file
+   in turn, deleting the probe between them.
+5. PASS if each run wrote the probe and `hook-canary` does not exist. If it exists, a hook ran:
+   FAILED, whatever the guide says.
+
+The canary does not depend on where a hook logs or on any variable a hook reads. The probe fires the
+hooks that run after a write; the ones at a compaction or a commit go with them only because every
+measure above turns all hooks off at once, so do not swap in a measure that names events. Aider has
+no hook system, but its commits run the commit gate: its guide says how to apply the same check to
+`pre-commit`.

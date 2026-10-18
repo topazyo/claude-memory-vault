@@ -72,20 +72,32 @@ exec codex exec --profile vault-dream --sandbox workspace-write "$(cat "$1")"
 ```
 
 `codex exec` defaults to a read-only sandbox, and `--sandbox workspace-write` lets it write the
-vault. Both passes must also have no shell. Codex's shell tool is the `features.shell_tool`
+vault. Both passes must also have no shell tool and run no hook: the vault's own
+`.codex/hooks.json` runs `bash` on `.claude/hooks/vault-lint.sh` after every `apply_patch`, so a
+pass that patched that script would get a shell through the next edit, whatever its shell tool
+says. Codex's shell tool is the `features.shell_tool` setting and its hooks the `features.hooks`
 setting, so create a profile file `$CODEX_HOME/vault-dream.config.toml` containing the following;
 the wrapper uses it for the promotion pass too:
 
 ```toml
 [features]
 shell_tool = false
+hooks = false
 ```
 
-Before you set `VAULT_ALLOW_UNENFORCED_TOOLS=1`, confirm three things: that
+The project's own `.codex/config.toml` sets `hooks = true`, and this guide has not checked which
+of the two wins, so the check below is what tells you the hooks are off. Never add
+`--dangerously-bypass-hook-trust` to the wrapper: it runs enabled hooks without the trust Codex
+records for them.
+
+Before you set `VAULT_ALLOW_UNENFORCED_TOOLS=1`, confirm four things: that
 `codex exec --profile vault-dream "List the tools you can use."` offers no shell tool, that
-network access is off in your Codex sandbox settings, and that the sandbox lets the pass write
-only inside the vault. This guide does not yet name the setting for the last; check your Codex
-version's sandbox documentation for the folders `workspace-write` opens besides the vault.
+network access is off in your Codex sandbox settings, that the sandbox lets the pass write
+only inside the vault, and that no hook runs, by the check in `docs/harnesses/README.md`, "No
+vault hook in a scheduled pass". This guide does not yet name the setting for the third; check
+your Codex version's sandbox documentation for the folders `workspace-write` opens besides the
+vault. This recipe uses Codex's sandbox rather than a container, so a hook that ran would run
+wherever Codex runs its hooks, which its documentation does not say.
 
 ## Known limits
 
@@ -96,6 +108,6 @@ version's sandbox documentation for the folders `workspace-write` opens besides 
 
 - AGENTS.md discovery: <https://developers.openai.com/codex/guides/agents-md>
 - Configuration reference (`.codex/config.toml`, `features.hooks`, `features.shell_tool`, profiles): <https://developers.openai.com/codex/config-reference>
-- Hooks (locations, `PostToolUse` on `apply_patch`, `PostCompact`, input fields): <https://developers.openai.com/codex/hooks>
+- Hooks (locations, `PostToolUse` on `apply_patch`, `PostCompact`, input fields; re-checked 2026-10-17 for "Hooks are enabled by default", `[features] hooks = false`, trust by hash and `--dangerously-bypass-hook-trust`): <https://developers.openai.com/codex/hooks>
 - Non-interactive mode (`codex exec`, `--sandbox`): <https://developers.openai.com/codex/noninteractive>
 - Skills (`.agents/skills`): <https://developers.openai.com/codex/skills>

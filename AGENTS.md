@@ -227,7 +227,7 @@ when the runner's own folder changed while the pass ran (exit 78).
 `KILL_FAILED`, and `vault-check.sh` refuses with the same 78 until the owner has done what the
 tripwire says and deleted it. Never delete it yourself. **In an interactive session, stop and tell
 the owner too unless `ls -ld .claude .claude/logs` prints a line for `.claude` and every line it
-prints starts with `drwx`.** A link (`l`), a file (`-`) or any other folder mode can make the
+prints starts with `drwx`.** A link (`l`), a file (`-`) or any other mode can make the
 runners write the tripwire only to their state directory (`docs/reference.md` §4.3), so its absence
 here proves nothing; a `.claude/logs` that `ls` reports as `No such file or directory` is fine, and
 any other `ls` error is a stop. A scheduled pass is exempt: its runner checked both copies before it
@@ -267,7 +267,7 @@ there. The table below is the summary.
 | Compaction stub | PostCompact hook | Shipped for Codex, Gemini CLI and Cursor; OpenCode's opt-in plugin and Pi's opt-in extension |
 | Read deny for `.env`, `.env.*`, `secrets/` | Enforced by `.claude/settings.json` for its file-read tool | Blocked by Windsurf's read hook, OpenCode's opt-in plugin and, for the paths its file tools name, Pi's opt-in extension; hidden from Cursor's agent and Gemini CLI's search by ignore files; **guidance only** everywhere else. No harness stops a shell command from reading them |
 | Skills | Slash commands | Read natively from `.agents/skills/` by Codex, Gemini CLI, Cursor, Copilot and OpenCode, and by Hermes and Pi once the project is trusted; elsewhere follow `SKILL.md` as a checklist |
-| Scheduled passes | `VAULT_AGENT=claude` (default); the agents' `tools:` allowlists are enforced | `VAULT_AGENT=command` with your own wrapper. **Refused** (exit 3) until `VAULT_ALLOW_UNENFORCED_TOOLS=1`, which you set only after sandboxing the wrapper so that neither pass has a shell or network access, and each pass's tools can write only inside the vault. The runner does the git work itself |
+| Scheduled passes | `VAULT_AGENT=claude` (default); the agents' `tools:` allowlists are enforced | `VAULT_AGENT=command` with your own wrapper. **Refused** (exit 3) until `VAULT_ALLOW_UNENFORCED_TOOLS=1`, which you set only after sandboxing the wrapper so that neither pass has a shell or network access, each pass's tools can write only inside the vault, and no hook runs in a pass, nor can a pass write anything that turns one on (`docs/harnesses/README.md` says how to prove it). The runner does the git work itself |
 | Retention pass | No agent and no `VAULT_AGENT`, so nothing to select or sandbox. Plain git and shell | The same in every harness |
 | Template updates | No agent, no harness wiring and no schedule. A person runs `vault-update.sh` | The same in every harness. It reads and reports, writes only the manifest, reaches no network, and runs nothing out of the folder it is given |
 
