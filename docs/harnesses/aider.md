@@ -94,13 +94,15 @@ turns off the lint Aider runs by itself after a change ("Enable/disable automati
 changes (default: True)"). A config inside the vault would be a file the pass could change too,
 which is why it lives outside, and its `read:` paths are absolute paths to the vault's files,
 because how Aider resolves a relative one there is not in the sources (reasoned). Aider also loads
-options from a `.env` file in the git root and in the current directory (its dotenv page), and a
-pass could write one: in the container, mount an empty file from outside the vault read-only over
-the vault's `.env`. The mount is what keeps this config's switches in force for later runs, because
-the runner's steering filter does not name a root `.env`, and whether a `.env` or `--config` wins is
-not in the sources (reasoned). If the vault has no `.env`, create an empty one there yourself before
-the first scheduled run, so that the mount has a target: `.claude/rules/security.md` forbids an
-agent to create a `.env`, so that step is the owner's.
+options from a `.env` file in the home directory, the git root and the current directory (its dotenv
+page), and a pass could write one: in the container, mount an empty file from outside the vault
+read-only over the vault's `.env`, and start a new container for each run, as the README's container
+rule says, because in a container kept between runs a `.env` a pass wrote in its home would load at
+the next run (reasoned). The mount is what keeps this config's switches in force for
+later runs, because the runner's steering filter does not name a root `.env`, and whether a `.env`
+or `--config` wins is not in the sources (reasoned). If the vault has no `.env`, create an empty one
+there yourself before the first scheduled run, so that the mount has a target:
+`.claude/rules/security.md` forbids an agent to create a `.env`, so that step is the owner's.
 
 ```bash
 #!/usr/bin/env bash
@@ -139,14 +141,17 @@ the check tests `git: false` alone:
    git on, Aider would find the repository dirty), and run the wrapper with the scheduled config on
    each probe prompt in turn, deleting the probe with `rm` between them.
 5. Look for `hook-canary` first, as in step 2. PASS only if the controls in steps 1 to 3 fired, each
-   run in step 4 wrote the probe, `hook-canary` does not exist, and `git log` shows no commit after
-   step 3's. If `hook-canary` exists, or `git log` shows a commit after step 3's, the check is
-   FAILED, and `VAULT_ALLOW_UNENFORCED_TOOLS` stays unset. A control that did not fire leaves the
-   check NOT VERIFIED, never PASS (the README's step 3). If step 2's control fired by the commit
-   alone, a PASS shows only that Aider made no commit in step 4. That any git it ran could reach
-   nothing of the class `docs/setup.md` names in its `UNVERIFIED` troubleshooting row that a pass
-   wrote then rests on the read-only `.git` and `.claude/` mounts below, which step 5 of the
-   README's check confirms.
+   run in step 4 wrote the probe, `hook-canary` does not exist, `git log` shows no commit after step
+   3's, and step 5 of the README's check, run in the schedule's container with all its mounts, gave
+   what the README's step 6 asks of it. If `hook-canary` exists, or `git log` shows a commit after
+   step 3's, the check is FAILED, and `VAULT_ALLOW_UNENFORCED_TOOLS` stays unset. A control that did
+   not fire leaves the check NOT VERIFIED, never PASS (the README's step 3). The README's step 5,
+   when FAILED or NOT VERIFIED, makes this check so too (its NOT VERIFIED: find out why, and run it
+   again). FAILED takes precedence, as in the README's step 6. If step 2's control fired by the
+   commit alone, a PASS shows only that Aider made no commit in step 4. Then what keeps any git
+   Aider ran from reaching anything a pass wrote, of the class `docs/setup.md` names in its
+   `UNVERIFIED` troubleshooting row, is the read-only `.git` and `.claude/` mounts below, which step
+   5 of the README's check confirms.
 
 Remove the second canary from the copy's git configuration afterwards. If the scheduled runs do not
 show the rules in the chat, check the absolute `read:` paths.
@@ -156,8 +161,8 @@ vault's `.claude/` and `.git` read-only and the empty file read-only over its `.
 README's container rule says; the read-only `.git` costs a pass nothing with `git: false`
 (reasoned). Before setting `VAULT_ALLOW_UNENFORCED_TOOLS=1`, confirm in that container, with all its
 mounts, that writes into the scratch copy's `.git` and `.claude/` are refused, by step 5 of the
-README's check: the check above runs without the `.git` mount, so only that step shows the mounts
-hold.
+README's check: the check above runs without the `.git` mount, so only that step shows the `.git`
+and `.claude/` mounts hold.
 
 ## Sources (checked 2026-09-13; the YAML config, options, git and `.env` pages read 2026-10-18)
 
