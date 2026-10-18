@@ -78,11 +78,13 @@ passes, gives the agent no shell and mounts only the vault writable.
 
 Copilot CLI also runs the vault's hooks: `.github/hooks/vault.json`, and the hooks in
 `.claude/settings.json` and `.claude/settings.local.json`, which its hooks reference says it reads
-too. Each runs a script inside the vault, so a pass that rewrote it would get a shell through its
-next edit. Keep them out of the container: mount `.github/` read-only with its `hooks/vault.json`
-from a copy that has no hooks (Copilot also reads `.github/copilot/settings.json`, which a pass
-could otherwise create), and `.claude/` read-only with its `settings.json` from a copy without
-its hooks, load none of your home configuration (Copilot reads hooks from `~/.copilot/` too), and
+too. Each runs a script inside the vault, and Copilot CLI 1.0.86 runs the vault's repository hooks
+in `-p` mode in a folder it trusts (measured 2026-10-18), so a pass that rewrote such a script
+would get a shell through its next edit (reasoned). Keep them out of the container: mount
+`.github/` read-only with its `hooks/vault.json` from a copy that has no hooks (Copilot also reads
+`.github/copilot/settings.json`, which a pass could otherwise create), `.claude/` read-only with its
+`settings.json` from a copy without its hooks, and the vault's `.git` read-only, load none of your
+home configuration (Copilot reads hooks from `~/.copilot/` too), and
 prove it with the check in `docs/harnesses/README.md`, "No vault hook in a scheduled pass". Copilot
 also documents a `disableAllHooks` setting; this guide does not use it, because the file it would
 sit in is one a pass could write, or one a mount would create inside the vault. Only then set

@@ -85,8 +85,8 @@ section's check before setting `VAULT_ALLOW_UNENFORCED_TOOLS=1`. This guide has 
 settings layers outrank the project's for that key, and a pass could write
 `"hooksConfig": {"enabled": true}` into the vault's own `.gemini/settings.json`. So, on the switch
 route, add exactly that to the scratch copy's `.gemini/settings.json` before the check's step 4: the
-hooks must stay off even then. If they do not, use the container, with `.gemini/` and `.claude/`
-read-only as the README says.
+hooks must stay off even then. If they do not, use the container, with `.gemini/`, `.claude/` and
+`.git` read-only as the README says.
 
 ## Known limits
 

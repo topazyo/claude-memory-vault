@@ -78,9 +78,10 @@ exec hermes chat -q "$(cat "$1")"
 `hermes chat -q` answers one query and exits. Because Hermes's own guards are not a hard boundary,
 run the wrapper in a container that blocks the network. For both passes, also remove the terminal
 tool, for example through `agent.disabled_toolsets` (check `hermes tools` for the toolset that
-provides it), and mount only the vault writable. The lint snippet from Setup runs `bash` on
-`.claude/hooks/vault-lint.sh` after every `write_file` and `patch`, in every session, so a pass that
-rewrote that script would get a shell through its next write: give the container a Hermes
+provides it), and mount only the vault writable, with its `.git` read-only. The lint snippet from
+Setup runs `bash` on `.claude/hooks/vault-lint.sh` after every `write_file` and `patch`, in every
+session, so a pass that rewrote that script would get a shell through its next write (reasoned):
+give the container a Hermes
 configuration with no `hooks:` entry, rather than your `~/.hermes/config.yaml`, and prove it with
 the check in `docs/harnesses/README.md`, "No vault hook in a scheduled pass". Only then set
 `VAULT_ALLOW_UNENFORCED_TOOLS=1`.

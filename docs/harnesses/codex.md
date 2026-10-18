@@ -74,10 +74,10 @@ exec codex exec --profile vault-dream --sandbox workspace-write "$(cat "$1")"
 `codex exec` defaults to a read-only sandbox, and `--sandbox workspace-write` lets it write the
 vault. Both passes must also have no shell tool and run no hook: the vault's own
 `.codex/hooks.json` runs `bash` on `.claude/hooks/vault-lint.sh` after every `apply_patch`, so a
-pass that patched that script would get a shell through the next edit, whatever its shell tool
-says. Codex's shell tool is the `features.shell_tool` setting and its hooks the `features.hooks`
-setting, so create a profile file `$CODEX_HOME/vault-dream.config.toml` containing the following;
-the wrapper uses it for the promotion pass too:
+pass that patched that script would get a shell through the next edit, whatever its shell tool says
+(reasoned). Codex's shell tool is the `features.shell_tool` setting and its hooks the
+`features.hooks` setting, so create a profile file `$CODEX_HOME/vault-dream.config.toml` containing
+the following; the wrapper uses it for the promotion pass too:
 
 ```toml
 [features]
