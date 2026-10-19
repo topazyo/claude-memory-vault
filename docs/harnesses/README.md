@@ -220,14 +220,14 @@ environment the schedule uses:
    `.claude/githooks/pre-commit`; look at it, do not run it), and the copy's own `.git`, not the
    vault's (for example, an empty file with another name, such as `copy-marker`, that you put in the
    copy's `.git/` beforehand, seen from where the harness runs). Stop if either is not: this step is
-   NOT VERIFIED until what is seen is the copy. If you ran it against the vault by mistake, the
-   check is FAILED (step 6): remove with `rm` every file the step wrote, and check the steering
+   NOT VERIFIED until what is seen is the copy. If any of its writes reached the vault by mistake,
+   the check is FAILED (step 6): remove with `rm` every file the step wrote, check the steering
    surfaces by hand, without git, before any git command, as `docs/setup.md`'s `UNVERIFIED`
-   troubleshooting row says for a run with no pre-pass backup. In a container the step writes three
-   files, in this order: a control file, `01-inbox/probe-ro.md`, which a pass may write and which
-   must be written, then `.git/probe-ro` and `.claude/probe-ro`, which must be refused. On a switch
-   route it writes five for each of the harness's tools for creating files, as the second branch
-   says.
+   troubleshooting row says for a run with no pre-pass backup, and then run the check again on the
+   copy. In a container the step writes three files, in this order: a control file,
+   `01-inbox/probe-ro.md`, which a pass may write and which must be written, then `.git/probe-ro`
+   and `.claude/probe-ro`, which must be refused. On a switch route it writes five for each of the
+   harness's tools for creating files, as the second branch says.
    - In a container, start the schedule's own container definition (each pass's, where the wrapper
      sets the two passes up differently) with only the vault's path swapped for the copy's and every
      mount kept (the Aider guide's check leaves the `.git` mount out; this step does not). First
@@ -270,17 +270,18 @@ environment the schedule uses:
 
    Any other result in either branch, apart from one that step 6 calls FAILED, is NOT VERIFIED too.
    Before you run this step again, remove with `rm` every file a run left whose name starts with
-   `probe-ro`, in the copy or in your own folders.
+   `probe-ro`, in the copy or in your own folders, apart from your two prompt files.
 6. PASS only if step 3's control fired, each run in step 4 wrote the probe, `hook-canary` does not
    exist, and step 5 ran on the copy and, in every run, wrote its control files and had every other
    write it makes refused (in a container, with a read-only error, after the definition and the
    runtime's listing showed what step 5 requires). FAILED, whatever the guide says, if `hook-canary`
    exists (a hook ran), if a write that step 5 requires to be refused went through, if the
    definition starts an existing container again or the listing shows a mount writable where step 5
-   does not allow it, or if step 5 was run against the vault: in a container, fix what failed and
-   run the check again, and on a switch route the container is the way on. FAILED takes precedence:
-   any of those is FAILED whatever else a run shows. A step 5 that is NOT VERIFIED leaves the check
-   NOT VERIFIED, and so does any other result short of PASS.
+   does not allow it, or if a write of step 5 reached the vault. After a write that reached the
+   vault, clean up as step 5 says and run the check again on the copy; after any other FAILED, in a
+   container, fix what failed and run the check again, and on a switch route the container is the
+   way on. FAILED takes precedence: any of those is FAILED whatever else a run shows. A step 5 that
+   is NOT VERIFIED leaves the check NOT VERIFIED, and so does any other result short of PASS.
 
 The canary does not depend on where a hook logs. It depends on step 1 for any variable a hook's
 command reads: the shipped `.claude/settings.json` names its scripts through
