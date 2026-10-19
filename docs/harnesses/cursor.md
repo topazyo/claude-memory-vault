@@ -72,8 +72,10 @@ their hooks, so a pass can add no hook file either (run the check again whenever
 `settings.local.json` appears or changes), the vault's `.git` read-only, and an empty file from
 outside the vault read-only over its `.env` (if the vault has no `.env`, create an empty one there
 first, as the README says), load none of your home configuration (`~/.cursor/hooks.json` included),
-and follow the rest of `docs/harnesses/README.md`, "No vault hook in a scheduled pass", including
-its check. Only then set `VAULT_ALLOW_UNENFORCED_TOOLS=1`.
+start a new container for each run, whose own filesystem is discarded at exit, as the README's
+container rule says, so that a hook a pass wrote under `~/.cursor/` in the container cannot run at
+the next run (reasoned), and follow the rest of `docs/harnesses/README.md`, "No vault hook in a
+scheduled pass", including its check. Only then set `VAULT_ALLOW_UNENFORCED_TOOLS=1`.
 
 ## Known limits
 

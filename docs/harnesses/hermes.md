@@ -86,10 +86,10 @@ empty one there first, as the README says). The lint snippet from Setup runs `ba
 rewrote that script would get a shell through its next write (reasoned): give the container a Hermes
 configuration with no `hooks:` entry, rather than your `~/.hermes/config.yaml`, start a new
 container for each run, whose own filesystem is discarded at exit, as the README's container rule
-says, so that a pass's write to that configuration cannot reach the next run, and run the check in
-`docs/harnesses/README.md`, "No vault hook in a scheduled pass", which shows that the vault's hook
-scripts do not run and that writes into `.git` and `.claude/` are refused. Only then set
-`VAULT_ALLOW_UNENFORCED_TOOLS=1`.
+says, so that a pass's write to that configuration cannot reach the next run (reasoned), and run the
+check in `docs/harnesses/README.md`, "No vault hook in a scheduled pass", which shows that the
+vault's hook scripts do not run and that writes into `.git` and `.claude/` are refused. Only then
+set `VAULT_ALLOW_UNENFORCED_TOOLS=1`.
 
 ## Known limits
 

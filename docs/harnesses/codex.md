@@ -106,10 +106,11 @@ profile and the wrapper, is still to check too: step 5 of that check confirms it
 the wrapper that has each of Codex's own tools for creating files write a control file of its own in
 `01-inbox/`, one file under each of the copy's `.git/` and `.claude/`, and one new file in
 `$CODEX_HOME` and in the wrapper's folder, judged by Codex's own record of its tool calls and by the
-disk. If any of the last four is written, or that step is not verified, run the wrapper in the
-README's container instead, which mounts the vault's `.git` and `.claude/` read-only and only the
-vault writable. This recipe uses Codex's sandbox rather than a container, so a hook that ran would
-run wherever Codex runs its hooks, which its documentation does not say.
+disk. If any of the last four is written (remove it with `rm`: that is FAILED), or that step is not
+verified, run the wrapper in the README's container instead, which mounts `.claude/` and the vault's
+`.git` read-only, and every file the wrapper or a switch rests on read-only too. This recipe uses
+Codex's sandbox rather than a container, so a hook that ran would run wherever Codex runs its hooks,
+which its documentation does not say.
 
 ## Known limits
 

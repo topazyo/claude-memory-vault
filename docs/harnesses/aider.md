@@ -98,11 +98,11 @@ options from a `.env` file in the home directory, the git root and the current d
 page), and a pass could write one: in the container, mount an empty file from outside the vault
 read-only over the vault's `.env`, and start a new container for each run, as the README's container
 rule says, because in a container kept between runs a `.env` a pass wrote in its home would load at
-the next run (reasoned). The mount is what keeps this config's switches in force for
-later runs, because the runner's steering filter does not name a root `.env`, and whether a `.env`
-or `--config` wins is not in the sources (reasoned). If the vault has no `.env`, create an empty one
-there yourself before the first scheduled run, so that the mount has a target:
-`.claude/rules/security.md` forbids an agent to create a `.env`, so that step is the owner's.
+the next run (reasoned). The mount is what keeps this config's switches in force for later runs,
+because the runner's steering filter does not name a root `.env`, and whether a `.env` or `--config`
+wins is not in the sources (reasoned). If the vault has no `.env`, create an empty one there
+yourself before the first scheduled run, so that the mount has a target: `.claude/rules/security.md`
+forbids an agent to create a `.env`, so that step is the owner's.
 
 ```bash
 #!/usr/bin/env bash
