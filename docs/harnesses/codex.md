@@ -105,8 +105,9 @@ setting for the third; check your Codex version's sandbox documentation for the 
 runner runs as confirms part of it. Whether `workspace-write` leaves the vault's `.git` writable to
 a pass, or, with the commit gate on, its `.claude/`, or the folders that hold this profile and the
 wrapper, or the home folder of the account the runner runs as (and of the harness's, where it
-differs), is still to check too: step 5 of that check confirms it, first by the profile's and the
-wrapper's resolved paths (one inside the vault or the copy is FAILED: move it out and run the check
+differs), is still to check too: step 5 of that check confirms it, first by the resolved paths of
+the profile, the wrapper and those home folders (one inside the vault or the copy is FAILED: move it
+out, or for a home folder move the vault or the copy, and run the check
 again), then by a probe through the wrapper that has each of Codex's own tools for creating files
 write a control file of its own in `01-inbox/`, one file under each of the copy's `.git/` and
 `.claude/`, and one new file in `$CODEX_HOME`, in the wrapper's folder and in the home folder of the

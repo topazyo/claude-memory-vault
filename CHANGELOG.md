@@ -305,7 +305,8 @@ for this release).
   wrapper fires none, where the same wrapper with the measure taken away fires one. A control that
   fires no canary leaves the check not verified, never passed, and on a switch route the container
   is then the way on, where the check is run again. The check shows that the wrapper, the container
-  definition, the switch file and the files they rest on lie outside the vault and the copy, by
+  definition, the switch file and the files they rest on, and the home folder of the account the
+  runner runs as (on a switch route, the harness's too), lie outside the vault and the copy, by
   their resolved paths (one inside fails the check), that the vault's hook scripts did not run, and
   that writes into the copy's `.git` and `.claude/` are refused, with a write the pass may make as
   that step's control (from a shell in the schedule's own container, each pass's where the wrapper
@@ -622,8 +623,9 @@ for this release).
    `VAULT_ALLOW_UNENFORCED_TOOLS=1` from the scheduled task (or disable the task), follow your
    harness's guide, and set it again only once the check in `docs/harnesses/README.md`, "No vault
    hook in a scheduled pass", passes, including its new step that confirms, by their resolved paths,
-   that the wrapper, the container definition, the switch file and the files they rest on lie
-   outside the vault and the copy, and, on the scratch copy, that writes into `.git` and `.claude/`
+   that the wrapper, the container definition, the switch file and the files they rest on, and the
+   home folder of the account the runner runs as (on a switch route, the harness's too), lie outside
+   the vault and the copy, and, on the scratch copy, that writes into `.git` and `.claude/`
    are refused, and, in a container, from the definition, that each run starts a new container and
    that the definition names every mount the README's rule and the guide require, from the container
    runtime's own listing, that every mount over or inside the vault but the vault's own, every mount
