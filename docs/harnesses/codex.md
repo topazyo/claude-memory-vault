@@ -79,9 +79,10 @@ vault. Both passes must also have no shell tool and run no hook: the vault's own
 pass that patched that script would get a shell through the next edit, whatever its shell tool says
 (reasoned). Codex's shell tool is the `features.shell_tool` setting and its hooks the
 `features.hooks` setting, so create a profile file `$CODEX_HOME/vault-dream.config.toml` (with
-`$CODEX_HOME` outside every folder `workspace-write` lets a pass write, which the third point below
-asks you to check and step 5 of the README's check confirms; if it does not confirm that, use the
-README's container) containing the following; the wrapper uses it for the promotion pass too:
+`$CODEX_HOME` outside the vault and outside every folder `workspace-write` lets a pass write, which
+the third point below asks you to check and step 5 of the README's check confirms, by the profile's
+path and by a refused write; if it does not confirm that, use the README's container) containing the
+following; the wrapper uses it for the promotion pass too:
 
 ```toml
 [features]
@@ -100,17 +101,20 @@ network access is off in your Codex sandbox settings, that the sandbox lets the 
 only inside the vault, and that the vault's hook scripts do not run, by the check in
 `docs/harnesses/README.md`, "No vault hook in a scheduled pass". This guide does not yet name the
 setting for the third; check your Codex version's sandbox documentation for the folders
-`workspace-write` opens besides the vault. Whether `workspace-write` leaves the vault's `.git`
-writable to a pass, or, with the commit gate on, its `.claude/`, or the folders that hold this
-profile and the wrapper, is still to check too: step 5 of that check confirms it, by a probe through
-the wrapper that has each of Codex's own tools for creating files write a control file of its own in
+`workspace-write` opens besides the vault, and step 5's probe of your home folder confirms part of
+it. Whether `workspace-write` leaves the vault's `.git` writable to a pass, or, with the commit gate
+on, its `.claude/`, or the folders that hold this profile and the wrapper, or your home folder, is
+still to check too: step 5 of that check confirms it, first by the profile's and the wrapper's paths
+(one inside the vault is FAILED: move it out and run the check again), then by a probe through the
+wrapper that has each of Codex's own tools for creating files write a control file of its own in
 `01-inbox/`, one file under each of the copy's `.git/` and `.claude/`, and one new file in
-`$CODEX_HOME` and in the wrapper's folder, judged by Codex's own record of its tool calls and by the
-disk. If any of the last four is written (remove it with `rm`: that is FAILED), or that step is not
-verified, run the wrapper in the README's container instead, which mounts `.claude/` and the vault's
-`.git` read-only, and every file the wrapper or a switch rests on read-only too. This recipe uses
-Codex's sandbox rather than a container, so a hook that ran would run wherever Codex runs its hooks,
-which its documentation does not say.
+`$CODEX_HOME`, in the wrapper's folder and in the home folder of the account the runner runs as,
+judged by Codex's own record of its tool calls and by the disk. If any of those other writes goes
+through (remove it with `rm`: that is FAILED), or that step is not verified, run the wrapper in the
+README's container instead, which mounts `.claude/` and the vault's `.git` read-only, and every file
+the wrapper or a switch rests on read-only too. This recipe uses Codex's sandbox rather than a
+container, so a hook that ran would run wherever Codex runs its hooks, which its documentation does
+not say.
 
 ## Known limits
 
