@@ -101,25 +101,34 @@ network access is off in your Codex sandbox settings, that the sandbox lets the 
 only inside the vault, and that the vault's hook scripts do not run, by the check in
 `docs/harnesses/README.md`, "No vault hook in a scheduled pass". This guide does not yet name the
 setting for the third; check your Codex version's sandbox documentation for the folders
-`workspace-write` opens besides the vault, and step 5's probe of the home folder of the account the
-runner runs as confirms part of it. Whether `workspace-write` leaves the vault's `.git` writable to
-a pass, or, with the commit gate on, its `.claude/`, or the folders that hold this profile and the
-wrapper, or the home folder of the account the runner runs as (and of the harness's, where it
-differs), is still to check too: step 5 of that check confirms it, first by the resolved paths of
-the profile, the wrapper and those home folders (one inside the vault or the copy is FAILED: move it
-out, or for a home folder move the vault or the copy, and run the check
-again), then by a probe through the wrapper that has each of Codex's own tools for creating files
+`workspace-write` opens besides the vault, and step 5's probes of the home folders of the account
+the runner runs as confirm part of it. Whether `workspace-write` leaves the vault's `.git` writable
+to a pass, or, with the commit gate on, its `.claude/`, or the folders that hold this profile and
+the wrapper, or the home folders of the account the runner runs as (and of the harness's, where it
+differs: the one the schedule's environment, or for Codex the wrapper, names as the home, and the
+account's own), is still to check too: step 5 of that check confirms it, first by the resolved paths
+of the profile, the wrapper, those home folders and every file of the class `docs/setup.md` names in
+its `UNVERIFIED` troubleshooting row that the runner reads at the per-user level (one inside the
+vault or the copy is FAILED: move it out, or for a home folder move the vault or the copy, and run
+the check again), each file with a link count of 1 and no folder of the vault mounted elsewhere on
+the host, after a path inside the copy and one inside the vault have each read as inside when
+resolved the same way (otherwise that step is not verified), then by the user Codex runs as, which
+must not be the superuser (not root; on Windows, not run elevated; FAILED: run Codex as another
+user), then by a probe through the wrapper that has each of Codex's own tools for creating files
 write a control file of its own in `01-inbox/`, one file under each of the copy's `.git/` and
-`.claude/`, and one new file in `$CODEX_HOME`, in the wrapper's folder and in the home folder of the
-account the runner runs as (and of the harness's, where it differs), judged by Codex's own record of
-its tool calls and by the disk. Each probe samples only a new file in its folder, so where Codex's
-sandbox documentation or your profile opens to a pass's writes any file or folder under the home
-outside the vault and the copy, or does not say which it opens, that step is not verified. If any of
-those other writes goes through (remove it with `rm`: that is FAILED), or that step is not verified,
-run the wrapper in the README's container instead, which mounts `.claude/` and the vault's `.git`
-read-only, and every file the wrapper or a switch rests on read-only too. This recipe uses Codex's
-sandbox rather than a container, so a hook that ran would run wherever Codex runs its hooks, which
-its documentation does not say.
+`.claude/`, and one new file in `$CODEX_HOME`, in the wrapper's folder and in each home folder of
+the account the runner runs as (and of the harness's, where it differs), judged by Codex's own
+record of its tool calls and by the disk. Each probe samples only a new file in its folder, so where
+Codex's sandbox documentation or your profile opens to a pass's writes any file or folder under
+those home folders outside the vault and the copy, or does not say which it opens, that step is not
+verified; files of that class outside the vault and those home folders, at the per-user level where
+the schedule's environment places them elsewhere and at the system level, are not sampled at all,
+and rest on Codex's sandbox documentation and the account's own permissions (reasoned; carried to a
+later release). If any of those other writes goes through (remove it with `rm`: that is FAILED), or
+that step is not verified, run the wrapper in the README's container instead, which mounts
+`.claude/` and the vault's `.git` read-only, and every file the wrapper or a switch rests on
+read-only too. This recipe uses Codex's sandbox rather than a container, so a hook that ran would
+run wherever Codex runs its hooks, which its documentation does not say.
 
 ## Known limits
 
