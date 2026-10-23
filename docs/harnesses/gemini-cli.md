@@ -77,8 +77,8 @@ blocks network access by default (`tools.sandboxNetworkAccess: false`). Enable i
 runs, with only the vault writable, before you set `VAULT_ALLOW_UNENFORCED_TOOLS=1` (step 5 of the
 README's check confirms part of that, with probes of the home folder of the account the runner runs
 as and of `~/.gemini/`, and a sandbox that leaves the vault's `.git` or `.claude/` writable will not
-pass it, nor will one whose profile or documentation opens any file or folder under the home or
-does not say which it opens; reasoned).
+pass it, nor will one whose profile or documentation opens to a pass's writes any file or folder
+under the home outside the vault and the copy, or does not say which it opens; reasoned).
 
 Approval covers tool calls, not hooks: the vault's `.gemini/settings.json` runs `bash` on
 `.claude/hooks/vault-lint.sh` after every `write_file` and `replace`, so a pass that rewrote that
@@ -101,15 +101,15 @@ file in the settings file's folder, in the wrapper's folder, in the home folder 
 runner runs as (and of the harness's, where it differs) and, where it is not the settings file's
 folder, in `~/.gemini/`, judged by Gemini CLI's own record of its tool calls and by the disk. Each
 probe samples only a new file in its folder, so where the sandbox's profile or documentation opens
-any file or folder under the home, or does not say which it opens, that step is not verified. If any
-of those other writes goes through (remove it with `rm`: that is FAILED), or that step is not
-verified, use the container. This guide has not checked which settings layers outrank the project's
-for that key, and a pass could write `"hooksConfig": {"enabled": true}` into the vault's own
-`.gemini/settings.json`. So, on the switch route, add exactly that to the scratch copy's
-`.gemini/settings.json` before the check's step 4: the hooks must stay off even then. If they do
-not, use the container, with `.gemini/`, `.claude/` and `.git` read-only, and an empty file from
-outside the vault read-only over the vault's `.env` (if the vault has none, create an empty one
-there first), as the README says.
+to a pass's writes any file or folder under the home outside the vault and the copy, or does not say
+which it opens, that step is not verified. If any of those other writes goes through (remove it with
+`rm`: that is FAILED), or that step is not verified, use the container. This guide has not checked
+which settings layers outrank the project's for that key, and a pass could write
+`"hooksConfig": {"enabled": true}` into the vault's own `.gemini/settings.json`. So, on the switch
+route, add exactly that to the scratch copy's `.gemini/settings.json` before the check's step 4: the
+hooks must stay off even then. If they do not, use the container, with `.gemini/`, `.claude/` and
+`.git` read-only, and an empty file from outside the vault read-only over the vault's `.env` (if the
+vault has none, create an empty one there first), as the README says.
 
 ## Known limits
 

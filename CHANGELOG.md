@@ -318,34 +318,35 @@ for this release).
   the harness's own tools for creating files, with a control file for each, judged by the harness's
   record of its tool calls, where writes into the folders that hold the switch file and the wrapper,
   into the home folders of the accounts the runner and the harness run as and into Gemini CLI's
-  `~/.gemini/`, must be refused too, and where the sandbox's documentation or profile opens any file
-  or folder under the home, or does not say which it opens, the step is not verified, because each
-  probe samples only a new file; this step was not run on any harness for this release); it cannot
-  see a hook of the account's own. That nothing a pass writes turns one on rests on the
-  switch file, the wrapper, the container definition and every file they name lying outside what the
-  pass can write, and on the mounts, with the runner's fence restoring a harness config a pass
-  leaves changed before a later run loads it (a root `.env`, `.hermes.md` and, should OpenCode read
-  one, a project `opencode.jsonc` excepted, reasoned and carried). The Codex guide turns hooks off
-  in its profile (`features.hooks`) and the Gemini CLI guide with `hooksConfig.enabled`. The Aider
-  guide's scheduled config, now kept outside the vault, turns Aider's git off (`git: false`) and its
-  lint after a change (`auto-lint: false`), so a pass's Aider should neither commit nor run git in
-  the vault (Aider's documentation; not measured for this release); its check adds a canary in the
-  copy's git configuration to the `pre-commit` one, with a control that turns git back on, says that
-  a control fired by a commit alone shows only that Aider made no commit, and passes only with the
-  README check's step 5 run in the schedule's container. The Copilot, Cursor, Hermes and OpenCode
-  guides keep the hooks out of their containers (Copilot's and Cursor's mount `.claude/` with its
-  `settings.json`, and any `settings.local.json`, from hook-free copies); those containers, and the
-  Aider and Pi ones, now also mount the vault's `.git` read-only, the Hermes, OpenCode, Aider and Pi
-  ones `.claude/` too, and OpenCode's all of `.opencode/` and `opencode.json`; every one of them
-  also mounts an empty file read-only over the vault's `.env` (if the vault has none, create an
-  empty one there yourself first), so that a pass can neither read the vault's `.env` nor leave one
-  for a later run to load (reasoned); and each of these recipes now starts a new container for each
-  run, whose own filesystem is discarded at exit, because several harnesses load settings or code at
-  start from their home inside it (reasoned). That closes only the next run: within a run the
-  container's own filesystem stays writable, so the harness runs as a user other than the superuser,
-  and the Cursor guide mounts files holding no hooks read-only over its two user-level hook files,
-  because Cursor documents that it reloads its config files; Cursor's other home configuration,
-  Copilot's `~/.copilot/`, Hermes's configuration where it is not mounted read-only, any other home
+  `~/.gemini/`, must be refused too, and where the sandbox's documentation or profile opens to a
+  pass's writes any file or folder under the home outside the vault and the copy, or does not say
+  which it opens, the step is not verified, because each probe samples only a new file; this step
+  was not run on any harness for this release); it cannot see a hook of the account's own. That
+  nothing a pass writes turns one on rests on the switch file, the wrapper, the container definition
+  and every file they name lying outside what the pass can write, and on the mounts, with the
+  runner's fence restoring a harness config a pass leaves changed before a later run loads it (a
+  root `.env`, `.hermes.md` and, should OpenCode read one, a project `opencode.jsonc` excepted,
+  reasoned and carried). The Codex guide turns hooks off in its profile (`features.hooks`) and the
+  Gemini CLI guide with `hooksConfig.enabled`. The Aider guide's scheduled config, now kept outside
+  the vault, turns Aider's git off (`git: false`) and its lint after a change (`auto-lint: false`),
+  so a pass's Aider should neither commit nor run git in the vault (Aider's documentation; not
+  measured for this release); its check adds a canary in the copy's git configuration to the
+  `pre-commit` one, with a control that turns git back on, says that a control fired by a commit
+  alone shows only that Aider made no commit, and passes only with the README check's step 5 run in
+  the schedule's container. The Copilot, Cursor, Hermes and OpenCode guides keep the hooks out of
+  their containers (Copilot's and Cursor's mount `.claude/` with its `settings.json`, and any
+  `settings.local.json`, from hook-free copies); those containers, and the Aider and Pi ones, now
+  also mount the vault's `.git` read-only, the Hermes, OpenCode, Aider and Pi ones `.claude/` too,
+  and OpenCode's all of `.opencode/` and `opencode.json`; every one of them also mounts an empty
+  file read-only over the vault's `.env` (if the vault has none, create an empty one there yourself
+  first), so that a pass can neither read the vault's `.env` nor leave one for a later run to load
+  (reasoned); and each of these recipes now starts a new container for each run, whose own
+  filesystem is discarded at exit, because several harnesses load settings or code at start from
+  their home inside it (reasoned). That closes only the next run: within a run the container's own
+  filesystem stays writable, so the harness runs as a user other than the superuser, and the Cursor
+  guide mounts files holding no hooks read-only over its two user-level hook files, because Cursor
+  documents that it reloads its config files; Cursor's other home configuration, Copilot's
+  `~/.copilot/`, Hermes's configuration where it is not mounted read-only, any other home
   configuration whose load timing no guide documents, and the class `docs/setup.md` names in its
   `UNVERIFIED` troubleshooting row at its level in the home, stay open within a run (reasoned;
   carried). The Pi guide's wrapper loads no extension, and its check uses the vault's extension as
@@ -355,9 +356,9 @@ for this release).
   Gemini CLI, `~/.gemini/`), was not checked, nor which settings layer wins for Codex's
   `features.hooks` and Gemini CLI's `hooksConfig.enabled`; the check's new step confirms part of it,
   a new file in each of those folders, and where it does not confirm all of them refused, or the
-  sandbox's documentation or profile opens any file or folder under the home or does not say which
-  it opens, their guides now point to the container. The route is not new: 1.4.1's hooks and guides
-  left it open in the same way.
+  sandbox's documentation or profile opens to a pass's writes any file or folder under the home
+  outside the vault and the copy, or does not say which it opens, their guides now point to the
+  container. The route is not new: 1.4.1's hooks and guides left it open in the same way.
 - **The lines `shown_name` prints show C1 control characters, and the state directory, safely.** The
   `VIOLATION` list still prints the names it lists as they are (measured with U+009B on this release
   and on 1.4.1). `shown_name` mapped C0
@@ -637,15 +638,15 @@ for this release).
    or the home folders of the accounts the runner and the harness run as (and, for Gemini CLI,
    `~/.gemini/`), is still to check: that step confirms it through each of the harness's own tools
    for creating files, a new file in each folder, and where it does not confirm all of them refused,
-   or the sandbox's documentation or profile opens any file or folder under the home or does not say
-   which it opens, use the README's container. The Copilot, Cursor, Hermes and OpenCode guides keep
-   the hooks out of their container (Copilot's and Cursor's mount `.claude/` with its
-   `settings.json`, and any `settings.local.json`, from hook-free
-   copies) and mount `.claude/` and the vault's `.git` read-only there (OpenCode all of `.opencode/`
-   and `opencode.json` too), and an empty file read-only over its `.env` (if the vault has none,
-   create an empty one there yourself first); a Cursor schedule also mounts, read-only, files
-   holding no hooks over `~/.cursor/hooks.json` and `~/.claude/settings.json` in the container's
-   home; a Pi schedule mounts `.claude/` and `.git` read-only
+   or the sandbox's documentation or profile opens to a pass's writes any file or folder under the
+   home outside the vault and the copy, or does not say which it opens, use the README's container.
+   The Copilot, Cursor, Hermes and OpenCode guides keep the hooks out of their container (Copilot's
+   and Cursor's mount `.claude/` with its `settings.json`, and any `settings.local.json`, from
+   hook-free copies) and mount `.claude/` and the vault's `.git` read-only there (OpenCode all of
+   `.opencode/` and `opencode.json` too), and an empty file read-only over its `.env` (if the vault
+   has none, create an empty one there yourself first); a Cursor schedule also mounts, read-only,
+   files holding no hooks over `~/.cursor/hooks.json` and `~/.claude/settings.json` in the
+   container's home; a Pi schedule mounts `.claude/` and `.git` read-only
    as well, and empty files read-only over its `.env` files (if the vault has no `.env`, create an
    empty one there yourself first), and runs the check with the vault's extension as its positive
    control; an Aider schedule moves `aider-scheduled.conf.yml` outside the vault with absolute
