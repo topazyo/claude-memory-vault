@@ -170,17 +170,20 @@ its own outside the vault, so a pass needs no git inside it (reasoned). Codex an
 switch rather than the container, and whether their sandboxes leave the vault's `.git` writable to a
 pass, or, with the commit gate on, its `.claude/`, or the folders that hold the switch file and the
 wrapper, or the home folder of the account the runner runs as (and of the harness's, where it
-differs), is still to check: step 5 of the check below confirms it, and where it does not confirm
-all of them refused (a sandbox that leaves all of the vault writable will not; reasoned), use the
+differs), or the harness's own user-settings folder (Gemini CLI's `~/.gemini/`), is still to check:
+step 5 of the check below confirms it, and where it does not confirm all of them refused (a sandbox
+that leaves all of the vault writable will not, nor will one whose documentation or profile opens
+any file or folder under the home or does not say which it opens; reasoned), use the
 container. The check below shows that the wrapper, the container definition, the switch file and
-every file they rest on lie outside the vault, that the vault's hook scripts did not run in a pass,
-that writes into the copy's `.git` and `.claude/`, and on a switch route into the folders that hold
-the switch file and the wrapper and into the accounts' home folders, are refused, and, in a
-container, that the mounts, each run's new container and the harness's user are as this rule says.
-It cannot see a hook of the account's own. That nothing the pass writes turns a hook on rests on the
-switch file, the wrapper, the container definition and every file they name lying outside what the
-pass can write, and on the mounts, with the runner's fence restoring a harness config a pass leaves
-changed before a later run loads it (`docs/setup.md`, the `contained` troubleshooting row), except a
+every file they rest on lie outside the vault and the copy, that the vault's hook scripts did not
+run in a pass, that writes into the copy's `.git` and `.claude/`, and on a switch route into the
+folders that hold the switch file and the wrapper, into the accounts' home folders and into the
+harness's user-settings folder, are refused, and, in a container, that the mounts, each run's new
+container and the harness's user are as this rule says. It cannot see a hook of the account's own.
+That nothing the pass writes turns a hook on rests on the switch file, the wrapper, the container
+definition and every file they name lying outside what the pass can write, and on the mounts, with
+the runner's fence restoring a harness config a pass leaves changed before a later run loads it
+(`docs/setup.md`, the `contained` troubleshooting row), except a
 root `.env` (in the container, its mount covers it), `.hermes.md` and, should OpenCode read one, a
 project `opencode.jsonc`, which its steering filter does not name (reasoned; carried to a later
 release). Run the check before you set `VAULT_ALLOW_UNENFORCED_TOOLS=1`, on a scratch copy of the
@@ -226,23 +229,23 @@ schedule uses:
 5. Confirm, on the same copy, that writes into its `.git` and `.claude/` are refused, both of them
    whether or not the commit gate is on now, since it can be turned on later without this check
    being run again, and, on a switch route, that writes into the folder that holds the hooks-off
-   switch file, into the wrapper's folder and into the home folder of the account the runner runs as
-   (and of the harness's, where it differs) are refused as well. First, by their resolved paths with
-   links followed, compared with the vault's and the copy's paths resolved the same way, confirm
-   that the wrapper `VAULT_AGENT_CMD` names in the schedule's environment, the schedule's own
-   container definition (not a variant made for this check), the switch file and every file or
-   folder copy the wrapper or a switch rests on (the profile, the scheduled config, Hermes's
-   container configuration, a sandbox profile the harness reads, the settings and harness-folder
-   copies, the empty files and folders over `.env`, `.env.*` and `secrets/`, the hook-free files a
-   guide mounts in the container's home) lie outside the vault and outside the copy: a run on the
-   copy cannot show what a pass on the vault could write there. The vault's own folders the
-   definition mounts, and the vault's files a config names for the harness to read, are not such
-   files. One that lies inside is FAILED (step 6): move it out and run the check again. If you
-   cannot read those paths from the wrapper, the definition or the switch, this step is NOT
-   VERIFIED: name them by absolute paths and run the check again. Never run this step against the
-   vault: a write the mounts or the sandbox let through would land in the vault's own folders, so
-   before any write confirm that what the container or the harness sees is the copy: a canary from
-   step 1 in place (`.claude/hooks/vault-lint.sh`, or, for the Aider guide's check,
+   switch file, into the wrapper's folder, into the home folder of the account the runner runs as
+   (and of the harness's, where it differs) and into the harness's own user-settings folder are
+   refused as well. First, by their resolved paths with links followed, compared with the vault's
+   and the copy's paths resolved the same way, confirm that the wrapper `VAULT_AGENT_CMD` names in
+   the schedule's environment, the schedule's own container definition (not a variant made for this
+   check), the switch file and every file or folder copy the wrapper or a switch rests on (the
+   profile, the scheduled config, Hermes's container configuration, a sandbox profile the harness
+   reads, the settings and harness-folder copies, the empty files and folders over `.env`, `.env.*`
+   and `secrets/`, the hook-free files a guide mounts in the container's home) lie outside the vault
+   and outside the copy: a run on the copy cannot show what a pass on the vault could write there.
+   The vault's own folders the definition mounts, and the vault's files a config names for the
+   harness to read, are not such files. One that lies inside is FAILED (step 6): move it out and run
+   the check again. If you cannot read those paths from the wrapper, the definition or the switch,
+   this step is NOT VERIFIED: name them by absolute paths and run the check again. Never run this
+   step against the vault: a write the mounts or the sandbox let through would land in the vault's
+   own folders, so before any write confirm that what the container or the harness sees is the copy:
+   a canary from step 1 in place (`.claude/hooks/vault-lint.sh`, or, for the Aider guide's check,
    `.claude/githooks/pre-commit`; look at it, do not run it), and the copy's own `.git`, not the
    vault's (for example, an empty file with another name, such as `copy-marker`, that you put in the
    copy's `.git/` beforehand, seen from where the harness runs). Stop if either is not: this step is
@@ -250,7 +253,8 @@ schedule uses:
    the check is FAILED (step 6): remove with `rm` every file the step wrote, check the steering
    surfaces by hand, without git, before any git command, as `docs/setup.md`'s `UNVERIFIED`
    troubleshooting row says for a run with no pre-pass backup, and then run the check again on the
-   copy. In a container the step writes three files, in this order: a control file,
+   copy. In a container the step first writes to each hook or settings file the guide mounts in the
+   home, which must be refused, and then creates three files, in this order: a control file,
    `01-inbox/probe-ro.md`, which a pass may write and which must be written, then `.git/probe-ro`
    and `.claude/probe-ro`, which must be refused. On a switch route it writes, for each of the
    harness's tools for creating files, a control file and each file the second branch lists as one
@@ -275,15 +279,18 @@ schedule uses:
      it shows kept between runs: fix them and run the check again. A definition you cannot read that
      from, a runtime that cannot list its mounts, or a listing that leaves out a mount the
      definition names, leaves this step NOT VERIFIED. Then read, from the definition or the image,
-     the user the harness runs as (the image's default user where none is named), and open a shell
-     of your own in the container as that user; a user you cannot read leaves this step NOT
-     VERIFIED. Confirm that this user is not the superuser (its user id is not 0), which is FAILED,
-     and that a write to each hook or settings file the guide mounts in this user's home fails with
-     a read-only error (one that goes through is FAILED, a write this step requires to be refused).
-     Then create the three files: the first must be written (then delete it with `rm`), and the
-     other two must each fail with a read-only error, not a missing folder. If the first is not
-     written, or a refusal is not a read-only error, this step is NOT VERIFIED: find out why, and
-     run it again.
+     the user the harness runs as (the image's default user where none is named, and, where the
+     entrypoint or the wrapper switches user before it starts the harness, the user it switches to),
+     and open a shell of your own in the container as that user; a user you cannot read leaves this
+     step NOT VERIFIED. Confirm that this user is not the superuser (its user id is not 0; a
+     superuser is FAILED), and that a write of nothing to each hook or settings file the guide
+     mounts in this user's home (an append of no bytes, which changes nothing should it go through)
+     fails with a read-only error (one that goes through is FAILED, a write this step requires to be
+     refused; any other error, a missing folder for one, is NOT VERIFIED: mount the files in this
+     user's home and run the check again). Then create the three files: the first must be written
+     (then delete it with `rm`), and the other two must each fail with a read-only error, not a
+     missing folder. If the first is not written, or a refusal is not a read-only error, this step
+     is NOT VERIFIED: find out why, and run it again.
    - On a switch route (Codex, Gemini CLI), a shell test of your own may not show what the harness's
      own file tools can write (reasoned), so write a prompt file `probe-ro.dream-pass.md` that asks
      the harness to create, with each of its own tools for creating files in turn, these files by
@@ -297,41 +304,44 @@ schedule uses:
      VERIFIED), and `probe-ro-settings` in the harness's own user-settings folder where that is not
      the switch file's (Gemini CLI's `~/.gemini/`). Write a copy of it named
      `probe-ro.promotion-pass.md`, and run the wrapper on each with the measure in place. The
-     folders outside the copy are your own, so the guard above against running this step on the
-     vault does not cover them, and each target samples only a new file in its own folder: a refused
-     write there does not show an existing file in that folder refused, the class `docs/setup.md`
-     names in its `UNVERIFIED` troubleshooting row at the home level among them, nor a folder under
-     it, and such a folder that holds that class is not sampled (reasoned; carried to a later
-     release). So where the sandbox's documentation or profile opens any file or folder under the
-     home, this step does not confirm the home: use the container. Judge each run by the harness's
-     own record of its tool calls and their results, never by the model's account, and by what is on
-     disk: each control file written by the tool it was asked of, and each of the other writes
-     attempted, refused, and not on disk. Delete the control files with `rm` after each run. If any
-     of the other writes goes through, remove what it wrote with `rm`: that is FAILED (step 6), and
-     the container is the way on, where this check is run again. If a run leaves no record of its
-     tool calls, its record does not show each of those writes attempted, a control file was not
-     written by its tool, or the model declined a write (in a folder `.claude/rules/security.md`
-     names, for one), this step is NOT VERIFIED, never PASS: use the container.
+     folders outside the copy are the real ones the schedule uses, so the guard above against
+     running this step on the vault does not cover them. Each target samples only a new file in its
+     own folder: a refused write there shows that a new file in that folder is refused, not an
+     existing file in it (the class `docs/setup.md` names in its `UNVERIFIED` troubleshooting row at
+     the home level among them), nor a folder under it (one that holds that class among them)
+     (reasoned; carried to a later release). So where the sandbox's documentation or profile opens
+     any file or folder under the home, or does not say which it opens, this step is NOT VERIFIED,
+     never PASS: use the container. Judge each run by the harness's own record of its tool calls and
+     their results, never by the model's account, and by what is on disk: each control file written
+     by the tool it was asked of, and each of the other writes attempted, refused, and not on disk.
+     Delete the control files with `rm` after each run. If any of the other writes goes through,
+     remove what it wrote with `rm`: that is FAILED (step 6), and the container is the way on, where
+     this check is run again. If a run leaves no record of its tool calls, its record does not show
+     each of those writes attempted, a control file was not written by its tool, or the model
+     declined a write (in a folder `.claude/rules/security.md` names, for one), this step is NOT
+     VERIFIED, never PASS: use the container.
 
    Any other result in either branch, apart from one that step 6 calls FAILED, is NOT VERIFIED too.
    Before you run this step again, remove with `rm` every file a run left whose name starts with
-   `probe-ro`, in the copy or in your own folders, apart from your two prompt files.
+   `probe-ro`, in the copy or in the folders outside it that this step writes to, apart from your
+   two prompt files.
 6. PASS only if step 3's control fired, each run in step 4 wrote the probe, `hook-canary` does not
    exist, and step 5 found the wrapper, the definition, the switch file and the files they rest on
    outside the vault and the copy, ran on the copy and, in every run, wrote its control files and
    had every other write it makes refused (in a container, as a user other than the superuser, with
-   a read-only error, after the definition and the runtime's listing showed what step 5 requires).
-   FAILED, whatever the guide says, if `hook-canary` exists (a hook ran), if a file step 5 requires
-   outside the vault and the copy lies inside one of them, if a write that step 5 requires to be
-   refused went through, if the definition starts an existing container again, starts one the
-   runtime does not remove at exit or lacks a mount the rule or the guide requires, if the listing
-   shows a mount writable where step 5 does not allow it, if the harness runs as the superuser, or
-   if a write of step 5 reached the vault. After a file found inside the vault or the copy, move it
-   out and run the check again; after a write that reached the vault, clean up as step 5 says and
-   run the check again on the copy; after any other FAILED, in a container, fix what failed and run
-   the check again, and on a switch route the container is the way on. FAILED takes precedence: any
-   of those is FAILED whatever else a run shows. A step 5 that is NOT VERIFIED leaves the check NOT
-   VERIFIED, and so does any other result short of PASS.
+   a read-only error, after the definition and the runtime's listing showed what step 5 requires; on
+   a switch route, with the sandbox's documentation or profile showing that it opens no file or
+   folder under the home). FAILED, whatever the guide says, if `hook-canary` exists (a hook ran), if
+   a file step 5 requires outside the vault and the copy lies inside one of them, if a write that
+   step 5 requires to be refused went through, if the definition starts an existing container again,
+   starts one the runtime does not remove at exit or lacks a mount the rule or the guide requires,
+   if the listing shows a mount writable where step 5 does not allow it, if the harness runs as the
+   superuser, or if a write of step 5 reached the vault. After a file found inside the vault or the
+   copy, move it out and run the check again; after a write that reached the vault, clean up as step
+   5 says and run the check again on the copy; after any other FAILED, in a container, fix what
+   failed and run the check again, and on a switch route the container is the way on. FAILED takes
+   precedence: any of those is FAILED whatever else a run shows. A step 5 that is NOT VERIFIED
+   leaves the check NOT VERIFIED, and so does any other result short of PASS.
 
 The canary does not depend on where a hook logs. It depends on step 1 for any variable a hook's
 command reads: the shipped `.claude/settings.json` names its scripts through

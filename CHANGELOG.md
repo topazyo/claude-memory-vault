@@ -318,8 +318,10 @@ for this release).
   the harness's own tools for creating files, with a control file for each, judged by the harness's
   record of its tool calls, where writes into the folders that hold the switch file and the wrapper,
   into the home folders of the accounts the runner and the harness run as and into Gemini CLI's
-  `~/.gemini/`, must be refused too; this step was not run on any harness for this release); it
-  cannot see a hook of the account's own. That nothing a pass writes turns one on rests on the
+  `~/.gemini/`, must be refused too, and where the sandbox's documentation or profile opens any file
+  or folder under the home, or does not say which it opens, the step is not verified, because each
+  probe samples only a new file; this step was not run on any harness for this release); it cannot
+  see a hook of the account's own. That nothing a pass writes turns one on rests on the
   switch file, the wrapper, the container definition and every file they name lying outside what the
   pass can write, and on the mounts, with the runner's fence restoring a harness config a pass
   leaves changed before a later run loads it (a root `.env`, `.hermes.md` and, should OpenCode read
@@ -349,11 +351,13 @@ for this release).
   carried). The Pi guide's wrapper loads no extension, and its check uses the vault's extension as
   the positive control. Whether the Codex and Gemini CLI sandboxes leave the vault's `.git` writable
   to a pass, or, with the commit gate on, its `.claude/`, or the folders that hold the switch file
-  and the wrapper, or the home folders of the accounts the runner and the harness run as, was not
-  checked, nor which settings layer wins for Codex's `features.hooks` and Gemini CLI's
-  `hooksConfig.enabled`; the check's new step is how to confirm whether any of those folders is
-  writable, and where it does not confirm all of them refused, their guides now point to the
-  container. The route is not new: 1.4.1's hooks and guides left it open in the same way.
+  and the wrapper, or the home folders of the accounts the runner and the harness run as (and, for
+  Gemini CLI, `~/.gemini/`), was not checked, nor which settings layer wins for Codex's
+  `features.hooks` and Gemini CLI's `hooksConfig.enabled`; the check's new step confirms part of it,
+  a new file in each of those folders, and where it does not confirm all of them refused, or the
+  sandbox's documentation or profile opens any file or folder under the home or does not say which
+  it opens, their guides now point to the container. The route is not new: 1.4.1's hooks and guides
+  left it open in the same way.
 - **The lines `shown_name` prints show C1 control characters, and the state directory, safely.** The
   `VIOLATION` list still prints the names it lists as they are (measured with U+009B on this release
   and on 1.4.1). `shown_name` mapped C0
@@ -632,8 +636,9 @@ for this release).
    gate on, its `.claude/`, or the folders that hold that profile or settings file and the wrapper,
    or the home folders of the accounts the runner and the harness run as (and, for Gemini CLI,
    `~/.gemini/`), is still to check: that step confirms it through each of the harness's own tools
-   for creating files, and where it does not confirm all of them refused, use the README's
-   container. The Copilot, Cursor, Hermes and OpenCode guides keep
+   for creating files, a new file in each folder, and where it does not confirm all of them refused,
+   or the sandbox's documentation or profile opens any file or folder under the home or does not say
+   which it opens, use the README's container. The Copilot, Cursor, Hermes and OpenCode guides keep
    the hooks out of their container (Copilot's and Cursor's mount `.claude/` with its
    `settings.json`, and any `settings.local.json`, from hook-free
    copies) and mount `.claude/` and the vault's `.git` read-only there (OpenCode all of `.opencode/`
