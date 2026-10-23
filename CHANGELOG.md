@@ -25,7 +25,7 @@ bash .claude/scripts/vault-update.sh --check --from ../template-new
 
 ---
 
-## 1.4.2 — 2026-10-19
+## 1.4.2 — 2026-10-23
 
 A hardening release for the scheduled runners, and a fix for `/resume`. Each runner now clears
 the inherited git settings that pointed git at another repository (with a `WARNING:`), refuses the
@@ -304,16 +304,20 @@ for this release).
   every recipe must pass: on a scratch copy of the vault whose hook scripts are canaries, the
   wrapper fires none, where the same wrapper with the measure taken away fires one. A control that
   fires no canary leaves the check not verified, never passed, and on a switch route the container
-  is then the way on, where the check is run again. The check shows that the vault's hook scripts
-  did not run, and that writes into the copy's `.git` and `.claude/` are refused, with a write the
-  pass may make as that step's control (from a shell in the schedule's own container, each pass's
-  where the wrapper sets them up differently, once the definition shows a new container for each run
-  and the container runtime's own listing shows every mount over or inside the vault but the vault's
-  own, and every mount of a file the wrapper or a switch rests on, read-only, and any other writable
-  mount discarded at exit; or, on a switch route, through each of the harness's own tools for
-  creating files, with a control file for each, judged by the harness's record of its tool calls,
-  where writes into the folders that hold the switch file and the wrapper must be refused too; this
-  step was not run on any harness for this release); it cannot see a hook of the account's own. That
+  is then the way on, where the check is run again. The check shows that the wrapper, the container
+  definition, the switch file and the files they rest on lie outside the vault (one inside fails the
+  check), that the vault's hook scripts did not run, and that writes into the copy's `.git` and
+  `.claude/` are refused, with a write the pass may make as that step's control (from a shell in the
+  schedule's own container, each pass's where the wrapper sets them up differently, as a user other
+  than the superuser, once the definition shows a new container for each run and every mount the
+  README's rule and the guide require, and the container runtime's own listing shows every mount
+  over or inside the vault but the vault's own, every mount of a file the wrapper or a switch rests
+  on, and every mount over a hook or settings file a harness reads from the container's home,
+  read-only, and any other writable mount discarded at exit; or, on a switch route, through each of
+  the harness's own tools for creating files, with a control file for each, judged by the harness's
+  record of its tool calls, where writes into the folders that hold the switch file and the wrapper,
+  and into the home folder of the account the runner runs as, must be refused too; this step was not
+  run on any harness for this release); it cannot see a hook of the account's own. That
   nothing a pass writes turns one on rests on the switch file, the wrapper, the container definition
   and every file they name lying outside what the pass can write, and on the mounts, with the
   runner's fence restoring a harness config a pass leaves changed before a later run loads it (a
@@ -334,13 +338,19 @@ for this release).
   first), so that a pass can neither read the vault's `.env` nor leave one for a later run to load
   (reasoned); and each of these recipes now starts a new container for each run, whose own
   filesystem is discarded at exit, because several harnesses load settings or code at start from
-  their home inside it (reasoned). The Pi guide's wrapper loads no extension, and its check uses the
-  vault's extension as the positive control. Whether the Codex and Gemini CLI sandboxes leave the
-  vault's `.git` writable to a pass, or, with the commit gate on, its `.claude/`, or the folders
-  that hold the switch file and the wrapper, and which settings layer wins for those two, was not
-  checked; the check's new step is how to confirm whether any of those folders is writable, and
-  where it does not confirm all of them refused, their guides now point to the container. The route
-  is not new: 1.4.1's hooks and guides left it open in the same way.
+  their home inside it (reasoned). That closes only the next run: within a run the container's own
+  filesystem stays writable, so the harness runs as a user other than the superuser, and the Cursor
+  guide mounts its two user-level hook files read-only, because Cursor documents that it reloads its
+  config files; Copilot's and Hermes's home configuration, and the class of settings
+  `docs/setup.md`'s `UNVERIFIED` troubleshooting row names at its level in the home, stay open
+  within a run (reasoned; carried). The Pi guide's wrapper loads no extension, and its check uses
+  the vault's extension as the positive control. Whether the Codex and Gemini CLI sandboxes leave
+  the vault's `.git` writable to a pass, or, with the commit gate on, its `.claude/`, or the folders
+  that hold the switch file and the wrapper, or the home folder of the account the runner runs as,
+  was not checked, nor which settings layer wins for Codex's `features.hooks` and Gemini CLI's
+  `hooksConfig.enabled`; the check's new step is how to confirm whether any of those folders is
+  writable, and where it does not confirm all of them refused, their guides now point to the
+  container. The route is not new: 1.4.1's hooks and guides left it open in the same way.
 - **The lines `shown_name` prints show C1 control characters, and the state directory, safely.** The
   `VIOLATION` list still prints the names it lists as they are (measured with U+009B on this release
   and on 1.4.1). `shown_name` mapped C0
@@ -603,23 +613,30 @@ for this release).
    `VAULT_AGENT_CMD` names outside every sandbox (`docs/setup.md` §8). Remove
    `VAULT_ALLOW_UNENFORCED_TOOLS=1` from the scheduled task (or disable the task), follow your
    harness's guide, and set it again only once the check in `docs/harnesses/README.md`, "No vault
-   hook in a scheduled pass", passes, including its new step that confirms, on the scratch copy,
-   that writes into `.git` and `.claude/` are refused, and, in a container, from the definition,
-   that each run starts a new container, and from the container runtime's own listing, that every
-   mount over or inside the vault but the vault's own, and every mount of a file the wrapper or a
-   switch rests on, is read-only, and any other writable mount is discarded at exit, never a folder
-   or volume kept between runs. The Codex profile gains `hooks = false` (and the wrapper never
+   hook in a scheduled pass", passes, including its new step that confirms, by their paths, that the
+   wrapper, the container definition, the switch file and the files they rest on lie outside the
+   vault, and, on the scratch copy, that writes into `.git` and `.claude/` are refused, and, in a
+   container, from the definition, that each run starts a new container and that the definition
+   names every mount the README's rule and the guide require, from the container runtime's own
+   listing, that every mount over or inside the vault but the vault's own, every mount of a file the
+   wrapper or a switch rests on, and every mount over a hook or settings file a harness reads from
+   the container's home, is read-only, and any other writable mount is discarded at exit, never a
+   folder or volume kept between runs, and that the harness runs as a user other than the superuser.
+   The Codex profile gains `hooks = false` (and the wrapper never
    passes `--dangerously-bypass-hook-trust`); the Gemini CLI guide sets `hooksConfig.enabled` to
    false in a settings file outside the vault, in a folder the sandbox does not let a pass write;
    for both, whether the sandbox leaves the vault's `.git` writable to a pass, or, with the commit
    gate on, its `.claude/`, or the folders that hold that profile or settings file and the wrapper,
-   is still to check: that step confirms it through each of the harness's own tools for creating
-   files, and where it does not confirm all of them refused, use the README's container. The
-   Copilot, Cursor, Hermes and OpenCode guides keep the hooks out of their container (Copilot's and
-   Cursor's mount `.claude/` with its `settings.json`, and any `settings.local.json`, from hook-free
+   or the home folder of the account the runner runs as, is still to check: that step confirms it
+   through each of the harness's own tools for creating files, and where it does not confirm all of
+   them refused, use the README's container. The Copilot, Cursor, Hermes and OpenCode guides keep
+   the hooks out of their container (Copilot's and Cursor's mount `.claude/` with its
+   `settings.json`, and any `settings.local.json`, from hook-free
    copies) and mount `.claude/` and the vault's `.git` read-only there (OpenCode all of `.opencode/`
    and `opencode.json` too), and an empty file read-only over its `.env` (if the vault has none,
-   create an empty one there yourself first); a Pi schedule mounts `.claude/` and `.git` read-only
+   create an empty one there yourself first); a Cursor schedule also mounts, read-only, files
+   holding no hooks over `~/.cursor/hooks.json` and `~/.claude/settings.json` in the container's
+   home; a Pi schedule mounts `.claude/` and `.git` read-only
    as well, and empty files read-only over its `.env` files (if the vault has no `.env`, create an
    empty one there yourself first), and runs the check with the vault's extension as its positive
    control; an Aider schedule moves `aider-scheduled.conf.yml` outside the vault with absolute
@@ -628,7 +645,9 @@ for this release).
    read-only over its `.env` (if the vault has none, create an empty one there yourself first), and
    runs the guide's check with its `pre-commit` canary, its git-configuration one, and the control
    that turns git back on. For any container schedule, start a new container for each run, whose own
-   filesystem is discarded at exit, never one kept between runs.
+   filesystem is discarded at exit, never one kept between runs, and run the harness in it as a user
+   other than the superuser: the new container closes only the next run, and within a run the
+   container's own filesystem stays writable.
 10. The shipped files this release touches: `.claude/scripts/lib/runner-common.sh`,
    `.claude/scripts/dream-pass.sh`, `.claude/scripts/promotion-pass.sh`,
    `.claude/scripts/vault-retention.sh`, `.claude/scripts/run-tests.sh`,
