@@ -79,8 +79,9 @@ config files and reloads them automatically", so a hook file a pass wrote there 
 the same run (whether the CLI watches is not documented: reasoned). Start a new container for each
 run, whose own filesystem is discarded at exit, as the README's container rule says, so that a
 pass's other writes under `~/.cursor/` or `~/.claude/` in the container cannot reach the next run
-(reasoned), and follow the rest of `docs/harnesses/README.md`, "No vault hook in a scheduled pass",
-including its check. Only then set `VAULT_ALLOW_UNENFORCED_TOOLS=1`.
+(reasoned; within the same run they stay open, the folders that hold the two files included, as the
+README says), and follow the rest of `docs/harnesses/README.md`, "No vault hook in a scheduled
+pass", including its check. Only then set `VAULT_ALLOW_UNENFORCED_TOOLS=1`.
 
 ## Known limits
 

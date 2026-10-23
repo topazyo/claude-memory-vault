@@ -84,13 +84,13 @@ empty file from outside the vault read-only over its `.env` (if the vault has no
 empty one there first, as the README says). The lint snippet from Setup runs `bash` on
 `.claude/hooks/vault-lint.sh` after every `write_file` and `patch`, in every session, so a pass that
 rewrote that script would get a shell through its next write (reasoned): give the container a Hermes
-configuration with no `hooks:` entry, rather than your `~/.hermes/config.yaml` (read-only, if you
-mount it), start a new container for each run, whose own filesystem is discarded at exit, as the
-README's container rule says, so that a pass's write to that configuration cannot reach the next run
-(reasoned; within the same run, a configuration not mounted read-only stays open, as the README
-says), and run the check in `docs/harnesses/README.md`, "No vault hook in a scheduled pass", which
-shows that the vault's hook scripts do not run and that writes into `.git` and `.claude/` are
-refused. Only then set `VAULT_ALLOW_UNENFORCED_TOOLS=1`.
+configuration with no `hooks:` entry (read-only, if you mount it), rather than your
+`~/.hermes/config.yaml`, start a new container for each run, whose own filesystem is discarded at
+exit, as the README's container rule says, so that a pass's write to that configuration cannot reach
+the next run (reasoned; within the same run, a configuration not mounted read-only stays open, as
+the README says), and run the check in `docs/harnesses/README.md`, "No vault hook in a scheduled
+pass", which shows that the vault's hook scripts do not run and that writes into `.git` and
+`.claude/` are refused. Only then set `VAULT_ALLOW_UNENFORCED_TOOLS=1`.
 
 ## Known limits
 
