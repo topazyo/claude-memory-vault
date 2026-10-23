@@ -71,11 +71,16 @@ off, so in the container mount `.cursor/` read-only from a copy whose `hooks.jso
 their hooks, so a pass can add no hook file either (run the check again whenever a
 `settings.local.json` appears or changes), the vault's `.git` read-only, and an empty file from
 outside the vault read-only over its `.env` (if the vault has no `.env`, create an empty one there
-first, as the README says), load none of your home configuration (`~/.cursor/hooks.json` included),
-start a new container for each run, whose own filesystem is discarded at exit, as the README's
-container rule says, so that a hook a pass wrote under `~/.cursor/` in the container cannot run at
-the next run (reasoned), and follow the rest of `docs/harnesses/README.md`, "No vault hook in a
-scheduled pass", including its check. Only then set `VAULT_ALLOW_UNENFORCED_TOOLS=1`.
+first, as the README says), load none of your home configuration, and mount, read-only and from
+outside the vault, files holding no hooks (a hook-free copy or an empty hook list, since an empty
+file may not parse) over `~/.cursor/hooks.json` and `~/.claude/settings.json` in the container's
+home, the user-level hook files Cursor's third-party hooks reference lists: it says "Cursor watches
+config files and reloads them automatically", so a hook file a pass wrote there could load within
+the same run (whether the CLI watches is not documented: reasoned). Start a new container for each
+run, whose own filesystem is discarded at exit, as the README's container rule says, so that a
+pass's other writes under `~/.cursor/` or `~/.claude/` in the container cannot reach the next run
+(reasoned), and follow the rest of `docs/harnesses/README.md`, "No vault hook in a scheduled pass",
+including its check. Only then set `VAULT_ALLOW_UNENFORCED_TOOLS=1`.
 
 ## Known limits
 
@@ -87,7 +92,7 @@ scheduled pass", including its check. Only then set `VAULT_ALLOW_UNENFORCED_TOOL
 - Rules and AGENTS.md: <https://cursor.com/docs/context/rules>
 - Hooks (project `hooks.json`, working directory, `afterFileEdit`, `preCompact`, common input, exit codes): <https://cursor.com/docs/agent/hooks>
 - Third-party hooks ("Cursor supports loading hooks from third-party tools like Claude Code"; checked 2026-10-18): <https://cursor.com/docs/agent/third-party-hooks>
-- Third-party hooks reference (the Claude Code files Cursor loads hooks from, `.claude/settings.local.json` among them; read 2026-10-19): <https://cursor.com/docs/reference/third-party-hooks>
+- Third-party hooks reference (the Claude Code files Cursor loads hooks from, `.claude/settings.local.json` among them, read 2026-10-19; `~/.cursor/hooks.json`, `~/.claude/settings.json` and "Cursor watches config files and reloads them automatically", read 2026-10-23): <https://cursor.com/docs/reference/third-party-hooks>
 - Ignore file: <https://cursor.com/docs/context/ignore-files>
 - Headless CLI (`-p`, `--force`): <https://cursor.com/docs/cli/headless>
 - Skills (skill directories): <https://cursor.com/docs/context/skills>

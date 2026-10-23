@@ -89,12 +89,13 @@ from a copy without their hooks (run the check again whenever one appears or cha
 has no `.env`, create an empty one there first, as the README says), load none of your home
 configuration (Copilot reads hooks from `~/.copilot/` too), start a new container for each run,
 whose own filesystem is discarded at exit, as the README's container rule says, so that a hook a
-pass wrote under `~/.copilot/` in the container cannot run at the next run (reasoned), and run the
-check in `docs/harnesses/README.md`, "No vault hook in a scheduled pass", which shows that the
-vault's hook scripts do not run and that writes into `.git` and `.claude/` are refused. Copilot also
-documents a `disableAllHooks` setting; this guide does not use it, because the file it would sit in
-is one a pass could write, or one a mount would create inside the vault. Only then set
-`VAULT_ALLOW_UNENFORCED_TOOLS=1`.
+pass wrote under `~/.copilot/` in the container cannot run at the next run (reasoned; within the
+same run it stays open, as the README says, because the hooks reference does not say when Copilot
+loads its hooks), and run the check in `docs/harnesses/README.md`, "No vault hook in a scheduled
+pass", which shows that the vault's hook scripts do not run and that writes into `.git` and
+`.claude/` are refused. Copilot also documents a `disableAllHooks` setting; this guide does not use
+it, because the file it would sit in is one a pass could write, or one a mount would create inside
+the vault. Only then set `VAULT_ALLOW_UNENFORCED_TOOLS=1`.
 
 ## Known limits
 
