@@ -122,15 +122,17 @@ the check tests `git: false` alone:
    that it and the copy's `.claude/`, `.claude/hooks/` and `.claude/githooks/` each resolve to a
    folder outside the vault and outside every folder the vault's own `.git`, `.claude/`,
    `.claude/hooks/` and `.claude/githooks/` resolve to or name (with any shared folder that one
-   names); and that every script in the copy's `.claude/hooks/` and `.claude/githooks/` is a file
-   with a single name (a link count of 1), not a link (else the check is NOT VERIFIED until all
-   three hold). Then, before you start the container, whose `.claude/` mount is read-only, replace
-   `.claude/githooks/pre-commit` in the copy with the README's canary, and add a second canary in
-   the copy's own git configuration, of the class `docs/setup.md` names in its `UNVERIFIED`
-   troubleshooting row: point the copy's `core.fsmonitor`, the setting that row names,
-   at a copy of the canary script in the copy's `.claude/hooks/`, by its absolute path as the
-   container sees it. Run `git status` in the copy by hand, inside the container: `hook-canary` must
-   appear, naming the second canary. Delete it.
+   names); and that every script in the copy's `.claude/hooks/` and `.claude/githooks/`, and the
+   file this step then writes in the copy's `.git`, is a file with a single name (a link count of
+   1), not a link (else the check is NOT VERIFIED until all three hold). That comparison runs before
+   the README's spelling controls, so on Windows one folder spelled two ways can read as two there;
+   that stays open (reasoned; carried to a later release). Then, before you start the container,
+   whose `.claude/` mount is read-only, replace `.claude/githooks/pre-commit` in the copy with the
+   README's canary, and add a second canary in the copy's own git configuration, of the class
+   `docs/setup.md` names in its `UNVERIFIED` troubleshooting row: point the copy's `core.fsmonitor`,
+   the setting that row names, at a copy of the canary script in the copy's `.claude/hooks/`, by its
+   absolute path as the container sees it. Run `git status` in the copy by hand, inside the
+   container: `hook-canary` must appear, naming the second canary. Delete it.
 2. Positive control for the switch: change a tracked note in the copy without committing it, and run
    a copy of the wrapper that names a copy of the scheduled config with `git: true` on
    `probe.dream-pass.md` (the scheduled config itself stays read-only and unchanged). Look for
