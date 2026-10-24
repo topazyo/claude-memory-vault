@@ -216,9 +216,10 @@ uses:
    canaries (left unset, they reach no script and go untested, though they do not reach the vault
    either: reasoned, and seen with Copilot CLI 1.0.86 on Windows), and point any hook configured
    with an absolute path (Hermes's snippet) at the copy. Then, once you have seen that the copy's
-   `.claude/`, `.claude/hooks/` and `.claude/githooks/` each resolve to a folder other than the
-   vault's (else the check is NOT VERIFIED until they do), replace every script in `.claude/hooks/`,
-   and `.claude/githooks/pre-commit`, with a canary that records it ran and does nothing else:
+   `.claude/`, `.claude/hooks/` and `.claude/githooks/` each resolve to a folder outside the vault,
+   and that no script in them is a link (else the check is NOT VERIFIED until they do), replace
+   every script in `.claude/hooks/`, and `.claude/githooks/pre-commit`, with a canary that records
+   it ran and does nothing else:
 
    ```bash
    #!/usr/bin/env bash
@@ -327,7 +328,7 @@ uses:
    from a read-only folder copy into a folder a pass can write, lies at or under their `.git` or
    `.claude/`, is writable under a mount that must be read-only, or is one this step fails where its
    lists show it; so is a folder or file of the vault found mounted or linked at or under a folder
-   the harness loads from at start (kind 6) (the harness's own folder in the vault apart, which the
+   the harness loads from at start (kind 6; the harness's own folder in the vault apart, which the
    runner's fence covers: `docs/setup.md`, the `contained` troubleshooting row): remove it, or move
    the item out, and run the check again. Any file, folder or place named for a file that this step
    requires outside both and that lies inside one of them by any of its names is FAILED (step 6),
@@ -491,57 +492,58 @@ uses:
    holding the source of a mount from outside both into either, and with no mount at or under the
    vault's or the copy's `.git` or `.claude/`, nor any whose source lies there and whose target lies
    elsewhere in either, no folder or file of either mounted at or under a read-only copy, no link
-   below their `.git` or `.claude/` to outside the one it lies below, no folder standing in their
-   place inside either, and none of kinds 1 to 5 that step 5 states open, nor a folder or file of
-   the vault mounted or linked at or under a folder the harness loads from at start (kind 6), found
-   where step 5 fails it (step 5 says which), found the harness running as a user other than the
-   superuser, ran on the copy and, in every run, wrote its control files and had every other write
-   it makes refused (in a container, with a read-only error, after the definition, the runtime's
-   listing and the shell's own list of mounts showed what step 5 requires and with the home folder
-   of the harness's user, and the files of that class, or places named for them, step 5 reads in the
-   container, outside the vault's mount with no other mount of a folder or file of the vault at,
-   above or inside them (step 5 says which); on a switch route, with the sandbox's documentation or
-   profile showing that it opens to a pass's writes no file or folder under the home folders step 5
-   names outside the vault and the copy). FAILED, whatever the guide says, if `hook-canary` exists
-   (a hook ran), if a file, folder or place named for a file that step 5 requires outside the vault
-   and the copy lies inside one of them by any of its names, if such a folder, or on a switch route
-   a folder that holds the switch file or the wrapper, holds the source of a mount from outside both
-   into either (step 5 says which), if a mount lies at or under the vault's or the copy's `.git` or
-   `.claude/`, or has its source there and its target elsewhere in either, a folder or file of
-   either is mounted at or under a copy the definition mounts read-only, a link below their `.git`
-   or `.claude/` leads outside the one it lies below, a folder standing in their place lies inside
-   either, or one of kinds 1 to 5 that step 5 states open, or a folder or file of the vault mounted
-   or linked at or under a folder the harness loads from at start (kind 6), is found where step 5
-   fails it (step 5 says which), if the home folder of the harness's user in a container, or a file
-   of that class, or place named for one, step 5 reads in the container, lies inside the vault's
-   mount or has another mount of a folder or file of the vault at, above or inside it (step 5 says
-   which), if a write that step 5 requires to be refused went through, if the definition starts an
-   existing container again, starts one the runtime does not remove at exit or lacks a mount the
-   rule or the guide requires, if the listing or the shell's own list of mounts shows a mount
-   writable where step 5 does not allow it, or a mount whose source step 5 does not allow (step 5
-   says which), if the harness runs as the superuser, or if a write of step 5 reached the vault.
-   After a file or folder found inside the vault or the copy, by any of its names, or a folder found
-   holding the source of a mount from outside both into either, move it out or remove the name
-   inside (for a folder or file of the vault mounted at another path, or a mount from outside both
-   into either, remove that mount; for a home folder, move the vault or the copy, or, for one the
-   schedule's environment names, have it name a home outside both; for a place named for a file,
-   have it named outside both) and run the check again; after a mount at or under `.git` or
-   `.claude/`, or one whose source lies there and whose target lies elsewhere, a mount of a folder
-   or file of either at or under a read-only copy, a link below them, or a stated-open name step 5
-   fails, remove that mount or link, or replace the link with a copy, or move the item out, and
-   after a folder standing in their place found inside, move it out and point the link or the file
-   at it, and run the check again; after a mount in a container that step 5 finds writable or with a
-   source it does not allow, fix it in the definition (make it read-only, or mount a copy from
-   outside both instead), remove the host mount beneath it, or start the container so that read-only
-   reaches it, and run the check again; after a container user's home folder, or a file or place of
-   that class, found that way, set it outside the vault's mount and clear of every such mount in the
-   definition, the image, or the entrypoint or wrapper that sets it, and run the check again; after
-   a harness that runs as the superuser, run it as another user and run the check again; after a
-   write that reached the vault, clean up as step 5 says and run the check again on the copy; after
-   any other FAILED, in a container, fix what failed and run the check again, and on a switch route
-   the container is the way on. FAILED takes precedence: any of those is FAILED whatever else a run
-   shows. A step 5 that is NOT VERIFIED leaves the check NOT VERIFIED, and so does any other result
-   short of PASS.
+   below their `.git` or `.claude/`, or a folder standing in for one, to outside the one it lies
+   below, no folder standing in their place inside either, and none of kinds 1 to 5 that step 5
+   states open, nor a folder or file of the vault mounted or linked at or under a folder the harness
+   loads from at start (kind 6), found where step 5 fails it (step 5 says which), found the harness
+   running as a user other than the superuser, ran on the copy and, in every run, wrote its control
+   files and had every other write it makes refused (in a container, with a read-only error, after
+   the definition, the runtime's listing and the shell's own list of mounts showed what step 5
+   requires and with the home folder of the harness's user, and the files of that class, or places
+   named for them, step 5 reads in the container, outside the vault's mount with no other mount of a
+   folder or file of the vault at, above or inside them (step 5 says which); on a switch route, with
+   the sandbox's documentation or profile showing that it opens to a pass's writes no file or folder
+   under the home folders step 5 names outside the vault and the copy). FAILED, whatever the guide
+   says, if `hook-canary` exists (a hook ran), if a file, folder or place named for a file that step
+   5 requires outside the vault and the copy lies inside one of them by any of its names, if such a
+   folder, or on a switch route a folder that holds the switch file or the wrapper, holds the source
+   of a mount from outside both into either (step 5 says which), if a mount lies at or under the
+   vault's or the copy's `.git` or `.claude/`, or has its source there and its target elsewhere in
+   either, a folder or file of either is mounted at or under a copy the definition mounts read-only,
+   a link below their `.git` or `.claude/`, or a folder standing in for one, leads outside the one
+   it lies below, a folder standing in their place lies inside either, or one of kinds 1 to 5 that
+   step 5 states open, or a folder or file of the vault mounted or linked at or under a folder the
+   harness loads from at start (kind 6), is found where step 5 fails it (step 5 says which), if the
+   home folder of the harness's user in a container, or a file of that class, or place named for
+   one, step 5 reads in the container, lies inside the vault's mount or has another mount of a
+   folder or file of the vault at, above or inside it (step 5 says which), if a write that step 5
+   requires to be refused went through, if the definition starts an existing container again, starts
+   one the runtime does not remove at exit or lacks a mount the rule or the guide requires, if the
+   listing or the shell's own list of mounts shows a mount writable where step 5 does not allow it,
+   or a mount whose source step 5 does not allow (step 5 says which), if the harness runs as the
+   superuser, or if a write of step 5 reached the vault. After a file or folder found inside the
+   vault or the copy, by any of its names, or a folder found holding the source of a mount from
+   outside both into either, move it out or remove the name inside (for a folder or file of the
+   vault mounted at another path, or a mount from outside both into either, remove that mount; for a
+   home folder, move the vault or the copy, or, for one the schedule's environment names, have it
+   name a home outside both; for a place named for a file, have it named outside both) and run the
+   check again; after a mount at or under `.git` or `.claude/`, or one whose source lies there and
+   whose target lies elsewhere, a mount of a folder or file of either at or under a read-only copy,
+   a link below their `.git` or `.claude/` or a folder standing in for one, or a stated-open name
+   step 5 fails, remove that mount or link, or replace the link with a copy, or move the item out,
+   and after a folder standing in their place found inside, move it out and point the link or the
+   file at it, and run the check again; after a mount in a container that step 5 finds writable or
+   with a source it does not allow, fix it in the definition (make it read-only, or mount a copy
+   from outside both instead), remove the host mount beneath it, or start the container so that
+   read-only reaches it, and run the check again; after a container user's home folder, or a file or
+   place of that class, found that way, set it outside the vault's mount and clear of every such
+   mount in the definition, the image, or the entrypoint or wrapper that sets it, and run the check
+   again; after a harness that runs as the superuser, run it as another user and run the check
+   again; after a write that reached the vault, clean up as step 5 says and run the check again on
+   the copy; after any other FAILED, in a container, fix what failed and run the check again, and on
+   a switch route the container is the way on. FAILED takes precedence: any of those is FAILED
+   whatever else a run shows. A step 5 that is NOT VERIFIED leaves the check NOT VERIFIED, and so
+   does any other result short of PASS.
 
 The canary does not depend on where a hook logs. It depends on step 1 for any variable a hook's
 command reads: the shipped `.claude/settings.json` names its scripts through
