@@ -216,11 +216,14 @@ uses:
    canaries (left unset, they reach no script and go untested, though they do not reach the vault
    either: reasoned, and seen with Copilot CLI 1.0.86 on Windows), and point any hook configured
    with an absolute path (Hermes's snippet) at the copy. Then, once you have seen that the copy's
-   `.claude/`, `.claude/hooks/` and `.claude/githooks/` each resolve to a folder outside the vault
-   and outside every folder the vault's own `.claude/`, `.claude/hooks/` and `.claude/githooks/`
-   resolve to, and that every script in them is a file with a single name (a link count of 1), not a
-   link (else the check is NOT VERIFIED until both hold), replace every script in `.claude/hooks/`,
-   and `.claude/githooks/pre-commit`, with a canary that records it ran and does nothing else:
+   `.git` is a folder, not a file or a link; that it and the copy's `.claude/`, `.claude/hooks/` and
+   `.claude/githooks/` each resolve to a folder outside the vault and outside every folder the
+   vault's own `.git`, `.claude/`, `.claude/hooks/` and `.claude/githooks/` resolve to or name (with
+   any shared folder that one names, as step 5 reads them); and that every script in the copy's
+   `.claude/hooks/` and `.claude/githooks/` is a file with a single name (a link count of 1), not a
+   link (else the check is NOT VERIFIED until all three hold), replace every script in
+   `.claude/hooks/`, and `.claude/githooks/pre-commit`, with a canary that records it ran and does
+   nothing else:
 
    ```bash
    #!/usr/bin/env bash
@@ -237,10 +240,12 @@ uses:
    mounts), run the wrapper on `probe.dream-pass.md`. `hook-canary` must appear at the copy's root.
    If it does not, the check is NOT VERIFIED, never PASS, and `VAULT_ALLOW_UNENFORCED_TOOLS=1`
    waits until it fires. Find out why: step 1 not followed, so a hook reached a script outside the
-   copy; no hook configured in the copy (OpenCode's plugin and Hermes's snippet are opt-in, so
-   enable the one you use in the copy for this run); trust or fingerprints the harness records per
-   hook that differ between the copy and the vault (Codex records trust against each hook's hash,
-   Gemini CLI fingerprints project hooks, and Hermes asks consent for each new command), so renew
+   copy; a copy whose `.claude/` or `.claude/hooks/` is a link, so that `hook-canary` lands beside
+   the link's target rather than at the copy's root (give the copy folders of its own); no hook
+   configured in the copy (OpenCode's plugin and Hermes's snippet are opt-in, so enable the one you
+   use in the copy for this run); trust or fingerprints the harness records per hook that differ
+   between the copy and the vault (Codex records trust against each hook's hash, Gemini CLI
+   fingerprints project hooks, and Hermes asks consent for each new command), so renew
    them in the copy; or a matcher that does not match the tool the probe's write used. On a switch
    route (Codex, Gemini CLI), if the control still does not fire, use the container instead, whose
    mounts do not rest on the switch, and run this check there.
@@ -330,9 +335,9 @@ uses:
    `.claude/`, is writable under a mount that must be read-only, or is one this step fails where its
    lists show it; so is a folder or file of the vault found mounted or linked at or under a folder
    the harness loads from at start (kind 6; the harness's own folder in the vault and its own files
-   apart, which the runner's fence covers: `docs/setup.md`, the `contained` troubleshooting row,
-   though not another folder or file of the vault mounted or linked under it): remove it, or move
-   the item out, and run the check again. Any file, folder or place named for a file that this step
+   apart, though not another folder or file of the vault mounted or linked under it; the runner's
+   fence covers them: `docs/setup.md`, the `contained` troubleshooting row): remove it, or move the
+   item out, and run the check again. Any file, folder or place named for a file that this step
    requires outside both and that lies inside one of them by any of its names is FAILED (step 6),
    one at or under a folder or file of the vault mounted at another path, or at or under the source
    of a mount from outside both into the vault or the copy, among them. So is a folder this step
