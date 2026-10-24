@@ -302,8 +302,9 @@ for this release).
   and can write nothing that turns one on, nor, where the harness itself can run git (assume any
   can), the vault's `.git` or, with the commit gate on, its `.claude/`, and the README gives a check
   every recipe must pass: on a scratch copy of the vault, whose `.claude/`, `.claude/hooks/` and
-  `.claude/githooks/` are seen to resolve outside the vault, with no script in them a link, before
-  its hook scripts are replaced with canaries (else the check is not verified), the wrapper fires
+  `.claude/githooks/` are seen to resolve outside the vault and outside every folder the vault's own
+  resolve to, with every script in them a file with a single name, not a link, before its hook
+  scripts are replaced with canaries (else the check is not verified), the wrapper fires
   none, where the same wrapper with the measure taken away fires one. A control that fires no canary
   leaves the check not verified, never passed, and on a switch route the container is then the way
   on, where the check is run again. The check shows that the wrapper, the container definition, the
@@ -423,7 +424,8 @@ for this release).
   write, lies at or under their `.git` or `.claude/`, is writable under a mount that must be
   read-only, or is one step 5 fails where its lists show it, and so does a folder or file of the
   vault found mounted or linked at or under a folder the harness loads from at start (kind 6), the
-  harness's own folder in the vault apart, which the runner's fence covers. The Pi guide's wrapper
+  harness's own folder in the vault and its own files apart, which the runner's fence covers, though
+  not another folder or file of the vault mounted or linked under it. The Pi guide's wrapper
   loads no extension, and its check uses the vault's extension as the positive control. Whether the
   Codex and Gemini CLI sandboxes leave the vault's `.git` writable to a pass, or, with the commit
   gate on, its `.claude/`, or the folders that hold the switch file and the wrapper, or the home
