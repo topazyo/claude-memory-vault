@@ -132,7 +132,8 @@ the check tests `git: false` alone:
    `docs/setup.md` names in its `UNVERIFIED` troubleshooting row: point the copy's `core.fsmonitor`,
    the setting that row names, at a copy of the canary script in the copy's `.claude/hooks/`, by its
    absolute path as the container sees it. Run `git status` in the copy by hand, inside the
-   container: `hook-canary` must appear, naming the second canary. Delete it.
+   container: `hook-canary` must appear at the copy's root, naming the second canary (else the check
+   is NOT VERIFIED until it does: give the copy folders of its own). Delete it.
 2. Positive control for the switch: change a tracked note in the copy without committing it, and run
    a copy of the wrapper that names a copy of the scheduled config with `git: true` on
    `probe.dream-pass.md` (the scheduled config itself stays read-only and unchanged). Look for
