@@ -28,6 +28,57 @@ RUNNER_UNAME="$(uname -s 2>/dev/null)"
 # Set only by memory_override, so a value from the environment cannot reach
 # run_agent, even under a runner that never calls memory_override.
 unset AGENT_SETTINGS_FILE
+# Set only by a runner, from snap_manifest, so a value from the environment
+# cannot stand in for the record of its folder that run_agent requires.
+unset SNAP_SEALS
+# Set only by log_outside_links, so a value from the environment can neither put
+# a note into a tripwire nor keep the log from being moved.
+unset LOG_MOVED_NOTE
+
+# Git's variables for one repository are cleared here, before any function
+# runs. GIT_DIR beats discovery and git -C changes only the working directory,
+# so with GIT_DIR exported a dream pass committed its journal into that other
+# repository (measured in command mode on 1.4.0 and 1.4.1), and git_preflight
+# could not see it: git then takes the vault as that repository's work tree. The
+# list is git's own, the names git rev-parse --local-env-vars prints (git
+# 2.55.0), which git clears itself when it moves into another repository. It is
+# written out rather than asked of git, so loading the library runs no git.
+# GIT_REPO_ENV_SET keeps the names that were set, for git_env_warning. This
+# reaches the three runners; vault-check.sh and vault-update.sh source the
+# library inside a subshell, so their own git calls are not covered.
+#
+# Kept: GIT_CEILING_DIRECTORIES and GIT_DISCOVERY_ACROSS_FILESYSTEM change only
+# where discovery stops, and a pass commits only when git's top level is the
+# vault itself (git_preflight), so they can make the vault read as no
+# repository, never move the commit. GIT_CONFIG_GLOBAL, GIT_CONFIG_SYSTEM,
+# GIT_CONFIG_NOSYSTEM, GIT_EXEC_PATH, GIT_SSH* and GIT_TRACE* are the account's
+# own configuration and tools, trusted as its ~/.gitconfig and PATH are. Such a
+# configuration can run commands, so it must lie outside the vault. GIT_NAMESPACE
+# names the refs a server advertises, and GIT_ATTR_SOURCE a tree of this
+# repository.
+#
+# The MSYS switches go too. Git Bash converts a POSIX path in an argument or an
+# environment variable before git.exe sees it. With MSYS2_ARG_CONV_EXCL covering
+# core., git was handed core.hooksPath=/c/... and looked for its hooks in a
+# folder under the drive root (measured in Git Bash); MSYS2_ENV_CONV_EXCL does
+# the same to the GIT_INDEX_FILE the retention runner hands git, and
+# MSYS_NO_PATHCONV=1 turns every conversion off. Each place this library wants
+# no conversion says so on the command itself.
+GIT_REPO_ENV_VARS="GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_CONFIG GIT_CONFIG_PARAMETERS
+  GIT_CONFIG_COUNT GIT_OBJECT_DIRECTORY GIT_DIR GIT_WORK_TREE GIT_IMPLICIT_WORK_TREE
+  GIT_GRAFT_FILE GIT_INDEX_FILE GIT_NO_REPLACE_OBJECTS GIT_REPLACE_REF_BASE GIT_PREFIX
+  GIT_SHALLOW_FILE GIT_COMMON_DIR"
+GIT_REPO_ENV_SET=
+for runner_git_var in $GIT_REPO_ENV_VARS; do
+  [ -n "${!runner_git_var+x}" ] && GIT_REPO_ENV_SET="${GIT_REPO_ENV_SET:+$GIT_REPO_ENV_SET }$runner_git_var"
+done
+unset runner_git_var $GIT_REPO_ENV_VARS MSYS_NO_PATHCONV MSYS2_ARG_CONV_EXCL MSYS2_ENV_CONV_EXCL
+# GLOBIGNORE drops the names it matches from every glob, so set before the
+# library loads it would hide entries from both records of the runner's folder
+# (snap_manifest), which would then agree. bash 5.3 does not take it from the
+# environment (measured in Git Bash and on Linux); bash 3.2 is unmeasured, and
+# a script that sources this library may have set it.
+unset GLOBIGNORE
 
 # is_windows_bash
 # True under Git Bash, MSYS or Cygwin, where a native Windows process is stopped
@@ -1040,7 +1091,7 @@ vault_state_dir() {
   if [ -z "$dir" ]; then
     dir="${TMPDIR:-/tmp}/claude-memory-vault-state-$id"
     [ -n "${VAULT_STATE_DIR:-}" ] && printf '[%s] WARNING: VAULT_STATE_DIR "%s" is not an absolute path outside the vault. Using %s instead.\n' \
-      "$(ts)" "$VAULT_STATE_DIR" "$dir" >&2
+      "$(ts)" "$(shown_name "$VAULT_STATE_DIR")" "$(shown_name "$dir")" >&2
   fi
   printf '%s\n' "$dir"
 }
@@ -1163,6 +1214,45 @@ write_file_atomic() {
   [ -f "$path" ] && [ ! -L "$path" ]
 }
 
+# vault_logs_linked <root>
+# True when .claude or .claude/logs in the vault is a link, which a pass may have
+# made, so a write into .claude/logs would land wherever the link points.
+vault_logs_linked() {
+  [ -L "$1/.claude" ] || [ -L "$1/.claude/logs" ]
+}
+
+# write_vault_copy <root> <path> <content-file>
+# write_file_atomic for a copy in the vault, where a pass can reach it. Nothing is
+# written while vault_logs_linked holds. The temporary file is one mktemp made,
+# under a name it picked, or, where mktemp fails or makes no file (the tripwire
+# must not depend on mktemp), one made here under a name from $RANDOM: refused
+# when anything is already there, which a pass could have put at a name it
+# guessed, and created with noclobber, which refuses a file, a link to a file or a
+# dangling link put there after that check but still opens a device or a FIFO (a
+# process still running could race it; nothing in shell closes that). A link at <path>
+# itself is removed first, because mv would move the copy into a folder it
+# names, outside the vault; when it cannot be removed nothing is written.
+# Returns 1 when no copy is in place.
+write_vault_copy() {
+  local root="$1" path="$2" src="$3" tmp
+  vault_logs_linked "$root" && return 1
+  mkdir -p "$(dirname "$path")" 2>/dev/null
+  if [ -L "$path" ]; then
+    rm -f "$path" 2>/dev/null
+    [ -L "$path" ] && return 1
+  fi
+  tmp="$(mktemp "$path.tmp.$$.XXXXXX" 2>/dev/null)"
+  if [ -n "$tmp" ] && [ -f "$tmp" ]; then
+    cp "$src" "$tmp" 2>/dev/null && mv -f "$tmp" "$path" 2>/dev/null
+  else
+    tmp="$path.tmp.$$.${RANDOM:-0}${RANDOM:-0}"
+    { [ -e "$tmp" ] || [ -L "$tmp" ]; } && return 1
+    ( set -C; cat "$src" > "$tmp" ) 2>/dev/null && mv -f "$tmp" "$path" 2>/dev/null
+  fi
+  rm -f "$tmp" 2>/dev/null
+  [ -f "$path" ] && [ ! -L "$path" ]
+}
+
 # guard_exists <root> <state-dir> <relative-name>
 # True when the named guard file exists, or is a symlink (even a dangling one),
 # in the vault or in the state directory.
@@ -1189,13 +1279,18 @@ write_tripwire() {
   # The state directory copy first. A signal handler takes that copy as proof
   # that this run set the tripwire, and adds to it instead of replacing it.
   write_file_atomic "$state/$(basename "$TRIPWIRE_REL")" "$body" && ok=0
-  write_file_atomic "$1/$TRIPWIRE_REL" "$body" && ok=0
+  write_vault_copy "$1" "$1/$TRIPWIRE_REL" "$body" && ok=0
   rm -f "$body"
   return "$ok"
 }
 
-# tripwire_text <root> <state-dir> <runner> <reason> <quarantine-dir> <handled-list> [<errors-list> [stop]]
-# Prints the text of the tripwire that write_tripwire writes.
+# tripwire_text <root> <state-dir> <runner> <reason> <quarantine-dir> <handled-list> [<errors-list> [stop|unverified|uncontained]]
+# Prints the text of the tripwire that write_tripwire writes. The unverified
+# shape is for a pass whose runner could not trust its own folder: nothing was
+# moved or restored, and <quarantine-dir> names that folder, kept for review.
+# The uncontained shape is for a pass that ended before containment ran (a
+# signal, or a marker a dead pass left): nothing was moved or restored either,
+# and <quarantine-dir> is not shown. Both print LOG_MOVED_NOTE when it is set.
 tripwire_text() {
   local state="$2" runner="$3" reason="$4" qdir="$5" handled="$6" errors="${7:-}" shape="${8:-}"
   {
@@ -1223,6 +1318,50 @@ tripwire_text() {
       else
         printf 'delete this file.\n'
       fi
+    elif [ "$shape" = unverified ] || [ "$shape" = uncontained ]; then
+      # Nothing was put back, so git config, git hooks and Obsidian plugins the
+      # pass may have planted are still in place: git runs the first two (a
+      # core.fsmonitor command at the first git status, a pager at git reflog),
+      # Obsidian loads the third.
+      if [ "$shape" = unverified ]; then
+        printf 'Nothing was moved or restored, because the runner could not tell what the\n'
+        printf 'pass changed.\n'
+      else
+        printf 'Nothing was moved or restored, because containment did not run.\n'
+      fi
+      printf 'Until the vault is reviewed, do not open it in Obsidian or an agent session,\n'
+      printf 'and run no git command in it before the steering surfaces have been checked:\n'
+      printf 'the pass may have changed .git/config or .git/hooks, which git runs, or\n'
+      printf '.obsidian/, which Obsidian loads. That includes git that starts on its own,\n'
+      printf 'in a shell prompt that shows git state or an editor with git integration.\n'
+      if [ -s "$state/inflight-backup.tar" ]; then
+        printf 'Compare the steering surfaces, those three among them, with the pre-pass\n'
+        printf 'backup of them at\n%s\n' "$state/inflight-backup.tar"
+        printf '(copy it first, because the next pass replaces it), without git: unpack the\n'
+        printf 'copy into an empty folder with tar -xf, compare that folder with the vault\n'
+        printf 'with diff -r (with --no-dereference where your diff has it, so a link is\n'
+        printf 'compared rather than followed), and put back what differs.\n'
+      else
+        printf 'No pre-pass backup of the steering surfaces is there to compare against, so\n'
+        printf 'check those three by hand.\n'
+      fi
+      printf 'Where .git is a file, the git folder it names is outside the vault and outside\n'
+      printf 'the backup: check its config and hooks by hand as well.\n'
+      printf 'A .git deeper in the vault is a steering surface too, and diff -r shows a new\n'
+      printf 'one only as a new folder above it: list every .git with find . -name .git, and\n'
+      printf 'check the config and hooks of any you did not make.\n'
+      printf 'A link in .claude/logs, or .claude itself as a link, is in neither the backup\n'
+      printf 'nor git: list them with find .claude -type l, and remove any you did not make\n'
+      printf 'once you have checked what it names.\n'
+      printf 'Then review the rest of the vault. Where it is a git repository, start with\n'
+      printf 'git -c core.fsmonitor=false --no-pager status --ignore-submodules=all, which\n'
+      printf 'starts no fsmonitor command or pager and stays out of repositories nested in it.\n'
+      if [ "$shape" = unverified ]; then
+        printf "The runner's folder for the pass is kept, for the review, at\n%s.\n" "$qdir"
+      fi
+      if [ -n "${LOG_MOVED_NOTE:-}" ]; then
+        printf '%s\n' "$LOG_MOVED_NOTE"
+      fi
     else
       printf 'Changed files were moved to the quarantine and restored from the pre-pass\n'
       printf 'backup where one existed. Git HEAD and refs are never rewritten, so check them\n'
@@ -1239,7 +1378,11 @@ tripwire_text() {
       sed 's/^/  /' "$errors"
     fi
     printf '\nNo runner, and not vault-check.sh, will run while this file exists.\n'
-    [ "$shape" = stop ] || printf 'Review the paths above, then delete this file. '
+    case "$shape" in
+      stop) ;;
+      unverified|uncontained) printf 'Review the vault as above, then delete this file. ' ;;
+      *) printf 'Review the paths above, then delete this file. ' ;;
+    esac
     printf 'The runners also keep a copy\n'
     printf 'at %s. Delete that too.\n' "$state/$(basename "$TRIPWIRE_REL")"
   }
@@ -1254,7 +1397,7 @@ mark_inflight() {
   local body rc
   body="$(mktemp 2>/dev/null || mktemp -t inflight)" || return 1
   printf 'runner=%s\npid=%s\nstarted=%s\n' "$3" "$$" "$(ts)" > "$body"
-  write_file_atomic "$1/$INFLIGHT_REL" "$body"
+  write_vault_copy "$1" "$1/$INFLIGHT_REL" "$body"
   write_file_atomic "$2/$(basename "$INFLIGHT_REL")" "$body"
   rc=$?
   rm -f "$body"
@@ -1281,14 +1424,15 @@ tripwire_check() {
     # there, so the owner is never sent to a path that holds nothing. A pass can
     # write the vault's copy unseen, so its instructions are not vouched for.
     # vault-check.sh names the copy by the same rule.
+    # Each path goes through shown_name, because the state directory is the
+    # owner's to set and may hold a line break or an escape.
     tw="$state/$(basename "$TRIPWIRE_REL")"
-    advice="Read $tw and do what it says, then delete it and its copy."
+    advice="Read $(shown_name "$tw") and do what it says, then delete it and its copy."
     if [ ! -f "$tw" ] || [ -L "$tw" ]; then
       if [ -e "$root/$TRIPWIRE_REL" ] || [ -L "$root/$TRIPWIRE_REL" ]; then
-        tw="$root/$TRIPWIRE_REL"
-        advice="Read $tw, then delete it and anything at $state/$(basename "$TRIPWIRE_REL"). No copy in $state is a file, and a pass can write the copy in the vault, so a pass may have written this one. Check its reason against this log before you do anything it says."
+        advice="Read $(shown_name "$root/$TRIPWIRE_REL"), then delete it and anything at $(shown_name "$tw"). No copy in $(shown_name "$state") is a file, and a pass can write the copy in the vault, so a pass may have written this one. Check its reason against this log before you do anything it says."
       else
-        advice="$tw is not a file, so it holds no tripwire text. Remove it, then read this log for why the tripwire was set."
+        advice="$(shown_name "$tw") is not a file, so it holds no tripwire text. Remove it, then read this log for why the tripwire was set."
       fi
     fi
     printf '[%s] TRIPWIRE: refusing to run. A previous pass changed a steering or execution surface, was interrupted before containment, or may have left a process running. %s\n' \
@@ -1310,10 +1454,10 @@ tripwire_check() {
     wrote=1
     write_tripwire "$root" "$state" "$runner" \
       "a previous pass ended before containment ran (interrupted, killed, or the machine stopped), so the vault's steering surfaces are unverified. $marker" \
-      "(none, because containment did not run. A pre-pass backup may be in the state directory.)" "$empty" && wrote=0
+      "(none, because containment did not run. A pre-pass backup may be in the state directory.)" "$empty" "" uncontained && wrote=0
     rm -f "$empty"
     if [ "$wrote" -ne 0 ]; then
-      printf '[%s] TRIPWIRE-ERROR: a previous pass never reached containment and no tripwire could be written. The in-flight marker is kept. Refusing to run.\n' "$(ts)" >> "$log"
+      printf '[%s] TRIPWIRE-ERROR: a previous pass never reached containment and no tripwire could be written. Treat the vault as unverified, and run no git command in it before the steering surfaces have been checked. The in-flight marker is kept. Refusing to run.\n' "$(ts)" >> "$log"
       return 70
     fi
     clear_inflight "$root" "$state"
@@ -1629,7 +1773,7 @@ run_lock_reclaim() {
         [ -e "$lock/${aside##*/}" ] && mv "$lock/${aside##*/}" "$aside" 2>/dev/null
         if [ -e "$aside" ] || [ -e "$lock/${aside##*/}" ]; then
           printf '[%s] RUN-LOCK-RACE: the run lock changed while it was being reclaimed. The lock that was moved is kept at %s for review.\n' \
-            "$(ts)" "$aside" >> "$log"
+            "$(ts)" "$(shown_name "$aside")" >> "$log"
         fi
       fi
     fi
@@ -1679,7 +1823,7 @@ run_lock_acquire() {
       if [ "$cur" != "$RUN_LOCK_NONCE" ]; then
         if ! is_nonce "$cur"; then
           run_lock_release
-          printf '[%s] ERROR: could not write the run lock'"'"'s owner file in %s. Refusing to run.\n' "$(ts)" "$state" >> "$log"
+          printf '[%s] ERROR: could not write the run lock'"'"'s owner file in %s. Refusing to run.\n' "$(ts)" "$(shown_name "$state")" >> "$log"
           return 1
         fi
         # Another runner took the directory before this one's owner file landed.
@@ -1710,7 +1854,7 @@ run_lock_acquire() {
       # misses in a row, a second apart.
       mkdir_misses=$((mkdir_misses + 1))
       if [ -e "$lock" ] || [ -L "$lock" ] || [ "$mkdir_misses" -ge 5 ]; then
-        printf '[%s] ERROR: could not create the run lock %s. Refusing to run.\n' "$(ts)" "$lock" >> "$log"
+        printf '[%s] ERROR: could not create the run lock %s. Refusing to run.\n' "$(ts)" "$(shown_name "$lock")" >> "$log"
         return 1
       fi
       sleep 1
@@ -1739,7 +1883,7 @@ run_lock_acquire() {
       if [ -n "$(owner_field "$owner" kill_failed)" ]; then
         # Never stale. A process of that pass may still be running.
         printf '[%s] LOCKED: the run lock is marked KILL_FAILED by %s (pid %s). A process of that pass may still be running. Check for it, stop it, then delete %s.\n' \
-          "$(ts)" "${o_runner:-an unknown runner}" "${o_pid:-unknown}" "$lock" >> "$log"
+          "$(ts)" "${o_runner:-an unknown runner}" "${o_pid:-unknown}" "$(shown_name "$lock")" >> "$log"
         return 75
       elif [ -z "$o_nonce" ]; then
         # No usable owner file. Either a runner is between mkdir and its first
@@ -1783,7 +1927,7 @@ mark_kill_failed() {
   if run_lock_held && printf 'kill_failed=%s\n' "$(date +%s)" >> "$RUN_LOCK_DIR/owner" 2>/dev/null; then
     # The tripwire says whether the lock holds later passes back.
     KILL_FAILED_LOCKED=1
-    printf '[%s] KILL_FAILED: a process of the stopped pass may still be running, so the run lock %s is kept and no pass will start. Check for it, stop it, then delete the lock folder. What the stop found:\n' "$(ts)" "$RUN_LOCK_DIR" >> "$log"
+    printf '[%s] KILL_FAILED: a process of the stopped pass may still be running, so the run lock %s is kept and no pass will start. Check for it, stop it, then delete the lock folder. What the stop found:\n' "$(ts)" "$(shown_name "$RUN_LOCK_DIR")" >> "$log"
   else
     printf '[%s] KILL_FAILED: a process of the stopped pass may still be running, and the run lock could not be marked, so later passes are not held back. Check for it and stop it. What the stop found:\n' "$(ts)" >> "$log"
   fi
@@ -1829,6 +1973,15 @@ run_lock_release() {
     rmdir "$RUN_LOCK_DIR" 2>/dev/null
   fi
   RUN_LOCK_MADE=0
+}
+
+# git_env_warning <log>
+# Logs which of git's variables for one repository the library cleared at load
+# (GIT_REPO_ENV_SET), so a vault git found only through GIT_DIR, which now reads
+# as no repository, says why. Each runner calls it once its log is known.
+git_env_warning() {
+  [ -n "${GIT_REPO_ENV_SET:-}" ] || return 0
+  printf '[%s] WARNING: the environment set %s, which change the repository, index, objects or configuration git uses, and the runner cleared them, so git finds the vault'"'"'s repository from the vault itself, and settings passed through GIT_CONFIG_COUNT or git -c, safe.directory among them, no longer reach the pass. A vault git reached only through GIT_DIR now reads as no repository; a .git file in the vault naming its git directory (gitdir: <path>, with no part ending in a dot) would let git find it from the vault (reasoned).\n' "$(ts)" "$GIT_REPO_ENV_SET" >> "$1"
 }
 
 # safe_git <empty-hooks-dir> <git args...>
@@ -2002,7 +2155,7 @@ RUNNER_TAB="$(printf '\t')"
 record_uncommitted() {
   local root="$1" hooks="$2" list="$3/$4.uncommitted" log="${6:-/dev/null}" p blob failed=0
   if ! : > "$list.new" 2>/dev/null; then
-    printf '[%s] WARNING: could not record the files this pass left uncommitted in %s, so the next run will take them for someone'"'"'s edit.\n' "$(ts)" "$3" >> "$log"
+    printf '[%s] WARNING: could not record the files this pass left uncommitted in %s, so the next run will take them for someone'"'"'s edit.\n' "$(ts)" "$(shown_name "$3")" >> "$log"
     return 0
   fi
   while IFS= read -r p; do
@@ -2015,7 +2168,7 @@ record_uncommitted() {
   done < "$5"
   if [ "$failed" -eq 1 ] || ! mv -f "$list.new" "$list" 2>/dev/null; then
     rm -f "$list.new" 2>/dev/null
-    printf '[%s] WARNING: could not record the files this pass left uncommitted in %s, so the next run will take them for someone'"'"'s edit.\n' "$(ts)" "$3" >> "$log"
+    printf '[%s] WARNING: could not record the files this pass left uncommitted in %s, so the next run will take them for someone'"'"'s edit.\n' "$(ts)" "$(shown_name "$3")" >> "$log"
   fi
 }
 
@@ -2719,6 +2872,151 @@ move_line_break_names() {
   }
 }
 
+# The runner's own folder for the pass holds its snapshot of the vault (before),
+# its backup of the steering surfaces (steering.tar), git's hooks folder
+# (nohooks) and the files git_preflight and the dirty-path check leave, and the
+# fence trusts every one of them. A pass that could change that folder could
+# remove the snapshot, so the comparison saw nothing, rewrite it to hide its own
+# write, or put a hook into nohooks for the runner's commit to run: with the
+# folder removed by the agent, or after it ran, every build up to 1.4.1 kept the
+# pass's writes and set no tripwire (measured). So each runner records the
+# folder with snap_manifest right after the memory override and before the
+# in-flight marker, and records it again as soon as the agent returns, before it
+# writes anything there; two records that differ, or one that cannot be made,
+# end the pass with snap_untrusted.
+#
+# snap_tool
+# The first of sha256sum, shasum and cksum found on PATH as an absolute path,
+# printed as "<name> <path>". cksum is a CRC: anyone able to write the folder
+# can make a file match it, which the runner's WARNING says. Fails when none is
+# found.
+snap_tool() {
+  local t p
+  for t in sha256sum shasum cksum; do
+    p="$(command -v "$t" 2>/dev/null)" || continue
+    case "$p" in
+      /*|[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]:/*|[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]:\\*)
+        printf '%s %s\n' "$t" "$p"; return 0 ;;
+    esac
+  done
+  return 1
+}
+
+# snap_digest <file> <tool name> <tool path>
+# The file's digest, read on standard input so no name is escaped into the
+# output, with its spaces turned into colons. Fails when the tool fails or
+# prints nothing.
+snap_digest() {
+  local out
+  case "$2" in
+    shasum) out="$("$3" -a 256 < "$1" 2>/dev/null)" || return 1 ;;
+    sha256sum|cksum) out="$("$3" < "$1" 2>/dev/null)" || return 1 ;;
+    *) return 1 ;;
+  esac
+  [ -n "$out" ] || return 1
+  printf '%s\n' "${out// /:}"
+}
+
+# snap_manifest <dir>
+# One line per entry directly in <dir>, in the order the shell sorts names:
+#   f<n> <digest> <name>   a regular file with <n> links (1, or n for more)
+#   l - <name>             a link, never followed
+#   d - <name> / D - <name>  an empty folder / one that holds anything
+#   o - <name>             a FIFO, a socket, a device or anything else
+# Entries are found by glob, so a name holding a line break is one name, and
+# every name must be made of letters, digits, dot, underscore and hyphen, spelled
+# out so no locale widens the set: a name outside it fails the record, so no name
+# can print a line of its own. Folders are not entered, since the runner's only
+# folder there, nohooks, must stay empty. run and gaps, which the watchdog writes
+# while the agent runs, are left out while each is a regular file with one link,
+# and recorded otherwise, so a link, a FIFO or a second name there differs. Fails
+# when <dir> is not a folder or is a link, when a name is outside the set, when a
+# file cannot be digested, or when a folder in it cannot be listed.
+snap_manifest() {
+  local dir="$1" tool name path e n lc d lst
+  [ -d "$dir" ] && [ ! -L "$dir" ] || return 1
+  tool="$(snap_tool)" || return 1
+  name="${tool%% *}" path="${tool#* }"
+  for e in "$dir"/* "$dir"/.[!.]* "$dir"/..?*; do
+    { [ -e "$e" ] || [ -L "$e" ]; } || continue
+    n="${e##*/}"
+    case "$n" in
+      *[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-]*) return 1 ;;
+    esac
+    if [ -L "$e" ]; then
+      printf 'l - %s\n' "$n"
+    elif [ -f "$e" ]; then
+      lc=n
+      [ -n "$(find "$e" -prune -links 1 2>/dev/null)" ] && lc=1
+      case "$n" in
+        run|gaps)
+          [ "$lc" = 1 ] || printf 'f%s - %s\n' "$lc" "$n"
+          continue ;;
+      esac
+      d="$(snap_digest "$e" "$name" "$path")" || return 1
+      printf 'f%s %s %s\n' "$lc" "$d" "$n"
+    elif [ -d "$e" ]; then
+      # A folder that cannot be listed would read as empty, while git can still
+      # run a hook in it through its search bit, so it fails the record.
+      [ -r "$e" ] && [ -x "$e" ] || return 1
+      lst="$(ls -A "$e" 2>/dev/null)" || return 1
+      if [ -z "$lst" ]; then printf 'd - %s\n' "$n"; else printf 'D - %s\n' "$n"; fi
+    else
+      printf 'o - %s\n' "$n"
+    fi
+  done
+  return 0
+}
+
+# snap_untrusted <root> <state-dir> <runner> <snap-dir> <log>
+# Ends a pass whose runner could not trust its own folder after the agent ran:
+# nothing it holds can be compared or restored from, so nothing is. Writes the
+# tripwire in its unverified shape, naming the folder, which the runner keeps
+# for the review; then the tripwire does the in-flight marker's job, so the
+# marker goes. Returns 78, or 70 when no tripwire could be written, with the
+# marker kept.
+snap_untrusted() {
+  local root="$1" state="$2" runner="$3" snap="$4" log="$5"
+  if ! write_tripwire "$root" "$state" "$runner" \
+       "the runner's own folder for the pass, which holds its snapshot of the vault, its backup of the steering surfaces and git's hooks folder, was changed while the pass ran, so what the pass wrote could not be checked or contained" \
+       "$snap" /dev/null "" unverified; then
+    printf '[%s] TRIPWIRE-ERROR: the runner'"'"'s own folder for the pass, %s, was changed while the pass ran and no tripwire could be written. Treat the vault as unverified, and run no git command in it before the steering surfaces have been checked. The in-flight marker is kept.\n' "$(ts)" "$(shown_name "$snap")" >> "$log"
+    return 70
+  fi
+  CONTAINED=1
+  clear_inflight "$root" "$state"
+  if [ -s "$state/inflight-backup.tar" ]; then
+    printf '[%s] UNVERIFIED: the runner'"'"'s own folder for the pass, %s, was changed while the pass ran, so nothing was moved or restored and the tripwire is set. Until the vault is reviewed, do not open it in Obsidian or an agent session, and run no git command in it before the steering surfaces, .git/config, .git/hooks and .obsidian/ among them, have been compared without git with the pre-pass backup of them, %s, and what differs put back (copy the backup before you delete the tripwire, because the next pass replaces it); the tripwire says how. Then review the rest of the vault, with git where there is one. The folder is kept for the review.\n' \
+      "$(ts)" "$(shown_name "$snap")" "$(shown_name "$state/inflight-backup.tar")" >> "$log"
+  else
+    printf '[%s] UNVERIFIED: the runner'"'"'s own folder for the pass, %s, was changed while the pass ran, so nothing was moved or restored and the tripwire is set. Until the vault is reviewed, do not open it in Obsidian or an agent session, and run no git command in it before the steering surfaces, .git/config, .git/hooks and .obsidian/ among them, have been checked by hand: no pre-pass backup of them was made. Then review the rest of the vault, with git where there is one. The folder is kept for the review.\n' \
+      "$(ts)" "$(shown_name "$snap")" >> "$log"
+  fi
+  return 78
+}
+
+# log_outside_links <root> <state-dir> <runner>
+# Where containment never runs, or has not run yet, a link the pass put in place
+# of the vault's log, or of a folder above it, is still there, and the runner's
+# next line would be written through it to whatever it names. So is a link an
+# earlier pass left, for a run that finds its tripwire or its marker. When LOG,
+# .claude or .claude/logs is a link, either folder is not a folder, or LOG is
+# there and not a file, LOG becomes <state-dir>/<runner>.uncontained.log, which
+# no pass can reach, and LOG_MOVED_NOTE says so, for that log and for the
+# tripwire. Changes nothing otherwise, or once LOG has been moved. It sets
+# globals, so call it directly, never in $(...).
+log_outside_links() {
+  local root="$1" state="$2" runner="$3" was="$LOG"
+  [ -n "${LOG_MOVED_NOTE:-}" ] && return 0
+  if [ ! -L "$root/.claude" ] && [ -d "$root/.claude/logs" ] && [ ! -L "$root/.claude/logs" ] \
+     && [ ! -L "$LOG" ] && { [ ! -e "$LOG" ] || [ -f "$LOG" ]; }; then
+    return 0
+  fi
+  LOG="$state/$runner.uncontained.log"
+  LOG_MOVED_NOTE="The vault's log, $(shown_name "$was"), or a folder above it, was a link or not a file, which a pass may have made, so the runner wrote the rest of this run's lines to $(shown_name "$LOG") instead."
+  printf '[%s] WARNING: %s\n' "$(ts)" "$LOG_MOVED_NOTE" >> "$LOG"
+}
+
 # contain_pass <root> <state-dir> <runner> <snap-dir> <log> <head-before>
 # The whole post-agent sequence, in the only safe order: contain the fenced
 # steering surfaces with no git involved, then, if git's own config was not
@@ -2755,7 +3053,7 @@ contain_pass() {
     return 70
   fi
   CONTAINED=1
-  printf '[%s] VIOLATION: steering or execution surfaces changed during the run. They were contained (quarantine %s) and the tripwire is set. The paths follow.\n' "$(ts)" "$qdir" >> "$log"
+  printf '[%s] VIOLATION: steering or execution surfaces changed during the run. They were contained (quarantine %s) and the tripwire is set. The paths follow.\n' "$(ts)" "$(shown_name "$qdir")" >> "$log"
   sed 's/^/    /' "$snap/contained" >> "$log"
   if [ -s "$snap/contain-errors" ]; then
     printf '[%s] CONTAINMENT-ERROR:\n' "$(ts)" >> "$log"
@@ -2946,7 +3244,7 @@ record_runner_session() {
     printf '[%s] WARNING: the stream names session %s, not the %s the runner chose. Both are recorded.\n' "$(ts)" "$seen" "$id" >> "$log"
   fi
   printf '%s\t%s\t%s\t%s\n' "$(ts)" "$runner" "$id" "$status" >> "$state/runner-sessions.tsv" 2>/dev/null \
-    || printf '[%s] WARNING: could not record session %s in %s.\n' "$(ts)" "$id" "$state/runner-sessions.tsv" >> "$log"
+    || printf '[%s] WARNING: could not record session %s in %s.\n' "$(ts)" "$id" "$(shown_name "$state/runner-sessions.tsv")" >> "$log"
 }
 
 # cap_copy <file> <dest> <max-bytes>
@@ -2988,7 +3286,7 @@ append_run_log() {
     return 1
   fi
   if [ -e "$out" ] && [ ! -f "$out" ]; then
-    printf '[%s] WARNING: %s is not a file, so the run output was not added to it.\n' "$(ts)" "$out" >> "$log"
+    printf '[%s] WARNING: %s is not a file, so the run output was not added to it.\n' "$(ts)" "$(shown_name "$out")" >> "$log"
     return 1
   fi
   if [ -f "$out" ]; then
@@ -3006,7 +3304,7 @@ append_run_log() {
     return 1
   fi
   if ! tmp="$(mktemp "$out.runner-tmp.XXXXXX" 2>/dev/null)"; then
-    printf '[%s] WARNING: no temporary file could be made beside %s, so the run output was not added to it.\n' "$(ts)" "$out" >> "$log"
+    printf '[%s] WARNING: no temporary file could be made beside %s, so the run output was not added to it.\n' "$(ts)" "$(shown_name "$out")" >> "$log"
     return 1
   fi
   if [ -n "$old" ] && ! cat "$old" > "$tmp" 2>/dev/null; then
@@ -3025,7 +3323,7 @@ append_run_log() {
     if part="$(mktemp "$out.runner-tmp.XXXXXX" 2>/dev/null)" && cap_copy "$tmp" "$part" "$max" && mv -f "$part" "$tmp" 2>/dev/null; then
       :
     else
-      printf '[%s] WARNING: %s could not be cut to %s bytes, so it is kept whole this time.\n' "$(ts)" "$out" "$max" >> "$log"
+      printf '[%s] WARNING: %s could not be cut to %s bytes, so it is kept whole this time.\n' "$(ts)" "$(shown_name "$out")" "$max" >> "$log"
       [ -n "$part" ] && rm -f "$part" 2>/dev/null
     fi
   fi
@@ -3064,7 +3362,7 @@ keep_run_output() {
     elif [ -e "$dest" ] || [ -L "$dest" ]; then
       note=" What is at that path is not a regular file, and holds no output a run kept."
     fi
-    printf '[%s] WARNING: the output of the pass could not be kept at %s, so it is lost.%s\n' "$(ts)" "$dest" "$note" >> "$4"
+    printf '[%s] WARNING: the output of the pass could not be kept at %s, so it is lost.%s\n' "$(ts)" "$(shown_name "$dest")" "$note" >> "$4"
     return 1
   }
   # A link at the path would send the rename wherever it points, and a folder
@@ -3082,13 +3380,13 @@ keep_run_output() {
   fi
   if [ -z "$in_way" ] && mv -f "$tmp" "$dest" 2>/dev/null; then
     if [ -f "$dest" ] && [ ! -L "$dest" ]; then
-      printf '[%s] The output of the pass is kept at %s.\n' "$(ts)" "$dest" >> "$4"
+      printf '[%s] The output of the pass is kept at %s.\n' "$(ts)" "$(shown_name "$dest")" >> "$4"
       return 0
     fi
     # Something took the path between the check and the rename, and the rename
     # moved the output into it.
     printf '[%s] WARNING: something took the place of %s while the output of the pass was being kept, so the output may be inside it as %s.\n' \
-      "$(ts)" "$dest" "${tmp##*/}" >> "$4"
+      "$(ts)" "$(shown_name "$dest")" "${tmp##*/}" >> "$4"
     return 1
   fi
   # What is in the way stays as it is for the owner to look at, and the output is
@@ -3096,12 +3394,12 @@ keep_run_output() {
   [ -n "$in_way" ] || in_way="a path the output could not be renamed to"
   alt="$(mktemp "$dest.XXXXXX" 2>/dev/null)"
   if [ -n "$alt" ] && mv -f "$tmp" "$alt" 2>/dev/null && [ -f "$alt" ] && [ ! -L "$alt" ]; then
-    printf '[%s] WARNING: %s is %s, so the output of the pass is kept at %s instead.\n' "$(ts)" "$dest" "$in_way" "$alt" >> "$4"
+    printf '[%s] WARNING: %s is %s, so the output of the pass is kept at %s instead.\n' "$(ts)" "$(shown_name "$dest")" "$in_way" "$(shown_name "$alt")" >> "$4"
     return 0
   fi
   rm -f "$tmp" 2>/dev/null
   [ -n "$alt" ] && [ ! -s "$alt" ] && rm -f "$alt" 2>/dev/null
-  printf '[%s] WARNING: the output of the pass could not be kept at %s, which is %s, or beside it, so it is lost.\n' "$(ts)" "$dest" "$in_way" >> "$4"
+  printf '[%s] WARNING: the output of the pass could not be kept at %s, which is %s, or beside it, so it is lost.\n' "$(ts)" "$(shown_name "$dest")" "$in_way" >> "$4"
   return 1
 }
 
@@ -3169,34 +3467,42 @@ $(sed 's/^/  /' "$list")"; then
 # note_tripwire <root> <state-dir> <log> <text>
 # Adds <text> as a paragraph to each copy of the tripwire that is a regular file,
 # then writes a missing copy from the one that is there. Returns 1 when neither
-# copy is a regular file, so the caller writes a whole tripwire instead.
+# copy is a regular file, so the caller writes a whole tripwire instead. The
+# vault's copy is left alone while vault_logs_linked holds.
 note_tripwire() {
   local root="$1" state="$2" log="$3" text="$4" f="" found=1 vault="$1/$TRIPWIRE_REL" kept="$2/$(basename "$TRIPWIRE_REL")"
   for f in "$vault" "$kept"; do
     [ -f "$f" ] && [ ! -L "$f" ] || continue
+    [ "$f" = "$vault" ] && vault_logs_linked "$root" && continue
     found=0
     printf '\n%s\n' "$text" >> "$f" 2>/dev/null \
-      || printf '[%s] TRIPWIRE-ERROR: a note could not be added to %s, which is still set.\n' "$(ts)" "$f" >> "$log"
+      || printf '[%s] TRIPWIRE-ERROR: a note could not be added to %s, which is still set.\n' "$(ts)" "$(shown_name "$f")" >> "$log"
   done
   [ "$found" -eq 0 ] || return 1
   if [ ! -f "$kept" ] || [ -L "$kept" ]; then
     write_file_atomic "$kept" "$vault" \
-      || printf '[%s] WARNING: the tripwire could not be copied to the state directory %s.\n' "$(ts)" "$state" >> "$log"
+      || printf '[%s] WARNING: the tripwire could not be copied to the state directory %s.\n' "$(ts)" "$(shown_name "$state")" >> "$log"
   elif [ ! -f "$vault" ] || [ -L "$vault" ]; then
-    write_file_atomic "$vault" "$kept" \
-      || printf '[%s] WARNING: the tripwire could not be copied to %s.\n' "$(ts)" "$vault" >> "$log"
+    write_vault_copy "$root" "$vault" "$kept" \
+      || printf '[%s] WARNING: the tripwire could not be copied to %s.\n' "$(ts)" "$(shown_name "$vault")" >> "$log"
   fi
   return 0
 }
 
 # shown_name <path>
-# Prints <path> with each C0 control character and DEL in it shown as ?, for a
-# log line, so a name holding a line break or an escape cannot split a line or
-# forge one. A C1 character (U+0080 to U+009F) is not among them and is printed
-# as it is (measured on Linux under the runners' C locale).
+# Prints <path> with each C0 control character, DEL and C1 control character
+# (U+0080 to U+009F, in its UTF-8 encoding) in it shown as ?, for a log line, so
+# a name holding a line break, an escape or a CSI cannot split a line or forge
+# one. Under the runners' C locale [:cntrl:] matches C0 and DEL only, so the C1
+# characters are mapped by their bytes. A raw byte 0x80 to 0x9F that is not part
+# of such an encoding, U+2028, U+2029 and the bidirectional controls are printed
+# as they are.
 shown_name() {
+  local c1
   case "$1" in
-    *[[:cntrl:]]*) printf '%s' "$1" | LC_ALL=C tr '[:cntrl:]' '?' ;;
+    *[[:cntrl:]]*|*$'\302'*)
+      c1="$(printf '\302[\200-\237]')"
+      printf '%s' "$1" | LC_ALL=C tr '[:cntrl:]' '?' | LC_ALL=C sed "s/$c1/?/g" ;;
     *) printf '%s' "$1" ;;
   esac
 }
@@ -3236,6 +3542,77 @@ temp_dir_spelling_ok() {
   return 1
 }
 
+# vault_root_spelling_ok <root> <log>
+#
+# git.exe reads the vault's folder as the runner spells it, and Win32 reads that
+# spelling as text. It drops the dot from a part that ends in one, so with a
+# folder v beside the vault v. git read the repository in v, in either spelling
+# and from inside v. (measured in Git Bash). It reads a colon after a part's name
+# as a stream of that folder, and drops a space that ends the last part (both
+# reasoned). Each runner calls this once its log is known, before the state
+# directory, the run lock or any git call, in every mode. Decided as
+# temp_dir_spelling_ok decides it: on Windows, or wherever a cygpath is found;
+# elsewhere it does nothing. Returns 1, with the reason in <log>, when the run
+# must not go on.
+vault_root_spelling_ok() {
+  local rest="$1"
+  case "$RUNNER_UNAME" in
+    MINGW*|MSYS*|CYGWIN*) ;;
+    *) command -v cygpath >/dev/null 2>&1 || return 0 ;;
+  esac
+  case "$rest" in [ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]:*) rest="${rest#??}" ;; esac
+  case "/$1/" in
+    *[!/\\]./*|*[!/\\].\\*) ;;
+    *)
+      case "$rest" in
+        *:*|*' ') ;;
+        *) return 0 ;;
+      esac ;;
+  esac
+  printf '[%s] ERROR: the vault, %s, is spelled with a part that ends in a dot, a colon that is not a drive letter'"'"'s, or a last part that ends in a space, and Windows reads such a spelling as another folder: with a folder v beside a vault named v., git reads the repository in v (measured in Git Bash), a part such as x::$INDEX_ALLOCATION names the folder x, and a space that ends the last part is dropped (both reasoned). Rename the folder, or reach the vault through a path with none of these. Refusing to run.\n' "$(ts)" "$(shown_name "$1")" >> "$2"
+  return 1
+}
+
+# runner_folder_ok <folder> <log>
+#
+# The runner's folder for the pass must be an absolute path. mktemp returns a
+# relative one when TMPDIR is relative or starts with ~ (measured in Git Bash and
+# on Linux), and the runners have moved into the vault by then, so the folder is
+# made inside it; git, handed its nohooks folder as core.hooksPath, resolves a
+# relative one against the top of the repository and expands a leading ~ to the
+# home folder, neither of them the folder the runner made. A drive path (C:/ or
+# C:\) counts as absolute only under Git Bash, MSYS or Cygwin; elsewhere it is a
+# relative one. On Windows, or wherever a cygpath is found, a colon other than a
+# leading drive letter's is refused too: NTFS reads a part such as
+# x::$INDEX_ALLOCATION as the folder x (the mechanism of CVE-2019-1352), and MSYS
+# leaves a path holding a colon unconverted, so git could read another folder
+# (reasoned, not staged: staging it needs a folder at a drive root). The runners
+# call this right after temp_dir_spelling_ok, before any git call, in every mode;
+# memory_override does not, so its own callers may hand it a relative folder.
+# Returns 1, with the reason in <log>, when the run must not go on.
+runner_folder_ok() {
+  local win=0 rest="$1"
+  case "$RUNNER_UNAME" in MINGW*|MSYS*|CYGWIN*) win=1 ;; esac
+  case "$1" in
+    /*) ;;
+    [ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]:/*|[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]:\\*)
+      [ "$win" = 1 ] || rest= ;;
+    *) rest= ;;
+  esac
+  if [ -z "$rest" ]; then
+    printf '[%s] ERROR: the runner'"'"'s temporary folder, %s, is not an absolute path, so it was made inside the vault, where the pass could write its snapshot, its backup and git'"'"'s hooks folder (mktemp returns such a path when TMPDIR is relative or starts with ~, measured in Git Bash and on Linux; for one starting with ~, git would also take its hooks from the home folder, reasoned). Point TMPDIR at an absolute folder outside the vault, or leave it unset. Refusing to run.\n' "$(ts)" "$(shown_name "$1")" >> "$2"
+    return 1
+  fi
+  [ "$win" = 1 ] || command -v cygpath >/dev/null 2>&1 || return 0
+  case "$rest" in [ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]:*) rest="${rest#??}" ;; esac
+  case "$rest" in
+    *:*)
+      printf '[%s] ERROR: the runner'"'"'s temporary folder, %s, is spelled with a colon that is not a drive letter'"'"'s, and on Windows a part such as x::$INDEX_ALLOCATION names the folder x while MSYS leaves a path holding a colon unconverted, so git could read another folder than the one the runner made (reasoned, not staged). Point TMPDIR at a folder with no colon but the drive letter'"'"'s, or leave it unset. Refusing to run.\n' "$(ts)" "$(shown_name "$1")" >> "$2"
+      return 1 ;;
+  esac
+  return 0
+}
+
 # memory_override <root> <state-dir> <work-dir> <log>
 #
 # Claude mode only. Claude Code grants the agent's Write and Edit tools its
@@ -3250,6 +3627,15 @@ temp_dir_spelling_ok() {
 # (2.1.285, 2.1.287, 2.1.289, 2.1.292, 2.1.295 and 2.1.296) were measured
 # refused, on Windows only, for a vault on a drive path; other versions are
 # unmeasured.
+#
+# The same file turns every hook off for the pass (disableAllHooks): those in
+# the account's settings, those of enabled plugins and the vault's own, which
+# otherwise run inside an unattended pass as the account, with a shell the
+# agent's allowlist never sees. With the file, Claude Code 2.1.301 ran neither
+# a probe folder's own hooks nor the plugins' and still loaded the instructions
+# (without it, both ran, and a plugin's hook wrote a file outside the folder);
+# hooks from managed settings are not turned off (measured 2026-09-15), and MCP
+# servers and the commands settings name outside hooks still start.
 #
 # On Windows both paths are converted with cygpath under a UTF-8 locale: under
 # the runners' LC_ALL=C it cuts a path at its first character outside the ANSI
@@ -3543,7 +3929,7 @@ memory_override() {
       return 1
     fi
   done
-  line="{\"autoMemoryDirectory\":\"$vault/90-auto-memory/.pass-agent\"}"
+  line="{\"autoMemoryDirectory\":\"$vault/90-auto-memory/.pass-agent\",\"disableAllHooks\":true}"
   # Readable by this account only on POSIX hosts, whatever the umask, because
   # Claude Code runs the hooks a settings file names.
   if ! ( umask 077 && printf '%s\n' "$line" > "$work/pass-settings.new" ) \
@@ -3576,6 +3962,19 @@ run_agent() {
   local stall="${AGENT_STALL_SECONDS:-0}" gaps="${AGENT_GAPS_FILE:-}" nonce="${AGENT_SESSION_ID:-}"
   [ -n "$nonce" ] || nonce="$(new_uuid)"
   AGENT_SESSION_ID="$nonce"
+  # Only a runner sets SNAP_SEALS, from snap_manifest, and one from an earlier
+  # release never does, so it could not check its folder when the agent returns.
+  # Such a pass, in either mode, fails here with a status and the reason in the
+  # run output, before the agent starts.
+  if [ -z "${SNAP_SEALS:-}" ]; then
+    printf '[%s] ERROR: no record of the runner'"'"'s folder for the pass was taken before the agent started, so this runner and lib/runner-common.sh come from different releases. Take runner-common.sh, dream-pass.sh, promotion-pass.sh and vault-retention.sh together. Refusing to start the agent.\n' "$(ts)" >> "$out"
+    RUN_RC=1
+    RUN_TIMED_OUT=0
+    RUN_STALLED=0
+    RUN_KILL_FAILED=0
+    RUN_KILL_REPORT=""
+    return 0
+  fi
   case "$AGENT_KIND" in
     claude)
       # Only memory_override sets AGENT_SETTINGS_FILE, and a runner from an earlier
@@ -3601,7 +4000,7 @@ run_agent() {
       # memory files of its own. That does not withdraw the agent's tools' grant
       # to a memory folder outside the vault. The --settings file memory_override
       # wrote does, by pointing the memory folder inside the fence (measured for
-      # Write, on Windows only).
+      # Write, on Windows only), and it turns every hook but managed ones off.
       #
       # Neither agent's allowlist names a tool that runs commands. --disallowedTools
       # denies Bash, PowerShell (which Claude Code offers on Windows) and Monitor

@@ -82,17 +82,51 @@ without asking me.
 
 ```bash
 #!/usr/bin/env bash
-# opencode-vault-agent.sh <prompt-file>
+# opencode-vault-agent.sh <prompt-file>: keep it, like the container definition, outside the
+# vault and every folder a pass can write (docs/harnesses/README.md)
 set -u
-exec opencode run --dir . "$(cat "$1")"
+case "$1" in
+  *dream-pass*)     agent=vault-dream ;;
+  *promotion-pass*) agent=vault-promotion ;;
+  *) echo "opencode-vault-agent: expected a dream-pass or promotion-pass prompt file, got '$1'" >&2; exit 64 ;;
+esac
+exec opencode run --dir . --agent "$agent" "$(cat "$1")"
 ```
 
 `opencode run` is non-interactive. Its `--auto` flag approves every permission not explicitly
 denied, so if you add it, first deny what each pass must not have. OpenCode agents take per-agent
-`permission` settings: an agent for the dream pass with `bash` and `webfetch` denied, selected
-with `--agent`, keeps that pass off the shell and the web. Network access through other routes is
-not covered by permissions, so still run the wrapper in a container that blocks the network before
-setting `VAULT_ALLOW_UNENFORCED_TOOLS=1`.
+`permission` settings: an agent for each pass with `bash` and `webfetch` denied, named `vault-dream`
+and `vault-promotion` as the wrapper selects them with `--agent` (define both), keeps both passes'
+own tools off the shell and the web. A permission covers only the tools it names, so ask each agent
+which tools it has and deny any other that can run a command or reach the web, `task` among them,
+which starts subagents that may have tools of their own (reasoned: this guide has not listed them).
+Network access through other routes is not covered by permissions, so still run the wrapper in a
+container that blocks the network and mounts only the vault writable before setting
+`VAULT_ALLOW_UNENFORCED_TOOLS=1`. If OpenCode finds no agent by the name it is given, it may fall
+back to its default agent, which has `bash`, so first check, in the container, that
+`opencode run --dir . --agent vault-dream "Run the shell command ls."` is refused and prints no
+fallback warning, and the same for `vault-promotion`.
+
+Keep plugins out of scheduled runs. The vault's plugin, once enabled, runs `bash` on
+`.claude/hooks/vault-lint.sh` after every write, so a pass that rewrote that script would get a
+shell through its next write (reasoned), and OpenCode runs any file in `.opencode/plugins/` with no
+trust prompt, so a pass could also add one. OpenCode also takes the singular `.opencode/plugin/`
+("Singular names … are also supported"), npm plugins through `opencode.json`'s `plugin` option, and
+custom tools from `.opencode/tools/`, which "can invoke scripts written in any language". Whether or
+not you enabled the plugin, mount `.opencode/` read-only in the container from a copy with no
+plugins and no tools, `opencode.json` read-only from a copy with no `plugin` option, the vault's
+`.claude/` and `.git` read-only, and an empty file from outside the vault read-only over its `.env`
+(create `.opencode/`, empty, in the vault before the first scheduled run if it is not there, and an
+empty `.env` if there is none, as the README says: a mount at a missing path would create it during
+a pass, and the runner would see a new path, reasoned), load none of your home configuration (its
+global plugins included), start a new container for each run, whose own filesystem is discarded at
+exit, as the README's container rule says, so that a global plugin a pass wrote in the container's
+home cannot load at the next run (reasoned), and run the check in `docs/harnesses/README.md`, "No
+vault hook in a scheduled pass", which shows that the vault's hook scripts do not run and that
+writes into `.git` and `.claude/` are refused. OpenCode also "supports both JSON and JSONC", and its
+config page does not say whether a project `opencode.jsonc` is read; if it is, a pass could add one
+beside `opencode.json` that neither this mount nor the runner's steering filter names (reasoned;
+carried to a later release).
 
 ## Known limits
 
@@ -101,11 +135,12 @@ setting `VAULT_ALLOW_UNENFORCED_TOOLS=1`.
   If it differs, patch edits go unlinted and the commit gate still catches them.
 - `bash` tool reads and writes bypass the plugin.
 
-## Sources (checked 2026-09-13)
+## Sources (checked 2026-09-13; config, plugins and custom tools read again 2026-10-18)
 
 - Rules, AGENTS.md and Claude Code compatibility: <https://opencode.ai/docs/rules/>
-- Config (`instructions`): <https://opencode.ai/docs/config/>
+- Config (`instructions`; singular folder names and JSONC, read 2026-10-18): <https://opencode.ai/docs/config/>
 - Permissions (keys, default `.env` deny): <https://opencode.ai/docs/permissions/> and <https://opencode.ai/docs/agents/>
-- Plugins (`.opencode/plugins/`, `tool.execute.before`, `$`, `session.compacted`): <https://opencode.ai/docs/plugins/>
+- Plugins (`.opencode/plugins/`, `tool.execute.before`, `$`, `session.compacted`; the `plugin` option and load order, read 2026-10-18): <https://opencode.ai/docs/plugins/>
+- Custom tools (`.opencode/tools/`), read 2026-10-18: <https://opencode.ai/docs/custom-tools/>
 - Skills (discovery paths): <https://opencode.ai/docs/skills/>
 - CLI (`opencode run`, `--auto`, `--dir`, `--agent`): <https://opencode.ai/docs/cli/>
