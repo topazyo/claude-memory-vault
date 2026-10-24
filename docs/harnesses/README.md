@@ -231,7 +231,8 @@ uses:
    ```
 
    Keep each canary executable (`chmod +x`), run it once by hand from the copy's root, as its hook's
-   own command line spells it, to see `hook-canary` appear at the copy's root, and delete
+   own command line spells it, to see `hook-canary` appear at the copy's root (else the check is NOT
+   VERIFIED until it does: give the copy folders of its own, as step 3 says), and delete
    `hook-canary` again. This step's check compares the folders as resolved, before step 5's spelling
    controls, so on Windows one folder spelled two ways can read as two here; that stays open
    (reasoned; carried to a later release).
