@@ -109,26 +109,28 @@ differ (for each account, the one the schedule's environment, or for Codex also 
 as its home, and the account's own), is still to check too: step 5 of that check confirms part of
 it, first by the resolved paths of the profile, the wrapper, those home folders and every file of
 the class `docs/setup.md` names in its `UNVERIFIED` troubleshooting row that the runner or Codex
-reads at the per-user or the system level (one inside the vault or the copy, by any of its names, or
-a folder holding the source of a mount whose target lies in either, is FAILED: move it out or remove
-the name inside (for a folder or file of the vault mounted elsewhere, or a mount whose target lies
-in the vault or the copy, remove that mount), or for a home folder move the vault or the copy, or,
-for one the schedule's environment names, have it name a home outside both, and run the check
-again), each file with a link count of 1 or each of its names found outside both, and none at or
-under a folder or file of the vault mounted elsewhere on the host, nor at or under the source of a
-mount whose target lies in the vault or the copy, by the host's own list of mounts, read and spelled
-as the README says, after a path inside the copy and one inside the vault, spelled each way the
-paths compared reach that step, whether a file or a link's target spells them that way (a short 8.3
-name, another letter case, a substituted or mapped drive), unless the resolver has been seen on that
-host to turn each such spelling of the vault's path into the one compared, have each read as inside
-when resolved the same way (home folders you cannot tell, a list of mounts you cannot read or spell
-as the README says, or a control that does not read as inside, leaves that step not verified), then
+reads at the per-user or the system level, each file with a link count of 1 or each of its names
+found outside both, none at or under a folder or file of the vault mounted elsewhere on the host,
+nor at or under the source of a mount from outside both into the vault or the copy, and none of
+those home folders, nor the folders that hold this profile and the wrapper, holding the source of
+such a mount, by the host's own list of mounts read and spelled as the README says, once a path
+inside the copy and one inside the vault have each read as inside when resolved the same way, each
+spelled every way the paths compared reach that step, whether a file or a link's target spells them
+that way (a short 8.3 name, another letter case, a substituted or mapped drive), unless the resolver
+has been seen on that host to turn each such spelling of the vault's path into the one compared
+(home folders you cannot tell, a list of mounts you cannot read or spell as the README says, or a
+control that does not read as inside, leaves that step not verified), then
 by the user Codex runs as, which must not be the superuser (not root; on Windows, not run elevated;
 FAILED: run Codex as another user; one you cannot tell: not verified), then by a probe through the
 wrapper that has each of Codex's own tools for creating files write a control file of its own in
 `01-inbox/`, one file under each of the copy's `.git/` and `.claude/`, and one new file in
 `$CODEX_HOME`, in the wrapper's folder and in each of those home folders, judged by Codex's own
-record of its tool calls and by the disk. Each probe samples only a new file in its folder, so where
+record of its tool calls and by the disk. One of those paths found inside the vault or the copy, by
+any of its names, or one of those folders found holding the source of such a mount, is FAILED: move
+it out or remove the name inside (for a folder or file of the vault mounted elsewhere, or a mount
+from outside both into the vault or the copy, remove that mount; for a home folder, move the vault
+or the copy, or, for one the schedule's environment names, have it name a home outside both), and
+run the check again. Each probe samples only a new file in its folder, so where
 Codex's sandbox documentation or your profile opens to a pass's writes any file or folder under
 those home folders outside the vault and the copy, or does not say which it opens, that step is not
 verified; files of that class that lie outside the vault and those home folders, at the per-user
