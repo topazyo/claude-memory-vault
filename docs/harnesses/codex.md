@@ -126,34 +126,35 @@ any other case the README's step 5 calls not verified, leaves that step not veri
 README says that step does not look for stays open, though one you do find is FAILED where the
 README says so), then by the host's own list showing no mount at or under the vault's or the copy's
 `.git` or `.claude/`, nor any whose source lies there and whose target lies elsewhere in either (or,
-on this route, outside both, which leaves that step not verified), and no link below one of them
-leading outside it, read as the README says, then by the user Codex runs as, which must not be the
-superuser (not root; on Windows, not run elevated; FAILED: run Codex as another user; one you cannot
-tell: not verified), then by a probe through the wrapper that has each of Codex's own tools for
-creating files write a control file of its own in `01-inbox/`, one file under each of the copy's
-`.git/` and `.claude/`, and one new file in `$CODEX_HOME`, in the wrapper's folder and in each of
-those home folders, judged by Codex's own record of its tool calls and by the disk. One of the paths
-that first reading names (the profile, the wrapper, those home folders and the files of that class,
-or places named for them) found inside the vault or the copy, by any of its names (at or under
-either kind of mount that reading names among them), or one of those home folders or the folders
-that hold this profile and the wrapper found holding the source of such a mount, or a mount or link
-that the `.git` and `.claude/` reading finds, or a folder standing in for `.git` or `.claude/` found
-inside either, is FAILED: move it out or remove the name inside (for a folder or file of the vault
-mounted elsewhere, a mount from outside both into the vault or the copy, or a mount the `.git` and
-`.claude/` reading finds, remove that mount; for such a link, remove it or replace it with a copy;
-for a folder standing in, move it out and point the link or the file at it; for a home folder, move
-the vault or the copy, or, for one the schedule's environment names, have it name a home outside
-both; for a place named for a file, have it named outside both), and run the check again. Each probe
-samples only a new file in its folder, so where Codex's sandbox documentation or your profile opens
-to a pass's writes any file or folder under those home folders outside the vault and the copy, or
-does not say which it opens, that step is not verified; files of that class that lie outside the
-vault and those home folders, at the per-user level or the system level, are not sampled at all, and
-rest on Codex's sandbox documentation and the account's own permissions (reasoned; carried to a
-later release). If any of those other writes goes through (remove it with `rm`: that is FAILED), or
-that step is not verified, run the wrapper in the README's container instead, which mounts
-`.claude/` and the vault's `.git` read-only, and every file the wrapper or a switch rests on
-read-only too. This recipe uses Codex's sandbox rather than a container, so a hook that ran would
-run wherever Codex runs its hooks, which its documentation does not say.
+on this route, outside both, which leaves that step not verified), and no link below their `.git`
+or `.claude/` leading outside the one it lies below, read as the README says, then by the user Codex
+runs as, which must not be the superuser (not root; on Windows, not run elevated; FAILED: run Codex
+as another user; one you cannot tell: not verified), then by a probe through the wrapper that has
+each of Codex's own tools for creating files write a control file of its own in `01-inbox/`, one
+file under each of the copy's `.git/` and `.claude/`, and one new file in `$CODEX_HOME`, in the
+wrapper's folder and in each of those home folders, judged by Codex's own record of its tool calls
+and by the disk. One of the paths that first reading names (the profile, the wrapper, those home
+folders and the files of that class, or places named for them) found inside the vault or the copy,
+by any of its names (at or under either kind of mount that reading names among them), or one of
+those home folders or the folders that hold this profile and the wrapper found holding the source of
+such a mount, or a mount or link that the `.git` and `.claude/` reading finds, or a folder standing
+in for `.git` or `.claude/` found inside either, is FAILED: move it out or remove the name inside
+(for a folder or file of the vault mounted elsewhere, a mount from outside both into the vault or
+the copy, or a mount the `.git` and `.claude/` reading finds, remove that mount; for such a link,
+remove it or replace it with a copy; for a folder standing in, move it out and point the link or the
+file at it; for a home folder, move the vault or the copy, or, for one the schedule's environment
+names, have it name a home outside both; for a place named for a file, have it named outside both),
+and run the check again. Each probe samples only a new file in its folder, so where Codex's sandbox
+documentation or your profile opens to a pass's writes any file or folder under those home folders
+outside the vault and the copy, or does not say which it opens, that step is not verified; files of
+that class that lie outside the vault and those home folders, at the per-user level or the system
+level, are not sampled at all, and rest on Codex's sandbox documentation and the account's own
+permissions (reasoned; carried to a later release). If any of those other writes goes through
+(remove it with `rm`: that is FAILED), or that step is not verified, run the wrapper in the README's
+container instead, which mounts `.claude/` and the vault's `.git` read-only, and every file the
+wrapper or a switch rests on read-only too. This recipe uses Codex's sandbox rather than a
+container, so a hook that ran would run wherever Codex runs its hooks, which its documentation does
+not say.
 
 ## Known limits
 
