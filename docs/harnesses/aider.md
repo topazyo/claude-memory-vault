@@ -118,14 +118,16 @@ the vault that is a clone with its own git folder, with the gate enabled there a
 commit. Run it in the container the schedule uses, but without its read-only `.git` mount, so that
 the check tests `git: false` alone:
 
-1. First see, as the README's step 1 says, that the copy's `.claude/`, `.claude/hooks/` and
-   `.claude/githooks/` each resolve to a folder outside the vault and outside every folder the
-   vault's own `.claude/`, `.claude/hooks/` and `.claude/githooks/` resolve to, and that every
-   script in them is a file with a single name (a link count of 1), not a link (else the check is
-   NOT VERIFIED until both hold). Then, before you start the container, whose `.claude/` mount is
-   read-only, replace `.claude/githooks/pre-commit` in the copy with the README's canary, and add a
-   second canary in the copy's own git configuration, of the class `docs/setup.md` names in its
-   `UNVERIFIED` troubleshooting row: point the copy's `core.fsmonitor`, the setting that row names,
+1. First see, as the README's step 1 says, that the copy's `.git` is a folder, not a file or a link;
+   that it and the copy's `.claude/`, `.claude/hooks/` and `.claude/githooks/` each resolve to a
+   folder outside the vault and outside every folder the vault's own `.git`, `.claude/`,
+   `.claude/hooks/` and `.claude/githooks/` resolve to or name (with any shared folder that one
+   names); and that every script in the copy's `.claude/hooks/` and `.claude/githooks/` is a file
+   with a single name (a link count of 1), not a link (else the check is NOT VERIFIED until all
+   three hold). Then, before you start the container, whose `.claude/` mount is read-only, replace
+   `.claude/githooks/pre-commit` in the copy with the README's canary, and add a second canary in
+   the copy's own git configuration, of the class `docs/setup.md` names in its `UNVERIFIED`
+   troubleshooting row: point the copy's `core.fsmonitor`, the setting that row names,
    at a copy of the canary script in the copy's `.claude/hooks/`, by its absolute path as the
    container sees it. Run `git status` in the copy by hand, inside the container: `hook-canary` must
    appear, naming the second canary. Delete it.

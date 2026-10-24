@@ -301,10 +301,11 @@ for this release).
   `docs/setup.md`, `AGENTS.md` and the harness README now require that a scheduled pass runs no hook
   and can write nothing that turns one on, nor, where the harness itself can run git (assume any
   can), the vault's `.git` or, with the commit gate on, its `.claude/`, and the README gives a check
-  every recipe must pass: on a scratch copy of the vault, whose `.claude/`, `.claude/hooks/` and
-  `.claude/githooks/` are seen to resolve outside the vault and outside every folder the vault's own
-  resolve to, with every script in them a file with a single name, not a link, before its hook
-  scripts are replaced with canaries (else the check is not verified), the wrapper fires
+  every recipe must pass: on a scratch copy of the vault, whose `.git` is seen to be a folder, not a
+  file or a link, and whose `.git`, `.claude/`, `.claude/hooks/` and `.claude/githooks/` are seen to
+  resolve outside the vault and outside every folder the vault's own resolve to or name, with every
+  script in its two hook folders a file with a single name, not a link, before its hook scripts are
+  replaced with canaries (else the check is not verified), the wrapper fires
   none, where the same wrapper with the measure taken away fires one. A control that fires no canary
   leaves the check not verified, never passed, and on a switch route the container is then the way
   on, where the check is run again. The check shows that the wrapper, the container definition, the
