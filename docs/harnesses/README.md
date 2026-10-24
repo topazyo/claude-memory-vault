@@ -231,7 +231,10 @@ uses:
    ```
 
    Keep each canary executable (`chmod +x`), run it once by hand from the copy's root, as its hook's
-   own command line spells it, to see `hook-canary` appear, and delete `hook-canary` again.
+   own command line spells it, to see `hook-canary` appear at the copy's root, and delete
+   `hook-canary` again. This step's check compares the folders as resolved, before step 5's spelling
+   controls, so on Windows one folder spelled two ways can read as two here; that stays open
+   (reasoned; carried to a later release).
 
 2. Write a prompt file named `probe.dream-pass.md` that asks for O4's write
    (`01-inbox/harness-probe.md`, holding the line `probe` and no frontmatter), and a copy of it
@@ -240,8 +243,8 @@ uses:
    mounts), run the wrapper on `probe.dream-pass.md`. `hook-canary` must appear at the copy's root.
    If it does not, the check is NOT VERIFIED, never PASS, and `VAULT_ALLOW_UNENFORCED_TOOLS=1`
    waits until it fires. Find out why: step 1 not followed, so a hook reached a script outside the
-   copy; a copy whose `.claude/` or `.claude/hooks/` is a link, so that `hook-canary` lands beside
-   the link's target rather than at the copy's root (give the copy folders of its own); no hook
+   copy; a copy whose `.claude/`, `.claude/hooks/` or `.claude/githooks/` is a link, so that
+   `hook-canary` lands outside the copy's root (give the copy folders of its own); no hook
    configured in the copy (OpenCode's plugin and Hermes's snippet are opt-in, so enable the one you
    use in the copy for this run); trust or fingerprints the harness records per hook that differ
    between the copy and the vault (Codex records trust against each hook's hash, Gemini CLI
@@ -336,45 +339,45 @@ uses:
    lists show it; so is a folder or file of the vault found mounted or linked at or under a folder
    the harness loads from at start (kind 6; the harness's own folder in the vault and its own files
    apart, though not another folder or file of the vault mounted or linked under it; the runner's
-   fence covers them: `docs/setup.md`, the `contained` troubleshooting row): remove it, or move the
-   item out, and run the check again. Any file, folder or place named for a file that this step
-   requires outside both and that lies inside one of them by any of its names is FAILED (step 6),
-   one at or under a folder or file of the vault mounted at another path, or at or under the source
-   of a mount from outside both into the vault or the copy, among them. So is a folder this step
-   requires outside both, or on a switch route a folder that holds the switch file or the wrapper,
-   that holds the source of such a mount whose target lies below the vault's or the copy's own
-   folder. For each, move it out, or remove the name inside (for either kind of mount, remove that
-   mount; for a home folder, move the vault or the copy, or, for one the schedule's environment
-   names, have it name a home outside both; for a place named for a file, have it named outside
-   both), and run the check again. A mount in the host's own list, of any source, whose target lies
-   at or under the vault's or the copy's `.git` or `.claude/`, or whose source lies there and whose
-   target lies elsewhere in the vault or the copy, is FAILED too: remove that mount. So is a folder
-   or file of the vault or the copy mounted at or under a copy outside both that the container
-   definition mounts read-only (a hook-free file or a folder copy): remove that mount. On a switch
-   route a mount whose source lies at or under their `.git` or `.claude/` and whose target lies
-   outside both leaves this step NOT VERIFIED, since its probes write only to the copy's own
-   folders: remove it, or use the container. A link (on Windows, a junction or other link) below the
-   vault's or the copy's `.git` or `.claude/`, or a folder standing in for one, whose target,
-   resolved with links followed, lies outside the one of them it lies below is FAILED: remove it, or
-   replace it with a copy. Trust that listing only once it has shown control links you made for the
-   purpose, one in a subfolder of the copy's `.git` and one in a subfolder of its `.claude/`, each
-   to a folder outside both (on Windows, a junction and, where the account can make one, a symbolic
-   link in each; where it cannot, whether the listing finds a symbolic link stays open), and then
-   remove them; a listing that does not show every one of them, or that you cannot make, leaves this
-   step NOT VERIFIED. Where `.git` or `.claude/` is itself a link, or `.git` is a file that names a
-   folder, the folder it resolves to or names, and any shared folder that one names in turn, stands
-   in its place in these readings and must lie outside the vault and the copy (else FAILED: move it
-   out, and point the link or the file at it), and the copy's must not be the vault's (step 1); on a
-   switch route a vault whose `.git` or `.claude/` stands in that way leaves this step NOT VERIFIED,
-   because its probes write only to the copy's own folders: use the container. A file at or under
-   `.git` or `.claude/` with a second name outside that folder is not looked for (reasoned; carried
-   to a later release): failing it would fail the check's own clone, which shares object files with
-   its source by hard links. If you cannot read the paths this step requires outside both from the
-   wrapper, the definition, the switch, the schedule's environment or another such file, or cannot
-   tell an account's home folders, this step is NOT VERIFIED: name them by absolute paths and run
-   the check again. Never run this step against the vault: a write the mounts or the sandbox let
-   through would land in the vault's own folders, so before any write confirm that what the
-   container or the harness sees is the copy: a canary from step 1 in place
+   fence covers that folder and its own files: `docs/setup.md`, the `contained` troubleshooting
+   row): remove it, or move the item out, and run the check again. Any file, folder or place named
+   for a file that this step requires outside both and that lies inside one of them by any of its
+   names is FAILED (step 6), one at or under a folder or file of the vault mounted at another path,
+   or at or under the source of a mount from outside both into the vault or the copy, among them. So
+   is a folder this step requires outside both, or on a switch route a folder that holds the switch
+   file or the wrapper, that holds the source of such a mount whose target lies below the vault's or
+   the copy's own folder. For each, move it out, or remove the name inside (for either kind of
+   mount, remove that mount; for a home folder, move the vault or the copy, or, for one the
+   schedule's environment names, have it name a home outside both; for a place named for a file,
+   have it named outside both), and run the check again. A mount in the host's own list, of any
+   source, whose target lies at or under the vault's or the copy's `.git` or `.claude/`, or whose
+   source lies there and whose target lies elsewhere in the vault or the copy, is FAILED too: remove
+   that mount. So is a folder or file of the vault or the copy mounted at or under a copy outside
+   both that the container definition mounts read-only (a hook-free file or a folder copy): remove
+   that mount. On a switch route a mount whose source lies at or under their `.git` or `.claude/`
+   and whose target lies outside both leaves this step NOT VERIFIED, since its probes write only to
+   the copy's own folders: remove it, or use the container. A link (on Windows, a junction or other
+   link) below the vault's or the copy's `.git` or `.claude/`, or a folder standing in for one,
+   whose target, resolved with links followed, lies outside the one of them it lies below is FAILED:
+   remove it, or replace it with a copy. Trust that listing only once it has shown control links you
+   made for the purpose, one in a subfolder of the copy's `.git` and one in a subfolder of its
+   `.claude/`, each to a folder outside both (on Windows, a junction and, where the account can make
+   one, a symbolic link in each; where it cannot, whether the listing finds a symbolic link stays
+   open), and then remove them; a listing that does not show every one of them, or that you cannot
+   make, leaves this step NOT VERIFIED. Where `.git` or `.claude/` is itself a link, or `.git` is a
+   file that names a folder, the folder it resolves to or names, and any shared folder that one
+   names in turn, stands in its place in these readings and must lie outside the vault and the copy
+   (else FAILED: move it out, and point the link or the file at it), and the copy's must not be the
+   vault's (step 1); on a switch route a vault whose `.git` or `.claude/` stands in that way leaves
+   this step NOT VERIFIED, because its probes write only to the copy's own folders: use the
+   container. A file at or under `.git` or `.claude/` with a second name outside that folder is not
+   looked for (reasoned; carried to a later release): failing it would fail the check's own clone,
+   which shares object files with its source by hard links. If you cannot read the paths this step
+   requires outside both from the wrapper, the definition, the switch, the schedule's environment or
+   another such file, or cannot tell an account's home folders, this step is NOT VERIFIED: name them
+   by absolute paths and run the check again. Never run this step against the vault: a write the
+   mounts or the sandbox let through would land in the vault's own folders, so before any write
+   confirm that what the container or the harness sees is the copy: a canary from step 1 in place
    (`.claude/hooks/vault-lint.sh`, or, for the Aider guide's check, `.claude/githooks/pre-commit`;
    look at it, do not run it), and the copy's own `.git`, not the vault's (for example, an empty
    file with another name, such as `copy-marker`, that you put in the copy's `.git/` beforehand,
