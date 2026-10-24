@@ -302,40 +302,40 @@ for this release).
   and can write nothing that turns one on, nor, where the harness itself can run git (assume any
   can), the vault's `.git` or, with the commit gate on, its `.claude/`, and the README gives a check
   every recipe must pass: on a scratch copy of the vault, whose `.claude/`, `.claude/hooks/` and
-  `.claude/githooks/` are seen to be its own, not the vault's, before its hook scripts are replaced
-  with canaries (else the check is not verified), the wrapper fires none, where the same wrapper
-  with the measure taken away fires one. A control that fires no canary leaves the check not
-  verified, never passed, and on a switch route the container is then the way on, where the check is
-  run again. The check shows that the wrapper, the container definition, the switch file and the
-  files they rest on, the home folders of the account the runner runs as (the one the schedule's
-  environment names and the account's own, where they differ; on a switch route, the harness's too,
-  the one the wrapper names among them), and every file of the class `docs/setup.md` names in its
-  `UNVERIFIED` troubleshooting row that the runner or the harness reads at the per-user or the
-  system level, or place named for one (in a container, outside the vault's mount too, with no other
-  mount of a folder or file of the vault at or above them, the README's step 5 saying which), lie
-  outside the vault and the copy, by their resolved paths (one inside, by any of its names, fails
-  the check, and so does a folder this check requires outside both, or on a switch route a folder
-  that holds the switch file or the wrapper, that holds the source of a mount from outside both
-  whose target lies below the vault's or the copy's own folder), each file with a single name (a
-  link count of 1) or each of its names found outside both, and no file or folder among them at or
-  under a folder or file of the vault mounted elsewhere on the host, nor at or under the source of a
-  mount from outside both into the vault or the copy, by the host's own list of mounts read as the
-  README's step 5 says (each source and target spelled as an absolute path on the host, a source
-  another listed mount also shows spelled through that mount as well, the list seen to show the
-  mount that holds the vault, and a source spelled through another mount or on a share this host
-  serves seen to show what its target shows; a list of mounts that cannot be read or does not show
-  the vault's, a source that cannot be spelled or seen that way, or a pass-through file system, such
-  as an overlay, not a bind mount or a share, mounted below the vault's or the copy's own folder
-  leaving the step not verified), once a path inside the copy and one inside the vault have each
-  read as inside, each spelled every way the paths compared reach the check, whether a file or a
-  link's target spells them so (a short 8.3 name, another letter case, a substituted or mapped
-  drive, a second path the host gives a folder above the vault or the copy, as WSL does for the
-  distribution's root by default), unless the resolver used is seen, on that host, to turn each such
-  spelling of the vault's and the copy's paths into the one compared, that the host's own list shows
-  no mount at or under the vault's or the copy's `.git` or `.claude/`, nor any whose source lies
-  there and whose target lies elsewhere in either (on a switch route, one whose target lies outside
-  both leaving the step not verified), nor a mount of a folder or file of either at or under a copy
-  outside both that the definition mounts read-only, and that no link below their `.git` or
+  `.claude/githooks/` are seen to resolve outside the vault, with no script in them a link, before
+  its hook scripts are replaced with canaries (else the check is not verified), the wrapper fires
+  none, where the same wrapper with the measure taken away fires one. A control that fires no canary
+  leaves the check not verified, never passed, and on a switch route the container is then the way
+  on, where the check is run again. The check shows that the wrapper, the container definition, the
+  switch file and the files they rest on, the home folders of the account the runner runs as (the
+  one the schedule's environment names and the account's own, where they differ; on a switch route,
+  the harness's too, the one the wrapper names among them), and every file of the class
+  `docs/setup.md` names in its `UNVERIFIED` troubleshooting row that the runner or the harness reads
+  at the per-user or the system level, or place named for one (in a container, outside the vault's
+  mount too, with no other mount of a folder or file of the vault at or above them, the README's
+  step 5 saying which), lie outside the vault and the copy, by their resolved paths (one inside, by
+  any of its names, fails the check, and so does a folder this check requires outside both, or on a
+  switch route a folder that holds the switch file or the wrapper, that holds the source of a mount
+  from outside both whose target lies below the vault's or the copy's own folder), each file with a
+  single name (a link count of 1) or each of its names found outside both, and no file or folder
+  among them at or under a folder or file of the vault mounted elsewhere on the host, nor at or
+  under the source of a mount from outside both into the vault or the copy, by the host's own list
+  of mounts read as the README's step 5 says (each source and target spelled as an absolute path on
+  the host, a source another listed mount also shows spelled through that mount as well, the list
+  seen to show the mount that holds the vault, and a source spelled through another mount or on a
+  share this host serves seen to show what its target shows; a list of mounts that cannot be read or
+  does not show the vault's, a source that cannot be spelled or seen that way, or a pass-through
+  file system, such as an overlay, not a bind mount or a share, mounted below the vault's or the
+  copy's own folder leaving the step not verified), once a path inside the copy and one inside the
+  vault have each read as inside, each spelled every way the paths compared reach the check, whether
+  a file or a link's target spells them so (a short 8.3 name, another letter case, a substituted or
+  mapped drive, a second path the host gives a folder above the vault or the copy, as WSL does for
+  the distribution's root by default), unless the resolver used is seen, on that host, to turn each
+  such spelling of the vault's and the copy's paths into the one compared, that the host's own list
+  shows no mount at or under the vault's or the copy's `.git` or `.claude/`, nor any whose source
+  lies there and whose target lies elsewhere in either (on a switch route, one whose target lies
+  outside both leaving the step not verified), nor a mount of a folder or file of either at or under
+  a copy outside both that the definition mounts read-only, and that no link below their `.git` or
   `.claude/` leads outside the one it lies below (the links listed only once the listing has shown
   control links made for the purpose in the copy's `.git` and `.claude/`, each to a folder outside
   both, a listing that does not show every one of them, or that cannot be made, leaving the step not
