@@ -312,12 +312,15 @@ for this release).
   reads at the per-user or the system level (in a container, outside the vault's mount too, with no
   other mount of a folder or file of the vault at, above or inside them, the README's step 5 saying
   which), lie outside the vault and the copy, by their resolved paths (one inside, by any of its
-  names, fails the check), each file with a single name (a link count of 1) or each of its names
-  found outside both, none at or under a folder of the vault mounted elsewhere on the host, nor at
-  or under the source of a mount whose target lies in the vault or the copy, by the host's own list
-  of mounts, once a path inside the copy and one inside the vault, spelled each way the paths
-  compared reach the check unless its resolver is seen to expand a short 8.3 spelling of the vault's
-  path, have each read as inside, that the vault's hook scripts did not run, and that writes into
+  names, or a folder holding the source of a mount whose target lies in either, fails the check),
+  each file with a single name (a link count of 1) or each of its names found outside both, none at
+  or under a folder or file of the vault mounted elsewhere on the host, nor at or under the source
+  of a mount whose target lies in the vault or the copy, by the host's own list of mounts with each
+  source spelled as an absolute path on the host (Linux's list gives some relative to their file
+  system), once a path inside the copy and one inside the vault, spelled each way the paths compared
+  reach the check (a short 8.3 name, another letter case, a substituted or mapped drive) unless its
+  resolver is seen to turn each such spelling of the vault's path into the one compared, have each
+  read as inside, that the vault's hook scripts did not run, and that writes into
   the copy's `.git` and `.claude/` are refused, with a write the pass may make as that step's
   control (from a shell in the schedule's own container, each pass's where the wrapper sets them up
   differently, opened as the user the harness runs as, which must not be the superuser and whose
@@ -369,20 +372,21 @@ for this release).
   Hermes's configuration where it is not mounted read-only, any other home configuration whose load
   timing no guide documents, and the class `docs/setup.md` names in its `UNVERIFIED` troubleshooting
   row at its level in the home, stay open within a run (reasoned; carried), and a layout the owner
-  builds that puts the vault's own mount at or under a folder the harness loads settings or code
-  from at start stays open at the next run too, which the README's step 5 does not look for
-  (reasoned; carried). The Pi guide's wrapper loads no extension, and its check uses the vault's
-  extension as the positive control. Whether the Codex and Gemini CLI sandboxes leave the vault's
-  `.git` writable to a pass, or, with the commit gate on, its `.claude/`, or the folders that hold
-  the switch file and the wrapper, or the home folders of the accounts the runner and the harness
-  run as (those the schedule's environment and the wrapper name as homes, and the accounts' own),
-  or, for Gemini CLI, `~/.gemini/`, was not checked, nor which settings layer wins for Codex's
-  `features.hooks` and Gemini CLI's `hooksConfig.enabled`; the check's new step confirms part of it,
-  a new file in each of those folders, and where it does not confirm all of them refused, or the
-  sandbox's documentation or profile opens to a pass's writes any file or folder under those home
-  folders outside the vault and the copy, or does not say which it opens, their guides now point to
-  the container. The route is not new: 1.4.1's hooks and guides left it open in the same way. -
-  **The lines `shown_name` prints show C1 control characters, and the state directory, safely.** The
+  builds in which a folder the harness loads settings or code from at start is, holds or lies inside
+  the vault's own mount (apart from the harness's own folder in the vault, mounted read-only) stays
+  open at the next run too, which the README's step 5 does not look for (reasoned; carried). The Pi
+  guide's wrapper loads no extension, and its check uses the vault's extension as the positive
+  control. Whether the Codex and Gemini CLI sandboxes leave the vault's `.git` writable to a pass,
+  or, with the commit gate on, its `.claude/`, or the folders that hold the switch file and the
+  wrapper, or the home folders of the accounts the runner and the harness run as (those the
+  schedule's environment and the wrapper name as homes, and the accounts' own), or, for Gemini CLI,
+  `~/.gemini/`, was not checked, nor which settings layer wins for Codex's `features.hooks` and
+  Gemini CLI's `hooksConfig.enabled`; the check's new step confirms part of it, a new file in each
+  of those folders, and where it does not confirm all of them refused, or the sandbox's
+  documentation or profile opens to a pass's writes any file or folder under those home folders
+  outside the vault and the copy, or does not say which it opens, their guides now point to the
+  container. The route is not new: 1.4.1's hooks and guides left it open in the same way.
+- **The lines `shown_name` prints show C1 control characters, and the state directory, safely.** The
   `VIOLATION` list still prints the names it lists as they are (measured with U+009B on this release
   and on 1.4.1). `shown_name` mapped C0
   control characters and DEL only, because under the runners' C locale `[:cntrl:]` matches nothing
@@ -652,22 +656,25 @@ for this release).
    troubleshooting row that the runner or the harness reads at the per-user or the system level (in
    a container, outside the vault's mount too, with no other mount of a folder or file of the vault
    at, above or inside them, the README's step 5 saying which), lie outside the vault and the copy
-   (one inside, by any of its names, fails the check), each file with a single name (a link count of
-   1) or each of its names found outside both, none at or under a folder of the vault mounted
-   elsewhere on the host, nor at or under the source of a mount whose target lies in the vault or
-   the copy, by the host's own list of mounts, once a path inside the copy and one inside the vault,
-   spelled each way the paths compared reach the check unless its resolver is seen to expand a short
-   8.3 spelling of the vault's path, have each read as inside, that the harness runs as a user other
-   than the superuser (on Windows, not run elevated), and, on the scratch copy, that writes into
-   `.git` and `.claude/` are refused, and, in a container, from the definition, that each run starts
-   a new container, which the runtime removes at exit, and that the definition names every mount the
-   README's rule and the guide require, from the container runtime's own listing, that every mount
-   over or inside the vault but the vault's own, every mount of a file the wrapper or a switch rests
-   on, and every mount over a hook or settings file a harness reads from the container's home, is
-   read-only, and any other writable mount is discarded at exit, never a folder or volume kept
-   between runs, from a shell opened in the container as the harness's user, that its home folder
-   lies outside the vault's mount, with no other mount of a folder or file of the vault at, above or
-   inside it (the README's step 5 says which), and that a write to each hook or
+   (one inside, by any of its names, or a folder holding the source of a mount whose target lies in
+   either, fails the check), each file with a single name (a link count of 1) or each of its names
+   found outside both, none at or under a folder or file of the vault mounted elsewhere on the host,
+   nor at or under the source of a mount whose target lies in the vault or the copy, by the host's
+   own list of mounts with each source spelled as an absolute path on the host (Linux's list gives
+   some relative to their file system), once a path inside the copy and one inside the vault,
+   spelled each way the paths compared reach the check (a short 8.3 name, another letter case, a
+   substituted or mapped drive) unless its resolver is seen to turn each such spelling of the
+   vault's path into the one compared, have each read as inside, that the harness runs as a user
+   other than the superuser (on Windows, not run elevated), and, on the scratch copy, that writes
+   into `.git` and `.claude/` are refused, and, in a container, from the definition, that each run
+   starts a new container, which the runtime removes at exit, and that the definition names every
+   mount the README's rule and the guide require, from the container runtime's own listing, that
+   every mount over or inside the vault but the vault's own, every mount of a file the wrapper or a
+   switch rests on, and every mount over a hook or settings file a harness reads from the
+   container's home, is read-only, and any other writable mount is discarded at exit, never a folder
+   or volume kept between runs, from a shell opened in the container as the harness's user, that its
+   home folder lies outside the vault's mount, with no other mount of a folder or file of the vault
+   at, above or inside it (the README's step 5 says which), and that a write to each hook or
    settings file the guide mounts in that home is refused. The Codex profile gains `hooks = false`
    (and the wrapper never passes `--dangerously-bypass-hook-trust`); the Gemini CLI guide sets
    `hooksConfig.enabled` to false in a settings file outside the vault, in a folder the sandbox does
