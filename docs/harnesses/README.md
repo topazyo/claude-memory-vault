@@ -216,10 +216,11 @@ uses:
    canaries (left unset, they reach no script and go untested, though they do not reach the vault
    either: reasoned, and seen with Copilot CLI 1.0.86 on Windows), and point any hook configured
    with an absolute path (Hermes's snippet) at the copy. Then, once you have seen that the copy's
-   `.claude/`, `.claude/hooks/` and `.claude/githooks/` each resolve to a folder outside the vault,
-   and that no script in them is a link (else the check is NOT VERIFIED until they do), replace
-   every script in `.claude/hooks/`, and `.claude/githooks/pre-commit`, with a canary that records
-   it ran and does nothing else:
+   `.claude/`, `.claude/hooks/` and `.claude/githooks/` each resolve to a folder outside the vault
+   and outside every folder the vault's own `.claude/`, `.claude/hooks/` and `.claude/githooks/`
+   resolve to, and that every script in them is a file with a single name (a link count of 1), not a
+   link (else the check is NOT VERIFIED until both hold), replace every script in `.claude/hooks/`,
+   and `.claude/githooks/pre-commit`, with a canary that records it ran and does nothing else:
 
    ```bash
    #!/usr/bin/env bash
@@ -328,8 +329,9 @@ uses:
    from a read-only folder copy into a folder a pass can write, lies at or under their `.git` or
    `.claude/`, is writable under a mount that must be read-only, or is one this step fails where its
    lists show it; so is a folder or file of the vault found mounted or linked at or under a folder
-   the harness loads from at start (kind 6; the harness's own folder in the vault apart, which the
-   runner's fence covers: `docs/setup.md`, the `contained` troubleshooting row): remove it, or move
+   the harness loads from at start (kind 6; the harness's own folder in the vault and its own files
+   apart, which the runner's fence covers: `docs/setup.md`, the `contained` troubleshooting row,
+   though not another folder or file of the vault mounted or linked under it): remove it, or move
    the item out, and run the check again. Any file, folder or place named for a file that this step
    requires outside both and that lies inside one of them by any of its names is FAILED (step 6),
    one at or under a folder or file of the vault mounted at another path, or at or under the source
