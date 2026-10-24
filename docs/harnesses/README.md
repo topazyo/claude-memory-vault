@@ -167,11 +167,11 @@ configuration where it is not mounted read-only, any other home configuration wh
 guide documents, and the class `docs/setup.md` names in its `UNVERIFIED` troubleshooting row at its
 level in the home (reasoned; carried to a later release). So does, at the next run as well, a layout
 you build that puts the vault's own mount at, above or under a folder from which the harness loads
-its user or home settings or code at start (one in the container user's home, for example), other
-than the home folder and the files of that class that step 5 reads: step 5 does not look for that
-layout (reasoned; carried to a later release). Keep the wrapper, the container definition and every
-file they name outside the vault and every folder a pass can write as well: the runner starts what
-`VAULT_AGENT_CMD` names (the wrapper, or the command that starts its container) outside every
+its user settings, home settings or code at start (one in the container user's home, for example),
+other than the home folder and the files of that class that step 5 reads: step 5 does not look for
+that layout (reasoned; carried to a later release). Keep the wrapper, the container definition and
+every file they name outside the vault and every folder a pass can write as well: the runner starts
+what `VAULT_AGENT_CMD` names (the wrapper, or the command that starts its container) outside every
 sandbox, and several guides' switches live in those files (`docs/setup.md` § 8). The runner commits
 from outside the container, with a hooks folder of its own outside the vault, so a pass needs no git
 inside it (reasoned). Codex and Gemini CLI take a switch rather than the container, and whether
@@ -279,31 +279,34 @@ schedule uses:
    link count of 1 (not asked of a folder, whose count is normally 2 or more), or each of its names
    found outside both. Read the host's own list of mounts for folders or files of the vault mounted
    at another path, and for mounts from outside both into the vault or the copy: those whose source
-   lies outside both and whose target lies inside one of them, below its own folder (on Windows no
+   lies outside both and whose target lies at or inside one of them (on Windows no
    single list shows them all: read the folders a volume is mounted at, and the substituted and
    mapped drives, as well). Spell each listed mount's source and target as absolute paths on the
-   host, resolved as above: a source the list gives as a path within its file system, as Linux's
-   does, by putting the folder another listed mount of the same file system is mounted at in place
-   of the leading part of it that this other mount has as its source; a source that names a device
-   or a whole file system, as its own target; a source on a network share, as the folder the share
-   names on the host that serves it, with the vault and the copy spelled the same way where they lie
-   on such a share. Before you trust that reading, see it list the mount that holds the vault, and
-   for each source you spelled in place of a leading part, see that the folder it names shows what
-   the mount's target shows. A file with more than one name is NOT VERIFIED until each of its names
-   is found outside both, and a list of mounts you cannot read, or a source you cannot spell or see
-   that way, leaves this step NOT VERIFIED. Any file or folder this step requires outside both that
-   lies inside one of them by any of its names is FAILED (step 6), one at or under a folder or file
-   of the vault mounted at another path, or at or under the source of a mount from outside both into
-   the vault or the copy, among them. So is a folder this step requires outside both, or on a switch
-   route a folder that holds the switch file or the wrapper, that holds the source of such a mount.
-   For each, move it out, or remove the name inside (for either kind of mount, remove that mount;
-   for a home folder, move the vault or the copy, or, for one the schedule's environment names, have
-   it name a home outside both), and run the check again. If you cannot read those paths from the
-   wrapper, the definition, the switch, the schedule's environment or another such file, or cannot
-   tell an account's home folders, this step is NOT VERIFIED: name them by absolute paths and run
-   the check again. Never run this step against the vault: a write the mounts or the sandbox let
-   through would land in the vault's own folders, so before any write confirm that what the
-   container or the harness sees is the copy: a canary from step 1 in place
+   host, resolved as above. A source that another listed mount also shows (the same file system or
+   device, with that mount's own source at or above this one), spell through each such mount, by
+   putting the folder it is mounted at in place of the part the two share; every such spelling
+   counts, and a mount whose source has any spelling outside both is from outside both. Spell a
+   source that no other listed mount shows as its own target. Spell a source on a network share as
+   the folder the share names on the host that serves it, with every path you compare, the vault and
+   the copy among them, spelled the same way where it lies on such a share; a share another host
+   serves lies outside both where neither the vault nor the copy lies on that host. Before you trust
+   that reading, see it list the mount that holds the vault, and for each source you spelled through
+   another mount, see that the folder it names shows what the mount's target shows. A file with more
+   than one name is NOT VERIFIED until each of its names is found outside both, and a list of mounts
+   you cannot read, or a source you cannot spell or see that way, leaves this step NOT VERIFIED. Any
+   file or folder this step requires outside both that lies inside one of them by any of its names
+   is FAILED (step 6), one at or under a folder or file of the vault mounted at another path, or at
+   or under the source of a mount from outside both into the vault or the copy, among them. So is a
+   folder this step requires outside both, or on a switch route a folder that holds the switch file
+   or the wrapper, that holds the source of such a mount whose target lies below the vault's or the
+   copy's own folder. For each, move it out, or remove the name inside (for either kind of mount,
+   remove that mount; for a home folder, move the vault or the copy, or, for one the schedule's
+   environment names, have it name a home outside both), and run the check again. If you cannot read
+   those paths from the wrapper, the definition, the switch, the schedule's environment or another
+   such file, or cannot tell an account's home folders, this step is NOT VERIFIED: name them by
+   absolute paths and run the check again. Never run this step against the vault: a write the mounts
+   or the sandbox let through would land in the vault's own folders, so before any write confirm
+   that what the container or the harness sees is the copy: a canary from step 1 in place
    (`.claude/hooks/vault-lint.sh`, or, for the Aider guide's check, `.claude/githooks/pre-commit`;
    look at it, do not run it), and the copy's own `.git`, not the vault's (for example, an empty
    file with another name, such as `copy-marker`, that you put in the copy's `.git/` beforehand,
@@ -411,7 +414,7 @@ schedule uses:
    the home folders it names and the files of the class it names at the per-user or the system
    level, outside the vault and the copy, with none of those folders, nor on a switch route those
    that hold the switch file and the wrapper, holding the source of a mount from outside both into
-   either, found the harness running as a user other than the
+   either (step 5 says which), found the harness running as a user other than the
    superuser, ran on the copy and, in every run, wrote its control files and had every other write
    it makes refused (in a container, with a read-only error, after the definition and the runtime's
    listing showed what step 5 requires and with the home folder of the harness's user, and the files
@@ -422,7 +425,7 @@ schedule uses:
    says, if `hook-canary` exists (a hook ran), if a file or folder step 5 requires outside the vault
    and the copy lies inside one of them by any of its names, if such a folder, or on a switch route
    a folder that holds the switch file or the wrapper, holds the source of a mount from outside both
-   into either, if the home folder of the harness's user in a container, or
+   into either (step 5 says which), if the home folder of the harness's user in a container, or
    a file of that class step 5 reads in the container, lies inside the vault's mount or has another
    mount of a folder or file of the vault at, above or inside it (step 5 says which), if a write
    that step 5 requires to be refused went through, if the definition starts an existing container
