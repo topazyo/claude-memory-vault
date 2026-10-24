@@ -108,37 +108,42 @@ spelled every way the paths compared reach that step, whether a file or a link's
 that way (a short 8.3 name, another letter case, a substituted or mapped drive, a second path the
 host gives a folder above the vault or the copy), unless the resolver has been seen on that host to
 turn each such spelling of the vault's and the copy's paths into the one compared (home folders you
-cannot tell, a list of mounts you cannot read or spell as the README says, or a control that does
-not read as inside, leaves that step not verified, and what the README says that step does not look
-for stays open), then by no mount at or under the vault's or the copy's `.git` or `.claude/` and no
-link below them leading outside them, read as the README says, then by the user Gemini CLI runs as,
-which must not be the superuser (not root; on Windows, not run elevated; FAILED: run Gemini CLI as
-another user; one you cannot tell: not verified), then by a probe through the wrapper that has each
-of Gemini CLI's own tools for creating files write a control file of its own in `01-inbox/`, one
-file under each of the copy's `.git/` and `.claude/`, and one new file in the settings file's
-folder, in the wrapper's folder, in each of those home folders and, where it is not the settings
-file's folder, in `~/.gemini/`, judged by Gemini CLI's own record of its tool calls and by the disk.
-One of the paths that first reading names (the settings file, the wrapper, those home folders and
-the files of that class) found inside the vault or the copy, by any of its names (at or under either
-kind of mount among them), or one of those home folders or the folders that hold the settings file
-and the wrapper found holding the source of such a mount, or a mount or link that the `.git` and
-`.claude/` reading finds, is FAILED: move it out or remove the name inside (for a folder or file of
-the vault mounted elsewhere, a mount from outside both into the vault or the copy, or a mount at or
-under `.git` or `.claude/`, remove that mount; for such a link, remove it or replace it with a copy;
-for a home folder, move the vault or the copy, or, for one the schedule's environment names, have it
-name a home outside both), and run the check again. Each probe samples only a new file in its
-folder, so where the sandbox's profile or documentation opens to a pass's writes any file or folder
-under those home folders outside the vault and the copy, or does not say which it opens, that step
-is not verified; files of that class that lie outside the vault and those home folders, at the
-per-user level or the system level, are not sampled at all, and rest on the sandbox's documentation
-and the account's own permissions (reasoned; carried to a later release). If any of those other
-writes goes through (remove it with `rm`: that is FAILED), or that step is not verified, use the
-container. This guide has not checked which settings layers outrank the project's for that key, and
-a pass could write `"hooksConfig": {"enabled": true}` into the vault's own `.gemini/settings.json`.
-So, on the switch route, add exactly that to the scratch copy's `.gemini/settings.json` before the
-check's step 4: the hooks must stay off even then. If they do not, use the container, with
-`.gemini/`, `.claude/` and `.git` read-only, and an empty file from outside the vault read-only over
-the vault's `.env` (if the vault has none, create an empty one there first), as the README says.
+cannot tell, a list of mounts you cannot read or spell as the README says, a control that does
+not read as inside, a vault whose `.git` or `.claude/` is a link or whose `.git` is a file, or any
+other case the README's step 5 calls not verified, leaves that step not verified, and what the
+README says that step does not look for stays open, though one you do find is FAILED where the
+README says so), then by the host's own list showing no mount at or under the vault's or the copy's
+`.git` or `.claude/`, nor of them elsewhere in either, and no link below them leading outside the
+folder it is in, read as the README says, then by the user Gemini CLI runs as, which must not be the
+superuser (not root; on Windows, not run elevated; FAILED: run Gemini CLI as another user; one you
+cannot tell: not verified), then by a probe through the wrapper that has each of Gemini CLI's own
+tools for creating files write a control file of its own in `01-inbox/`, one file under each of the
+copy's `.git/` and `.claude/`, and one new file in the settings file's folder, in the wrapper's
+folder, in each of those home folders and, where it is not the settings file's folder, in
+`~/.gemini/`, judged by Gemini CLI's own record of its tool calls and by the disk. One of the paths
+that first reading names (the settings file, the wrapper, those home folders and the files of that
+class) found inside the vault or the copy, by any of its names (at or under either kind of mount
+that reading names among them), or one of those home folders or the folders that hold the settings
+file and the wrapper found holding the source of such a mount, or a mount or link that the `.git`
+and `.claude/` reading finds, or a folder standing in for `.git` or `.claude/` found inside either,
+is FAILED: move it out or remove the name inside (for a folder or file of the vault mounted
+elsewhere, a mount from outside both into the vault or the copy, or a mount the `.git` and
+`.claude/` reading finds, remove that mount; for such a link, remove it or replace it with a copy;
+for a folder standing in, move it out and point the link or the file at it; for a home folder, move
+the vault or the copy, or, for one the schedule's environment names, have it name a home outside
+both), and run the check again. Each probe samples only a new file in its folder, so where the
+sandbox's profile or documentation opens to a pass's writes any file or folder under those home
+folders outside the vault and the copy, or does not say which it opens, that step is not verified;
+files of that class that lie outside the vault and those home folders, at the per-user level or the
+system level, are not sampled at all, and rest on the sandbox's documentation and the account's own
+permissions (reasoned; carried to a later release). If any of those other writes goes through
+(remove it with `rm`: that is FAILED), or that step is not verified, use the container. This guide
+has not checked which settings layers outrank the project's for that key, and a pass could write
+`"hooksConfig": {"enabled": true}` into the vault's own `.gemini/settings.json`. So, on the switch
+route, add exactly that to the scratch copy's `.gemini/settings.json` before the check's step 4: the
+hooks must stay off even then. If they do not, use the container, with `.gemini/`, `.claude/` and
+`.git` read-only, and an empty file from outside the vault read-only over the vault's `.env` (if the
+vault has none, create an empty one there first), as the README says.
 
 ## Known limits
 
