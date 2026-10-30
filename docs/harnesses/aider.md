@@ -141,7 +141,7 @@ the check tests `git: false` alone:
    copy by hand, inside the container: `hook-canary` must appear at the copy's root, naming the
    second canary (look for it as the README's step 1 says: one found where the marker is looked for
    is FAILED; otherwise the check is NOT VERIFIED until it appears at the copy's root: give the copy
-   folders of its own). Delete it.
+   folders of its own outside the vault, a fresh clone, not a link). Delete it.
 2. Positive control for the switch: change a tracked note in the copy without committing it, and run
    a copy of the wrapper that names a copy of the scheduled config with `git: true` on
    `probe.dream-pass.md` (the scheduled config itself stays read-only and unchanged). Look for
