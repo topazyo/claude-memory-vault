@@ -124,9 +124,9 @@ the check tests `git: false` alone:
    `.claude/githooks/`, seen in each, and found nowhere that step looks in the vault, by a search
    seen to find a file known to lie in each folder that step names (a marker found, or a search that
    does not find those files, leaves the check NOT VERIFIED, as that step says), with only the one
-   in the copy's `.git/` kept. Then see, as the README's step 1 says, that the copy's `.git` is a
-   folder, not a file or a link; that it and the copy's `.claude/`, `.claude/hooks/` and
-   `.claude/githooks/` each resolve to a folder outside the vault and outside every folder the
+   in the copy's `.git/` kept. Then see, as the README's step 1 says, that the copy's `.git`,
+   `.claude/`, `.claude/hooks/` and `.claude/githooks/` are each a folder, not a file or a link;
+   that they each resolve to a folder outside the vault and outside every folder the
    vault's own `.git`, `.claude/`, `.claude/hooks/` and `.claude/githooks/` resolve to or name (with
    any shared folder that one names); and that every script in the copy's `.claude/hooks/` and
    `.claude/githooks/`, and the file this step then writes in the copy's `.git`, is a file with a
@@ -145,10 +145,11 @@ the check tests `git: false` alone:
 2. Positive control for the switch: change a tracked note in the copy without committing it, and run
    a copy of the wrapper that names a copy of the scheduled config with `git: true` on
    `probe.dream-pass.md` (the scheduled config itself stays read-only and unchanged). Look for
-   `hook-canary` before you run any git command in the copy, because your own `git status` there
-   fires the second canary. `hook-canary` must name the second canary, or `git log` must show a new
-   commit; note which of the two fired. If neither, the check is NOT VERIFIED, never PASS, and
-   `VAULT_ALLOW_UNENFORCED_TOOLS=1` waits until it fires (the README's step 3).
+   `hook-canary`, at the copy's root and as in step 1, before you run any git command in the copy,
+   because your own `git status` there fires the second canary. `hook-canary` must name the second
+   canary, or `git log` must show a new commit; note which of the two fired. If neither, the check
+   is NOT VERIFIED, never PASS, and `VAULT_ALLOW_UNENFORCED_TOOLS=1` waits until it fires (the
+   README's step 3).
 3. Control for the commit gate: delete the probe with `rm`, not git, and then `hook-canary`, and run
    that copy of the wrapper again with `git: true`, `git-commit-verify: true` and
    `auto-commits: true` in the copied config: `hook-canary` must appear at the copy's root and name
@@ -158,20 +159,20 @@ the check tests `git: false` alone:
 4. Delete the probe and then `hook-canary`, as in step 3, change a tracked note again (so that, were
    git on, Aider would find the repository dirty), and run the wrapper with the scheduled config on
    each probe prompt in turn, deleting the probe with `rm` between them.
-5. Look for `hook-canary` first, as in step 2. PASS only if step 1's identity control found no
-   marker where it looks, by a search seen to find the known files, its three conditions held, the
-   controls in steps 1 to 3 fired, each run in step 4 wrote the probe, `hook-canary` does not exist,
-   `git log` shows no commit after step 3's, and step 5 of the README's check, run in the schedule's
-   container with all its mounts, gave what the README's step 6 asks of it. If `hook-canary` exists,
-   or `git log` shows a commit after step 3's, the check is FAILED, and
-   `VAULT_ALLOW_UNENFORCED_TOOLS` stays unset. A control that did not fire leaves the check NOT
-   VERIFIED, never PASS (the README's step 3). The README's step 5, when FAILED or NOT VERIFIED,
-   makes this check so too (its NOT VERIFIED: find out why, and run it again). FAILED takes
-   precedence, as in the README's step 6. If step 2's control fired by the commit alone, a PASS
-   shows only that Aider made no commit in step 4. Then what keeps any git Aider ran from reaching
-   anything a pass wrote, of the class `docs/setup.md` names in its `UNVERIFIED` troubleshooting
-   row, is the read-only `.git` and `.claude/` mounts below, which step 5 of the README's check
-   confirms.
+5. Look for `hook-canary` first, as in step 2 (one found where step 1 looks for the marker is
+   FAILED). PASS only if step 1's identity control found no marker where it looks, by a search seen
+   to find the known files, its three conditions held, the controls in steps 1 to 3 fired, each run
+   in step 4 wrote the probe, `hook-canary` does not exist, `git log` shows no commit after step
+   3's, and step 5 of the README's check, run in the schedule's container with all its mounts, gave
+   what the README's step 6 asks of it. If `hook-canary` exists, or `git log` shows a commit after
+   step 3's, the check is FAILED, and `VAULT_ALLOW_UNENFORCED_TOOLS` stays unset. A control that did
+   not fire leaves the check NOT VERIFIED, never PASS (the README's step 3). The README's step 5,
+   when FAILED or NOT VERIFIED, makes this check so too (its NOT VERIFIED: find out why, and run it
+   again). FAILED takes precedence, as in the README's step 6. If step 2's control fired by the
+   commit alone, a PASS shows only that Aider made no commit in step 4. Then what keeps any git
+   Aider ran from reaching anything a pass wrote, of the class `docs/setup.md` names in its
+   `UNVERIFIED` troubleshooting row, is the read-only `.git` and `.claude/` mounts below, which step
+   5 of the README's check confirms.
 
 Remove the second canary from the copy's git configuration afterwards. If the scheduled runs do not
 show the rules in the chat, check the absolute `read:` paths.

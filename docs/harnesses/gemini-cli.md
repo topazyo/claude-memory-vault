@@ -132,23 +132,23 @@ it out or remove the name inside (for a folder or file of the vault mounted else
 outside both into the vault or the copy, or a mount the `.git` and `.claude/` reading finds, remove
 that mount; for such a link, remove it or replace it with a copy; for the vault's `.git` or
 `.claude/` that is a link, make it a folder of its own, as the README's step 5 says; for a folder
-standing in, move it out and point the vault's `.git` file at it, or, for the copy's, give the copy
-folders of its own, as the README's step 1 says; for a home folder, move the vault or the copy, or,
-for one the schedule's environment names, have it name a home outside both; for a place named for a
-file, have it named outside both), and run the check again. Each probe samples only a new file in
-its folder, so where the sandbox's profile or documentation opens to a pass's writes any file or
-folder under those home folders outside the vault and the copy, or does not say which it opens, that
-step is not verified; files of that class that lie outside the vault and those home folders, at the
-per-user level or the system level, are not sampled at all, and rest on the sandbox's documentation
-and the account's own permissions (reasoned; carried to a later release). If any of those other
-writes goes through (remove it with `rm`: that is FAILED), or that step is not verified, use the
-container. This guide has not checked which settings layers outrank the project's for that key, and
-a pass could write `"hooksConfig": {"enabled": true}` into the vault's own `.gemini/settings.json`.
-So, on the switch route, add exactly that to the scratch copy's `.gemini/settings.json` before the
-check's step 4: the hooks must stay off even then. If they do not, use the container, with
-`.gemini/`, `.claude/` and `.git` read-only, and an empty file from outside the vault read-only over
-the vault's `.env` (if the vault has none, create an empty one there first), each of those names a
-folder or file in the vault, not a link, as the README says (its step 5 says which).
+standing in, move it out and point the vault's `.git` file at it; for a home folder, move the vault
+or the copy, or, for one the schedule's environment names, have it name a home outside both; for a
+place named for a file, have it named outside both), and run the check again. Each probe samples
+only a new file in its folder, so where the sandbox's profile or documentation opens to a pass's
+writes any file or folder under those home folders outside the vault and the copy, or does not say
+which it opens, that step is not verified; files of that class that lie outside the vault and those
+home folders, at the per-user level or the system level, are not sampled at all, and rest on the
+sandbox's documentation and the account's own permissions (reasoned; carried to a later release). If
+any of those other writes goes through (remove it with `rm`: that is FAILED), or that step is not
+verified, use the container. This guide has not checked which settings layers outrank the project's
+for that key, and a pass could write `"hooksConfig": {"enabled": true}` into the vault's own
+`.gemini/settings.json`. So, on the switch route, add exactly that to the scratch copy's
+`.gemini/settings.json` before the check's step 4: the hooks must stay off even then. If they do
+not, use the container, with `.gemini/`, `.claude/` and `.git` read-only, and an empty file from
+outside the vault read-only over the vault's `.env` (if the vault has none, create an empty one
+there first), each of those names a folder or file in the vault, not a link, as the README says (its
+step 5 says which).
 
 ## Known limits
 

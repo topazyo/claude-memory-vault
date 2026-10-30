@@ -143,21 +143,20 @@ inside (for a folder or file of the vault mounted elsewhere, a mount from outsid
 vault or the copy, or a mount the `.git` and `.claude/` reading finds, remove that mount; for such a
 link, remove it or replace it with a copy; for the vault's `.git` or `.claude/` that is a link, make
 it a folder of its own, as the README's step 5 says; for a folder standing in, move it out and point
-the vault's `.git` file at it, or, for the copy's, give the copy folders of its own, as the README's
-step 1 says; for a home folder, move the vault or the copy, or, for one the schedule's environment
-names, have it name a home outside both; for a place named for a file, have it named outside both),
-and run the check again. Each probe samples only a new file in its folder, so where Codex's sandbox
-documentation or your profile opens to a pass's writes any file or folder under those home folders
-outside the vault and the copy, or does not say which it opens, that step is not verified; files of
-that class that lie outside the vault and those home folders, at the per-user level or the system
-level, are not sampled at all, and rest on Codex's sandbox documentation and the account's own
-permissions (reasoned; carried to a later release). If any of those other writes goes through
-(remove it with `rm`: that is FAILED), or that step is not verified, run the wrapper in the README's
-container instead, which mounts `.claude/` and the vault's `.git` read-only, and every file the
-wrapper or a switch rests on read-only too, each name it mounts over in the vault a folder or file,
-not a link (the README's step 5 says which). This recipe uses Codex's sandbox rather than a
-container, so a hook that ran would run wherever Codex runs its hooks, which its documentation does
-not say.
+the vault's `.git` file at it; for a home folder, move the vault or the copy, or, for one the
+schedule's environment names, have it name a home outside both; for a place named for a file, have
+it named outside both), and run the check again. Each probe samples only a new file in its folder,
+so where Codex's sandbox documentation or your profile opens to a pass's writes any file or folder
+under those home folders outside the vault and the copy, or does not say which it opens, that step
+is not verified; files of that class that lie outside the vault and those home folders, at the
+per-user level or the system level, are not sampled at all, and rest on Codex's sandbox
+documentation and the account's own permissions (reasoned; carried to a later release). If any of
+those other writes goes through (remove it with `rm`: that is FAILED), or that step is not verified,
+run the wrapper in the README's container instead, which mounts `.claude/` and the vault's `.git`
+read-only, and every file the wrapper or a switch rests on read-only too, each name it mounts over
+in the vault a folder or file, not a link (the README's step 5 says which). This recipe uses Codex's
+sandbox rather than a container, so a hook that ran would run wherever Codex runs its hooks, which
+its documentation does not say.
 
 ## Known limits
 
