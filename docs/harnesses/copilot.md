@@ -86,8 +86,9 @@ script would get a shell through its next edit (reasoned). Keep them out of the 
 otherwise create), `.claude/` read-only with its `settings.json`, and any `settings.local.json`,
 from a copy without their hooks (run the check again whenever one appears or changes), the vault's
 `.git` read-only, and an empty file from outside the vault read-only over its `.env` (if the vault
-has no `.env`, create an empty one there first, as the README says), load none of your home
-configuration (Copilot reads hooks from `~/.copilot/` too), start a new container for each run,
+has no `.env`, create an empty one there first, as the README says), with each name these mounts
+cover a folder or file in the vault, not a link (the README's step 5 says which), load none of your
+home configuration (Copilot reads hooks from `~/.copilot/` too), start a new container for each run,
 whose own filesystem is discarded at exit, as the README's container rule says, so that a hook a
 pass wrote under `~/.copilot/` in the container cannot run at the next run (reasoned; within the
 same run it stays open, as the README says, because the hooks reference does not say when Copilot

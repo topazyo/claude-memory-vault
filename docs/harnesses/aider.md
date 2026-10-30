@@ -98,11 +98,12 @@ options from a `.env` file in the home directory, the git root and the current d
 page), and a pass could write one: in the container, mount an empty file from outside the vault
 read-only over the vault's `.env`, and start a new container for each run, as the README's container
 rule says, because in a container kept between runs a `.env` a pass wrote in its home would load at
-the next run (reasoned). The mount is what keeps this config's switches in force for later runs,
-because the runner's steering filter does not name a root `.env`, and whether a `.env` or `--config`
-wins is not in the sources (reasoned). If the vault has no `.env`, create an empty one there
-yourself before the first scheduled run, so that the mount has a target: `.claude/rules/security.md`
-forbids an agent to create a `.env`, so that step is the owner's.
+the next run (reasoned). The mount is what keeps this config's switches in force for later runs (the
+README's step 5 fails a `.env` that is a link), because the runner's steering filter does not name a
+root `.env`, and whether a `.env` or `--config` wins is not in the sources (reasoned). If the vault
+has no `.env`, create an empty one there yourself before the first scheduled run, so that the mount
+has a target: `.claude/rules/security.md` forbids an agent to create a `.env`, so that step is the
+owner's.
 
 ```bash
 #!/usr/bin/env bash
@@ -118,22 +119,29 @@ the vault that is a clone with its own git folder, with the gate enabled there a
 commit. Run it in the container the schedule uses, but without its read-only `.git` mount, so that
 the check tests `git: false` alone:
 
-1. First see, as the README's step 1 says, that the copy's `.git` is a folder, not a file or a link;
-   that it and the copy's `.claude/`, `.claude/hooks/` and `.claude/githooks/` each resolve to a
+1. First, before any other write into the copy, run the README's step 1 identity control: an empty
+   `copy-marker` put in the copy's root and in its `.git/`, `.claude/`, `.claude/hooks/` and
+   `.claude/githooks/`, seen in each, and found in none of the folders of the vault that step names,
+   by a search seen to find a file known to lie in each (a marker found there leaves the check NOT
+   VERIFIED, as that step says), with only the one in the copy's `.git/` kept. Then see, as the
+   README's step 1 says, that the copy's `.git` is a folder, not a file or a link; that it and the
+   copy's `.claude/`, `.claude/hooks/` and `.claude/githooks/` each resolve to a
    folder outside the vault and outside every folder the vault's own `.git`, `.claude/`,
    `.claude/hooks/` and `.claude/githooks/` resolve to or name (with any shared folder that one
    names); and that every script in the copy's `.claude/hooks/` and `.claude/githooks/`, and the
    file this step then writes in the copy's `.git`, is a file with a single name (a link count of
    1), not a link (else the check is NOT VERIFIED until all three hold). That comparison runs before
-   the README's spelling controls, so on Windows one folder spelled two ways can read as two there;
-   that stays open (reasoned; carried to a later release). Then, before you start the container,
-   whose `.claude/` mount is read-only, replace `.claude/githooks/pre-commit` in the copy with the
-   README's canary, and add a second canary in the copy's own git configuration, of the class
-   `docs/setup.md` names in its `UNVERIFIED` troubleshooting row: point the copy's `core.fsmonitor`,
-   the setting that row names, at a copy of the canary script in the copy's `.claude/hooks/`, by its
-   absolute path as the container sees it. Run `git status` in the copy by hand, inside the
-   container: `hook-canary` must appear at the copy's root, naming the second canary (else the check
-   is NOT VERIFIED until it does: give the copy folders of its own). Delete it.
+   the README's spelling controls, so on Windows it can read one folder spelled two ways as two; the
+   marker does not depend on spelling (the README's step 1 says what stays open). Then, before you
+   start the container, whose `.claude/` mount is read-only, replace `.claude/githooks/pre-commit`
+   in the copy with the README's canary, and add a second canary in the copy's own git
+   configuration, of the class `docs/setup.md` names in its `UNVERIFIED` troubleshooting row: point
+   the copy's `core.fsmonitor`, the setting that row names, at a copy of the canary script in the
+   copy's `.claude/hooks/`, by its absolute path as the container sees it. Run `git status` in the
+   copy by hand, inside the container: `hook-canary` must appear at the copy's root, naming the
+   second canary (look for it as the README's step 1 says: one found where the marker is looked for
+   is FAILED; otherwise the check is NOT VERIFIED until it appears at the copy's root: give the copy
+   folders of its own). Delete it.
 2. Positive control for the switch: change a tracked note in the copy without committing it, and run
    a copy of the wrapper that names a copy of the scheduled config with `git: true` on
    `probe.dream-pass.md` (the scheduled config itself stays read-only and unchanged). Look for
@@ -143,9 +151,10 @@ the check tests `git: false` alone:
    `VAULT_ALLOW_UNENFORCED_TOOLS=1` waits until it fires (the README's step 3).
 3. Control for the commit gate: delete the probe with `rm`, not git, and then `hook-canary`, and run
    that copy of the wrapper again with `git: true`, `git-commit-verify: true` and
-   `auto-commits: true` in the copied config: `hook-canary` must name `pre-commit`. Here and below,
-   delete probes with `rm` and `hook-canary` last, after any git command of yours: your own git
-   commands in the copy fire the second canary, and would leave a false FAILED.
+   `auto-commits: true` in the copied config: `hook-canary` must appear at the copy's root and name
+   `pre-commit`. Here and below, delete probes with `rm` and `hook-canary` last, after any git
+   command of yours: your own git commands in the copy fire the second canary, and would leave a
+   false FAILED.
 4. Delete the probe and then `hook-canary`, as in step 3, change a tracked note again (so that, were
    git on, Aider would find the repository dirty), and run the wrapper with the scheduled config on
    each probe prompt in turn, deleting the probe with `rm` between them.
@@ -167,8 +176,9 @@ show the rules in the chat, check the absolute `read:` paths.
 
 Run the schedule in a container that blocks the network and mounts only the vault writable, with the
 vault's `.claude/` and `.git` read-only and the empty file read-only over its `.env`, as the
-README's container rule says; the read-only `.git` costs a pass nothing with `git: false`
-(reasoned). Before setting `VAULT_ALLOW_UNENFORCED_TOOLS=1`, confirm in that container, with all its
+README's container rule says, each of those names a folder or file in the vault, not a link (its
+step 5 says which); the read-only `.git` costs a pass nothing with `git: false` (reasoned). Before
+setting `VAULT_ALLOW_UNENFORCED_TOOLS=1`, confirm in that container, with all its
 mounts, that writes into the scratch copy's `.git` and `.claude/` are refused, by step 5 of the
 README's check: the check above runs without the `.git` mount, so only that step shows the `.git`
 and `.claude/` mounts hold.

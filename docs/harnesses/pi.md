@@ -199,7 +199,8 @@ exec pi --print --no-session --no-approve --no-extensions --no-skills --offline 
   during a pass.** Keep them out of the container: mount an empty file from outside the vault
   read-only over the vault's `.env` (if the vault has none, create an empty one there yourself
   first), as the README's container rule says, and over every other `.env` and `.env.*` at any
-  depth, and an empty folder over every `secrets/` folder. Adding `-e .claude/adapters/pi/vault.js`
+  depth, and an empty folder over every `secrets/` folder, each of those names a file or folder in
+  the vault, not a link (the README's step 5 says which). Adding `-e .claude/adapters/pi/vault.js`
   would load the guard, since Pi loads an extension named with `-e` even with `--no-extensions`, but
   it would also lint every write and could record a compaction into `20-projects/_logs/` during the
   pass.
@@ -212,8 +213,9 @@ exec pi --print --no-session --no-approve --no-extensions --no-skills --offline 
 
 Pi cannot confine `write` and `edit` to a folder. So run the wrapper in a container that mounts only
 the vault, without its secrets, with its `.claude/` and `.git` read-only
-(`docs/harnesses/README.md`) and with none of your home configuration, and whose only network route
-is your model provider. Pi's grep and find need ripgrep and fd, and Pi downloads them into
+(`docs/harnesses/README.md`, whose step 5 fails any name these mounts cover that is a link in the
+vault) and with none of your home configuration, and whose only network route is your model
+provider. Pi's grep and find need ripgrep and fd, and Pi downloads them into
 `~/.pi/agent/bin` when it cannot find them, so put both in the image. Start a new container for each
 run, whose own filesystem is discarded at exit, as the README's container rule says: Pi keeps its
 state, its global `AGENTS.md` and the tools it downloads under `~/.pi/agent/` in the container's

@@ -71,17 +71,18 @@ off, so in the container mount `.cursor/` read-only from a copy whose `hooks.jso
 their hooks, so a pass can add no hook file either (run the check again whenever a
 `settings.local.json` appears or changes), the vault's `.git` read-only, and an empty file from
 outside the vault read-only over its `.env` (if the vault has no `.env`, create an empty one there
-first, as the README says), load none of your home configuration, and mount, read-only and from
-outside the vault, files holding no hooks (a hook-free copy or an empty hook list, since an empty
-file may not parse) over `~/.cursor/hooks.json` and `~/.claude/settings.json` in the container's
-home, the user-level hook files Cursor's third-party hooks reference lists: it says "Cursor watches
-config files and reloads them automatically", so a hook file a pass wrote there could load within
-the same run (whether the CLI watches is not documented: reasoned). Start a new container for each
-run, whose own filesystem is discarded at exit, as the README's container rule says, so that a
-pass's other writes under `~/.cursor/` or `~/.claude/` in the container cannot reach the next run
-(reasoned; within the same run they stay open, the folders that hold the two files included, as the
-README says), and follow the rest of `docs/harnesses/README.md`, "No vault hook in a scheduled
-pass", including its check. Only then set `VAULT_ALLOW_UNENFORCED_TOOLS=1`.
+first, as the README says), with each name these mounts cover a folder or file in the vault, not a
+link (the README's step 5 says which), load none of your home configuration, and mount, read-only
+and from outside the vault, files holding no hooks (a hook-free copy or an empty hook list, since an
+empty file may not parse) over `~/.cursor/hooks.json` and `~/.claude/settings.json` in the
+container's home, the user-level hook files Cursor's third-party hooks reference lists: it says
+"Cursor watches config files and reloads them automatically", so a hook file a pass wrote there
+could load within the same run (whether the CLI watches is not documented: reasoned). Start a new
+container for each run, whose own filesystem is discarded at exit, as the README's container rule
+says, so that a pass's other writes under `~/.cursor/` or `~/.claude/` in the container cannot reach
+the next run (reasoned; within the same run they stay open, the folders that hold the two files
+included, as the README says), and follow the rest of `docs/harnesses/README.md`, "No vault hook in
+a scheduled pass", including its check. Only then set `VAULT_ALLOW_UNENFORCED_TOOLS=1`.
 
 ## Known limits
 

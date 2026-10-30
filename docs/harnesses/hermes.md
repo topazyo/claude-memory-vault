@@ -81,7 +81,8 @@ run the wrapper in a container that blocks the network. For both passes, also re
 tool, for example through `agent.disabled_toolsets` (check `hermes tools` for the toolset that
 provides it), and mount only the vault writable, with its `.claude/` and `.git` read-only and an
 empty file from outside the vault read-only over its `.env` (if the vault has no `.env`, create an
-empty one there first, as the README says). The lint snippet from Setup runs `bash` on
+empty one there first, as the README says), each of those names a folder or file in the vault, not a
+link (the README's step 5 says which). The lint snippet from Setup runs `bash` on
 `.claude/hooks/vault-lint.sh` after every `write_file` and `patch`, in every session, so a pass that
 rewrote that script would get a shell through its next write (reasoned): give the container a Hermes
 configuration with no `hooks:` entry (read-only, if you mount it), rather than your
