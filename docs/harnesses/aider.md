@@ -121,18 +121,18 @@ the check tests `git: false` alone:
 
 1. First, before any other write into the copy, run the README's step 1 identity control: an empty
    `copy-marker` put in the copy's root and in its `.git/`, `.claude/`, `.claude/hooks/` and
-   `.claude/githooks/`, seen in each, and found in none of the folders of the vault that step names,
-   by a search seen to find a file known to lie in each (a marker found there leaves the check NOT
-   VERIFIED, as that step says), with only the one in the copy's `.git/` kept. Then see, as the
-   README's step 1 says, that the copy's `.git` is a folder, not a file or a link; that it and the
-   copy's `.claude/`, `.claude/hooks/` and `.claude/githooks/` each resolve to a
-   folder outside the vault and outside every folder the vault's own `.git`, `.claude/`,
-   `.claude/hooks/` and `.claude/githooks/` resolve to or name (with any shared folder that one
-   names); and that every script in the copy's `.claude/hooks/` and `.claude/githooks/`, and the
-   file this step then writes in the copy's `.git`, is a file with a single name (a link count of
-   1), not a link (else the check is NOT VERIFIED until all three hold). That comparison runs before
-   the README's spelling controls, so on Windows it can read one folder spelled two ways as two; the
-   marker does not depend on spelling (the README's step 1 says what stays open). Then, before you
+   `.claude/githooks/`, seen in each, and found nowhere that step looks in the vault, by a search
+   seen to find a file known to lie in each folder that step names (a marker found, or a search that
+   does not find those files, leaves the check NOT VERIFIED, as that step says), with only the one
+   in the copy's `.git/` kept. Then see, as the README's step 1 says, that the copy's `.git` is a
+   folder, not a file or a link; that it and the copy's `.claude/`, `.claude/hooks/` and
+   `.claude/githooks/` each resolve to a folder outside the vault and outside every folder the
+   vault's own `.git`, `.claude/`, `.claude/hooks/` and `.claude/githooks/` resolve to or name (with
+   any shared folder that one names); and that every script in the copy's `.claude/hooks/` and
+   `.claude/githooks/`, and the file this step then writes in the copy's `.git`, is a file with a
+   single name (a link count of 1), not a link (else the check is NOT VERIFIED until all three
+   hold). That comparison runs before the README's spelling controls, so on Windows it can read one
+   folder spelled two ways as two; the marker search does not depend on spelling. Then, before you
    start the container, whose `.claude/` mount is read-only, replace `.claude/githooks/pre-commit`
    in the copy with the README's canary, and add a second canary in the copy's own git
    configuration, of the class `docs/setup.md` names in its `UNVERIFIED` troubleshooting row: point
@@ -152,24 +152,26 @@ the check tests `git: false` alone:
 3. Control for the commit gate: delete the probe with `rm`, not git, and then `hook-canary`, and run
    that copy of the wrapper again with `git: true`, `git-commit-verify: true` and
    `auto-commits: true` in the copied config: `hook-canary` must appear at the copy's root and name
-   `pre-commit`. Here and below, delete probes with `rm` and `hook-canary` last, after any git
-   command of yours: your own git commands in the copy fire the second canary, and would leave a
-   false FAILED.
+   `pre-commit` (look for it as in step 1: one found where the marker is looked for is FAILED). Here
+   and below, delete probes with `rm` and `hook-canary` last, after any git command of yours: your
+   own git commands in the copy fire the second canary, and would leave a false FAILED.
 4. Delete the probe and then `hook-canary`, as in step 3, change a tracked note again (so that, were
    git on, Aider would find the repository dirty), and run the wrapper with the scheduled config on
    each probe prompt in turn, deleting the probe with `rm` between them.
-5. Look for `hook-canary` first, as in step 2. PASS only if the controls in steps 1 to 3 fired, each
-   run in step 4 wrote the probe, `hook-canary` does not exist, `git log` shows no commit after step
-   3's, and step 5 of the README's check, run in the schedule's container with all its mounts, gave
-   what the README's step 6 asks of it. If `hook-canary` exists, or `git log` shows a commit after
-   step 3's, the check is FAILED, and `VAULT_ALLOW_UNENFORCED_TOOLS` stays unset. A control that did
-   not fire leaves the check NOT VERIFIED, never PASS (the README's step 3). The README's step 5,
-   when FAILED or NOT VERIFIED, makes this check so too (its NOT VERIFIED: find out why, and run it
-   again). FAILED takes precedence, as in the README's step 6. If step 2's control fired by the
-   commit alone, a PASS shows only that Aider made no commit in step 4. Then what keeps any git
-   Aider ran from reaching anything a pass wrote, of the class `docs/setup.md` names in its
-   `UNVERIFIED` troubleshooting row, is the read-only `.git` and `.claude/` mounts below, which step
-   5 of the README's check confirms.
+5. Look for `hook-canary` first, as in step 2. PASS only if step 1's identity control found no
+   marker where it looks, by a search seen to find the known files, its three conditions held, the
+   controls in steps 1 to 3 fired, each run in step 4 wrote the probe, `hook-canary` does not exist,
+   `git log` shows no commit after step 3's, and step 5 of the README's check, run in the schedule's
+   container with all its mounts, gave what the README's step 6 asks of it. If `hook-canary` exists,
+   or `git log` shows a commit after step 3's, the check is FAILED, and
+   `VAULT_ALLOW_UNENFORCED_TOOLS` stays unset. A control that did not fire leaves the check NOT
+   VERIFIED, never PASS (the README's step 3). The README's step 5, when FAILED or NOT VERIFIED,
+   makes this check so too (its NOT VERIFIED: find out why, and run it again). FAILED takes
+   precedence, as in the README's step 6. If step 2's control fired by the commit alone, a PASS
+   shows only that Aider made no commit in step 4. Then what keeps any git Aider ran from reaching
+   anything a pass wrote, of the class `docs/setup.md` names in its `UNVERIFIED` troubleshooting
+   row, is the read-only `.git` and `.claude/` mounts below, which step 5 of the README's check
+   confirms.
 
 Remove the second canary from the copy's git configuration afterwards. If the scheduled runs do not
 show the rules in the chat, check the absolute `read:` paths.
