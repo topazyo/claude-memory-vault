@@ -145,10 +145,11 @@ FAILED), or that step is not verified, use the container. This guide has not che
 layers outrank the project's for that key, and a pass could write `"hooksConfig": {"enabled": true}`
 into the vault's own `.gemini/settings.json`. So, on the switch route, add exactly that to the
 scratch copy's `.gemini/settings.json` before the check's step 4: the hooks must stay off even then.
-If they do not, use the container, with `.gemini/`, `.claude/` and `.git` read-only, and an empty
-file from outside the vault read-only over the vault's `.env` (if the vault has none, create an
-empty one there first), each of those names a folder or file in the vault, not a link, and, where a
-file, with a single name, as the README says (its step 5 says which).
+If they do not, use the container, with `.gemini/`, `.claude/` (its settings files mounted over it
+from copies without their hooks) and `.git` read-only, and an empty file from outside the vault
+read-only over the vault's `.env` (if the vault has none, create an empty one there first), each of
+those names a folder or file in the vault, not a link, and, where a file, with a single name, as the
+README says (its step 5 says which).
 
 ## Known limits
 

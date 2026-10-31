@@ -79,14 +79,15 @@ exec hermes chat -q "$(cat "$1")"
 `hermes chat -q` answers one query and exits. Because Hermes's own guards are not a hard boundary,
 run the wrapper in a container that blocks the network. For both passes, also remove the terminal
 tool, for example through `agent.disabled_toolsets` (check `hermes tools` for the toolset that
-provides it), and mount only the vault writable, with its `.claude/` and `.git` read-only and an
-empty file from outside the vault read-only over its `.env` (if the vault has no `.env`, create an
-empty one there first, as the README says), each of those names a folder or file in the vault, not a
-link, and, where a file, with a single name (the README's step 5 says which). The lint snippet from
-Setup runs `bash` on `.claude/hooks/vault-lint.sh` after every `write_file` and `patch`, in every
-session, so a pass that rewrote that script would get a shell through its next write (reasoned):
-give the container a Hermes configuration with no `hooks:` entry (read-only, if you mount it, with
-that file, and each folder above it in the container's home, a file or folder in the container, not
+provides it), and mount only the vault writable, with its `.claude/` (its settings files mounted
+over it from copies without their hooks) and `.git` read-only and an empty file from outside the
+vault read-only over its `.env` (if the vault has no `.env`, create an empty one there first, as the
+README says), each of those names a folder or file in the vault, not a link, and, where a file, with
+a single name (the README's step 5 says which). The lint snippet from Setup runs `bash` on
+`.claude/hooks/vault-lint.sh` after every `write_file` and `patch`, in every session, so a pass that
+rewrote that script would get a shell through its next write (reasoned): give the container a Hermes
+configuration with no `hooks:` entry (read-only, if you mount it, with that file, and each folder
+above it up to the home folder, that folder included, a file or folder in the container, not
 a link, as the README's step 5 says), rather than your `~/.hermes/config.yaml`, start a new
 container for each run, whose own filesystem is discarded at
 exit, as the README's container rule says, so that a pass's write to that configuration cannot reach

@@ -77,16 +77,17 @@ step 5 says which), load none of your home configuration, and mount, read-only
 and from outside the vault, files holding no hooks (a hook-free copy or an empty hook list, since an
 empty file may not parse) over `~/.cursor/hooks.json` and `~/.claude/settings.json` in the
 container's home, the user-level hook files Cursor's third-party hooks reference lists, with each of
-them, and each folder above it in that home, a file or folder in the container, not a link (the
-README's step 5 says which): that reference says "Cursor watches config files and reloads them
-automatically", so a hook file a pass wrote there could load within the same run (whether the CLI
-watches is not documented: reasoned), as could one at the vault's `.cursor/` or `.claude/` where
-that name is a link (the README's step 5 fails that layout). Start a new container for each run,
-whose own filesystem is discarded at exit, as the README's container rule says, so that a pass's
-other writes under `~/.cursor/` or `~/.claude/` in the container cannot reach the next run
-(reasoned; within the same run they stay open, the folders that hold the two files included, as the
-README says), and follow the rest of `docs/harnesses/README.md`, "No vault hook in a scheduled
-pass", including its check. Only then set `VAULT_ALLOW_UNENFORCED_TOOLS=1`.
+them, and each folder above it up to the home folder, that folder included, a file or folder in the
+container, not a link (the README's step 5 says which): that reference says "Cursor watches config
+files and reloads them automatically", so a hook file a pass wrote there could load within the same
+run (whether the CLI watches is not documented: reasoned), as could one at the vault's `.cursor/` or
+`.claude/` where that name is a link (the README's step 5 fails that layout). Start a new container
+for each run, whose own filesystem is discarded at exit, as the README's container rule says, so
+that a pass's other writes under `~/.cursor/` or `~/.claude/` in the container cannot reach the next
+run (reasoned; within the same run they stay open, the folders that hold the two files included,
+which the README's step 5 reads only for links, as the README says), and follow the rest of
+`docs/harnesses/README.md`, "No vault hook in a scheduled pass", including its check. Only then set
+`VAULT_ALLOW_UNENFORCED_TOOLS=1`.
 
 ## Known limits
 

@@ -152,12 +152,12 @@ not say which it opens, that step is not verified; files of that class that lie 
 and those home folders, at the per-user level or the system level, are not sampled at all, and rest
 on Codex's sandbox documentation and the account's own permissions (reasoned; carried to a later
 release). If any of those other writes goes through (remove it with `rm`: that is FAILED), or that
-step is not verified, run the wrapper in the README's container instead, which mounts `.claude/` and
-the vault's `.git` read-only, and every file the wrapper or a switch rests on read-only too, each
-name it mounts over in the vault a folder or file, not a link, and, where a file, with a single name
-(the README's step 5 says which). This recipe uses Codex's sandbox rather than a container, so a
-hook that ran would run wherever Codex runs its hooks, which
-its documentation does not say.
+step is not verified, run the wrapper in the README's container instead, which mounts `.claude/`
+(its settings files over it from copies without their hooks) and the vault's `.git` read-only, and
+every file the wrapper or a switch rests on read-only too, each name it mounts over in the vault a
+folder or file, not a link, and, where a file, with a single name (the README's step 5 says which).
+This recipe uses Codex's sandbox rather than a container, so a hook that ran would run wherever
+Codex runs its hooks, which its documentation does not say.
 
 ## Known limits
 
