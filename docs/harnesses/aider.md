@@ -176,8 +176,8 @@ copy's, but without its read-only `.git` mount, so that the check tests `git: fa
    stays unset. A control that did not fire leaves the check NOT VERIFIED, never PASS (the README's
    step 3). The README's step 5, when FAILED or NOT VERIFIED, makes this check so too (its NOT
    VERIFIED: find out why, and run it again). FAILED takes precedence, as in the README's step 6. If
-   step 2's control fired by the commit alone, a PASS shows only that Aider made no commit in step
-   4. Then what keeps any git Aider ran from reaching anything a pass wrote, of the class
+   step 2's control fired by the commit alone, a PASS shows only that Aider made no commit in
+   step 4. Then what keeps any git Aider ran from reaching anything a pass wrote, of the class
    `docs/setup.md` names in its `UNVERIFIED` troubleshooting row, is the read-only `.git` and
    `.claude/` mounts below, which step 5 of the README's check confirms.
 
