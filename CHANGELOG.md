@@ -333,14 +333,15 @@ for this release).
   its own name, a mount by unmounting it, a drive by removing it), and nothing more where that
   folder is the copy's root; where no marker lies in a matching folder, a copy found inside the
   vault (its root's marker in a folder of the vault below its root, the other four in that folder's
-  own four) is removed there too, by that path; every removal
-  of a copy, during the check or once it is over, is made only after the host's own list of mounts,
-  read as step 5 reads it, in the shell the copy is removed from, for mounts at or under the copy,
-  its path spelled as step 5 spells the paths it compares, and trusted once the same reading over a
-  folder that is not itself a mount and below which the list shows one has listed that mount (on
-  Linux and in WSL, `/sys/fs`, which holds `/sys/fs/cgroup`, for one, measured in WSL), or, on
-  Windows, where the list shows no volume mounted at a folder, once it has shown the volume mounted
-  at the root of the drive that holds the copy, or, for a substituted drive, of the drive its folder
+  own four) is removed there too, by that path; every removal of a copy (never one step 5's stop for
+  a marker found in the vault leaves in place), during the check or once it is over, is made only
+  after the host's own list of mounts, read as step 5 reads it, in the shell the copy is removed
+  from, for mounts at or under the copy, its path spelled as step 5 spells the paths it compares,
+  and trusted once the same reading over a folder that is not itself a mount and below which the
+  list shows one has listed that mount (on Linux and in WSL, `/sys/fs`, which holds
+  `/sys/fs/cgroup`, for one, measured in WSL), or, on Windows, where the list shows no volume
+  mounted at a folder, once it has shown the volume mounted at the root of the drive that holds the
+  copy, or, for a substituted drive, of the drive its folder
   lies on (none then lying at or under the copy: reasoned; a folder mount's reading stated open
   where none can be made, and a mapped drive unable to show it), shows each mount at or under
   the copy that the owner made unmounted and none left there (a control that cannot be made or does
@@ -356,7 +357,8 @@ for this release).
   missing failing the check, the vault then put back from a copy the owner trusts and its steering
   surfaces checked by hand before anything else; a canary's record found where the marker is looked
   for fails it, the vault then cleaned up as step 5 says, its hook scripts among the surfaces
-  checked by hand, and the copy given folders of its own, with an earlier copy removed as above,
+  checked by hand, any a canary replaced put back from a copy the owner trusts, and the copy given
+  folders of its own, with an earlier copy removed as above,
   before the check is run again; once the search has found each known file and no marker, the copy's
   markers removed, the one in its `.git/` apart; the marker search does not depend on spelling
   (measured on Windows), while the resolved comparison, on Windows, can read one folder spelled two
@@ -430,28 +432,28 @@ for this release).
   vault's, the known files seen, a `hook-canary` looked for where the marker is looked for and the
   vault looked at by hand, without git, for the rest of what steps 1 to 4 wrote into the copy (among
   them a canary in place of one of the vault's hook scripts, which the known files cannot show, step
-  4's probe, and what its passes wrote), any of them found failing the check, and in either case the
-  check sent back to step 1 on a copy at another path), with a write the
-  pass may make as that step's control (from a shell in the schedule's own container, each pass's
-  where the wrapper sets them up differently, opened as the user the harness runs as, which must not
-  be the superuser and whose home folder must lie outside the vault's mount, with no other mount of
-  a folder or file of the vault at, above or inside it, the README's step 5 saying which, once the
-  definition shows a new container for each run, which the runtime removes at exit, and every mount
-  the README's rule and the guide require, and the container runtime's own listing shows every mount
-  over or inside the vault but the vault's own, every mount of a file the wrapper or a switch rests
-  on, and every mount over a hook or settings file a harness reads from the container's home,
-  read-only, and any other writable mount discarded at exit, and that shell's own list of mounts,
-  once it shows the definition's read-only `.git` mount with the vault's `.git` (in the check's run,
-  the copy's) as its source, shows each mount at or under one that must be read-only as read-only
-  too, and none of them, the `.git` and `.claude/` mounts apart where their sources are the vault's
-  own (in the check's run, the copy's), having a folder or file of the vault or of the copy, or a
-  folder that holds either, as its source (a source read as a file system and a path within it,
-  those of the vault, the copy and any folder of either located from the host's own list, and the
-  step not verified where that cannot be told); and each hook or settings file the guide mounts in
-  that home, and each folder above it up to the home folder, that folder included, seen
-  to be a file or folder in the container, not a link, by a link test first seen to show links made
-  for the purpose in the container's own filesystem, to a folder and to a file, and a write to each
-  such file refused; or, on a switch route, with the harness running as a user other than the
+  4's probe, and what its passes wrote), any of them found failing the check, and in either case,
+  after step 6's remedy where it fails, the check sent back to step 1 on a copy at another path),
+  with a write the pass may make as that step's control (from a shell in the schedule's own
+  container, each pass's where the wrapper sets them up differently, opened as the user the harness
+  runs as, which must not be the superuser and whose home folder must lie outside the vault's mount,
+  with no other mount of a folder or file of the vault at, above or inside it, the README's step 5
+  saying which, once the definition shows a new container for each run, which the runtime removes at
+  exit, and every mount the README's rule and the guide require, and the container runtime's own
+  listing shows every mount over or inside the vault but the vault's own, every mount of a file the
+  wrapper or a switch rests on, and every mount over a hook or settings file a harness reads from
+  the container's home, read-only, and any other writable mount discarded at exit, and that shell's
+  own list of mounts, once it shows the definition's read-only `.git` mount with the vault's `.git`
+  (in the check's run, the copy's) as its source, shows each mount at or under one that must be
+  read-only as read-only too, and none of them, the `.git` and `.claude/` mounts apart where their
+  sources are the vault's own (in the check's run, the copy's), having a folder or file of the vault
+  or of the copy, or a folder that holds either, as its source (a source read as a file system and a
+  path within it, those of the vault, the copy and any folder of either located from the host's own
+  list, and the step not verified where that cannot be told); and each hook or settings file the
+  guide mounts in that home, and each folder above it up to the home folder, that folder included,
+  seen to be a file or folder in the container, not a link, by a link test first seen to show links
+  made for the purpose in the container's own filesystem, to a folder and to a file, and a write to
+  each such file refused; or, on a switch route, with the harness running as a user other than the
   superuser (on Windows, not run elevated), through each of the harness's own tools for creating
   files, with a control file for each, judged by the harness's record of its tool calls, where
   writes into the folders that hold the switch file and the wrapper, into those home folders and
@@ -867,13 +869,13 @@ for this release).
    for where the marker is looked for and the vault looked at by hand, without git, for the rest of
    what steps 1 to 4 wrote into the copy (among them a canary in place of one of the vault's hook
    scripts, which the known files cannot show, step 4's probe, and what its passes wrote), any of
-   them found failing the check, and in either case the check sent back to step 1 on a copy at
-   another path), that writes into `.git` and `.claude/` are refused, and, in a
-   container, from the definition, that each run starts a new container, which the runtime removes
-   at exit, and that the definition names every mount the README's rule and the guide require; from
-   the container runtime's own listing, that every mount over or inside the vault but the vault's
-   own, every mount of a file the wrapper or a switch rests on, and every mount over a hook or
-   settings file a harness reads from the container's home, is
+   them found failing the check, and in either case, after step 6's remedy where it fails, the check
+   sent back to step 1 on a copy at another path), that writes into `.git` and `.claude/` are
+   refused, and, in a container, from the definition, that each run starts a new container, which
+   the runtime removes at exit, and that the definition names every mount the README's rule and the
+   guide require; from the container runtime's own listing, that every mount over or inside the
+   vault but the vault's own, every mount of a file the wrapper or a switch rests on, and every
+   mount over a hook or settings file a harness reads from the container's home, is
    read-only, that any other writable mount is discarded at exit, never a folder or volume kept
    between runs, and that no mount of a folder or file of the vault, the vault's own and those over
    or inside it apart, lies at, above or inside the home folder of the harness's user (the README's
