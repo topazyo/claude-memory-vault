@@ -111,8 +111,9 @@ it, first by the resolved paths of the profile, the wrapper, those home folders 
 the class `docs/setup.md` names in its `UNVERIFIED` troubleshooting row that the runner or Codex
 reads at the per-user or the system level, or place named for one, outside the vault and the copy,
 each file with a link count of 1 (read by a reading first seen to show 2 on a file given a second
-name for the purpose, on the file system that holds the file read, else NOT VERIFIED, as the README
-says) or each of its names found outside both, and no file or folder
+name for the purpose in a scratch folder outside the vault and the copy, on the file system that
+holds the file read, then removed, else NOT VERIFIED, as the README says) or each of its names, as
+many as its count, found outside both, and no file or folder
 among them at or under a folder or file of the vault mounted elsewhere on the host, nor at or under
 the source of a mount from outside both into the vault or the copy, and none of those home folders,
 nor the folders that hold this profile and the wrapper, holding the source of such a mount (the

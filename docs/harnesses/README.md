@@ -217,7 +217,9 @@ scratch copy of the vault, trusted by the harness as the vault is, from the copy
 environment the schedule uses:
 
 1. Make the copy a clone with its own `.git`, so no hook reaches the vault's, and its own `.claude/`
-   folder. Before any other write into the copy, put an empty file named `copy-marker` in its root
+   folder. Before any other write into the copy, read the host's own list of mounts for mounts below
+   its root, as this step reads it below: one there leaves the check NOT VERIFIED until the copy is
+   made at another path with none. Then put an empty file named `copy-marker` in its root
    and in its `.git/`, `.claude/`, `.claude/hooks/` and `.claude/githooks/`, and see it in each.
    Then look for `copy-marker` by name throughout the vault's folder, with links not followed and no
    ignore file honoured (that rests on the tool you choose: reasoned), and in each folder the
@@ -238,32 +240,38 @@ environment the schedule uses:
    for it, a link or junction at one of the copy's own four folders, or a mount there that you made
    (a link or junction by its own name, as below; a mount by unmounting it; a drive by removing it);
    where that folder is the copy's root, remove nothing more, and otherwise remove what is left of
-   the copy as below. Remove any other copy as below. In every case, then see that
-   each known file this step names still lies in the vault: one missing is a write that reached the
-   vault, and the check is FAILED (step 6): put the vault back from a copy you trust and check the
-   steering surfaces by hand, as step 5 says, before anything else; otherwise give the copy folders
-   of its own outside the vault (a fresh clone at a path of its own, not a link), and start this
-   step again. Whenever you remove a copy, here, after a later step or once the check is over, first
-   read the host's own list of mounts as step 5 reads it, for each mount at or under the copy,
-   trusted once the same reading, over a folder other than `/` at or below which the list shows a
-   mount (on Windows, the root of the copy's drive; on Linux and in WSL, `/dev`, for one), has
-   listed that mount; unmount each mount at or under the copy that you made, and read the list again
-   to see none there; where you cannot make that control, or the reading does not list that mount,
-   or another mount lies at or under the copy, or you cannot unmount one, or no command passes the
-   control below, remove nothing of the copy and make the new one at another path. Then remove its
-   links by their own names, as this step's folder test finds them: where its root is a link or
-   junction, that alone, and nothing found through it; otherwise its `.git` and `.claude/` where
-   each is one, and its `.claude/hooks/` and `.claude/githooks/` only where `.claude/` is not. Never
-   remove one by a path ending in `/` or `\`, or through it, and use a command seen first, spelled
-   as you will spell it, to remove a link of each kind the account can make (on Windows, a junction
-   and, where it can make one, a symbolic link; what the command does to a kind it cannot make stays
-   open) that you made for the purpose, in a scratch folder outside the vault and the copy, to a
-   scratch folder holding a file, and a scratch folder you made there holding such a link, leaving
-   the file each time (one that removes the file or leaves the link is not that command); then
-   remove the rest with it, and see that each known file this step names still lies in the vault (a
-   sample: a loss elsewhere would not show); one missing is FAILED, as above. When the search has
-   found each known file, read every folder and found no marker, remove the copy's markers, apart
-   from the one in its `.git/`, which step 5 reads. Copy into the copy any
+   the copy as below. Remove any other copy as below; where the marker you put in the copy's root
+   was found in a folder of the vault, and the other four in that folder's `.git/`, `.claude/`,
+   `.claude/hooks/` and `.claude/githooks/`, the copy lies inside the vault at that folder: remove
+   it there too, by that path, as below. In every case, then see that each known file this step
+   names still lies in the vault: one missing is a write that reached the vault, and the check is
+   FAILED (step 6): put the vault back from a copy you trust and check the steering surfaces by
+   hand, as step 5 says, before anything else; otherwise give the copy folders of its own outside
+   the vault (a fresh clone at a path of its own, not a link), and start this step again. Whenever
+   you remove a copy, here, after a later step or once the check is over, first read the host's own
+   list of mounts as step 5 reads it, in the shell you will remove the copy from, for mounts at or
+   under the copy, its path spelled as step 5 spells the paths it compares; trust that reading once
+   the same reading, over a folder that is not itself a mount and below which the list shows one,
+   has listed that mount (on Linux and in WSL, `/sys/fs`, which holds `/sys/fs/cgroup`, for one),
+   or, on Windows, where the list shows no volume mounted at a folder, once it has shown the volume
+   at the copy's drive root (none then lies at or under the copy: reasoned). Unmount each mount at
+   or under the copy that you made, and read the list again to see none there; where you cannot make
+   the control, or the reading does not list the control's mount, or another mount lies at or under
+   the copy, or you cannot unmount one, or no command passes the control below, remove nothing of
+   the copy: make the new one at another path, or, once the check is over, leave the old one where
+   it is. Then remove its links by their own names, as this step's folder test finds them: where its
+   root is a link or junction, that alone, and nothing found through it; otherwise its `.git` and
+   `.claude/` where each is one, and its `.claude/hooks/` and `.claude/githooks/` only where
+   `.claude/` is not. Never remove one by a path ending in `/` or `\`, or through it, and use a
+   command seen first, spelled as you will spell it, to remove a link of each kind the account can
+   make (on Windows, a junction and, where it can make one, a symbolic link; what the command does
+   to a kind it cannot make stays open) that you made for the purpose, in a scratch folder outside
+   the vault and the copy, to a scratch folder holding a file, and a scratch folder you made there
+   holding such a link, leaving the file each time (one that removes the file or leaves the link is
+   not that command); then remove the rest with it, and see that each known file this step names
+   still lies in the vault (a sample: a loss elsewhere would not show); one missing is FAILED, as
+   above. When the search has found each known file, read every folder and found no marker, remove
+   the copy's markers, apart from the one in its `.git/`, which step 5 reads. Copy into the copy any
    `.claude/settings.local.json`, which a clone leaves out because `.gitignore` names it, and any
    `.github/copilot/settings.local.json` the clone lacks. Create in the copy yourself, empty, every
    mount target the container definition names that a clone lacks (an empty `.env`, which
@@ -369,8 +377,9 @@ environment the schedule uses:
    the one compared; on Windows one resolver can keep a short 8.3 name that another expands, so that
    one folder reads as two). Each file this step requires outside both, the files of that class
    among them, must also have a link count of 1 (not asked of a folder, whose count is normally 2 or
-   more), or each of its names found outside both, its count read by a reading first seen to show 2
-   on a file given a second name for the purpose, on the file system that holds the file read (else
+   more), or each of its names, as many as its count, found outside both, the count read by a
+   reading first seen to show 2 on a file given a second name for the purpose in a scratch folder
+   outside the vault and the copy, on the file system that holds the file read, then removed (else
    this step is NOT VERIFIED until one that does is used). Read the host's own list of mounts for
    folders or files of the vault mounted at another path, and for mounts from outside both into the
    vault or the copy: those whose source lies outside both and whose target lies at or inside one of
@@ -494,7 +503,7 @@ environment the schedule uses:
    vault's: step 1's `copy-marker`, seen in the copy's `.git/` from where the harness runs, and
    absent from the vault, looked for as step 1 says. Stop if either is not: this step is NOT
    VERIFIED until what is seen is the copy (start the container or the harness on the copy's path;
-   for a marker found in the vault, remove it, give the copy folders of its own, as step 1 says, and
+   for a marker found in the vault, do as step 1 says for one, its removal rule included, and
    start the check again at step 1). If any of its writes reached the vault by mistake, the check is
    FAILED (step 6): remove with `rm` every file the step wrote, check the steering surfaces by hand,
    without git, before any git command, as `docs/setup.md`'s `UNVERIFIED` troubleshooting row says
@@ -671,15 +680,15 @@ environment the schedule uses:
    rule or the guide requires, if the listing or the shell's own list of mounts shows a mount
    writable where step 5 does not allow it, or a mount whose source step 5 does not allow (step 5
    says which), if the harness runs as the superuser, or if a write of this check, other than step
-   1's `copy-marker`, reached the vault (a `hook-canary` found where step 1 looks for the marker
-   among them), or if a known file of the vault is missing after a copy, or a link, mount or drive
-   made for one, was removed (step 1 says which). After a file or folder found inside the vault or
-   the copy, by any of its names, or a folder found holding the source of a mount in the host's own
-   list from outside both into either, move it out or remove the name inside (for a folder or file
-   of the vault mounted at another path, or a mount from outside both into either, remove that
-   mount; for a home folder, move the vault or the copy, or, for one the schedule's environment
-   names, have it name a home outside both; for a place named for a file, have it named outside
-   both) and run the check again; after a mount in the host's own list at or under `.git` or
+   1's `copy-marker` and a copy made inside the vault that step 1 removes, reached the vault (a
+   `hook-canary` found where step 1 looks for the marker among them), or if a known file of the
+   vault is missing where step 1 reads them (step 1 says when). After a file or folder found inside
+   the vault or the copy, by any of its names, or a folder found holding the source of a mount in
+   the host's own list from outside both into either, move it out or remove the name inside (for a
+   folder or file of the vault mounted at another path, or a mount from outside both into either,
+   remove that mount; for a home folder, move the vault or the copy, or, for one the schedule's
+   environment names, have it name a home outside both; for a place named for a file, have it named
+   outside both) and run the check again; after a mount in the host's own list at or under `.git` or
    `.claude/`, or one whose source lies there and whose target
    lies elsewhere, a mount of a folder or file of either at or under a read-only copy, a link below
    their `.git` or `.claude/` or a folder standing in for the vault's `.git`, or a stated-open name
@@ -700,13 +709,12 @@ environment the schedule uses:
    again; after a write that reached the vault, clean up as step 5 says (the vault's hook scripts
    among the surfaces you check by hand after a `hook-canary` found there, and the copy given
    folders of its own, with an earlier copy removed as step 1 says) and run the check again on the
-   copy; after a known file of the vault missing after a copy, or a link, mount or drive made for
-   one, was removed, put the vault back from a copy you trust and check the steering surfaces by
-   hand, as step 5 says, before anything else, and run the check again on a copy of its own; after
-   any other FAILED, in a container, fix what failed and run the check again, and on a switch route
-   the container is the way on. FAILED takes precedence: any of those is FAILED whatever else a run
-   shows. A step 5 that is NOT VERIFIED leaves the check NOT VERIFIED, and so does any other result
-   short of PASS.
+   copy; after a known file of the vault missing where step 1 reads them, put the vault back from a
+   copy you trust and check the steering surfaces by hand, as step 5 says, before anything else, and
+   run the check again on a copy of its own; after any other FAILED, in a container, fix what failed
+   and run the check again, and on a switch route the container is the way on. FAILED takes
+   precedence: any of those is FAILED whatever else a run shows. A step 5 that is NOT VERIFIED
+   leaves the check NOT VERIFIED, and so does any other result short of PASS.
 
 The canary does not depend on where a hook logs. It depends on step 1 for any variable a hook's
 command reads: the shipped `.claude/settings.json` names its scripts through
