@@ -301,75 +301,89 @@ for this release).
   `docs/setup.md`, `AGENTS.md` and the harness README now require that a scheduled pass runs no hook
   and can write nothing that turns one on, nor, where the harness itself can run git (assume any
   can), the vault's `.git` or, with the commit gate on, its `.claude/`, and the README gives a check
-  every recipe must pass: on a scratch copy of the vault, in whose root and whose `.git`,
-  `.claude/`, `.claude/hooks/` and `.claude/githooks/` an empty marker is put before any other write
-  and seen, and then found nowhere in the vault's folder, links not followed, nor in the folders the
-  vault's own four resolve to or name, with any shared folder that one names, by a search that
-  honours no ignore file (which rests on the tool: reasoned), reports no folder it could not read,
-  and is seen to find a file known to lie in the vault's root, in each of those four folders and
-  each folder they resolve to or name, and three folders down outside `.claude/`, as the README's
-  step 1 says, whose root and four folders are seen to be folders, not files or links, by a link
-  test first seen to show a link made for the purpose in a scratch folder outside the vault and the
-  copy (on Windows a junction and, where the account can make one, a symbolic link, a kind it cannot
-  make stated open), and to resolve outside the vault and outside every folder the vault's own
-  resolve to or name, with every script in its two hook folders a file with a single name, read by a
-  count first seen to read 2, not a link, before its hook scripts are replaced with canaries, each
-  run once by hand and seen to write at the copy's root (else the check is not verified: a link test
-  or a count whose control did not show is replaced and read again, a search that misses a known
-  file or cannot read a folder is put right and the step started again, and otherwise the step is
-  started again on a copy of its own at a path of its own, not a link; a marker put in one of the
-  copy's five folders and found in the matching folder of the vault, or a folder that one resolves
-  to or names, shows that folder of the copy to be the vault's own under another path, through which
-  nothing is removed but a link, junction, mount or drive at or above the copy's root that the owner
-  made for it, a link or junction at one of the copy's four folders, or a mount there the owner
-  made, and nothing more where that folder is the copy's root; any other copy, and what is left of
-  one, removed, during the check or once it is over, only after the host's own list of mounts, read
-  as step 5 reads it and trusted once the same reading over a folder other than `/` at or below
-  which the list shows a mount has listed that mount, shows each mount at or under the copy that the
-  owner made unmounted and none left there (another mount there, one that cannot be unmounted, a
-  control that cannot be made or does not list, or no command passing the control below sending the
-  new copy to another path with nothing of the old one removed), and after each link at its root or
-  four folders is removed by its own name (the root's alone, where the root is one; the two hook
-  folders' only where `.claude/` is not one), never by a path ending in `/` or `\` or through it,
-  with a command first seen, spelled as it will be used, to remove a link of each kind the account
-  can make (what it does to another kind stated open), made for the purpose in a scratch folder
-  outside the vault and the copy, to a scratch folder holding a file, and a scratch folder holding
-  such a link, leaving the file each time, the rest then removed with that command; in every case
-  the vault's known files, a sample, seen in place afterwards, one missing failing the check, the
-  vault then put back from a copy the owner trusts and its steering surfaces checked by hand before
-  anything else; a canary's record found where the marker is looked for fails it, the vault then
-  cleaned up as step 5 says, its hook scripts among the surfaces checked by hand, and the copy given
-  folders of its own, with an earlier copy removed as above, before the check is run again; the
-  marker search does not depend on spelling (measured on Windows), while the resolved comparison, on
-  Windows, can read one folder spelled two ways as two), the wrapper fires none, where the same
-  wrapper with the measure taken away fires one. A control that fires no canary leaves the check not
-  verified, never passed (a `hook-canary` found where step 1 looks for the marker failing it, and
-  otherwise a copy folder found to be a link sending the check back to step 1 on a copy of its own),
-  and on a switch route the container is then the way on, where the check is run again. The check
-  shows that the wrapper, the container definition, the switch file and the files
-  they rest on, the home folders of the account the runner runs as (the one the schedule's
-  environment names and the account's own, where they differ; on a switch route, the harness's too,
-  the one the wrapper names among them), and every file of the class `docs/setup.md` names in its
-  `UNVERIFIED` troubleshooting row that the runner or the harness reads at the per-user or the
-  system level, or place named for one (in a container, outside the vault's mount too, with no other
-  mount of a folder or file of the vault at or above them, the README's step 5 saying which), lie
-  outside the vault and the copy, by their resolved paths (one inside, by any of its names, fails
-  the check, and so does a folder this check requires outside both, or on a switch route a folder
-  that holds the switch file or the wrapper, that holds the source of a mount in the host's own list
-  from outside both whose target lies below the vault's or the copy's own folder), each file with a
-  single name (a link count of 1, read by a count first seen to read 2 on a file given a second name
-  for the purpose, on the file system that holds the file read, else the step not verified) or each
-  of its names found outside both, and no file or folder among them at or under a folder or file of
-  the vault mounted elsewhere on the host, nor at or under the source of a mount from outside both
-  into the vault or the copy, by the host's own list of mounts read as the README's step 5 says
-  (each source and target spelled as an absolute path on the host, a source another listed mount
-  also shows spelled through that mount as well, the list seen to show the mount that holds the
-  vault, and a source spelled through another mount or on a share this host serves seen to show what
-  its target shows; a list of mounts that cannot be read or does not show the vault's, a source that
-  cannot be spelled or seen that way, or a pass-through file system, such as an overlay, not a bind
-  mount or a share, mounted below the vault's or the copy's own folder leaving the step not
-  verified), once a path inside the copy and one inside the vault have each read as inside, each
-  spelled every way the paths compared reach the check, whether
+  every recipe must pass: on a scratch copy of the vault, below whose root the host's own list of
+  mounts, read as below, shows none before any other write (one there leaving the check not verified
+  until the copy is made at another path with none), in whose root and whose `.git`, `.claude/`,
+  `.claude/hooks/` and `.claude/githooks/` an empty marker is put before any other write and seen,
+  and then found nowhere in the vault's folder, links not followed, nor in the folders the vault's
+  own four resolve to or name, with any shared folder that one names, by a search that honours no
+  ignore file (which rests on the tool: reasoned), reports no folder it could not read, and is seen
+  to find a file known to lie in the vault's root, in each of those four folders and each folder
+  they resolve to or name, and three folders down outside `.claude/`, as the README's step 1 says,
+  whose root and four folders are seen to be folders, not files or links, by a link test first seen
+  to show a link made for the purpose in a scratch folder outside the vault and the copy, to a
+  scratch folder holding a file, and then removed by its own name (on Windows a junction and, where
+  the account can make one, a symbolic link, a kind it cannot make stated open), and to resolve
+  outside the vault and outside every folder the vault's own resolve to or name, with every script
+  in its two hook folders a file with a single name, read by a count first seen to read 2 on a file
+  given a second name for the purpose, not a link, before its hook scripts are replaced with
+  canaries, each run once by hand and seen to write at the copy's root (else the check is not
+  verified: a link test or a count whose control did not show is replaced and read again, a search
+  that misses a known file or cannot read a folder is put right and the step started again, and
+  otherwise every marker found is removed and the step is started again on a copy of its own at a
+  path of its own, not a link; a marker put in one of the copy's five folders and found in the
+  matching folder of the vault, or a folder that one resolves
+  to or names, shows that folder of the copy to be the vault's own under another path (a link or
+  junction at or above it, a mount at or above it, a substituted or mapped drive, another spelling
+  of the vault's path, or the vault's own path), at or through which nothing is removed but a link,
+  junction, mount or drive at or above the copy's root that the owner made for it, a link or
+  junction at one of the copy's four folders, or a mount there the owner made (a link or junction by
+  its own name, a mount by unmounting it, a drive by removing it), and nothing more where that
+  folder is the copy's root; a copy found inside the vault (its root's marker in a folder of the
+  vault, the other four in that folder's own four) is removed there too, by that path; every removal
+  of a copy, during the check or once it is over, is made only after the host's own list of mounts,
+  read as step 5 reads it, in the shell the copy is removed from, for mounts at or under the copy,
+  its path spelled as step 5 spells the paths it compares, and trusted once the same reading over a
+  folder that is not itself a mount and below which the list shows one has listed that mount (on
+  Linux and in WSL, `/sys/fs`, which holds `/sys/fs/cgroup`, for one; on Windows, where the list
+  shows no volume mounted at a folder, once it has shown the volume at the
+  copy's drive root, none then lying at or under the copy: reasoned), shows each mount at or under
+  the copy that the owner made unmounted and none left there (a control that cannot be made or does
+  not list, another mount there, one that cannot be unmounted, or no command passing the control
+  below leaving the old copy in place, nothing of it removed, and sending the new copy to another
+  path), and then after each link at its root or four folders is removed by its own name (the root's
+  alone, where the root is one; the two hook folders' only where `.claude/` is not one), never by a
+  path ending in `/` or `\` or through it, with a command first seen, spelled as it will be used, to
+  remove a link of each kind the account can make (what it does to another kind stated open), made
+  for the purpose in a scratch folder outside the vault and the copy, to a scratch folder holding a
+  file, and a scratch folder holding such a link, leaving the file each time, the rest then removed
+  with that command; in every case the vault's known files, a sample, seen in place afterwards, one
+  missing failing the check, the vault then put back from a copy the owner trusts and its steering
+  surfaces checked by hand before anything else; a canary's record found where the marker is looked
+  for fails it, the vault then cleaned up as step 5 says, its hook scripts among the surfaces
+  checked by hand, and the copy given folders of its own, with an earlier copy removed as above,
+  before the check is run again; once the search has found each known file and no marker, the copy's
+  markers removed, the one in its `.git/` apart; the marker search does not depend on spelling
+  (measured on Windows), while the resolved comparison, on Windows, can read one folder spelled two
+  ways as two), the wrapper fires none, where the same wrapper with the measure taken away fires
+  one. A control that fires no canary leaves the check not verified, never passed (a `hook-canary`
+  found where step 1 looks for the marker failing it, and otherwise a copy folder found to be a link
+  sending the check back to step 1 on a copy of its own), and on a switch route the container is
+  then the way on, where the check is run again. The check shows that the wrapper, the container
+  definition, the switch file and the files they rest on, the home folders of the account the runner
+  runs as (the one the schedule's environment names and the account's own, where they differ; on a
+  switch route, the harness's too, the one the wrapper names among them), and every file of the
+  class `docs/setup.md` names in its `UNVERIFIED` troubleshooting row that the runner or the harness
+  reads at the per-user or the system level, or place named for one (in a container, outside the
+  vault's mount too, with no other mount of a folder or file of the vault at or above them, the
+  README's step 5 saying which), lie outside the vault and the copy, by their resolved paths (one
+  inside, by any of its names, fails the check, and so does a folder this check requires outside
+  both, or on a switch route a folder that holds the switch file or the wrapper, that holds the
+  source of a mount in the host's own list from outside both whose target lies below the vault's or
+  the copy's own folder), each file with a single name (a link count of 1, read by a count first
+  seen to read 2 on a file given a second name for the purpose in a scratch folder outside the vault
+  and the copy, on the file system that holds the file read, then removed, else the step not
+  verified) or each of its names, as many as its count, found outside both, and no file or
+  folder among them at or under a folder or file of the vault mounted elsewhere on the host, nor at
+  or under the source of a mount from outside both into the vault or the copy, by the host's own
+  list of mounts read as the README's step 5 says (each source and target spelled as an absolute
+  path on the host, a source another listed mount also shows spelled through that mount as well, the
+  list seen to show the mount that holds the vault, and a source spelled through another mount or on
+  a share this host serves seen to show what its target shows; a list of mounts that cannot be read
+  or does not show the vault's, a source that cannot be spelled or seen that way, or a pass-through
+  file system, such as an overlay, not a bind mount or a share, mounted below the vault's or the
+  copy's own folder leaving the step not verified), once a path inside the copy and one inside the
+  vault have each read as inside, each spelled every way the paths compared reach the check, whether
   a file or a link's target spells them so (a short 8.3 name, another letter case, a substituted or
   mapped drive, a second path the host gives a folder above the vault or the copy, as WSL does for
   the distribution's root by default), unless the resolver used is seen, on that host, to turn each
@@ -388,8 +402,9 @@ for this release).
   `.claude/settings.local.json` the container rule mounts over, `opencode.json`, `.env`, and the Pi
   guide's `.env`, `.env.*` and `secrets/` at any depth), are folders or files, not links, and, where
   files, have a single name (a link count of 1), each failing the check where it does not, read in
-  the vault by a link test first seen to show links made for the purpose in the copy, to a folder
-  and to a file, as links, and by a link count first seen to read 2 on a file given a second name
+  the vault by a link test first seen to show links made for the purpose in the copy, to a scratch
+  folder outside both holding a file and to that file, as links (then removed, each by its own
+  name), and by a link count first seen to read 2 on a file given a second name
   for the purpose in a scratch folder outside the vault and the copy, on the file system that holds
   the name read, a kind of link the account cannot make stated open (where the vault's `.git` is a
   file, not a link, the folder it names, and any shared folder that one names, standing in its place
@@ -783,10 +798,11 @@ for this release).
    check requires outside both, or on a switch route a folder that holds the switch file or the
    wrapper, that holds the source of a mount in the host's own list from outside both whose target
    lies below the vault's or the copy's own folder), each file with a single name (a link count of
-   1, read by a count first seen to read 2 on a file given a second name for the purpose, on the
-   file system that holds the file read, else the step not verified) or each of its names found
-   outside both, and no file or folder among them at or under a
-   folder or file of the vault mounted elsewhere on the host, nor at or under the source of a mount
+   1, read by a count first seen to read 2 on a file given a second name for the purpose in a
+   scratch folder outside the vault and the copy, on the file system that holds the file read, then
+   removed, else the step not verified) or each of its names, as many as its count, found outside
+   both, and no file or folder among them at or under a folder or file of the vault mounted
+   elsewhere on the host, nor at or under the source of a mount
    from outside both into the vault or the copy, by the host's own list of mounts read as the
    README's step 5 says (each source and target spelled as an absolute path on the host, a source
    another listed mount also shows spelled through that mount as well, the list seen to show the
@@ -815,14 +831,15 @@ for this release).
    `opencode.json`, `.env`, and the Pi guide's `.env`, `.env.*` and `secrets/` at any depth), are
    folders or files, not links, and, where files, have a single name (a link count of 1), each
    failing the check where it does not, read in the vault by a link test first seen to show links
-   made for the purpose in the copy, to a folder and to a file, as links, and by a link count first
-   seen to read 2 on a file given a second name for the purpose in a scratch folder outside the
-   vault and the copy, on the file system that holds the name read, a kind of link the account
-   cannot make stated open (where the vault's `.git` is a file, not a link, the folder it names, and
-   any shared folder that one names, standing in its place and lying outside both, and, on a switch
-   route, a vault whose `.git` is such a file leaving the step not verified; a link at a folder
-   above one of the Pi guide's names not looked for, reasoned and carried; a second name for any
-   other file under the vault's `.git`, or the folder a `.git` file names, or its `.claude/` not
+   made for the purpose in the copy, to a scratch folder outside both holding a file and to that
+   file, as links (then removed, each by its own name), and by a
+   link count first seen to read 2 on a file given a second name for the purpose in a scratch folder
+   outside the vault and the copy, on the file system that holds the name read, a kind of link the
+   account cannot make stated open (where the vault's `.git` is a file, not a link, the folder it
+   names, and any shared folder that one names, standing in its place and lying outside both, and,
+   on a switch route, a vault whose `.git` is such a file leaving the step not verified; a link at a
+   folder above one of the Pi guide's names not looked for, reasoned and carried; a second name for
+   any other file under the vault's `.git`, or the folder a `.git` file names, or its `.claude/` not
    looked for, reasoned and carried, since a clone made from the vault on the same disk shares the
    object files under `.git` with it by hard links and in a container a pass cannot give a file
    under the read-only mounts a second name through them (each measured; on a switch route that
@@ -883,16 +900,16 @@ for this release).
    read-only over its `.env` (if the vault has none, create an empty one there yourself first), and
    runs the guide's check with its `pre-commit` canary, its git-configuration one, and the control
    that turns git back on. For any schedule, keep the vault's `.git` and `.claude/` folders, not
-   links (a `.git` file with a single name, naming a folder outside the vault and the copy, apart,
-   on the container route). For any container schedule, keep each other name in the vault that these
-   mounts cover a folder or file, not a link, and, where a file, with a single name (the README's
-   step 5 fails one that is a link or has more than one name), start a new container for each run,
-   whose own filesystem is discarded at exit, never one kept between runs, and run the harness in it
-   as a user other than the superuser, with that user's home folder outside the vault's mount, with
-   no other mount of a folder or file of the vault at, above or inside it (the README's step 5 says
-   which; in the definition, the image, or the entrypoint or wrapper that sets it): the new
-   container closes only the next run, and within a run the container's own filesystem stays
-   writable.
+   links (apart from, on the container route, a `.git` file with a single name naming a folder
+   outside the vault and the copy). For any container schedule, keep each other name in the vault
+   that these mounts cover a folder or file, not a link, and, where a file, with a single name (the
+   README's step 5 fails one that is a link or has more than one name), start a new container for
+   each run, whose own filesystem is discarded at exit, never one kept between runs, and run the
+   harness in it as a user other than the superuser, with that user's home folder outside the
+   vault's mount, with no other mount of a folder or file of the vault at, above or inside it (the
+   README's step 5 says which; in the definition, the image, or the entrypoint or wrapper that sets
+   it): the new container closes only the next run, and within a run the container's own filesystem
+   stays writable.
 10. The shipped files this release touches: `.claude/scripts/lib/runner-common.sh`,
    `.claude/scripts/dream-pass.sh`, `.claude/scripts/promotion-pass.sh`,
    `.claude/scripts/vault-retention.sh`, `.claude/scripts/run-tests.sh`,
