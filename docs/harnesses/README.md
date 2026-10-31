@@ -218,16 +218,17 @@ environment the schedule uses:
 
 1. Make the copy a clone with its own `.git`, so no hook reaches the vault's, and its own `.claude/`
    folder. Before any other write into the copy, read the host's own list of mounts for mounts below
-   its root, as this step reads it below before a removal, its control included: one there, or a
-   reading that control does not let you trust, leaves the check NOT VERIFIED until the copy is made
-   at another path with none. Then put an empty file named `copy-marker` in its root and in its
-   `.git/`, `.claude/`, `.claude/hooks/` and `.claude/githooks/`, and see it in each. Then look for
-   `copy-marker` by name throughout the vault's folder, with links not followed and no ignore file
-   honoured (that rests on the tool you choose: reasoned), and in each folder the vault's `.git`,
-   `.claude/`, `.claude/hooks/` and `.claude/githooks/` resolve to or name outside it (with any
-   shared folder that one names), and trust that search only once it has found, in the vault's root,
-   in each of those four folders and in each folder they resolve to or name, a file you know lies
-   there (such as `HEAD` in a git folder), and one three folders down outside `.claude/` (such as
+   its root, as this step reads it below before a removal, its control included, but in the shell
+   the check runs from: one there, or a reading that control does not let you trust, leaves the
+   check NOT VERIFIED until the copy is made at another path with none. Then put an empty file named
+   `copy-marker` in its root and in its `.git/`, `.claude/`, `.claude/hooks/` and
+   `.claude/githooks/`, and see it in each. Then look for `copy-marker` by name throughout the
+   vault's folder, with links not followed and no ignore file honoured (that rests on the tool you
+   choose: reasoned), and in each folder the vault's `.git`, `.claude/`, `.claude/hooks/` and
+   `.claude/githooks/` resolve to or name outside it (with any shared folder that one names), and
+   trust that search only once it has found, in the vault's root, in each of those four folders and
+   in each folder they resolve to or name, a file you know lies there (such as `HEAD` in a git
+   folder), and one three folders down outside `.claude/` (such as
    `20-projects/_logs/templates/medium-term-project-log.md`); a search that does not find each of
    them, or that reports a folder it could not read (read its errors), leaves the check NOT
    VERIFIED: make such a folder readable, or move it out of the vault, and start this step again. A
@@ -509,17 +510,22 @@ environment the schedule uses:
    absent from the vault, looked for as step 1 says. Stop if either is not: this step is NOT
    VERIFIED until what is seen is the copy (start the container or the harness on the copy's path;
    for a marker found in the vault, remove it, and remove nothing of the copy but a link, junction,
-   mount or drive you made for it, each as step 1 says, then see the known files as step 1 says and
-   start the check again at step 1 on a copy at another path, since one marker cannot show which of
-   the copy's folders are the vault's). If any of its writes reached the vault by mistake, the check
-   is FAILED (step 6): remove with `rm` every file the step wrote, check the steering surfaces by
-   hand, without git, before any git command, as `docs/setup.md`'s `UNVERIFIED` troubleshooting row
-   says for a run with no pre-pass backup, and then run the check again on the copy. In a container
-   the step first writes to each hook or settings file the guide mounts in the home, which must be
-   refused, and then creates three files, in this order: a control file, `01-inbox/probe-ro.md`,
-   which a pass may write and which must be written, then `.git/probe-ro` and `.claude/probe-ro`,
-   which must be refused. On a switch route it writes, for each of the harness's tools for creating
-   files, a control file and each file the second branch lists as one to be refused.
+   mount or drive you made for it, each as step 1 says; then see the known files as step 1 says,
+   look for `hook-canary` by name where step 1 looks for the marker, and look in the vault by hand,
+   without git, for the rest of what steps 1 to 4 wrote into the copy (a canary in place of one of
+   the vault's hook scripts, which the known files cannot show, step 4's probe, and what its passes
+   wrote): any of them found is a write that reached the vault, and the check is FAILED (step 6);
+   otherwise start the check again at step 1 on a copy at another path, since one marker cannot show
+   which of the copy's folders are the vault's). If any of its writes reached the vault by mistake,
+   the check is FAILED (step 6): remove with `rm` every file the step wrote, check the steering
+   surfaces by hand, without git, before any git command, as `docs/setup.md`'s `UNVERIFIED`
+   troubleshooting row says for a run with no pre-pass backup, and then run the check again on the
+   copy. In a container the step first writes to each hook or settings file the guide mounts in the
+   home, which must be refused, and then creates three files, in this order: a control file,
+   `01-inbox/probe-ro.md`, which a pass may write and which must be written, then `.git/probe-ro`
+   and `.claude/probe-ro`, which must be refused. On a switch route it writes, for each of the
+   harness's tools for creating files, a control file and each file the second branch lists as one
+   to be refused.
    - In a container, start the schedule's own container definition (each pass's, where the wrapper
      sets the two passes up differently) with only the vault's path swapped for the copy's and every
      mount kept (the Aider guide's check leaves the `.git` mount out; this step does not). First
