@@ -214,7 +214,7 @@ exec pi --print --no-session --no-approve --no-extensions --no-skills --offline 
 Pi cannot confine `write` and `edit` to a folder. So run the wrapper in a container that mounts only
 the vault, without its secrets, with its `.claude/` (its settings files mounted over it from copies
 without their hooks) and `.git` read-only (`docs/harnesses/README.md`, whose step 5 fails any name
-these mounts cover that is a link in the vault, or a file with a second name there) and with none of
+these mounts cover that is a link in the vault, or a file with more than one name) and with none of
 your home configuration, and whose only network route is your model provider. Pi's grep and find
 need ripgrep and fd, and Pi downloads them into `~/.pi/agent/bin` when it cannot find them, so put
 both in the image. Start a new container for each run, whose own filesystem is discarded at exit, as

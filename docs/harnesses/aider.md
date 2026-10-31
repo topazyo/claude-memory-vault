@@ -99,7 +99,7 @@ page), and a pass could write one: in the container, mount an empty file from ou
 read-only over the vault's `.env`, and start a new container for each run, as the README's container
 rule says, because in a container kept between runs a `.env` a pass wrote in its home would load at
 the next run (reasoned). The mount is what keeps this config's switches in force for later runs (the
-README's step 5 fails a `.env` that is a link, or a file with a second name in the vault), because
+README's step 5 fails a `.env` that is a link, or a file with more than one name), because
 the runner's steering filter does not name a root `.env`, and whether a `.env` or `--config` wins is
 not in the sources (reasoned). If the vault has no `.env`, create an empty one there yourself before
 the first scheduled run, so that the mount has a target: `.claude/rules/security.md` forbids an
@@ -132,22 +132,23 @@ copy's, but without its read-only `.git` mount, so that the check tests `git: fa
    the vault's own `.git`, `.claude/`, `.claude/hooks/` and `.claude/githooks/` resolve to or name
    (with any shared folder that one names); and that every script in the copy's `.claude/hooks/` and
    `.claude/githooks/`, and the file this step then writes in the copy's `.git`, is a file with a
-   single name (a link count of 1), not a link (else the check is NOT VERIFIED: where the test did
-   not show its control link, use one that does and run the folder test again; otherwise remove the
-   marker in the copy's `.git/`, give the copy folders of its own outside the vault (a fresh clone,
-   not a link; a linked copy removed as the README's step 1 says), and start this step again). That
-   comparison runs before the README's spelling controls, so on Windows it can read one folder
-   spelled two ways as two; the marker search does not depend on spelling. Then, before you
-   start the container, whose `.claude/` mount is read-only, replace `.claude/githooks/pre-commit`
-   in the copy with the README's canary, and add a second canary in the copy's own git
-   configuration, of the class `docs/setup.md` names in its `UNVERIFIED` troubleshooting row: point
-   the copy's `core.fsmonitor`, the setting that row names, at a copy of the canary script in the
-   copy's `.claude/hooks/`, by its absolute path as the container sees it. Run `git status` in the
-   copy by hand, inside the container: `hook-canary` must appear at the copy's root, naming the
-   second canary (look for it as the README's step 1 says: one found where the marker is looked for
-   is FAILED; otherwise the check is NOT VERIFIED until it appears at the copy's root: give the copy
-   folders of its own outside the vault, a fresh clone and not a link, with any linked copy removed
-   as the README's step 1 says, and start this step again). Delete it.
+   single name (a link count of 1, read with the control the README's step 1 gives it), not a link
+   (else the check is NOT VERIFIED: where the test did not show its control link, use one that does
+   and run the folder test again; otherwise remove the marker in the copy's `.git/`, give the copy
+   folders of its own outside the vault (a fresh clone, not a link; a linked copy removed as the
+   README's step 1 says), and start this step again). That comparison runs before the README's
+   spelling controls, so on Windows it can read one folder spelled two ways as two; the marker
+   search does not depend on spelling. Then, before you start the container, whose `.claude/` mount
+   is read-only, replace `.claude/githooks/pre-commit` in the copy with the README's canary, and add
+   a second canary in the copy's own git configuration, of the class `docs/setup.md` names in its
+   `UNVERIFIED` troubleshooting row: point the copy's `core.fsmonitor`, the setting that row names,
+   at a copy of the canary script in the copy's `.claude/hooks/`, by its absolute path as the
+   container sees it. Run `git status` in the copy by hand, inside the container: `hook-canary` must
+   appear at the copy's root, naming the second canary (look for it as the README's step 1 says: one
+   found where the marker is looked for is FAILED: clean up and give the copy folders of its own, as
+   the README's step 1 says; otherwise the check is NOT VERIFIED until it appears at the copy's
+   root: give the copy folders of its own outside the vault, a fresh clone and not a link, with any
+   linked copy removed as the README's step 1 says, and start this step again). Delete it.
 2. Positive control for the switch: change a tracked note in the copy without committing it, and run
    a copy of the wrapper that names a copy of the scheduled config with `git: true` on
    `probe.dream-pass.md` (the scheduled config itself stays read-only and unchanged). Look for
