@@ -83,11 +83,12 @@ in `-p` mode in a folder it trusts (measured on Windows, 2026-10-18), so a pass 
 script would get a shell through its next edit (reasoned). Keep them out of the container: mount
 `.github/` read-only with its `hooks/vault.json` from a copy that has no hooks (Copilot also reads
 `.github/copilot/settings.json` and `.github/copilot/settings.local.json`, which a pass could
-otherwise create), `.claude/` read-only with its `settings.json`, and any `settings.local.json`,
-from a copy without their hooks (run the check again whenever one appears or changes), the vault's
-`.git` read-only, and an empty file from outside the vault read-only over its `.env` (if the vault
-has no `.env`, create an empty one there first, as the README says), with each name these mounts
-cover a folder or file in the vault, not a link (the README's step 5 says which), load none of your
+otherwise create), `.claude/` read-only from the vault's own folder, with its `settings.json`, and
+any `settings.local.json`, mounted over it from copies without their hooks (run the check again
+whenever one appears or changes), the vault's `.git` read-only, and an empty file from outside the
+vault read-only over its `.env` (if the vault has no `.env`, create an empty one there first, as the
+README says), with each name these mounts cover a folder or file in the vault, not a link, and,
+where a file, with a single name (the README's step 5 says which), load none of your
 home configuration (Copilot reads hooks from `~/.copilot/` too), start a new container for each run,
 whose own filesystem is discarded at exit, as the README's container rule says, so that a hook a
 pass wrote under `~/.copilot/` in the container cannot run at the next run (reasoned; within the

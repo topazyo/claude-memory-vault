@@ -99,11 +99,11 @@ page), and a pass could write one: in the container, mount an empty file from ou
 read-only over the vault's `.env`, and start a new container for each run, as the README's container
 rule says, because in a container kept between runs a `.env` a pass wrote in its home would load at
 the next run (reasoned). The mount is what keeps this config's switches in force for later runs (the
-README's step 5 fails a `.env` that is a link), because the runner's steering filter does not name a
-root `.env`, and whether a `.env` or `--config` wins is not in the sources (reasoned). If the vault
-has no `.env`, create an empty one there yourself before the first scheduled run, so that the mount
-has a target: `.claude/rules/security.md` forbids an agent to create a `.env`, so that step is the
-owner's.
+README's step 5 fails a `.env` that is a link, or a file with a second name in the vault), because
+the runner's steering filter does not name a root `.env`, and whether a `.env` or `--config` wins is
+not in the sources (reasoned). If the vault has no `.env`, create an empty one there yourself before
+the first scheduled run, so that the mount has a target: `.claude/rules/security.md` forbids an
+agent to create a `.env`, so that step is the owner's.
 
 ```bash
 #!/usr/bin/env bash
@@ -116,23 +116,28 @@ exec aider --config /absolute/path/outside/the/vault/aider-scheduled.conf.yml \
 
 Aider has no lint hook, so apply the README's check to the git Aider would run, on a scratch copy of
 the vault that is a clone with its own git folder, with the gate enabled there and git able to
-commit. Run it in the container the schedule uses, but without its read-only `.git` mount, so that
-the check tests `git: false` alone:
+commit. Run it in the container the schedule uses, with only the vault's path swapped for the
+copy's, but without its read-only `.git` mount, so that the check tests `git: false` alone:
 
 1. First, before any other write into the copy, run the README's step 1 identity control: an empty
    `copy-marker` put in the copy's root and in its `.git/`, `.claude/`, `.claude/hooks/` and
    `.claude/githooks/`, seen in each, and found nowhere that step looks in the vault, by a search
-   seen to find a file known to lie in each folder that step names (a marker found, or a search that
-   does not find those files, leaves the check NOT VERIFIED, as that step says), with only the one
-   in the copy's `.git/` kept. Then see, as the README's step 1 says, that the copy's `.git`,
+   that honours no ignore file, reports no folder it could not read and is seen to find each known
+   file that step names, as that step says, with its controls (a marker found, or a search that does
+   not find those files or that reports a folder it could not read, leaves the check NOT VERIFIED,
+   with the remedies that step gives), with only the one in the copy's `.git/` kept. Then see, as
+   the README's step 1 says, with its control, that the copy's root and its `.git`,
    `.claude/`, `.claude/hooks/` and `.claude/githooks/` are each a folder, not a file or a link;
    that they each resolve to a folder outside the vault and outside every folder the
    vault's own `.git`, `.claude/`, `.claude/hooks/` and `.claude/githooks/` resolve to or name (with
    any shared folder that one names); and that every script in the copy's `.claude/hooks/` and
    `.claude/githooks/`, and the file this step then writes in the copy's `.git`, is a file with a
-   single name (a link count of 1), not a link (else the check is NOT VERIFIED until all three
-   hold). That comparison runs before the README's spelling controls, so on Windows it can read one
-   folder spelled two ways as two; the marker search does not depend on spelling. Then, before you
+   single name (a link count of 1), not a link (else the check is NOT VERIFIED: where the test did
+   not show its control link, use one that does and run the folder test again; otherwise remove the
+   marker in the copy's `.git/`, give the copy folders of its own outside the vault, a fresh clone,
+   not a link, a linked copy removed as the README's step 1 says, and start this step again). That
+   comparison runs before the README's spelling controls, so on Windows it can read one folder
+   spelled two ways as two; the marker search does not depend on spelling. Then, before you
    start the container, whose `.claude/` mount is read-only, replace `.claude/githooks/pre-commit`
    in the copy with the README's canary, and add a second canary in the copy's own git
    configuration, of the class `docs/setup.md` names in its `UNVERIFIED` troubleshooting row: point
@@ -141,7 +146,8 @@ the check tests `git: false` alone:
    copy by hand, inside the container: `hook-canary` must appear at the copy's root, naming the
    second canary (look for it as the README's step 1 says: one found where the marker is looked for
    is FAILED; otherwise the check is NOT VERIFIED until it appears at the copy's root: give the copy
-   folders of its own outside the vault, a fresh clone, not a link). Delete it.
+   folders of its own outside the vault, a fresh clone, not a link, a linked copy removed as the
+   README's step 1 says, and start this step again). Delete it.
 2. Positive control for the switch: change a tracked note in the copy without committing it, and run
    a copy of the wrapper that names a copy of the scheduled config with `git: true` on
    `probe.dream-pass.md` (the scheduled config itself stays read-only and unchanged). Look for
@@ -160,31 +166,32 @@ the check tests `git: false` alone:
    git on, Aider would find the repository dirty), and run the wrapper with the scheduled config on
    each probe prompt in turn, deleting the probe with `rm` between them.
 5. Look for `hook-canary` first, as in step 2 (one found where step 1 looks for the marker is
-   FAILED). PASS only if step 1's identity control found no marker where it looks, by a search seen
-   to find the known files, its three conditions held, the controls in steps 1 to 3 fired, each run
-   in step 4 wrote the probe, `hook-canary` does not exist, `git log` shows no commit after step
-   3's, and step 5 of the README's check, run in the schedule's container with all its mounts, gave
-   what the README's step 6 asks of it. If `hook-canary` exists, or `git log` shows a commit after
-   step 3's, the check is FAILED, and `VAULT_ALLOW_UNENFORCED_TOOLS` stays unset. A control that did
-   not fire leaves the check NOT VERIFIED, never PASS (the README's step 3). The README's step 5,
-   when FAILED or NOT VERIFIED, makes this check so too (its NOT VERIFIED: find out why, and run it
-   again). FAILED takes precedence, as in the README's step 6. If step 2's control fired by the
-   commit alone, a PASS shows only that Aider made no commit in step 4. Then what keeps any git
-   Aider ran from reaching anything a pass wrote, of the class `docs/setup.md` names in its
-   `UNVERIFIED` troubleshooting row, is the read-only `.git` and `.claude/` mounts below, which step
-   5 of the README's check confirms.
+   FAILED). PASS only if step 1's identity control found no marker where it looks, by a search that
+   honours no ignore file (which rests on the tool), reports no folder it could not read and is seen
+   to find the known files, as the README's step 1 says, its three conditions held, the controls in
+   steps 1 to 3 fired, each run in step 4 wrote the probe, `hook-canary` does not exist, `git log`
+   shows no commit after step 3's, and step 5 of the README's check, run in the schedule's container
+   with all its mounts, gave what the README's step 6 asks of it. If `hook-canary` exists, or
+   `git log` shows a commit after step 3's, the check is FAILED, and `VAULT_ALLOW_UNENFORCED_TOOLS`
+   stays unset. A control that did not fire leaves the check NOT VERIFIED, never PASS (the README's
+   step 3). The README's step 5, when FAILED or NOT VERIFIED, makes this check so too (its NOT
+   VERIFIED: find out why, and run it again). FAILED takes precedence, as in the README's step 6. If
+   step 2's control fired by the commit alone, a PASS shows only that Aider made no commit in step
+   4. Then what keeps any git Aider ran from reaching anything a pass wrote, of the class
+   `docs/setup.md` names in its `UNVERIFIED` troubleshooting row, is the read-only `.git` and
+   `.claude/` mounts below, which step 5 of the README's check confirms.
 
 Remove the second canary from the copy's git configuration afterwards. If the scheduled runs do not
 show the rules in the chat, check the absolute `read:` paths.
 
 Run the schedule in a container that blocks the network and mounts only the vault writable, with the
 vault's `.claude/` and `.git` read-only and the empty file read-only over its `.env`, as the
-README's container rule says, each of those names a folder or file in the vault, not a link (its
-step 5 says which); the read-only `.git` costs a pass nothing with `git: false` (reasoned). Before
-setting `VAULT_ALLOW_UNENFORCED_TOOLS=1`, confirm in that container, with all its
-mounts, that writes into the scratch copy's `.git` and `.claude/` are refused, by step 5 of the
-README's check: the check above runs without the `.git` mount, so only that step shows the `.git`
-and `.claude/` mounts hold.
+README's container rule says, each of those names a folder or file in the vault, not a link, and,
+where a file, with a single name (its step 5 says which); the read-only `.git` costs a pass nothing
+with `git: false` (reasoned). Before setting `VAULT_ALLOW_UNENFORCED_TOOLS=1`, confirm in that
+container, with all its mounts, that writes into the scratch copy's `.git` and `.claude/` are
+refused, by step 5 of the README's check: the check above runs without the `.git` mount, so only
+that step shows the `.git` and `.claude/` mounts hold.
 
 ## Sources (checked 2026-09-13; the YAML config, options, git and `.env` pages read 2026-10-18)
 
