@@ -70,15 +70,32 @@ without asking me.
 
 ```bash
 #!/usr/bin/env bash
-# hermes-vault-agent.sh <prompt-file>
+# hermes-vault-agent.sh <prompt-file>: keep it, like the container definition, outside the vault
+# and every folder a pass can write (docs/harnesses/README.md)
 set -u
 exec hermes chat -q "$(cat "$1")"
 ```
 
 `hermes chat -q` answers one query and exits. Because Hermes's own guards are not a hard boundary,
-run the wrapper in a container that blocks the network. For the dream pass, also remove the
-terminal tool, for example through `agent.disabled_toolsets` (check `hermes tools` for the toolset
-that provides it). Only then set `VAULT_ALLOW_UNENFORCED_TOOLS=1`.
+run the wrapper in a container that blocks the network. For both passes, also remove the terminal
+tool, for example through `agent.disabled_toolsets` (check `hermes tools` for the toolset that
+provides it), and mount only the vault writable, with its `.claude/` (its settings files mounted
+over it from copies without their hooks) and `.git` read-only and an empty file from outside the
+vault read-only over its `.env` (if the vault has no `.env`, create an empty one there first, as the
+README says), each of those names a folder or file in the vault, not a link, and, where a file, with
+a single name (the README's step 5 says which). The lint snippet from Setup runs `bash` on
+`.claude/hooks/vault-lint.sh` after every `write_file` and `patch`, in every session, so a pass that
+rewrote that script would get a shell through its next write (reasoned): give the container a Hermes
+configuration with no `hooks:` entry (read-only, if you mount it, with that file, and each folder
+above it up to the home folder, that folder included, a file or folder in the container, not
+a link, as the README's step 5 says), rather than your `~/.hermes/config.yaml`, start a new
+container for each run, whose own filesystem is discarded at
+exit, as the README's container rule says, so that a pass's write to that configuration cannot reach
+the next run (reasoned; within the same run, a configuration not mounted read-only, and the folders
+that hold one that is, stay open, as the README says), and run the check in
+`docs/harnesses/README.md`, "No vault hook in a scheduled pass", which shows that the vault's hook
+scripts do not run and that writes into `.git` and `.claude/` are refused. Only then set
+`VAULT_ALLOW_UNENFORCED_TOOLS=1`.
 
 ## Known limits
 
