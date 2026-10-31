@@ -135,8 +135,8 @@ copy's, but without its read-only `.git` mount, so that the check tests `git: fa
    single name (a link count of 1, read with the control the README's step 1 gives it), not a link
    (else the check is NOT VERIFIED: where the test did not show its control link, or the count
    reading its count of 2, use one that does and read again; otherwise remove the marker in the
-   copy's `.git/`, give the copy folders of its own outside the vault (a fresh clone, not a link; a
-   linked copy removed as the README's step 1 says), and start this step again). That comparison
+   copy's `.git/`, give the copy folders of its own outside the vault (a fresh clone, not a link; an
+   earlier copy removed as the README's step 1 says), and start this step again). That comparison
    runs before the README's spelling controls, so on Windows it can read one folder spelled two ways
    as two; the marker search does not depend on spelling. Then, before you start the container,
    whose `.claude/` mount is read-only, replace `.claude/githooks/pre-commit` in the copy with the
@@ -148,7 +148,7 @@ copy's, but without its read-only `.git` mount, so that the check tests `git: fa
    the README's step 1 says: one found where the marker is looked for is FAILED: clean up and give
    the copy folders of its own, as the README's step 1 says; otherwise the check is NOT VERIFIED
    until it appears at the copy's root: give the copy folders of its own outside the vault, a fresh
-   clone and not a link, with any linked copy removed as the README's step 1 says, and start this
+   clone and not a link, with an earlier copy removed as the README's step 1 says, and start this
    step again). Delete it.
 2. Positive control for the switch: change a tracked note in the copy without committing it, and run
    a copy of the wrapper that names a copy of the scheduled config with `git: true` on

@@ -91,10 +91,11 @@ above it up to the home folder, that folder included, a file or folder in the co
 a link, as the README's step 5 says), rather than your `~/.hermes/config.yaml`, start a new
 container for each run, whose own filesystem is discarded at
 exit, as the README's container rule says, so that a pass's write to that configuration cannot reach
-the next run (reasoned; within the same run, a configuration not mounted read-only stays open, as
-the README says), and run the check in `docs/harnesses/README.md`, "No vault hook in a scheduled
-pass", which shows that the vault's hook scripts do not run and that writes into `.git` and
-`.claude/` are refused. Only then set `VAULT_ALLOW_UNENFORCED_TOOLS=1`.
+the next run (reasoned; within the same run, a configuration not mounted read-only, and the folders
+that hold one that is, stay open, as the README says), and run the check in
+`docs/harnesses/README.md`, "No vault hook in a scheduled pass", which shows that the vault's hook
+scripts do not run and that writes into `.git` and `.claude/` are refused. Only then set
+`VAULT_ALLOW_UNENFORCED_TOOLS=1`.
 
 ## Known limits
 
