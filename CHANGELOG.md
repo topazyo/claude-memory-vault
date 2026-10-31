@@ -425,11 +425,13 @@ for this release).
   did not run, and that writes into the copy's `.git` and `.claude/` are refused, once step 1's
   canary and the marker in the copy's `.git/` are seen from where the harness runs, and the marker
   absent from the vault (else not verified until they are, a marker found in the vault removed,
-  nothing of the copy removed but what was made for it, the known files seen, a `hook-canary` looked
-  for where the marker is looked for and the vault looked at by hand, without git, for the rest of
-  what steps 1 to 4 wrote into the copy (a canary in place of one of its hook scripts, which the
-  known files cannot show, step 4's probe, and what its passes wrote), any of them found failing the
-  check, and otherwise the check sent back to step 1 on a copy at another path), with a write the
+  nothing of the copy removed, now or later, but a link, junction, mount or drive made for it, each
+  as the README's step 1 says, since one marker cannot show which of the copy's folders are the
+  vault's, the known files seen, a `hook-canary` looked for where the marker is looked for and the
+  vault looked at by hand, without git, for the rest of what steps 1 to 4 wrote into the copy (among
+  them a canary in place of one of the vault's hook scripts, which the known files cannot show, step
+  4's probe, and what its passes wrote), any of them found failing the check, and in either case the
+  check sent back to step 1 on a copy at another path), with a write the
   pass may make as that step's control (from a shell in the schedule's own container, each pass's
   where the wrapper sets them up differently, opened as the user the harness runs as, which must not
   be the superuser and whose home folder must lie outside the vault's mount, with no other mount of
@@ -859,12 +861,14 @@ for this release).
    that the harness runs as a user other than the superuser (on Windows, not run elevated), and, on
    the scratch copy, once step 1's canary and the marker in the copy's `.git/` are seen from where
    the harness runs, and the marker absent from the vault (else not verified until they are, a
-   marker found in the vault removed, nothing of the copy removed but what was made for it, the
-   known files seen, a `hook-canary` looked for where the marker is looked for and the vault looked
-   at by hand, without git, for the rest of what steps 1 to 4 wrote into the copy (a canary in place
-   of one of its hook scripts, which the known files cannot show, step 4's probe, and what its
-   passes wrote), any of them found failing the check, and otherwise the check sent back to step 1
-   on a copy at another path), that writes into `.git` and `.claude/` are refused, and, in a
+   marker found in the vault removed, nothing of the copy removed, now or later, but a link,
+   junction, mount or drive made for it, each as the README's step 1 says, since one marker cannot
+   show which of the copy's folders are the vault's, the known files seen, a `hook-canary` looked
+   for where the marker is looked for and the vault looked at by hand, without git, for the rest of
+   what steps 1 to 4 wrote into the copy (among them a canary in place of one of the vault's hook
+   scripts, which the known files cannot show, step 4's probe, and what its passes wrote), any of
+   them found failing the check, and in either case the check sent back to step 1 on a copy at
+   another path), that writes into `.git` and `.claude/` are refused, and, in a
    container, from the definition, that each run starts a new container, which the runtime removes
    at exit, and that the definition names every mount the README's rule and the guide require; from
    the container runtime's own listing, that every mount over or inside the vault but the vault's
