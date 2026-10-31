@@ -509,23 +509,23 @@ environment the schedule uses:
    vault's: step 1's `copy-marker`, seen in the copy's `.git/` from where the harness runs, and
    absent from the vault, looked for as step 1 says. Stop if either is not: this step is NOT
    VERIFIED until what is seen is the copy (start the container or the harness on the copy's path;
-   for a marker found in the vault, remove it, and remove nothing of the copy but a link, junction,
-   mount or drive you made for it, each as step 1 says; then see the known files as step 1 says,
-   look for `hook-canary` by name where step 1 looks for the marker, and look in the vault by hand,
-   without git, for the rest of what steps 1 to 4 wrote into the copy (a canary in place of one of
-   the vault's hook scripts, which the known files cannot show, step 4's probe, and what its passes
-   wrote): any of them found is a write that reached the vault, and the check is FAILED (step 6);
-   otherwise start the check again at step 1 on a copy at another path, since one marker cannot show
-   which of the copy's folders are the vault's). If any of its writes reached the vault by mistake,
-   the check is FAILED (step 6): remove with `rm` every file the step wrote, check the steering
-   surfaces by hand, without git, before any git command, as `docs/setup.md`'s `UNVERIFIED`
-   troubleshooting row says for a run with no pre-pass backup, and then run the check again on the
-   copy. In a container the step first writes to each hook or settings file the guide mounts in the
-   home, which must be refused, and then creates three files, in this order: a control file,
-   `01-inbox/probe-ro.md`, which a pass may write and which must be written, then `.git/probe-ro`
-   and `.claude/probe-ro`, which must be refused. On a switch route it writes, for each of the
-   harness's tools for creating files, a control file and each file the second branch lists as one
-   to be refused.
+   for a marker found in the vault, remove it, and remove nothing of the copy, now or later, but a
+   link, junction, mount or drive you made for it, each as step 1 says, since one marker cannot show
+   which of the copy's folders are the vault's; then see the known files as step 1 says, look for
+   `hook-canary` by name where step 1 looks for the marker, and look in the vault by hand, without
+   git, for the rest of what steps 1 to 4 wrote into the copy (among them a canary in place of one
+   of the vault's hook scripts, which the known files cannot show, step 4's probe, and what its
+   passes wrote): any of them found is a write that reached the vault, and the check is FAILED (step
+   6); in either case start the check again at step 1 on a copy at another path). If any of its
+   writes reached the vault by mistake, the check is FAILED (step 6): remove with `rm` every file
+   the step wrote, check the steering surfaces by hand, without git, before any git command, as
+   `docs/setup.md`'s `UNVERIFIED` troubleshooting row says for a run with no pre-pass backup, and
+   then run the check again on the copy. In a container the step first writes to each hook or
+   settings file the guide mounts in the home, which must be refused, and then creates three files,
+   in this order: a control file, `01-inbox/probe-ro.md`, which a pass may write and which must be
+   written, then `.git/probe-ro` and `.claude/probe-ro`, which must be refused. On a switch route it
+   writes, for each of the harness's tools for creating files, a control file and each file the
+   second branch lists as one to be refused.
    - In a container, start the schedule's own container definition (each pass's, where the wrapper
      sets the two passes up differently) with only the vault's path swapped for the copy's and every
      mount kept (the Aider guide's check leaves the `.git` mount out; this step does not). First
@@ -722,9 +722,11 @@ environment the schedule uses:
    such mount in the definition, the image, or the entrypoint or wrapper that sets it, and run the
    check again; after a harness that runs as the superuser, run it as another user and run the check
    again; after a write that reached the vault, clean up as step 5 says (the vault's hook scripts
-   among the surfaces you check by hand after a `hook-canary` found there, and the copy given
-   folders of its own, with an earlier copy removed as step 1 says) and run the check again on the
-   copy; after a known file of the vault missing when step 1 reads them after a marker is found or a
+   among the surfaces you check by hand after a `hook-canary`, or a canary in place of one of them,
+   found there, any such script put back from a copy you trust, and the copy given folders of its
+   own, with an earlier copy removed as step 1 says, or, after step 5's stop for a marker found in
+   the vault, left where it is as that stop says) and run the check again on the copy; after a known
+   file of the vault missing when step 1 reads them after a marker is found or a
    removal, put the vault back from a copy you trust and check the steering surfaces by hand, as
    step 5 says, before anything else, and run the check again on a copy of its own; after any other
    FAILED, in a container, fix what failed and run the check again, and on a switch route the
