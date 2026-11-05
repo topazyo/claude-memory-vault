@@ -25,7 +25,7 @@ bash .claude/scripts/vault-update.sh --check --from ../template-new
 
 ---
 
-## 1.4.2 — 2026-11-05
+## 1.4.2 — 2026-11-06
 
 A hardening release for the scheduled runners, and a fix for `/resume`. Each runner now clears
 the inherited git settings that pointed git at another repository (with a `WARNING:`), refuses the
@@ -307,9 +307,7 @@ for this release).
   path with none, a reading that control does not let be trusted until one whose control fires is
   used, and a copy on a mapped drive, whose share another host serves (on Windows, a drive that
   `net use` lists in the shell the check runs from; whether a share reached another way is caught
-  stated
-  open), until the copy is made on a
-  local drive), in whose root and whose
+  stated open), until the copy is made on a local drive), in whose root and whose
   `.git`, `.claude/`, `.claude/hooks/` and `.claude/githooks/` an empty marker is put before any
   other write and seen, and then found nowhere in the vault's folder, links not followed, nor in the
   folders the vault's own four resolve to or name, with any shared folder that one names, by a
@@ -504,9 +502,10 @@ for this release).
   `hooksConfig.enabled`. The Aider guide's scheduled config, now kept outside the vault, turns
   Aider's git off (`git: false`) and its lint after a change (`auto-lint: false`), so a pass's Aider
   should neither commit nor run git in the vault (Aider's documentation; not measured for this
-  release); its check makes step 1's opening mount reading on the host before its container starts
-  (inside it the read-only `.claude/` mount would always be listed), adds a canary in the copy's git
-  configuration to the `pre-commit` one, with a
+  release); its check makes step 1's opening mount reading on the host, in the shell the container
+  is started from, before it starts (inside it the read-only `.claude/` mount would always be
+  listed), re-reads the copy as step 1 says before changing anything in it once the check is over,
+  adds a canary in the copy's git configuration to the `pre-commit` one, with a
   control that turns git back on, says that a control fired by a commit alone shows only that Aider
   made no commit, and passes only with the README check's step 5 run in the schedule's container.
   The Copilot, Cursor, Hermes and OpenCode guides keep the hooks out of their containers; those
