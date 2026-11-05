@@ -119,9 +119,10 @@ the vault that is a clone with its own git folder, with the gate enabled there a
 commit. Run it in the container the schedule uses, with only the vault's path swapped for the
 copy's, but without its read-only `.git` mount, so that the check tests `git: false` alone:
 
-1. First, on the host and before you start the container, before any other write into the copy,
-   read the host's own list of mounts for mounts below its root, with its control, as the README's
-   step 1 says (the container keeps a read-only `.claude/` mount below the copy's root, so a reading
+1. First, on the host, in the shell you start the container from, and before you start it, before
+   any other write into the copy, read the host's own list of mounts for mounts below its root, with
+   its control, as the README's step 1 says (the container keeps a read-only `.claude/` mount below
+   the copy's root, so a reading
    made inside it would always list one): one there leaves the check NOT VERIFIED until the copy is
    made at another path with none; a reading its control does not let you trust, until one whose
    control fires is used; and a copy on a mapped drive, whose share another host serves, until the
@@ -131,7 +132,8 @@ copy's, but without its read-only `.git` mount, so that the check tests `git: fa
    that honours no ignore file (which rests on the tool: reasoned), reports no folder it could not
    read and is seen to find each known file that step names, as that step says, with its controls (a
    marker found, or a search that does not find those files or that reports a folder it could not
-   read, leaves the check NOT VERIFIED, with the remedies that step gives), with only the one in the
+   read, leaves the check NOT VERIFIED, or FAILED where that step says, with the remedies that step
+   and the README's step 6 give), with only the one in the
    copy's `.git/` kept. Then see, as the README's step 1 says, with its control, that the copy's
    root and its `.git`, `.claude/`, `.claude/hooks/` and `.claude/githooks/` are each a folder, not
    a file or a link; that they each resolve to a folder outside the vault and outside every folder
@@ -182,7 +184,8 @@ copy's, but without its read-only `.git` mount, so that the check tests `git: fa
    controls in steps 1 to 3 fired, each run in step 4 wrote the probe, `hook-canary` does not exist,
    `git log` shows no commit after step 3's, and step 5 of the README's check, run in the schedule's
    container with all its mounts, gave what the README's step 6 asks of it. If `hook-canary` exists,
-   or `git log` shows a commit after step 3's, the check is FAILED, and
+   `git log` shows a commit after step 3's, or the README's step 1 gives FAILED, the check is
+   FAILED, and
    `VAULT_ALLOW_UNENFORCED_TOOLS` stays unset. A control that did not fire leaves the check NOT
    VERIFIED, never PASS (the README's step 3). The README's step 5, when FAILED or NOT VERIFIED,
    makes this check so too (its NOT VERIFIED: find out why, and run it again). FAILED takes
@@ -192,7 +195,9 @@ copy's, but without its read-only `.git` mount, so that the check tests `git: fa
    row, is the read-only `.git` and `.claude/` mounts below, which step 5 of the README's check
    confirms.
 
-Remove the second canary from the copy's git configuration afterwards. If the scheduled runs do not
+Once the check is over, make the README's step 1 re-read, as for a removal, before you change
+anything in the copy, and change nothing in it where a marker is found in the vault. Remove the
+second canary from the copy's git configuration afterwards. If the scheduled runs do not
 show the rules in the chat, check the absolute `read:` paths.
 
 Run the schedule in a container that blocks the network and mounts only the vault writable, with the

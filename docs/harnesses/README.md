@@ -221,8 +221,9 @@ environment the schedule uses:
    its root, as this step reads it below before a removal, its control included, but in the shell
    the check runs from: one there leaves the check NOT VERIFIED until the copy is made at another
    path with none; a reading its control does not let you trust, until one whose control fires is
-   used; and a copy on a mapped drive, whose share another host serves, until the copy is made on a
-   local drive. Then put an empty file named `copy-marker` in its root and in its `.git/`,
+   used; and a copy on a mapped drive, whose share another host serves (on Windows, a drive
+   `net use` lists; whether a share reached another way is caught stays open), until the copy is
+   made on a local drive. Then put an empty file named `copy-marker` in its root and in its `.git/`,
    `.claude/`, `.claude/hooks/` and `.claude/githooks/`, and see it in each. Then look for
    `copy-marker` by name throughout the vault's folder, with links not followed and no ignore file
    honoured (that rests on the tool you choose: reasoned), and in each folder the vault's `.git`,
@@ -249,22 +250,27 @@ environment the schedule uses:
    lies inside the vault at that folder: remove it there too, by that path, as below. Where the
    marker you put in the copy's root was found in a folder of the vault below its root, see, after
    the removal as below, that this folder is gone: one still there may hold what the copy wrote into
-   the vault, and the check is FAILED (step 6). In every case,
-   then see that each known file this step names still lies in the vault: one missing is a write
-   that reached the vault, and the check is FAILED (step 6): put the vault back from a copy you
+   the vault, and the check is FAILED (step 6): do as step 6 says for it before you start this step
+   again. In every case where a marker was found, then see that each known file this step names
+   still lies in the vault: one missing is a write that reached the vault, and the check is FAILED
+   (step 6): put the vault back from a copy you
    trust and check the steering surfaces by hand, as step 5 says, before anything else; otherwise
    give the copy folders of its own outside the vault (a fresh clone at a path of its own, not a
    link), and start this step again. Whenever you remove a copy (never one that step 5's stop for a
-   marker found in the vault leaves where it is) after a later step or once the check is over,
-   first put `copy-marker` in its root and, where it has one, its `.git/` again, and look for it as
-   this step says. One found in the vault, other than inside a folder you made for the copy there
-   (where you cannot tell, it is not one), shows the path to be the vault's own: remove nothing of
-   it but a link, junction, mount or drive you made for the copy, each as above, and the markers
-   found; then see the known files as above, and, after a later step, do as step 5's stop says for
-   a marker found in the vault. A marker you cannot put or see, or a search you cannot trust as this
-   step says, leaves the copy where it is: remove nothing of it. Otherwise remove the markers and go
-   on as below. Whenever you remove a copy (never one that step 5's stop for a
-   marker found in the vault leaves where it is), here, after a later step or once the check is
+   marker found in the vault leaves where it is) after the folder test or the canary run below,
+   after a later step, or once the check is over, first put `copy-marker` in its root and, where it
+   has one, its `.git/` again, and look for it as this step says. One found in the vault, other than
+   inside a folder you made for the copy there (where you cannot tell, it is not one), shows the
+   path to be the vault's own: remove nothing of it but a link, junction, mount or drive you made
+   for the copy, each as above, and the markers found; then see that each known file this step
+   names still lies in the vault (one missing is FAILED, as above), and, after a later step or once
+   a check that stopped before step 5 is over, do as step 5's stop says for a marker found in the
+   vault. A marker you cannot put or see, or a search you cannot trust as this step says, leaves the
+   copy where it is: remove nothing of it, and make any new copy at another path. Otherwise remove
+   the markers and go on as below, and where the one in its root was found in the vault, see
+   afterwards that the folder it was found in is gone, as above. Whenever you remove a copy (never
+   one that step 5's stop for a marker found in the vault leaves where it is), here, after a later
+   step or once the check is
    over, first read the host's own list of mounts as step 5 reads it, in the shell you
    will remove the copy from, for mounts at or under the copy, its path spelled as step 5 spells the
    paths it compares; trust that reading once the same reading, over a folder that is not itself a
@@ -275,7 +281,8 @@ environment the schedule uses:
    holds the copy, or, for a substituted drive, of the drive its folder lies on (none then lies at
    or under the copy: reasoned; whether the reading would show a folder mount stays open where the
    account cannot make one). Remove nothing of a copy on a mapped drive, whose share another host
-   serves, through the drive (a drive you made for the copy you may still remove, as above).
+   serves, through the drive (a drive you made for the copy you may still remove, as above), and
+   make any new copy on a local drive.
    Unmount each mount at or under the copy that you made, and read the list again to see none there;
    where you cannot make the control, or the reading does not list the control's mount, or another
    mount lies at or under the copy, or you cannot unmount one, or no command passes the control
@@ -711,7 +718,8 @@ environment the schedule uses:
    rule or the guide requires, if the listing or the shell's own list of mounts shows a mount
    writable where step 5 does not allow it, or a mount whose source step 5 does not allow (step 5
    says which), if the harness runs as the superuser, or if a write of this check, other than step
-   1's `copy-marker` and a copy made inside the vault that step 1 removes, reached the vault (a
+   1's `copy-marker`, a copy made inside the vault that step 1 removes and a copy's folder left
+   there (its remedy below), reached the vault (a
    `hook-canary` found where step 1 looks for the marker among them), or if a known file of the
    vault is missing when step 1 reads them after a marker is found or a copy, or a link, junction,
    mount or drive made for one, is removed, or if a copy's folder is still inside the vault after
@@ -747,7 +755,8 @@ environment the schedule uses:
    known file of the vault missing when step 1 reads them after a marker is found or a
    removal, put the vault back from a copy you trust and check the steering surfaces by hand, as
    step 5 says, before anything else, and run the check again on a copy of its own; after a copy's
-   folder left inside the vault, remove it there, by that path, as step 1 says, only where you made
+   folder left inside the vault, remove it there, by that path, as step 1 says (unless step 5's stop
+   for a marker found in the vault left it where it is), only where you made
    that folder for the copy (where you cannot tell, it is not one), otherwise leave it and check it
    by hand, and run the check again on a copy given folders of its own outside the vault; after
    any other
