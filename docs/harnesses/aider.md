@@ -155,8 +155,8 @@ copy's, but without its read-only `.git` mount, so that the check tests `git: fa
    the setting that row names, at a copy of the canary script in the copy's `.claude/hooks/`, by its
    absolute path as the container sees it. Run `git status` in the copy by hand, inside the
    container: `hook-canary` must appear at the copy's root, naming the second canary (look for it as
-   the README's step 1 says: one found where the marker is looked for is FAILED: clean up and give
-   the copy folders of its own, as the README's step 1 says; otherwise the check is NOT VERIFIED
+   the README's step 1 says: one found where the marker is looked for is FAILED: do as the README's
+   step 1 says for one found after its canary run; otherwise the check is NOT VERIFIED
    until it appears at the copy's root: give the copy folders of its own outside the vault, a fresh
    clone and not a link, with an earlier copy removed as the README's step 1 says, and start this
    step again). Delete it.
@@ -199,8 +199,10 @@ copy's, but without its read-only `.git` mount, so that the check tests `git: fa
 
 Once the check is over, make the README's step 1 re-read, as for a removal, before you change
 anything in the copy, and change nothing in it where a marker is found in the vault outside a
-folder you made for the copy, or where you cannot put or see one or cannot trust the search;
-otherwise remove the markers first. Remove the second canary from the copy's git configuration
+folder you made for the copy, or where you cannot put or see one or cannot trust the search (where
+a marker is found there and the check stopped before the README's step 5, also do as that step's
+stop says for a marker found in the vault); otherwise remove the markers first. Remove the second
+canary from the copy's git configuration
 afterwards. If the scheduled runs do not show the rules in the chat, check the absolute `read:`
 paths.
 

@@ -266,7 +266,8 @@ environment the schedule uses:
    for the copy, each as above, and the markers found; then see that each known file this step
    names still lies in the vault (one missing is FAILED, as above), and, during the check or once a
    check that stopped before step 5 is over, do as step 5's stop says for a marker found in the
-   vault (once a check that reached step 5 is over, its verdict stands). A marker you cannot put or
+   vault (once a check that reached step 5 is over, no stop is made, and its verdict stands unless a
+   known file is missing). A marker you cannot put or
    see, or a search you cannot trust as this step says, leaves the copy where it is: remove nothing
    of it, and make any new copy at another path. Otherwise remove
    the markers and go on as below, and where the one in its root was found in the vault, see
@@ -355,7 +356,8 @@ environment the schedule uses:
    If it does not, the check is NOT VERIFIED, never PASS, and `VAULT_ALLOW_UNENFORCED_TOOLS=1` waits
    until it fires. Find out why: step 1 not followed, so a hook reached a script outside the copy,
    or a copy folder is a link and `hook-canary` landed outside the copy's root (look for it as step
-   1 says: one found where step 1 looks for the marker is FAILED; otherwise give the copy folders of
+   1 says: one found where step 1 looks for the marker is FAILED, and you then do as step 1 says for
+   one found after its canary run; otherwise give the copy folders of
    its own, as step 1 says, and start the check again at step 1); no hook configured in the copy
    (OpenCode's plugin and Hermes's snippet are opt-in, so enable the one you use in the copy for
    this run); trust or fingerprints the harness records per hook that differ between the copy and
@@ -750,8 +752,11 @@ environment the schedule uses:
    file or place of that class, found that way, set it outside the vault's mount and clear of every
    such mount in the definition, the image, or the entrypoint or wrapper that sets it, and run the
    check again; after a harness that runs as the superuser, run it as another user and run the check
-   again; after a write that reached the vault, clean up as step 5 says (the vault's hook scripts
-   among the surfaces you check by hand after a `hook-canary`, or a canary in place of one of them,
+   again; after a write that reached the vault, first, for a `hook-canary` or a canary in place of
+   one of the vault's hook scripts found there, do as step 5's stop says for a marker found in the
+   vault (it removes nothing of the copy but what you made for it); then clean up as step 5 says
+   (the vault's hook scripts among the surfaces you check by hand after a `hook-canary`, or a canary
+   in place of one of them,
    found there, any such script put back from a copy you trust, and the copy given folders of its
    own, with an earlier copy removed as step 1 says unless step 5's stop for a marker found in the
    vault left it where it is) and run the check again on the copy given folders of its own; after a
