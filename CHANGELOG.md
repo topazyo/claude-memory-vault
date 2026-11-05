@@ -305,8 +305,10 @@ for this release).
   mounts, read as below, its control included, but in the shell the check runs from, shows none
   before any other write (one there leaving the check not verified until the copy is made at another
   path with none, a reading that control does not let be trusted until one whose control fires is
-  used, and a copy on a mapped drive, whose share another host serves (on Windows, a drive `net use`
-  lists; whether a share reached another way is caught stated open), until the copy is made on a
+  used, and a copy on a mapped drive, whose share another host serves (on Windows, a drive that
+  `net use` lists in the shell the check runs from; whether a share reached another way is caught
+  stated
+  open), until the copy is made on a
   local drive), in whose root and whose
   `.git`, `.claude/`, `.claude/hooks/` and `.claude/githooks/` an empty marker is put before any
   other write and seen, and then found nowhere in the vault's folder, links not followed, nor in the
@@ -351,12 +353,14 @@ for this release).
   copy there (where that cannot be told, it is not one), showing the path to be the vault's own, so
   that nothing of it is removed but a link, junction, mount or drive the owner made for the copy,
   each as above, and the markers found, the known files then seen, one missing failing the check,
-  and, after a later step or once a check that stopped before step 5 is over, that stop followed
-  for a marker found in the vault; a marker that cannot be put or seen, or a search that cannot be
+  and, during the check or once a check that stopped before step 5 is over, that stop followed for
+  a marker found in the vault (once a check that reached step 5 is over, its verdict standing); a
+  marker that cannot be put or seen, or a search that cannot be
   trusted, leaves the copy in place, nothing of it removed and any new copy made at another path;
   otherwise the markers are removed and the removal goes on as below, the folder the root's marker
-  was found in, where that was in the vault, then seen gone; every removal of a copy
-  (never one step 5's stop for a marker found in the vault leaves in place), during the check or
+  was found in, where that was in the vault, then seen gone, one still there failing the check;
+  every removal of a copy (never one the stop in the README's step 5 for a marker found in the vault
+  leaves in place), during the check or
   once it is over, is made only
   after the host's own list of mounts, read as step 5 reads it, in the shell the copy is removed
   from, for mounts at or under the copy, its path spelled as step 5 spells the paths it compares,
@@ -367,9 +371,9 @@ for this release).
   mounted at a folder, once it has shown the volume mounted at the root of the drive that holds the
   copy, or, for a substituted drive, of the drive its folder
   lies on (none then lying at or under the copy: reasoned; a folder mount's reading stated open
-  where none can be made; nothing of a copy on a mapped drive, whose share another host serves,
-  being removed through the drive, though a drive made for the copy may be, as above, any new copy
-  then made on a local drive), shows each mount at or under
+  where none can be made; nothing of a copy on a mapped drive (told as above), whose share another
+  host serves, being removed through the drive, though a drive made for the copy may be, as above,
+  any new copy then made on a local drive), shows each mount at or under
   the copy that the owner made unmounted and none left there (a control that cannot be made or does
   not list, another mount there, one that cannot be unmounted, or no command passing the control
   below leaving the old copy in place, nothing of it removed, and, during the check, sending the new
@@ -383,10 +387,11 @@ for this release).
   with that command; in every case the vault's known files, a sample, seen in place afterwards, one
   missing failing the check, the vault then put back from a copy the owner trusts and its steering
   surfaces checked by hand before anything else; a canary's record found where the marker is looked
-  for fails it, the vault then cleaned up as step 5 says, its hook scripts among the surfaces
-  checked by hand, any a canary replaced put back from a copy the owner trusts, and the copy given
-  folders of its own outside the vault, with an earlier copy removed as above,
-  before the check is run again; once the search has found each known file and no marker, the copy's
+  for fails it, the stop in the README's step 5 for a marker found in the vault then followed
+  (nothing of the copy removed but what the owner made for it), the vault cleaned up as step 5
+  says, its hook scripts among the surfaces checked by hand, any a canary replaced put back from a
+  copy the owner trusts, and the check run again on a copy given folders of its own outside the
+  vault at another path; once the search has found each known file and no marker, the copy's
   markers removed, the one in its `.git/` apart; the marker search does not depend on spelling
   (measured on Windows), while the resolved comparison, on Windows, can read one folder spelled two
   ways as two), the wrapper fires none, where the same wrapper with the measure taken away fires
