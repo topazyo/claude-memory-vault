@@ -352,7 +352,8 @@ for this release).
   that nothing of it is removed but a link, junction, mount or drive the owner made for the copy,
   each as above, and the markers found, the known files then seen, one missing failing the check,
   and, during the check or once a check that stopped before step 5 is over, that stop followed for
-  a marker found in the vault (once a check that reached step 5 is over, its verdict standing); a
+  a marker found in the vault (once a check that reached step 5 is over, no stop made and its
+  verdict standing unless a known file is missing); a
   marker that cannot be put or seen, or a search that cannot be
   trusted, leaves the copy in place, nothing of it removed and any new copy made at another path;
   otherwise the markers are removed and the removal goes on as below, the folder the root's marker
@@ -394,7 +395,8 @@ for this release).
   (measured on Windows), while the resolved comparison, on Windows, can read one folder spelled two
   ways as two), the wrapper fires none, where the same wrapper with the measure taken away fires
   one. A control that fires no canary leaves the check not verified, never passed (a `hook-canary`
-  found where step 1 looks for the marker failing it, and otherwise a copy folder found to be a link
+  found where step 1 looks for the marker failing it, with step 1's route for one found after its
+  canary run then followed, and otherwise a copy folder found to be a link
   sending the check back to step 1 on a copy of its own), and on a switch route the container is
   then the way on, where the check is run again. The check shows that the wrapper, the container
   definition, the switch file and the files they rest on, the home folders of the account the runner
