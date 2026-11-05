@@ -25,7 +25,7 @@ bash .claude/scripts/vault-update.sh --check --from ../template-new
 
 ---
 
-## 1.4.2 — 2026-10-31
+## 1.4.2 — 2026-11-05
 
 A hardening release for the scheduled runners, and a fix for `/resume`. Each runner now clears
 the inherited git settings that pointed git at another repository (with a `WARNING:`), refuses the
@@ -303,8 +303,10 @@ for this release).
   can), the vault's `.git` or, with the commit gate on, its `.claude/`, and the README gives a check
   every recipe must pass: on a scratch copy of the vault, below whose root the host's own list of
   mounts, read as below, its control included, but in the shell the check runs from, shows none
-  before any other write (one there, or a reading that control does not let be trusted, leaving the
-  check not verified until the copy is made at another path with none), in whose root and whose
+  before any other write (one there leaving the check not verified until the copy is made at another
+  path with none, a reading that control does not let be trusted until one whose control fires is
+  used, and a copy on a mapped drive, whose share another host serves, until the copy is made on a
+  local drive), in whose root and whose
   `.git`, `.claude/`, `.claude/hooks/` and `.claude/githooks/` an empty marker is put before any
   other write and seen, and then found nowhere in the vault's folder, links not followed, nor in the
   folders the vault's own four resolve to or name, with any shared folder that one names, by a
@@ -323,31 +325,48 @@ for this release).
   (else the check is not verified: a link test or a count whose control did not show is replaced and
   read again, a search that misses a known file or cannot read a folder is put right and the step
   started again, and otherwise every marker found is removed and the step is started again on a copy
-  of its own at a path of its own, not a link; a marker put in one of the copy's five folders and
-  found in the matching folder of the vault, or a folder that one resolves
+  of its own at a path of its own outside the vault, not a link; a marker put in one of the copy's
+  five folders and found in the matching folder of the vault, or a folder that one resolves
   to or names, shows that folder of the copy to be the vault's own under another path (a link or
   junction at or above it, a mount at or above it, a substituted or mapped drive, another spelling
   of the vault's path, or the vault's own path), at or through which nothing is removed but a link,
   junction, mount or drive at or above the copy's root that the owner made for it, a link or
   junction at one of the copy's four folders, or a mount there the owner made (a link or junction by
   its own name, a mount by unmounting it, a drive by removing it), and nothing more where that
-  folder is the copy's root; where no marker lies in a matching folder, a copy found inside the
+  folder is the copy's root, and otherwise what is left of the copy removed as below; where no
+  marker lies in a matching folder, a copy found inside the
   vault (its root's marker in a folder of the vault below its root, the other four in that folder's
-  own four) is removed there too, by that path; every removal of a copy (never one step 5's stop for
-  a marker found in the vault leaves in place), during the check or once it is over, is made only
+  own four) is removed there too, by that path; where its root's marker was found in a folder of the
+  vault below its root, that folder is seen gone after the removal, one still there, which may hold
+  what the copy wrote into the vault, failing the check and then being removed there, by that path,
+  as the README's step 1 says, only where the owner made it for the copy (where that cannot be told,
+  it is not one), and otherwise left and checked by hand; a removal of a copy (never one step 5's
+  stop for a marker found in the vault leaves in place) after a later step or once the check is
+  over first puts the marker in the copy's root and, where it has one, its `.git/` again and looks
+  for it as step 1 says, one found in the vault, other than inside a folder the owner made for the
+  copy there (where that cannot be told, it is not one), showing the path to be the vault's own, so
+  that nothing of it is removed but a link, junction, mount or drive made for the copy, each as
+  above, and the markers found, the known files then seen and, after a later step, step 5's stop
+  followed for a marker found in the vault, and a marker that cannot be put or seen, or a search
+  that cannot be trusted, leaving the copy in place, nothing of it removed; every removal of a copy
+  (never one step 5's stop for a marker found in the vault leaves in place), during the check or
+  once it is over, is made only
   after the host's own list of mounts, read as step 5 reads it, in the shell the copy is removed
   from, for mounts at or under the copy, its path spelled as step 5 spells the paths it compares,
   and trusted once the same reading over a folder that is not itself a mount and below which the
-  list shows one has listed that mount (on Linux and in WSL, `/sys/fs`, which holds
+  list shows one has listed that mount and, read over that mount's own folder, has listed it as
+  well (on Linux and in WSL, `/sys/fs`, which holds
   `/sys/fs/cgroup`, for one, measured in WSL), or, on Windows, where the list shows no volume
   mounted at a folder, once it has shown the volume mounted at the root of the drive that holds the
   copy, or, for a substituted drive, of the drive its folder
   lies on (none then lying at or under the copy: reasoned; a folder mount's reading stated open
-  where none can be made, and a mapped drive unable to show it), shows each mount at or under
+  where none can be made), shows each mount at or under
   the copy that the owner made unmounted and none left there (a control that cannot be made or does
   not list, another mount there, one that cannot be unmounted, or no command passing the control
-  below leaving the old copy in place, nothing of it removed, and sending the new copy to another
-  path), and then after each link at its root or four folders is removed by its own name (the root's
+  below leaving the old copy in place, nothing of it removed, and, during the check, sending the new
+  copy to another path; nothing of a copy on a mapped drive, whose share another host serves, is
+  removed through the drive, though a drive made for the copy may still be removed, as above), and
+  then after each link at its root or four folders is removed by its own name (the root's
   alone, where the root is one; the two hook folders' only where `.claude/` is not one), never by a
   path ending in `/` or `\` or through it, with a command first seen, spelled as it will be used, to
   remove a link of each kind the account can make (what it does to another kind stated open), made
@@ -358,7 +377,7 @@ for this release).
   surfaces checked by hand before anything else; a canary's record found where the marker is looked
   for fails it, the vault then cleaned up as step 5 says, its hook scripts among the surfaces
   checked by hand, any a canary replaced put back from a copy the owner trusts, and the copy given
-  folders of its own, with an earlier copy removed as above,
+  folders of its own outside the vault, with an earlier copy removed as above,
   before the check is run again; once the search has found each known file and no marker, the copy's
   markers removed, the one in its `.git/` apart; the marker search does not depend on spelling
   (measured on Windows), while the resolved comparison, on Windows, can read one folder spelled two
@@ -492,9 +511,10 @@ for this release).
   their home folder inside the container (reasoned). That closes only the next run: within a run the
   container's own filesystem stays writable, so the harness runs as a user other than the superuser,
   and the Cursor guide mounts files holding no hooks read-only over its two user-level hook files,
-  each of them, and each folder above it up to the home folder, that folder included, a file or
-  folder in the container, not a link (the README's step 5 fails one that is a link), because Cursor
-  documents that it reloads its config files, so a hook file a pass wrote there could load within
+  as the README's container rule does over Hermes's configuration where the owner mounts it, each of
+  them, and each folder above it up to the home folder, that folder included, a file or folder in
+  the container, not a link (the README's step 5 fails one that is a link); Cursor documents that
+  it reloads its config files, so a hook file a pass wrote there could load within
   the same run, as could one a pass wrote at the vault's `.cursor/` or `.claude/` where that name is
   a link, which its read-only mount does not cover (a layout step 5 fails; reasoned); Cursor's other
   home configuration, the folders that hold its two files included (step 5 reads only that they are
@@ -911,9 +931,10 @@ for this release).
    container (OpenCode mounts all of `.opencode/` and `opencode.json` read-only too), and mount an
    empty file read-only over its `.env` (if the vault has none, create an empty one there yourself
    first); a Cursor schedule also mounts, read-only, files holding no hooks over
-   `~/.cursor/hooks.json` and `~/.claude/settings.json` in the container's home, each of
-   them, and each folder above it up to the home folder, that folder included, a file or folder in
-   the container, not a link; a Pi schedule mounts `.claude/` and `.git` read-only as well, and
+   `~/.cursor/hooks.json` and `~/.claude/settings.json` in the container's home, and a Hermes
+   schedule over its configuration where the owner mounts it, each of them, and each folder above it
+   up to the home folder, that folder included, a file or folder in the container, not a link; a Pi
+   schedule mounts `.claude/` and `.git` read-only as well, and
    empty files read-only over its `.env` files (if the vault has no `.env`, create an empty one
    there yourself first), and runs the check with the vault's extension as its positive control; an
    Aider schedule moves `aider-scheduled.conf.yml` outside the vault with absolute `read:` paths,
