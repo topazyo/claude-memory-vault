@@ -221,8 +221,9 @@ environment the schedule uses:
    its root, as this step reads it below before a removal, its control included, but in the shell
    the check runs from: one there leaves the check NOT VERIFIED until the copy is made at another
    path with none; a reading its control does not let you trust, until one whose control fires is
-   used; and a copy on a mapped drive, whose share another host serves (on Windows, a drive
-   `net use` lists; whether a share reached another way is caught stays open), until the copy is
+   used; and a copy on a mapped drive, whose share another host serves (on Windows, a drive that
+   `net use` lists in the shell the check runs from; whether a share reached another way is caught
+   stays open), until the copy is
    made on a local drive. Then put an empty file named `copy-marker` in its root and in its `.git/`,
    `.claude/`, `.claude/hooks/` and `.claude/githooks/`, and see it in each. Then look for
    `copy-marker` by name throughout the vault's folder, with links not followed and no ignore file
@@ -263,14 +264,15 @@ environment the schedule uses:
    inside a folder you made for the copy there (where you cannot tell, it is not one), shows the
    path to be the vault's own: remove nothing of it but a link, junction, mount or drive you made
    for the copy, each as above, and the markers found; then see that each known file this step
-   names still lies in the vault (one missing is FAILED, as above), and, after a later step or once
-   a check that stopped before step 5 is over, do as step 5's stop says for a marker found in the
-   vault. A marker you cannot put or see, or a search you cannot trust as this step says, leaves the
-   copy where it is: remove nothing of it, and make any new copy at another path. Otherwise remove
+   names still lies in the vault (one missing is FAILED, as above), and, during the check or once a
+   check that stopped before step 5 is over, do as step 5's stop says for a marker found in the
+   vault (once a check that reached step 5 is over, its verdict stands). A marker you cannot put or
+   see, or a search you cannot trust as this step says, leaves the copy where it is: remove nothing
+   of it, and make any new copy at another path. Otherwise remove
    the markers and go on as below, and where the one in its root was found in the vault, see
-   afterwards that the folder it was found in is gone, as above. Whenever you remove a copy (never
-   one that step 5's stop for a marker found in the vault leaves where it is), here, after a later
-   step or once the check is
+   afterwards that the folder it was found in is gone (one still there is FAILED: step 6). Whenever
+   you remove a copy (never one that step 5's stop for a marker found in the vault leaves where it
+   is), here, after the folder test or the canary run, after a later step or once the check is
    over, first read the host's own list of mounts as step 5 reads it, in the shell you
    will remove the copy from, for mounts at or under the copy, its path spelled as step 5 spells the
    paths it compares; trust that reading once the same reading, over a folder that is not itself a
@@ -280,9 +282,9 @@ environment the schedule uses:
    volume mounted at a folder, once it has shown the volume mounted at the root of the drive that
    holds the copy, or, for a substituted drive, of the drive its folder lies on (none then lies at
    or under the copy: reasoned; whether the reading would show a folder mount stays open where the
-   account cannot make one). Remove nothing of a copy on a mapped drive, whose share another host
-   serves, through the drive (a drive you made for the copy you may still remove, as above), and
-   make any new copy on a local drive.
+   account cannot make one). Remove nothing of a copy on a mapped drive (told as above), whose share
+   another host serves, through the drive (a drive you made for the copy you may still remove, as
+   above), and make any new copy on a local drive.
    Unmount each mount at or under the copy that you made, and read the list again to see none there;
    where you cannot make the control, or the reading does not list the control's mount, or another
    mount lies at or under the copy, or you cannot unmount one, or no command passes the control
@@ -334,10 +336,11 @@ environment the schedule uses:
    Keep each canary executable (`chmod +x`), run it once by hand from the copy's root, as its hook's
    own command line spells it, and look for `hook-canary` at the copy's root and, by name, where you
    looked for the marker. One found where you looked for the marker is a write that reached the
-   vault: the check is FAILED (step 6), so clean up as step 5 says, with the vault's hook scripts
-   among the surfaces you check by hand, and give the copy folders of its own outside the vault (a
-   fresh clone, not a link; an earlier copy removed as this step says above) before you run the
-   check again. Otherwise, one that does not appear at the copy's root leaves the check NOT VERIFIED
+   vault: the check is FAILED (step 6), so do as step 5's stop says for a marker found in the vault,
+   which removes nothing of the copy but what you made for it, then clean up as step 5 says, with
+   the vault's hook scripts among the surfaces you check by hand, and give the copy folders of its
+   own outside the vault (a fresh clone at another path, not a link) before you run the check
+   again. Otherwise, one that does not appear at the copy's root leaves the check NOT VERIFIED
    until it does: give the copy folders of its own outside the vault (a fresh clone, not a link; an
    earlier copy removed as this step says above), and start this step again. Delete `hook-canary`
    again. The resolved comparison above runs before step 5's spelling controls, so on Windows it can

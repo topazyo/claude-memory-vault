@@ -125,9 +125,11 @@ copy's, but without its read-only `.git` mount, so that the check tests `git: fa
    the copy's root, so a reading
    made inside it would always list one): one there leaves the check NOT VERIFIED until the copy is
    made at another path with none; a reading its control does not let you trust, until one whose
-   control fires is used; and a copy on a mapped drive, whose share another host serves, until the
-   copy is made on a local drive. Then run the README's step 1 identity control: an empty
-   `copy-marker` put in the copy's root and in its `.git/`, `.claude/`, `.claude/hooks/` and
+   control fires is used; and a copy on a mapped drive, whose share another host serves (on
+   Windows, a drive that `net use` lists in that shell; whether a share reached another way is
+   caught stays open), until the copy is made on a local drive. Then run the README's step 1
+   identity control: an empty `copy-marker` put in the copy's root and in its `.git/`, `.claude/`,
+   `.claude/hooks/` and
    `.claude/githooks/`, seen in each, and found nowhere that step looks in the vault, by a search
    that honours no ignore file (which rests on the tool: reasoned), reports no folder it could not
    read and is seen to find each known file that step names, as that step says, with its controls (a
@@ -196,9 +198,11 @@ copy's, but without its read-only `.git` mount, so that the check tests `git: fa
    confirms.
 
 Once the check is over, make the README's step 1 re-read, as for a removal, before you change
-anything in the copy, and change nothing in it where a marker is found in the vault. Remove the
-second canary from the copy's git configuration afterwards. If the scheduled runs do not
-show the rules in the chat, check the absolute `read:` paths.
+anything in the copy, and change nothing in it where a marker is found in the vault outside a
+folder you made for the copy, or where you cannot put or see one or cannot trust the search;
+otherwise remove the markers first. Remove the second canary from the copy's git configuration
+afterwards. If the scheduled runs do not show the rules in the chat, check the absolute `read:`
+paths.
 
 Run the schedule in a container that blocks the network and mounts only the vault writable, with the
 vault's `.claude/` (its settings files mounted over it from copies without their hooks) and `.git`
