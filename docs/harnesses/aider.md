@@ -119,7 +119,13 @@ the vault that is a clone with its own git folder, with the gate enabled there a
 commit. Run it in the container the schedule uses, with only the vault's path swapped for the
 copy's, but without its read-only `.git` mount, so that the check tests `git: false` alone:
 
-1. First, before any other write into the copy, run the README's step 1 identity control: an empty
+1. First, on the host and before you start the container, before any other write into the copy,
+   read the host's own list of mounts for mounts below its root, with its control, as the README's
+   step 1 says (the container keeps a read-only `.claude/` mount below the copy's root, so a reading
+   made inside it would always list one): one there leaves the check NOT VERIFIED until the copy is
+   made at another path with none; a reading its control does not let you trust, until one whose
+   control fires is used; and a copy on a mapped drive, whose share another host serves, until the
+   copy is made on a local drive. Then run the README's step 1 identity control: an empty
    `copy-marker` put in the copy's root and in its `.git/`, `.claude/`, `.claude/hooks/` and
    `.claude/githooks/`, seen in each, and found nowhere that step looks in the vault, by a search
    that honours no ignore file (which rests on the tool: reasoned), reports no folder it could not
@@ -168,8 +174,10 @@ copy's, but without its read-only `.git` mount, so that the check tests `git: fa
    git on, Aider would find the repository dirty), and run the wrapper with the scheduled config on
    each probe prompt in turn, deleting the probe with `rm` between them.
 5. Look for `hook-canary` first, as in step 2 (one found where step 1 looks for the marker is
-   FAILED). PASS only if step 1's identity control found no marker where it looks, by a search that
-   honours no ignore file (which rests on the tool: reasoned), reports no folder it could not read
+   FAILED). PASS only if step 1's reading before any write found no mount below the copy's root,
+   trusted by its control, on a copy not on a mapped drive, its identity control found no marker
+   where it looks, by a search that honours no ignore file (which rests on the tool: reasoned),
+   reports no folder it could not read
    and is seen to find the known files, as the README's step 1 says, its three conditions held, the
    controls in steps 1 to 3 fired, each run in step 4 wrote the probe, `hook-canary` does not exist,
    `git log` shows no commit after step 3's, and step 5 of the README's check, run in the schedule's
