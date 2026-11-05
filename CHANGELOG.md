@@ -305,7 +305,8 @@ for this release).
   mounts, read as below, its control included, but in the shell the check runs from, shows none
   before any other write (one there leaving the check not verified until the copy is made at another
   path with none, a reading that control does not let be trusted until one whose control fires is
-  used, and a copy on a mapped drive, whose share another host serves, until the copy is made on a
+  used, and a copy on a mapped drive, whose share another host serves (on Windows, a drive `net use`
+  lists; whether a share reached another way is caught stated open), until the copy is made on a
   local drive), in whose root and whose
   `.git`, `.claude/`, `.claude/hooks/` and `.claude/githooks/` an empty marker is put before any
   other write and seen, and then found nowhere in the vault's folder, links not followed, nor in the
@@ -338,17 +339,23 @@ for this release).
   vault (its root's marker in a folder of the vault below its root, the other four in that folder's
   own four) is removed there too, by that path; where its root's marker was found in a folder of the
   vault below its root, that folder is seen gone after the removal, one still there, which may hold
-  what the copy wrote into the vault, failing the check and then being removed there, by that path,
-  as the README's step 1 says, only where the owner made it for the copy (where that cannot be told,
-  it is not one), and otherwise left and checked by hand; a removal of a copy (never one step 5's
-  stop for a marker found in the vault leaves in place) after a later step or once the check is
-  over first puts the marker in the copy's root and, where it has one, its `.git/` again and looks
-  for it as step 1 says, one found in the vault, other than inside a folder the owner made for the
+  what the copy wrote into the vault, failing the check, with step 6's remedy made before the step
+  is started again: removed there, by that path, as the README's step 1 says (unless the stop in the
+  README's step 5 for a marker found in the vault left it in place), only where the owner made it
+  for the copy (where that cannot be told, it is not one), and otherwise left and checked by hand,
+  the check then run again on a copy given folders of its own outside the vault; a removal of a copy
+  (never one the stop in the README's step 5 for a marker found in the vault leaves in place) after
+  the folder test or the canary run, after a later step, or once the check is over first puts the
+  marker in the copy's root and, where it has one, its `.git/` again and looks for it as the
+  README's step 1 says, one found in the vault, other than inside a folder the owner made for the
   copy there (where that cannot be told, it is not one), showing the path to be the vault's own, so
-  that nothing of it is removed but a link, junction, mount or drive made for the copy, each as
-  above, and the markers found, the known files then seen and, after a later step, step 5's stop
-  followed for a marker found in the vault, and a marker that cannot be put or seen, or a search
-  that cannot be trusted, leaving the copy in place, nothing of it removed; every removal of a copy
+  that nothing of it is removed but a link, junction, mount or drive the owner made for the copy,
+  each as above, and the markers found, the known files then seen, one missing failing the check,
+  and, after a later step or once a check that stopped before step 5 is over, that stop followed
+  for a marker found in the vault; a marker that cannot be put or seen, or a search that cannot be
+  trusted, leaves the copy in place, nothing of it removed and any new copy made at another path;
+  otherwise the markers are removed and the removal goes on as below, the folder the root's marker
+  was found in, where that was in the vault, then seen gone; every removal of a copy
   (never one step 5's stop for a marker found in the vault leaves in place), during the check or
   once it is over, is made only
   after the host's own list of mounts, read as step 5 reads it, in the shell the copy is removed
@@ -360,12 +367,13 @@ for this release).
   mounted at a folder, once it has shown the volume mounted at the root of the drive that holds the
   copy, or, for a substituted drive, of the drive its folder
   lies on (none then lying at or under the copy: reasoned; a folder mount's reading stated open
-  where none can be made), shows each mount at or under
+  where none can be made; nothing of a copy on a mapped drive, whose share another host serves,
+  being removed through the drive, though a drive made for the copy may be, as above, any new copy
+  then made on a local drive), shows each mount at or under
   the copy that the owner made unmounted and none left there (a control that cannot be made or does
   not list, another mount there, one that cannot be unmounted, or no command passing the control
   below leaving the old copy in place, nothing of it removed, and, during the check, sending the new
-  copy to another path; nothing of a copy on a mapped drive, whose share another host serves, is
-  removed through the drive, though a drive made for the copy may still be removed, as above), and
+  copy to another path), and
   then after each link at its root or four folders is removed by its own name (the root's
   alone, where the root is one; the two hook folders' only where `.claude/` is not one), never by a
   path ending in `/` or `\` or through it, with a command first seen, spelled as it will be used, to
@@ -491,7 +499,9 @@ for this release).
   `hooksConfig.enabled`. The Aider guide's scheduled config, now kept outside the vault, turns
   Aider's git off (`git: false`) and its lint after a change (`auto-lint: false`), so a pass's Aider
   should neither commit nor run git in the vault (Aider's documentation; not measured for this
-  release); its check adds a canary in the copy's git configuration to the `pre-commit` one, with a
+  release); its check makes step 1's opening mount reading on the host before its container starts
+  (inside it the read-only `.claude/` mount would always be listed), adds a canary in the copy's git
+  configuration to the `pre-commit` one, with a
   control that turns git back on, says that a control fired by a commit alone shows only that Aider
   made no commit, and passes only with the README check's step 5 run in the schedule's container.
   The Copilot, Cursor, Hermes and OpenCode guides keep the hooks out of their containers; those
@@ -511,12 +521,13 @@ for this release).
   their home folder inside the container (reasoned). That closes only the next run: within a run the
   container's own filesystem stays writable, so the harness runs as a user other than the superuser,
   and the Cursor guide mounts files holding no hooks read-only over its two user-level hook files,
-  as the README's container rule does over Hermes's configuration where the owner mounts it, each of
-  them, and each folder above it up to the home folder, that folder included, a file or folder in
-  the container, not a link (the README's step 5 fails one that is a link); Cursor documents that
-  it reloads its config files, so a hook file a pass wrote there could load within
-  the same run, as could one a pass wrote at the vault's `.cursor/` or `.claude/` where that name is
-  a link, which its read-only mount does not cover (a layout step 5 fails; reasoned); Cursor's other
+  and a Hermes schedule over its configuration where the owner mounts it (the README's container
+  rule), each of them, and each folder above it up to the home folder, that folder included, a file
+  or folder in the container, not a link (the README's step 5 fails one that is a link); because
+  Cursor documents that it reloads its config files, a hook file a pass wrote over one of its two
+  could load within the same run, as could one a pass wrote at the vault's `.cursor/` or `.claude/`
+  where that name is a link, which its read-only mount does not cover (a layout step 5 fails;
+  reasoned); Cursor's other
   home configuration, the folders that hold its two files included (step 5 reads only that they are
   not links), Copilot's `~/.copilot/`, Hermes's configuration where it is not mounted read-only and
   the folders that hold it where it is, any other home configuration whose load timing no guide
