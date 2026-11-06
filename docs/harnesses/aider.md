@@ -207,12 +207,18 @@ Once the check is over, before you change anything in the copy, make the README'
 as for a removal, on the host, through the path you will change the copy by and in the shell you
 will change it from. Where a marker is found in the vault other than inside a folder you made for
 the copy (where you cannot tell, it is not one), change nothing in the copy but the markers found,
-which you remove; see the known files as that step says (one missing is FAILED), and, where the
-check stopped before the README's step 5, do as that step's stop says for a marker found in the
-vault, or, where it reached that step, look in the vault by hand as the README's step 1 says for
-that case. Where you cannot put or see a marker, or cannot trust the search, change nothing in it.
-Otherwise remove the markers, and then the second canary. If the scheduled runs do not show the
-rules in the chat, check the absolute `read:` paths.
+which you remove, and the check is FAILED (the README's step 6): see the known files as that step
+says; check the steering surfaces by hand, without git, before any git command, as
+`docs/setup.md`'s `UNVERIFIED` troubleshooting row says, since a look by name cannot show the
+second canary; where the check stopped before the README's step 5, do as that step's stop says for
+a marker found in the vault, or, where it reached that step, look in the vault by hand as the
+README's step 1 says for that case; and in either case look in the vault by hand for what this
+guide's steps 1 to 4 wrote (the copy of the canary script in `.claude/hooks/`, the prompt files,
+and the notes steps 2 and 4 changed, compared with a copy you trust; a commit is not seen without
+git). Where you cannot put or see a marker, or cannot trust the search, change nothing in it.
+Otherwise remove the markers, and then the second canary from the copy's git configuration, with
+the copy of the canary script it points at in the copy's `.claude/hooks/`. If the scheduled runs
+do not show the rules in the chat, check the absolute `read:` paths.
 
 Run the schedule in a container that blocks the network and mounts only the vault writable, with the
 vault's `.claude/` (its settings files mounted over it from copies without their hooks) and `.git`

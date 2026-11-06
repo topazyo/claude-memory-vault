@@ -236,7 +236,13 @@ environment the schedule uses:
    `20-projects/_logs/templates/medium-term-project-log.md`); a search that does not find each of
    them, or that reports a folder it could not read (read its errors), leaves the check NOT
    VERIFIED: make such a folder readable, or move it out of the vault, and start this step again. A
-   marker found leaves the check NOT VERIFIED: remove every marker found where you looked. Where the
+   marker found leaves the check NOT VERIFIED: remove every marker found where you looked. Wherever
+   the marker you put in the copy's root was found in a folder of the vault below its root, remove
+   nothing of that folder, by any branch of this step, a link or junction in it included, but the
+   markers found, unless that folder is, or lies inside, a folder you made for the copy (where you
+   cannot tell, it is not one): there remove nothing of the copy but a link, junction, mount or
+   drive at or above its root that you made for it, each as the next sentence says, and the check
+   is FAILED (step 6). Where the
    marker you put in one of the copy's five folders (its root, `.git/`, `.claude/`,
    `.claude/hooks/`, `.claude/githooks/`) was found in the matching folder of the vault (or a folder
    that one resolves to or names), that folder of the copy is the vault's own under another path (a
@@ -246,16 +252,14 @@ environment the schedule uses:
    junction at one of the copy's own four folders, or a mount there that you made (a link or
    junction by its own name, as below; a mount by unmounting it; a drive by removing it); where that
    folder is the copy's root, remove nothing more, and otherwise remove what is left of the copy as
-   below. Remove any other copy as below, but where the marker you put in its root was found in a
-   folder of the vault below its root that you did not make for the copy (where you cannot tell,
-   you did not), remove nothing of that folder, and the check is FAILED (step 6); where no marker
-   was found in a matching folder, and the
+   below. Remove any other copy as below; where no marker was found in a matching folder, and the
    one you put in the copy's root was found in a folder of the vault below its root, and the other
    four in that folder's `.git/`, `.claude/`, `.claude/hooks/` and `.claude/githooks/`, the copy
-   lies inside the vault at that folder: remove it there too, by that path, as below, only where you
-   made that folder for the copy (where you cannot tell, it is not one); otherwise remove nothing of
-   that folder, and nothing of the copy but a link, junction, mount or drive you made for it, each
-   as above, and the check is FAILED (step 6). Where the marker you put in the copy's root was found
+   lies inside the vault at that folder: remove it there too, by that path, as below, only where
+   that folder is, or lies inside, a folder you made for the copy (where you cannot tell, it is not
+   one); otherwise remove nothing of that folder but the markers found, and nothing of the copy but
+   a link, junction, mount or drive you made for it, each as above, and the check is FAILED (step
+   6). Where the marker you put in the copy's root was found
    in a folder of the vault below its root, see, after
    the removal as below, that this folder is gone: one still there may hold what the copy wrote into
    the vault, and the check is FAILED (step 6): do as step 6 says for it before you start this step
@@ -277,7 +281,8 @@ environment the schedule uses:
    vault (once a check that reached step 5 is over, no stop is made: look in the vault by hand,
    without git, as that stop says, for `hook-canary` where this step looks for the marker, for the
    rest of what steps 1 to 4 wrote and for what step 5 wrote (its control files and any file whose
-   name starts with `probe-ro`); one found is FAILED (step 6), and the copy is left where it is;
+   name starts with `probe-ro`); one found is FAILED (step 6), and the copy is left where it is
+   (nothing of it removed but what you made for it, as above);
    otherwise its verdict stands unless a known file is missing). A marker you cannot put or
    see, or a search you cannot trust as this step says, leaves the copy where it is: remove nothing
    of it, and make any new copy at another path. Otherwise remove
