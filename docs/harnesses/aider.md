@@ -220,7 +220,8 @@ changed, compared with a copy you trust, made before the check began and kept ou
 every copy; a commit is not seen without git). These looks leave the check FAILED: put each note and
 each other file the check changed back from the copy you trust, its current form first moved out of
 the vault and every copy, never removing it (nothing in a folder the README's step 1 sentence that
-begins "Wherever" keeps, which you check by hand); clean up the rest of what they find through the
+begins "Wherever" keeps, which you check by hand, and, where you have no copy you trust, put back
+and move nothing, as the README's step 6 says); clean up the rest of what they find through the
 vault's own path, never the copy's, as the README's step 6 says, and run the check again on a copy
 given folders of its own outside the vault at another path. Where you cannot put or see a marker, or
 cannot trust the search, change nothing in it. Otherwise remove the markers, and then the second

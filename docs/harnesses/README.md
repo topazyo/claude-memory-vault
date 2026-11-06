@@ -285,16 +285,17 @@ environment the schedule uses:
    what steps 1 to 4 wrote and for what step 5 wrote (its control files, any file whose name starts
    with `probe-ro`, and what its passes wrote or changed, compared with a copy you trust, made
    before the check began and kept outside the vault and every copy (where you have none, the check
-   is FAILED); where you cannot tell whether a file is the check's, it is the check's for the
-   verdict, and step 6 says what is done with it; a commit is not seen without git); one found is
-   FAILED (step 6), and the copy is left where it is (nothing of it removed but what you made for
-   it, as above); otherwise its verdict stands unless a known file is missing, you have no copy you
-   trust made before the check began, or the sentence that begins "Wherever" applies (FAILED, as
-   each says). A marker you cannot put or see, or a search you cannot trust as this step says,
-   leaves the copy where it is: remove nothing of it, and make any new copy at another path.
-   Otherwise remove the markers and go on as below, and where the one in its root was found in the
-   vault, see afterwards that the folder it was found in is gone (one still there is FAILED: step
-   6). Whenever you remove a copy (never one that step 5's stop for a marker found in the vault
+   is FAILED, and step 6 says what to do then); where you cannot tell whether a file is the check's,
+   it is the check's for the verdict, and step 6 says what is done with it; a commit is not seen
+   without git); one found is FAILED (step 6), and the copy is left where it is (nothing of it
+   removed but what you made for it, as above); otherwise its verdict stands unless a known file is
+   missing, you have no copy you trust made before the check began, or the sentence that begins
+   "Wherever" applies (FAILED, as each says). A marker you cannot put or see, or a search you cannot
+   trust as this step says, leaves the copy where it is: remove nothing of it, and make any new copy
+   at another path. Otherwise remove the markers and go on as below, and where the one in its root
+   was found in the vault, see afterwards that the folder it was found in is gone (one still there
+   is FAILED: step 6). Whenever you remove a copy (never one that step 5's stop for a marker found
+   in the vault
    leaves where it is), here, after the folder test or the canary run, after a later step or once
    the check is over, first read the host's own list of mounts as step 5 reads it, in the shell you
    will remove the copy from, for mounts at or under the copy, its path spelled as step 5 spells the
@@ -779,26 +780,31 @@ environment the schedule uses:
    one of the vault's hook scripts found there, do as step 5's stop says for a marker found in the
    vault (it removes nothing of the copy but what you made for it); then clean up as step 5 says
    (the vault's hook scripts among the surfaces you check by hand after a `hook-canary`, or a canary
-   in place of one of them, found there, any such script put back from a copy you trust, and the
-   copy given folders of its own, with an earlier copy removed as step 1 says unless step 5's stop
-   for a marker found in the vault, or step 1's re-read, left it where it is); in that clean-up, and
-   wherever step 5 itself says to remove what it wrote, put any file of the vault the check changed
-   back from a copy you trust, never removing it, its current form first moved out of the vault and
-   every copy, use `rm` only on a file you know the check wrote, and move any file you cannot tell
-   outside the vault and every copy, never deleting it (where you have no copy you trust, put back
-   and move nothing: list what the look found, check it by hand, `rm` only what you know the check
-   wrote, and make such a copy before you run the check again); then run the check again on the copy
-   given folders of its own outside the vault at another path; after a known file of the vault
-   missing when step 1 reads them after a marker is found or a
-   removal, put the vault back from a copy you trust and check the steering surfaces by hand, as
-   step 5 says, before anything else, and run the check again on a copy of its own; after a copy's
-   folder left inside the vault, remove it there, by that path, as step 1 says (unless step 5's stop
-   for a marker found in the vault, or step 1's re-read, left it where it is), only where that
-   folder is, or lies inside, a folder you made for the copy (where you cannot tell, it is not one),
+   in place of one of them, found there, any such script put back from a copy you trust, made before
+   the check began, and the copy given folders of its own, with an earlier copy removed as step 1
+   says unless step 5's stop for a marker found in the vault, or step 1's re-read, left it where it
+   is); in that clean-up, and wherever step 5 itself says to remove what it wrote, put any file of
+   the vault the check changed back from a copy you trust, made before the check began, never
+   removing it, its current form first moved out of the vault and every copy, use `rm` only on a
+   file you know the check wrote, and move any file you cannot tell outside the vault and every
+   copy, never deleting it, but put back, move and remove nothing in a folder step 1's sentence that
+   begins "Wherever" keeps but the markers found, and check that folder by hand (where you have no
+   such copy, put back and move nothing, the `rm` limit above still holding: list what was
+   found and check each file of it by hand, and only once each is settled make such a copy, kept
+   outside the vault and every copy, before you run the check again, listing beside it any file you
+   still cannot tell, never taken as the owner's); then run the check again on the copy given
+   folders of its own outside the vault at another path; after a known file of the vault missing
+   when step 1 reads them after a marker is found or a removal, put the vault back from a copy you
+   trust and check the steering surfaces by hand, as step 5 says, before anything else, and run the
+   check again on a copy of its own; after a copy's folder left inside the vault, remove it there,
+   by that path, as step 1 says (unless step 5's stop for a marker found in the vault, or step 1's
+   re-read, left it where it is), only where that folder is, or lies inside, a folder you made for
+   the copy (where you cannot tell, it is not one),
    otherwise leave it and check it by hand, and run the check again on a copy given folders of its
-   own outside the vault; after
-   any other
-   FAILED, in a container, fix what failed and run the check again, and on a switch route the
+   own outside the vault; after a FAILED for having no copy you trust made before the check began,
+   where the look found nothing else, make such a copy, kept outside the vault and every copy, and
+   run the check again; after any other FAILED, in a container, fix what failed and run the check
+   again, and on a switch route the
    container is the way on. FAILED takes precedence: any of those is FAILED whatever else a run
    shows. A step 5 that is NOT VERIFIED leaves the check NOT VERIFIED, and so does any other result
    short of PASS.
