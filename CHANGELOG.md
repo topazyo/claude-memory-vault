@@ -529,9 +529,11 @@ for this release).
   is started from, before it starts (inside it the read-only `.claude/` mount would always be
   listed), carries step 1's FAILED outcomes, a canary's record found where the marker is looked for
   among them, re-reads the copy as step 1 says before changing anything in it once the check is
-  over (one that finds the path to be the vault's own failing the check, the known files then seen,
-  the steering surfaces checked by hand, and the vault looked at for what the README's step 5 stop
-  or step 1 names and for what the check's own steps wrote, the check then run again on a copy given
+  over (one that finds the path to be the vault's own failing the check, nothing of the copy then
+  changed, then or later, but the markers found, nor removed but what the owner made for it, the
+  known files then seen, the steering surfaces checked by hand, and the vault looked at for what the
+  README's step 5 stop or step 1 names and for what the check's own steps wrote, what is found
+  cleaned up in the vault by its own path, the check then run again on a copy given
   folders of its own outside the vault at another path; one that cannot put or see a marker, or
   trust its search, changing nothing; and
   the second canary removed only otherwise), adds a canary in the copy's git configuration to the
