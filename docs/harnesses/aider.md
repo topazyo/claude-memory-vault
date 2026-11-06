@@ -218,7 +218,8 @@ that reached that step is over, and for what this guide's steps 1 to 4 wrote (th
 canary script in `.claude/hooks/`, the prompt files, the copies of the wrapper and of the scheduled
 config where you put them in the copy, and the notes steps 2 and 4 changed, compared
 with a copy you trust; a commit is not seen without git). These looks leave the check FAILED:
-clean up what they find as the README's step 6 says, and run the check again on a copy given
+clean up what they find, in the vault by its own path, as the README's step 6 says, and run the
+check again on a copy given
 folders of its own outside the vault at another path. Where you cannot put or see a marker, or
 cannot trust the search, change nothing in it.
 Otherwise remove the markers, and then the second canary from the copy's git configuration, with

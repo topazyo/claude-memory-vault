@@ -347,7 +347,8 @@ for this release).
   folder of the vault it lies at is, or lies inside, a folder the owner made for the copy (where
   that cannot be told, it is not one), and
   otherwise nothing of that folder is removed but the markers found, nor anything of the copy but
-  what the clause before allows, and the check fails; where
+  what the clause on a folder of the vault the owner did not make for the copy allows, and the check
+  fails; where
   its root's marker was found in a folder of the
   vault below its root, that folder is seen gone after the removal, one still there, which may hold
   what the copy wrote into the vault, failing the check, with step 6's remedy made before the step
@@ -537,7 +538,8 @@ for this release).
   `pre-commit` one, with a control that turns git back on, says that a control fired by a commit
   alone shows only that Aider made no commit, and passes only where that opening reading, trusted
   by its control, found no mount below the copy's root, on a copy not on a mapped drive, its
-  identity control found no marker, and the README check's step 5 ran in the schedule's container.
+  identity control found no marker, and the README check's step 5, run in the schedule's container,
+  passed.
   The Copilot, Cursor, Hermes and OpenCode guides keep the hooks out of their containers; those
   containers, and the Aider and Pi ones, now also mount the vault's `.git` read-only, and `.claude/`
   read-only from the vault's own folder, with its `settings.json`, and any `settings.local.json`,
