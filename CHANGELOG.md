@@ -530,8 +530,9 @@ for this release).
   among them, re-reads the copy as step 1 says before changing anything in it once the check is
   over (one that finds the path to be the vault's own failing the check, the known files then seen,
   the steering surfaces checked by hand, and the vault looked at for what the README's step 5 stop
-  or step 1 names and for what the check's own steps wrote, the check then run again on a copy at
-  another path; one that cannot put or see a marker, or trust its search, changing nothing; and
+  or step 1 names and for what the check's own steps wrote, the check then run again on a copy given
+  folders of its own outside the vault at another path; one that cannot put or see a marker, or
+  trust its search, changing nothing; and
   the second canary removed only otherwise), adds a canary in the copy's git configuration to the
   `pre-commit` one, with a control that turns git back on, says that a control fired by a commit
   alone shows only that Aider made no commit, and passes only where that opening reading, trusted
