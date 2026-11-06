@@ -338,15 +338,15 @@ for this release).
   its own name, a mount by unmounting it, a drive by removing it), and nothing more where that
   folder is the copy's root, and otherwise what is left of the copy removed as below; nothing of a
   folder of the vault below its root that holds the marker put in the copy's root is removed, by
-  any branch, a link or junction in it included, but the markers found, unless it is, or lies
+  any branch, a link, junction or mount in it included, but the markers found, unless it is, or lies
   inside, a folder the owner made for the copy (where that cannot be told, it is not one), nor
   anything of the copy there but a link, junction, mount or drive at or above its root that the
   owner made for it, each as above, the check then failing; where no marker lies in a matching
   folder, a copy found inside the vault (its root's marker in a folder of the vault below its root,
   the other four in that folder's own four) is removed there too, by that path, only where it is, or
   lies inside, a folder the owner made for the copy (where that cannot be told, it is not one), and
-  otherwise nothing of that folder is removed but the markers found, nor anything of the copy but a
-  link, junction, mount or drive the owner made for it, each as above, and the check fails; where
+  otherwise nothing of that folder is removed but the markers found, nor anything of the copy but
+  what the clause before allows, and the check fails; where
   its root's marker was found in a folder of the
   vault below its root, that folder is seen gone after the removal, one still there, which may hold
   what the copy wrote into the vault, failing the check, with step 6's remedy made before the step
@@ -527,7 +527,8 @@ for this release).
   listed), carries step 1's FAILED outcomes, a canary's record found where the marker is looked for
   among them, re-reads the copy as step 1 says before changing anything in it once the check is
   over (one that finds the path to be the vault's own failing the check, the steering surfaces then
-  checked by hand and the vault looked at for what the check's own steps wrote), adds a canary in
+  checked by hand and the vault looked at for what the check's own steps wrote, the check then run
+  again on a copy at another path), adds a canary in
   the copy's git configuration to the `pre-commit` one, with a control that
   turns git back on, says that a control fired by a commit alone shows only that Aider
   made no commit, and passes only where that opening reading, trusted by its control, found no
