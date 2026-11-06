@@ -125,10 +125,12 @@ copy's, but without its read-only `.git` mount, so that the check tests `git: fa
    the copy's root, so a reading
    made inside it would always list one): one there leaves the check NOT VERIFIED until the copy is
    made at another path with none; a reading its control does not let you trust, until one whose
-   control fires is used; and a copy on a mapped drive, whose share another host serves (on
-   Windows, a drive that `net use` lists in that shell; whether a share reached another way is
-   caught stays open), until the copy is made on a local drive. Then run the README's step 1
-   identity control: an empty `copy-marker` put in the copy's root and in its `.git/`, `.claude/`,
+   control fires is used; and a copy on a mapped drive, whose share a server serves, this host
+   included (on Windows, a drive that `net use` lists in that shell; whether a share is caught when
+   it is reached another way, or from WSL, Linux or macOS (a network path, a share mounted there, a
+   link or mount above the copy's root that leads to one), stays open), until the copy is made on a
+   local drive. Then run the README's step 1 identity control: an empty `copy-marker` put in the
+   copy's root and in its `.git/`, `.claude/`,
    `.claude/hooks/` and
    `.claude/githooks/`, seen in each, and found nowhere that step looks in the vault, by a search
    that honours no ignore file (which rests on the tool: reasoned), reports no folder it could not
@@ -163,22 +165,26 @@ copy's, but without its read-only `.git` mount, so that the check tests `git: fa
 2. Positive control for the switch: change a tracked note in the copy without committing it, and run
    a copy of the wrapper that names a copy of the scheduled config with `git: true` on
    `probe.dream-pass.md` (the scheduled config itself stays read-only and unchanged). Look for
-   `hook-canary`, at the copy's root and as in step 1, before you run any git command in the copy,
-   because your own `git status` there fires the second canary. `hook-canary` must name the second
+   `hook-canary`, at the copy's root and as in step 1 (one found where step 1 looks for the marker
+   is FAILED: do as the README's step 1 says for one found after its canary run), before you run
+   any git command in the copy, because your own `git status` there fires the second canary.
+   `hook-canary` must name the second
    canary, or `git log` must show a new commit; note which of the two fired. If neither, the check
    is NOT VERIFIED, never PASS, and `VAULT_ALLOW_UNENFORCED_TOOLS=1` waits until it fires (the
    README's step 3).
 3. Control for the commit gate: delete the probe with `rm`, not git, and then `hook-canary`, and run
    that copy of the wrapper again with `git: true`, `git-commit-verify: true` and
    `auto-commits: true` in the copied config: `hook-canary` must appear at the copy's root and name
-   `pre-commit` (look for it as in step 1: one found where the marker is looked for is FAILED). Here
+   `pre-commit` (look for it as in step 1: one found where step 1 looks for the marker is FAILED:
+   do as the README's step 1 says for one found after its canary run). Here
    and below, delete probes with `rm` and `hook-canary` last, after any git command of yours: your
    own git commands in the copy fire the second canary, and would leave a false FAILED.
 4. Delete the probe and then `hook-canary`, as in step 3, change a tracked note again (so that, were
    git on, Aider would find the repository dirty), and run the wrapper with the scheduled config on
    each probe prompt in turn, deleting the probe with `rm` between them.
 5. Look for `hook-canary` first, as in step 2 (one found where step 1 looks for the marker is
-   FAILED). PASS only if step 1's reading before any write found no mount below the copy's root,
+   FAILED: do as the README's step 1 says for one found after its canary run). PASS only if step
+   1's reading before any write found no mount below the copy's root,
    trusted by its control, on a copy not on a mapped drive, its identity control found no marker
    where it looks, by a search that honours no ignore file (which rests on the tool: reasoned),
    reports no folder it could not read
@@ -197,14 +203,16 @@ copy's, but without its read-only `.git` mount, so that the check tests `git: fa
    row, is the read-only `.git` and `.claude/` mounts below, which step 5 of the README's check
    confirms.
 
-Once the check is over, make the README's step 1 re-read, as for a removal, before you change
-anything in the copy, and change nothing in it where a marker is found in the vault outside a
-folder you made for the copy, or where you cannot put or see one or cannot trust the search (where
-a marker is found there and the check stopped before the README's step 5, also do as that step's
-stop says for a marker found in the vault); otherwise remove the markers first. Remove the second
-canary from the copy's git configuration
-afterwards. If the scheduled runs do not show the rules in the chat, check the absolute `read:`
-paths.
+Once the check is over, before you change anything in the copy, make the README's step 1 re-read,
+as for a removal, on the host, through the path you will change the copy by and in the shell you
+will change it from. Where a marker is found in the vault other than inside a folder you made for
+the copy (where you cannot tell, it is not one), change nothing in the copy but the markers found,
+which you remove; see the known files as that step says (one missing is FAILED), and, where the
+check stopped before the README's step 5, do as that step's stop says for a marker found in the
+vault, or, where it reached that step, look in the vault by hand as the README's step 1 says for
+that case. Where you cannot put or see a marker, or cannot trust the search, change nothing in it.
+Otherwise remove the markers, and then the second canary. If the scheduled runs do not show the
+rules in the chat, check the absolute `read:` paths.
 
 Run the schedule in a container that blocks the network and mounts only the vault writable, with the
 vault's `.claude/` (its settings files mounted over it from copies without their hooks) and `.git`
