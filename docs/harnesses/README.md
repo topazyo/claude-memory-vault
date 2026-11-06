@@ -239,29 +239,28 @@ environment the schedule uses:
    marker found leaves the check NOT VERIFIED: remove every marker found where you looked. Wherever
    the marker you put in the copy's root was found in a folder of the vault below its root that is
    not, and does not lie inside, a folder you made for the copy (where you cannot tell, it is not
-   one), remove nothing of that folder by any branch of this step, a link, junction or mount in it
-   included, but the markers found, nor anything of the copy but a link, junction, mount or drive at
-   or above its root that you made for it, each as the next sentence says, and the check is FAILED
-   (step 6). Where the
-   marker you put in one of the copy's five folders (its root, `.git/`, `.claude/`,
-   `.claude/hooks/`, `.claude/githooks/`) was found in the matching folder of the vault (or a folder
-   that one resolves to or names), that folder of the copy is the vault's own under another path (a
-   link or junction at or above it, a mount at or above it, a substituted or mapped drive, another
-   spelling of the vault's path, or the vault's own path): remove nothing at or through that path
-   but a link, junction, mount or drive at or above the copy's root that you made for it, a link or
-   junction at one of the copy's own four folders, or a mount there that you made (a link or
-   junction by its own name, as below; a mount by unmounting it; a drive by removing it); where that
-   folder is the copy's root, remove nothing more, and otherwise remove what is left of the copy as
-   below. Remove any other copy as below; where no marker was found in a matching folder, and the
-   one you put in the copy's root was found in a folder of the vault below its root, and the other
-   four in that folder's `.git/`, `.claude/`, `.claude/hooks/` and `.claude/githooks/`, the copy
-   lies inside the vault at that folder: remove it there too, by that path, as below, only where
-   that folder is, or lies inside, a folder you made for the copy (where you cannot tell, it is not
-   one); otherwise remove nothing of that folder but the markers found, nor anything of the copy but
-   what the sentence that begins "Wherever" lets you remove, and the check is FAILED (step 6). Where
-   the marker you
-   put in the copy's root was found
-   in a folder of the vault below its root, see, after
+   one), remove nothing of that folder by any branch of this step, a link, junction or mount below
+   it included, but the markers found, nor anything of the copy but a link, junction, mount or drive
+   at or above its root that you made for it, each as the next sentence says, and the check is
+   FAILED (step 6). Step 5's stop and step 6's remedy remove nothing of such a folder either, but
+   the markers found and what the sentence above lets you remove. Where the marker you put in one of
+   the copy's five folders (its root, `.git/`, `.claude/`, `.claude/hooks/`, `.claude/githooks/`)
+   was found in the matching folder of the vault (or a folder that one resolves to or names), that
+   folder of the copy is the vault's own under another path (a link or junction at or above it, a
+   mount at or above it, a substituted or mapped drive, another spelling of the vault's path, or the
+   vault's own path): remove nothing at or through that path but a link, junction, mount or drive at
+   or above the copy's root that you made for it, a link or junction at one of the copy's own four
+   folders, or a mount there that you made (a link or junction by its own name, as below; a mount by
+   unmounting it; a drive by removing it); where that folder is the copy's root, remove nothing
+   more, and otherwise remove what is left of the copy as below. Remove any other copy as below;
+   where no marker was found in a matching folder, and the one you put in the copy's root was found
+   in a folder of the vault below its root, and the other four in that folder's `.git/`, `.claude/`,
+   `.claude/hooks/` and `.claude/githooks/`, the copy lies inside the vault at that folder: remove
+   it there too, by that path, as below, only where that folder is, or lies inside, a folder you
+   made for the copy (where you cannot tell, it is not one); otherwise remove nothing of that folder
+   but the markers found, nor anything of the copy but what the sentence that begins "Wherever" lets
+   you remove, and the check is FAILED (step 6). Where the marker you put in the copy's root was
+   found in a folder of the vault below its root, see, after
    the removal as below, that this folder is gone: one still there may hold what the copy wrote into
    the vault, and the check is FAILED (step 6): do as step 6 says for it before you start this step
    again. In every case where a marker was found, then see that each known file this step names
@@ -276,18 +275,20 @@ environment the schedule uses:
    its `.git/` again, and look for it as this step says. One found in the vault, other than
    inside a folder you made for the copy there (where you cannot tell, it is not one), shows the
    path to be the vault's own: remove nothing of it but a link, junction, mount or drive you made
-   for the copy, each as above (none inside a folder of the vault this step keeps), and the markers
-   found; then see that each known file this step
-   names still lies in the vault (one missing is FAILED, as above), and, during the check or once a
-   check that stopped before step 5 is over, do as step 5's stop says for a marker found in the
-   vault (once a check that reached step 5 is over, no stop is made: look in the vault by hand,
-   without git, as that stop says, for `hook-canary` where this step looks for the marker, for the
-   rest of what steps 1 to 4 wrote and for what step 5 wrote (its control files and any file whose
-   name starts with `probe-ro`); one found is FAILED (step 6), and the copy is left where it is
-   (nothing of it removed but what you made for it, as above);
-   otherwise its verdict stands unless a known file is missing). A marker you cannot put or
-   see, or a search you cannot trust as this step says, leaves the copy where it is: remove nothing
-   of it, and make any new copy at another path. Otherwise remove
+   for the copy, each as above (none below a folder of the vault this step keeps), and the markers
+   found; then see that each known file this step names still lies in the vault (one missing is
+   FAILED, as above), and, during the check or once a check that stopped before step 5 is over, do
+   as step 5's stop says for a marker found in the vault. Where the path is shown to be the vault's
+   own once a check that reached step 5 is over, no stop is made: look in the vault by hand, without
+   git, as that stop says, for `hook-canary` where this step looks for the marker, for the rest of
+   what steps 1 to 4 wrote and for what step 5 wrote (its control files, any file whose name starts
+   with `probe-ro`, and what its passes wrote or changed, compared with a copy you trust; where you
+   cannot tell whether a file is the check's, it is the check's; a commit is not seen without git);
+   one found is FAILED (step 6), and the copy is left where it is (nothing of it removed but what
+   you made for it, as above); otherwise its verdict stands unless a known file is missing, or the
+   sentence that begins "Wherever" applies (FAILED, as it says). A marker you cannot put or see, or
+   a search you cannot trust as this step says, leaves the copy where it is: remove nothing of it,
+   and make any new copy at another path. Otherwise remove
    the markers and go on as below, and where the one in its root was found in the vault, see
    afterwards that the folder it was found in is gone (one still there is FAILED: step 6). Whenever
    you remove a copy (never one that step 5's stop for a marker found in the vault leaves where it
@@ -773,9 +774,11 @@ environment the schedule uses:
    check again; after a harness that runs as the superuser, run it as another user and run the check
    again; after a write that reached the vault, first, for a `hook-canary` or a canary in place of
    one of the vault's hook scripts found there, do as step 5's stop says for a marker found in the
-   vault (it removes nothing of the copy but what you made for it); then clean up as step 5 says
-   (the vault's hook scripts among the surfaces you check by hand after a `hook-canary`, or a canary
-   in place of one of them,
+   vault (it removes nothing of the copy but what you made for it); then clean up as step 5 says,
+   any file of the vault the check changed put back from a copy you trust, its current form first
+   moved out of the vault and every copy; `rm` only a file you know the check wrote, and move any
+   you cannot tell outside the vault and every copy, never deleting it (the vault's hook scripts
+   among the surfaces you check by hand after a `hook-canary`, or a canary in place of one of them,
    found there, any such script put back from a copy you trust, and the copy given folders of its
    own, with an earlier copy removed as step 1 says unless step 5's stop for a marker found in the
    vault, or step 1's re-read, left it where it is) and run the check again on the copy given
