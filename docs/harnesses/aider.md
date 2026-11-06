@@ -206,14 +206,17 @@ copy's, but without its read-only `.git` mount, so that the check tests `git: fa
 Once the check is over, before you change anything in the copy, make the README's step 1 re-read,
 as for a removal, on the host, through the path you will change the copy by and in the shell you
 will change it from. Where a marker is found in the vault other than inside a folder you made for
-the copy (where you cannot tell, it is not one), change nothing in the copy but the markers found,
-which you remove, and the check is FAILED (the README's step 6): see the known files as the
+the copy (where you cannot tell, it is not one), change nothing in the copy, then or later, but the
+markers found, which you remove, and remove nothing of it but a link, junction, mount or drive you
+made for it, as the README's step 1 says; the check is FAILED (the README's step 6): see the known
+files as the
 README's step 1 says; check the steering surfaces by hand, without git, before any git command, as
 `docs/setup.md`'s `UNVERIFIED` troubleshooting row says, since a look by name cannot show the
 second canary; look in the vault by hand for what the README's step 5 stop names for a marker found
 in the vault, where the check stopped before that step, or for what its step 1 names once a check
 that reached that step is over, and for what this guide's steps 1 to 4 wrote (the copy of the
-canary script in `.claude/hooks/`, the prompt files, and the notes steps 2 and 4 changed, compared
+canary script in `.claude/hooks/`, the prompt files, the copies of the wrapper and of the scheduled
+config where you put them in the copy, and the notes steps 2 and 4 changed, compared
 with a copy you trust; a commit is not seen without git). These looks leave the check FAILED:
 clean up what they find as the README's step 6 says, and run the check again on a copy given
 folders of its own outside the vault at another path. Where you cannot put or see a marker, or

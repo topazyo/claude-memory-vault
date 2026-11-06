@@ -258,7 +258,8 @@ environment the schedule uses:
    lies inside the vault at that folder: remove it there too, by that path, as below, only where
    that folder is, or lies inside, a folder you made for the copy (where you cannot tell, it is not
    one); otherwise remove nothing of that folder but the markers found, nor anything of the copy but
-   what the sentence above lets you remove, and the check is FAILED (step 6). Where the marker you
+   what the sentence that begins "Wherever" lets you remove, and the check is FAILED (step 6). Where
+   the marker you
    put in the copy's root was found
    in a folder of the vault below its root, see, after
    the removal as below, that this folder is gone: one still there may hold what the copy wrote into
