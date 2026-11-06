@@ -216,13 +216,15 @@ names for a marker found in the vault, where the check stopped before that step,
 step 1 names once a check that reached that step is over, and for what this guide's steps 1 to 4
 wrote (the copy of the canary script in `.claude/hooks/`, the prompt files, the copies of the
 wrapper and of the scheduled config where you put them in the copy, and the notes steps 2 and 4
-changed, compared with a copy you trust; a commit is not seen without git). These looks leave the
-check FAILED: put each note and each other file the check changed back from the copy you trust, its
-current form first moved out of the vault and every copy, never removing it; clean up the rest of
-what they find through the vault's own path, never the copy's, as the README's step 6 says, and run
-the check again on a copy given folders of its own outside the vault at another path. Where you
-cannot put or see a marker, or cannot trust the search, change nothing in it.
-Otherwise remove the markers, and then the second canary from the copy's git configuration, with
+changed, compared with a copy you trust, made before the check began and kept outside the vault and
+every copy; a commit is not seen without git). These looks leave the check FAILED: put each note and
+each other file the check changed back from the copy you trust, its current form first moved out of
+the vault and every copy, never removing it (nothing in a folder the README's step 1 sentence that
+begins "Wherever" keeps, which you check by hand); clean up the rest of what they find through the
+vault's own path, never the copy's, as the README's step 6 says, and run the check again on a copy
+given folders of its own outside the vault at another path. Where you cannot put or see a marker, or
+cannot trust the search, change nothing in it. Otherwise remove the markers, and then the second
+canary from the copy's git configuration, with
 the copy of the canary script it points at in the copy's `.claude/hooks/`. If the scheduled runs
 do not show the rules in the chat, check the absolute `read:` paths.
 

@@ -241,13 +241,14 @@ environment the schedule uses:
    not, and does not lie inside, a folder you made for the copy (where you cannot tell, it is not
    one), remove nothing of that folder by any branch of this step, a link, junction or mount below
    it included, but the markers found, nor anything of the copy but a link, junction, mount or drive
-   at or above its root that you made for it, each as the next sentence says, and the check is
-   FAILED (step 6). Step 5's stop and step 6's remedy remove or move nothing of such a folder
-   either, but the markers found and what the sentence above lets you remove. Where the marker you
-   put in one of the copy's five folders (its root, `.git/`, `.claude/`, `.claude/hooks/`,
-   `.claude/githooks/`) was found in the matching folder of the vault (or a folder that one resolves
-   to or names), that folder of the copy is the vault's own under another path (a link or junction
-   at or above it, a mount at or above it, a substituted or mapped drive, another spelling of the
+   at or above its root that you made for it, each as the sentence that begins "Where the marker you
+   put in one of the copy's five folders" says, and the check is FAILED (step 6). Step 5's stop and
+   step 6's remedy remove or move nothing of such a folder either, but the markers found and what
+   the sentence above lets you remove. Where the marker you put in one of the copy's five folders
+   (its root, `.git/`, `.claude/`, `.claude/hooks/`, `.claude/githooks/`) was found in the matching
+   folder of the vault (or a folder that one resolves to or names), that folder of the copy is the
+   vault's own under another path (a link or junction at or above it, a mount at or above it, a
+   substituted or mapped drive, another spelling of the
    vault's path, or the vault's own path): remove nothing at or through that path but a link,
    junction, mount or drive at or above the copy's root that you made for it, a link or junction at
    one of the copy's own four folders, or a mount there that you made (a link or junction by its own
@@ -287,15 +288,15 @@ environment the schedule uses:
    is FAILED); where you cannot tell whether a file is the check's, it is the check's for the
    verdict, and step 6 says what is done with it; a commit is not seen without git); one found is
    FAILED (step 6), and the copy is left where it is (nothing of it removed but what you made for
-   it, as above); otherwise its verdict stands unless a known file is missing, or the sentence that
-   begins "Wherever" applies (FAILED, as it says). A marker you cannot put or see, or a search you
-   cannot trust as this step says, leaves the copy where it is: remove nothing of it, and make any
-   new copy at another path. Otherwise remove
-   the markers and go on as below, and where the one in its root was found in the vault, see
-   afterwards that the folder it was found in is gone (one still there is FAILED: step 6). Whenever
-   you remove a copy (never one that step 5's stop for a marker found in the vault leaves where it
-   is), here, after the folder test or the canary run, after a later step or once the check is
-   over, first read the host's own list of mounts as step 5 reads it, in the shell you
+   it, as above); otherwise its verdict stands unless a known file is missing, you have no copy you
+   trust made before the check began, or the sentence that begins "Wherever" applies (FAILED, as
+   each says). A marker you cannot put or see, or a search you cannot trust as this step says,
+   leaves the copy where it is: remove nothing of it, and make any new copy at another path.
+   Otherwise remove the markers and go on as below, and where the one in its root was found in the
+   vault, see afterwards that the folder it was found in is gone (one still there is FAILED: step
+   6). Whenever you remove a copy (never one that step 5's stop for a marker found in the vault
+   leaves where it is), here, after the folder test or the canary run, after a later step or once
+   the check is over, first read the host's own list of mounts as step 5 reads it, in the shell you
    will remove the copy from, for mounts at or under the copy, its path spelled as step 5 spells the
    paths it compares; trust that reading once the same reading, over a folder that is not itself a
    mount and below which the list shows one, has listed that mount and, read over that mount's own
@@ -780,13 +781,15 @@ environment the schedule uses:
    (the vault's hook scripts among the surfaces you check by hand after a `hook-canary`, or a canary
    in place of one of them, found there, any such script put back from a copy you trust, and the
    copy given folders of its own, with an earlier copy removed as step 1 says unless step 5's stop
-   for a marker found in the vault, or step 1's re-read, left it where it is); there, and wherever
-   step 5 itself says to remove what it wrote, put any file of the vault the check changed back from
-   a copy you trust, never removing it, its current form first moved out of the vault and every
-   copy, use `rm` only on a file you know the check wrote, and move any file you cannot tell outside
-   the vault and every copy, never deleting it; then run the check again on the copy given folders
-   of its own outside the vault at another path; after a
-   known file of the vault missing when step 1 reads them after a marker is found or a
+   for a marker found in the vault, or step 1's re-read, left it where it is); in that clean-up, and
+   wherever step 5 itself says to remove what it wrote, put any file of the vault the check changed
+   back from a copy you trust, never removing it, its current form first moved out of the vault and
+   every copy, use `rm` only on a file you know the check wrote, and move any file you cannot tell
+   outside the vault and every copy, never deleting it (where you have no copy you trust, put back
+   and move nothing: list what the look found, check it by hand, `rm` only what you know the check
+   wrote, and make such a copy before you run the check again); then run the check again on the copy
+   given folders of its own outside the vault at another path; after a known file of the vault
+   missing when step 1 reads them after a marker is found or a
    removal, put the vault back from a copy you trust and check the steering surfaces by hand, as
    step 5 says, before anything else, and run the check again on a copy of its own; after a copy's
    folder left inside the vault, remove it there, by that path, as step 1 says (unless step 5's stop
