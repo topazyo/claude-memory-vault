@@ -342,12 +342,12 @@ for this release).
   nothing of that folder is removed by any branch, a link, junction or mount below it included, but
   the markers found, nor anything of the copy but a link, junction, mount or drive at or above its
   root that the owner made for it, each as above, and the check fails; nor is anything of such a
-  folder removed by the stop in the README's step 5 for a marker found in the vault or by its step 6
-  remedy, but the markers found and what this clause allows; where no marker lies in a matching
-  folder, a copy found inside the vault (its root's marker in a folder of the vault below its root,
-  the other four in that folder's own four) is removed there too, by that path, only where the
-  folder of the vault it lies at is, or lies inside, a folder the owner made for the copy (where
-  that cannot be told, it is not one), and
+  folder removed or moved by the stop in the README's step 5 for a marker found in the vault or by
+  the README's step 6 remedy, but the markers found and what the clause before it allows; where no
+  marker lies in a matching folder, a copy found inside the vault (its root's marker in a folder of
+  the vault below its root, the other four in that folder's own four) is removed there too, by that
+  path, only where the folder of the vault it lies at is, or lies inside, a folder the owner made
+  for the copy (where that cannot be told, it is not one), and
   otherwise nothing of that folder is removed but the markers found, nor anything of the copy but
   what the clause on a folder of the vault the owner did not make for the copy allows, and the check
   fails; where
@@ -375,19 +375,21 @@ for this release).
   git, as that stop says, for a `hook-canary` where the marker is looked for, for the rest of what
   the README's steps 1 to 4 wrote and for what its step 5 wrote (its control files, any file whose
   name starts with `probe-ro`, and what its passes wrote or changed, compared with a copy the owner
-  trusts, a file that cannot be told the check's or not counted the check's, a commit not seen
-  without git), one found failing the check, the vault then cleaned up as the README's step 6 says
-  (a file the check changed put back from a copy the owner trusts, its current form first moved out
-  of the vault and every copy, never removed; one that cannot be told moved outside the vault and
-  every copy, never deleted), and the copy left in place, nothing of it removed but what the owner
-  made for it, as above, and otherwise its verdict standing unless a known file is missing, or the
-  marker put in the copy's root was found in a folder of the vault below its root that is not, and
-  does not lie inside, one the owner made for the copy (failing the check, as the clause on a folder
-  of the vault the owner did not make for the copy says); a marker that cannot be put or seen, or a
-  search that cannot be trusted, leaves the copy in place, nothing of it removed and any new copy
-  made at another path; otherwise the markers are removed and the removal goes on as below, the
-  folder the root's marker was found in, where that was in the vault, then seen gone, one still
-  there failing the check; nothing of a copy on a mapped drive (told as above, in the shell it is
+  trusts, made before the check began and kept outside the vault and every copy (none failing the
+  check), a file that cannot be told to be the check's or not counted as the check's for the
+  verdict, the README's step 6 saying what is done with it, a commit not seen without git), one
+  found failing the check, the vault then cleaned up as the README's step 6 says (a file the check
+  changed put back from a copy the owner trusts, its current form first moved out of the vault and
+  every copy, never removed; one that cannot be told moved outside the vault and every copy, never
+  deleted), and the copy left in place, nothing of it removed but what the owner made for it, as
+  above, and otherwise its verdict standing unless a known file is missing, or the marker put in the
+  copy's root was found in a folder of the vault below its root that is not, and does not lie
+  inside, one the owner made for the copy (failing the check, as the clause on a folder of the vault
+  the owner did not make for the copy says); a marker that cannot be put or seen, or a search that
+  cannot be trusted, leaves the copy in place, nothing of it removed and any new copy made at
+  another path; otherwise the markers are removed and the removal goes on as below, the folder the
+  root's marker was found in, where that was in the vault, then seen gone, one still there failing
+  the check; nothing of a copy on a mapped drive (told as above, in the shell it is
   removed from), whose share a server serves, this host included, is removed through the drive,
   though a drive made for the copy may be, as above, any new copy then made on a local drive; every
   removal of a copy (never one the stop in the README's step 5 for a marker found in the vault
@@ -418,9 +420,10 @@ for this release).
   surfaces checked by hand before anything else; a canary's record found where the marker is looked
   for fails it, the stop in the README's step 5 for a marker found in the vault then followed
   (nothing of the copy removed but what the owner made for it), the vault cleaned up as step 5 says,
-  a file the check changed put back from a copy the owner trusts, its current form first moved out
-  of the vault and every copy, `rm` used only on a file known to be the check's and one that cannot
-  be told moved outside the vault and every copy, never deleted, its hook scripts among the surfaces
+  a file the check changed put back from a copy the owner trusts, never removed, its current form
+  first moved out of the vault and every copy, `rm` used only on a file known to be one the check
+  wrote; one that cannot be told moved outside the vault and every copy, never deleted, as also
+  wherever that step itself says to remove what it wrote, its hook scripts among the surfaces
   checked by hand, any a canary replaced put back from a copy the owner trusts, and the check run
   again on a copy given folders of its own outside the vault at another path; once the search has
   found each known file and no marker, the copy's markers removed, the one in its `.git/` apart; the
@@ -545,14 +548,15 @@ for this release).
   be the vault's own failing the check, stricter than the README's step 1, nothing changed through
   the copy's path, then or later, but the markers found, which are removed, nor anything of the copy
   removed but a link, junction, mount or drive the owner made for it, the known files then seen, the
-  steering surfaces checked by hand, the vault looked at for what the README's step 5 stop or step 1
-  names and for what the check's own steps wrote, each note and each other file the check changed
-  put back from a copy the owner trusts, its current form first moved out of the vault and every
-  copy, and never removed, and the rest cleaned up in the vault by its own path, never the copy's,
-  as the README's step 6 says, a file that cannot be told the check's moved outside the vault and
-  every copy and never deleted, the check then run again on a copy given folders of its own outside
-  the vault at another path; one that cannot put or see a marker, or trust its search, changing
-  nothing; and the second canary removed only otherwise), adds a canary in the copy's git
+  steering surfaces checked by hand, without git, before any git command, the vault looked at for
+  what the README's step 5 stop or step 1 names and for what the check's own steps wrote, each note
+  and each other file the check changed put back from a copy the owner trusts, its current form
+  first moved out of the vault and every copy, and never removed, and the rest cleaned up in the
+  vault by its own path, never the copy's, as the README's step 6 says, `rm` used only on a file
+  known to be one the check wrote, a file that cannot be told the check's moved outside the vault
+  and every copy and never deleted, the check then run again on a copy given folders of its own
+  outside the vault at another path; one that cannot put or see a marker, or trust its search,
+  changing nothing; and the second canary removed only otherwise), adds a canary in the copy's git
   configuration to the `pre-commit` one, with a control that turns git back on, says that a control
   fired by a commit alone shows only that Aider made no commit, and passes only where that opening
   reading, trusted by its control, found no mount below the copy's root, on a copy not on a mapped
