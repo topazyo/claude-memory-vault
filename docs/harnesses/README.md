@@ -275,7 +275,8 @@ environment the schedule uses:
    its `.git/` again, and look for it as this step says. One found in the vault, other than
    inside a folder you made for the copy there (where you cannot tell, it is not one), shows the
    path to be the vault's own: remove nothing of it but a link, junction, mount or drive you made
-   for the copy, each as above, and the markers found; then see that each known file this step
+   for the copy, each as above (none inside a folder of the vault this step keeps), and the markers
+   found; then see that each known file this step
    names still lies in the vault (one missing is FAILED, as above), and, during the check or once a
    check that stopped before step 5 is over, do as step 5's stop says for a marker found in the
    vault (once a check that reached step 5 is over, no stop is made: look in the vault by hand,
