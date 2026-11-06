@@ -237,12 +237,12 @@ environment the schedule uses:
    them, or that reports a folder it could not read (read its errors), leaves the check NOT
    VERIFIED: make such a folder readable, or move it out of the vault, and start this step again. A
    marker found leaves the check NOT VERIFIED: remove every marker found where you looked. Wherever
-   the marker you put in the copy's root was found in a folder of the vault below its root, remove
-   nothing of that folder, by any branch of this step, a link or junction in it included, but the
-   markers found, unless that folder is, or lies inside, a folder you made for the copy (where you
-   cannot tell, it is not one): there remove nothing of the copy but a link, junction, mount or
-   drive at or above its root that you made for it, each as the next sentence says, and the check
-   is FAILED (step 6). Where the
+   the marker you put in the copy's root was found in a folder of the vault below its root that is
+   not, and does not lie inside, a folder you made for the copy (where you cannot tell, it is not
+   one), remove nothing of that folder by any branch of this step, a link, junction or mount in it
+   included, but the markers found, nor anything of the copy but a link, junction, mount or drive at
+   or above its root that you made for it, each as the next sentence says, and the check is FAILED
+   (step 6). Where the
    marker you put in one of the copy's five folders (its root, `.git/`, `.claude/`,
    `.claude/hooks/`, `.claude/githooks/`) was found in the matching folder of the vault (or a folder
    that one resolves to or names), that folder of the copy is the vault's own under another path (a
@@ -257,9 +257,9 @@ environment the schedule uses:
    four in that folder's `.git/`, `.claude/`, `.claude/hooks/` and `.claude/githooks/`, the copy
    lies inside the vault at that folder: remove it there too, by that path, as below, only where
    that folder is, or lies inside, a folder you made for the copy (where you cannot tell, it is not
-   one); otherwise remove nothing of that folder but the markers found, and nothing of the copy but
-   a link, junction, mount or drive you made for it, each as above, and the check is FAILED (step
-   6). Where the marker you put in the copy's root was found
+   one); otherwise remove nothing of that folder but the markers found, nor anything of the copy but
+   what the sentence above lets you remove, and the check is FAILED (step 6). Where the marker you
+   put in the copy's root was found
    in a folder of the vault below its root, see, after
    the removal as below, that this folder is gone: one still there may hold what the copy wrote into
    the vault, and the check is FAILED (step 6): do as step 6 says for it before you start this step
