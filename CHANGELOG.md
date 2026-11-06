@@ -336,8 +336,10 @@ for this release).
   junction, mount or drive at or above the copy's root that the owner made for it, a link or
   junction at one of the copy's four folders, or a mount there the owner made (a link or junction by
   its own name, a mount by unmounting it, a drive by removing it), and nothing more where that
-  folder is the copy's root, and otherwise what is left of the copy removed as below; where no
-  marker lies in a matching folder, a copy found inside the
+  folder is the copy's root, and otherwise what is left of the copy removed as below; nothing of a
+  folder of the vault below its root that holds the marker put in the copy's root is removed where
+  the owner did not make it for the copy (where that cannot be told, the owner did not), the check
+  then failing; where no marker lies in a matching folder, a copy found inside the
   vault (its root's marker in a folder of the vault below its root, the other four in that folder's
   own four) is removed there too, by that path, only where the owner made that folder for the copy
   (where that cannot be told, it is not one), and otherwise nothing of that folder is removed, nor

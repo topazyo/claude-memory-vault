@@ -246,7 +246,10 @@ environment the schedule uses:
    junction at one of the copy's own four folders, or a mount there that you made (a link or
    junction by its own name, as below; a mount by unmounting it; a drive by removing it); where that
    folder is the copy's root, remove nothing more, and otherwise remove what is left of the copy as
-   below. Remove any other copy as below; where no marker was found in a matching folder, and the
+   below. Remove any other copy as below, but where the marker you put in its root was found in a
+   folder of the vault below its root that you did not make for the copy (where you cannot tell,
+   you did not), remove nothing of that folder, and the check is FAILED (step 6); where no marker
+   was found in a matching folder, and the
    one you put in the copy's root was found in a folder of the vault below its root, and the other
    four in that folder's `.git/`, `.claude/`, `.claude/hooks/` and `.claude/githooks/`, the copy
    lies inside the vault at that folder: remove it there too, by that path, as below, only where you
