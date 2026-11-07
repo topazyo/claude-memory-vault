@@ -343,12 +343,12 @@ for this release).
   the markers found, nor anything of the copy but a link, junction, mount or drive at or above its
   root that the owner made for it, each as above, and the check fails; nor is anything of such a
   folder removed or moved by the stop in the README's step 5 for a marker found in the vault or by
-  the README's step 6 remedy, but the markers found and what the clause before it allows (the
-  README's step 6 taking out by hand of a change that can be told to be the check's, by editing the
-  file, removing and moving nothing, and so not barred by it); where no marker lies in a matching
-  folder, a copy found inside the vault (its root's marker in a folder of the vault below its root,
-  the other four in that folder's own four) is removed there too, by that path, only where the
-  folder of the vault it lies at is, or lies inside, a folder the owner made for the copy (where
+  the README's step 6 remedy, but the markers found and what the clause before it allows (the taking
+  out by hand, in the README's step 6, of a change that can be told to be the check's, by editing
+  the file, removes and moves no file, and so this rule does not bar it); where no marker lies in a
+  matching folder, a copy found inside the vault (its root's marker in a folder of the vault below
+  its root, the other four in that folder's own four) is removed there too, by that path, only where
+  the folder of the vault it lies at is, or lies inside, a folder the owner made for the copy (where
   that cannot be told, it is not one), and otherwise nothing of that folder is removed but the
   markers found, nor anything of the copy but what the clause on a folder of the vault the owner did
   not make for the copy allows, and the check fails; where its root's marker was found in a folder
@@ -379,8 +379,8 @@ for this release).
   check; what was found listed, each file of it and what else the check could have written or
   changed, the steering surfaces among them, checked by hand, any change that can be told to be the
   check's taken out by hand, the current form of each file so changed first copied outside the vault
-  and every copy, and only once each file so checked is settled such a copy made, any file still not
-  told listed beside it and never taken as the owner's, before the check is run again on a copy
+  and every copy, and only once each file so checked is settled a copy to trust made, any file still
+  not told listed beside it and never taken as the owner's, before the check is run again on a copy
   given folders of its own outside the vault at another path, as the README's step 6 says), a file
   that cannot be told to be the check's or not counted as the check's for the verdict, the README's
   step 6 saying what is done with it, a commit not seen without git), one found failing the check,
@@ -432,36 +432,38 @@ for this release).
   for fails it, the stop in the README's step 5 for a marker found in the vault then followed
   (nothing of the copy removed but what the owner made for it), the vault cleaned up as the README's
   step 6 says, its hook scripts among the surfaces checked by hand and any a canary replaced put
-  back from a copy the owner trusts, made before the check began, and, there, the clean-up made
+  back from a copy the owner trusts, made before the check began, and that clean-up made
   through the vault's own path (through the copy's only where that is the vault's own path itself,
   not another path to the vault; a path that cannot be told being another path; no limit of the
   README's step 1 or of its step 5's stop on what is removed of the copy barring the clean-up's
   putting back, its moving out of a file's current form or of a file that cannot be told, or its
   `rm` of a file known to be one the check wrote, but the clause on a folder of the vault the owner
   did not make for the copy; and where the copy's path is the vault's own path itself, the copy,
-  being the vault, never removed, nor anything of it but by that clean-up), and, there and wherever
+  being the vault, never removed, nor anything of it removed but the markers found and what that
+  clean-up's moving out and `rm` remove), and, there and wherever
   the README's step 5 itself says to remove what it wrote, a file the check changed put back from
   such a copy, never removed, its current form first moved out of the vault and every copy
   (`rm` used only on a file known to be one the check wrote), one that cannot be told moved outside
   the vault and every copy, never deleted, nothing put back, moved or removed in a folder of the
   vault the owner did not make for the copy, kept as above, but the markers found and what that
   clause allows, that folder checked by hand, any change that can be told to be the check's taken
-  out by hand there, with or without such a copy, by editing the file, nothing being put back,
+  out by hand there, with or without such a copy, by editing the file, no file being put back,
   removed or moved, its current form first copied outside the vault and every copy, and any file of
-  that folder the check wrote or that cannot be told listed beside the next copy made to trust,
-  never taken as the owner's; for every file of the vault, in that folder or not, with no such
+  that folder the check wrote or that cannot be told listed beside the next copy made to trust, made
+  only once that folder is checked and each such change taken out, never taken as the owner's; for
+  every file of the vault, in that folder or not, with no such
   copy, nothing put back or moved, the `rm` limit and that folder's rule still holding: what was
   found listed, each file of it and what else the check could have written or changed checked by
   hand, the steering surfaces among them as the README's step 5 says, any change that can be told to
   be the check's taken out by hand, each such file's current form first copied outside the vault and
   every copy (in that folder too, by editing the file, no file being put back, removed or moved),
-  and only once each is settled such a copy made, kept outside the vault and every copy, any file
-  still not told listed beside it and never taken as the owner's, before the check is run again; the
-  check then run again on a copy given folders of its own outside the vault at another path; once
-  the search has found each known file and no marker, the copy's markers removed, the one in its
-  `.git/` apart; the marker search does not depend on spelling (measured on Windows), while the
-  resolved comparison, on Windows, can read one folder spelled two ways as two), the wrapper fires
-  none, where the same wrapper with the measure taken away fires
+  and only once each is settled a copy to trust made, kept outside the vault and every copy, any
+  file still not told listed beside it and never taken as the owner's, before the check is run
+  again; the check then run again on a copy given folders of its own outside the vault at another
+  path; once the search has found each known file and no marker, the copy's markers removed, the one
+  in its `.git/` apart; the marker search does not depend on spelling (measured on Windows), while
+  the resolved comparison, on Windows, can read one folder spelled two ways as two), the wrapper
+  fires none, where the same wrapper with the measure taken away fires
   one. A control that fires no canary leaves the check not verified, never passed (a `hook-canary`
   found where step 1 looks for the marker failing it, with step 1's route for one found after its
   canary run then followed, and
@@ -581,21 +583,23 @@ for this release).
   be the vault's own failing the check, stricter than the README's step 1, nothing changed through
   the copy's path, then or later, but the markers found, which are removed, nor anything of the copy
   removed but a link, junction, mount or drive the owner made for it, the clean-up below apart,
-  which neither limit bars and which is made through the vault's own path, as the README's step 6
-  says (through the copy's only where that is the vault's own path itself, not another path to the
-  vault; a path that cannot be told being another path; and where the copy's path is the vault's own
-  path itself, the copy, being the vault, never removed, nor anything of it but by that clean-up),
-  the known files then seen, the steering surfaces checked by hand, without git, before any git
-  command, the vault looked at for what the README's step 5 stop or step 1 names and for what the
-  check's own steps wrote, each note and each other file the check changed put back from a copy the
-  owner trusts, made before the check began and kept outside the vault and every copy, its current
-  form first moved out of the vault and every copy, and never removed (nothing in a folder of the
-  vault the owner did not make for the copy, which is checked by hand and kept as the README's step
-  1 sentence that begins "Wherever" says, any change that can be told to be the check's taken out by
-  hand there, with or without a copy the owner trusts, by editing the file, nothing being put back,
-  removed or moved, its current form first copied outside the vault and every copy, and any file of
-  that folder the check wrote or that cannot be told listed beside the next copy made to trust,
-  never taken as the owner's; and, for every file of the vault, in that folder or not, with no copy
+  which neither limit bars but the README's step 1 sentence that begins "Wherever", and which is
+  made through the vault's own path, as the README's step 6 says (through the copy's only where that
+  is the vault's own path itself, not another path to the vault; a path that cannot be told being
+  another path; and where the copy's path is the vault's own path itself, the copy, being the vault,
+  never removed, nor anything of it removed but the markers found and what that clean-up's moving
+  out and `rm` remove), the known files then seen, the steering surfaces checked by hand, without
+  git, before any git command, the vault looked at for what the README's step 5 stop or step 1 names
+  and for what the check's own steps wrote, each note and each other file the check changed put back
+  from a copy the owner trusts, made before the check began and kept outside the vault and every
+  copy, its current form first moved out of the vault and every copy, and never removed (nothing in
+  a folder of the vault the owner did not make for the copy, which is checked by hand and kept as
+  the README's step 1 sentence that begins "Wherever" says, any change that can be told to be the
+  check's taken out by hand there, with or without a copy the owner trusts, by editing the file, no
+  file being put back, removed or moved, its current form first copied outside the vault and every
+  copy, and any file of that folder the check wrote or that cannot be told listed beside the next
+  copy made to trust, made only once that folder is checked and each such change taken out, never
+  taken as the owner's; and, for every file of the vault, in that folder or not, with no copy
   the owner trusts, nothing put back or moved, the `rm` limit below and that folder's rule still
   holding: what was found listed, each file of it and what else the check could have written or
   changed checked by hand, the steering surfaces among them as the README's step 5 says, any change

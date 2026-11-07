@@ -245,7 +245,7 @@ environment the schedule uses:
    put in one of the copy's five folders" says, and the check is FAILED (step 6). Step 5's stop and
    step 6's remedy remove or move nothing of such a folder either, but the markers found and what
    the sentence above lets you remove (step 6's taking out by hand of a change you can tell is the
-   check's, by editing the file, removes and moves nothing, so this does not bar it). Where the
+   check's, by editing the file, removes and moves no file, so this does not bar it). Where the
    marker you put in one of the copy's five folders (its root, `.git/`, `.claude/`,
    `.claude/hooks/`, `.claude/githooks/`) was found in the matching folder of the vault (or a folder
    that one resolves to or names), that folder of the copy is the vault's own under another path (a
@@ -792,7 +792,8 @@ environment the schedule uses:
    putting back, its moving out of a file's current form or of a file you cannot tell, or its `rm`
    of a file you know the check wrote, but step 1's sentence that begins "Wherever"; and where the
    copy's path is the vault's own path itself, the copy, being the vault, is never removed, nor
-   anything of it but by this clean-up), and wherever step 5 itself says to remove what it wrote,
+   anything of it removed but the markers found and what this clean-up's moving out and `rm`
+   remove), and wherever step 5 itself says to remove what it wrote,
    put any file of the vault the check changed back from a copy you trust, made before the check
    began, never removing it, its current form first moved out of the vault and every copy, use `rm`
    only on a file you know the check wrote, and move any file you cannot tell outside the vault and
@@ -801,7 +802,8 @@ environment the schedule uses:
    remove, and check that folder by hand, taking out by hand there, with or without such a copy, any
    change you can tell is the check's, by editing the file, which puts back, removes and moves no
    file, its current form first copied outside the vault and every copy, and listing beside the next
-   copy you make to trust any file of that folder the check wrote or you cannot tell, never taken as
+   copy you make to trust, made only once that folder is checked and each such change taken out, any
+   file of that folder the check wrote or you cannot tell, never taken as
    the owner's; for every file of the vault, in that folder or not, where you have no such copy, put
    back and move nothing, the `rm` limit above and that folder's rule still holding: list what was
    found, check by hand each file of it and what else the check could have written or changed, the
