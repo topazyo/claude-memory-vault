@@ -376,12 +376,14 @@ for this release).
   the README's steps 1 to 4 wrote and for what its step 5 wrote (its control files, any file whose
   name starts with `probe-ro`, and what its passes wrote or changed, compared with a copy the owner
   trusts, made before the check began and kept outside the vault and every copy (none failing the
-  check, such a copy then made and the check run again, as the README's step 6 says), a file that
-  cannot be told to be the check's or not counted as the check's for the verdict, the README's step
-  6 saying what is done with it, a commit not seen without git), one found failing the check, the
-  vault then cleaned up as the README's step 6 says (a file the check changed put back from a copy
-  the owner trusts, its current form first moved out of the vault and every copy, never removed;
-  `rm` used only on a file known to be one the check wrote; one that cannot be told moved outside
+  check, such a copy made only once what the check could have written or changed, the steering
+  surfaces among them, is checked by hand and settled, and the check run again, as the README's step
+  6 says), a file that cannot be told to be the check's or not counted as the check's for the
+  verdict, the README's step 6 saying what is done with it, a commit not seen without git), one
+  found failing the check, the vault then cleaned up as the README's step 6 says (a file the check
+  changed put back from a copy the owner trusts, its current form first moved out of the vault and
+  every copy, never removed; `rm` used only on a file known to be one the check wrote; one that
+  cannot be told moved outside
   the vault and every copy, never deleted; with no copy the owner trusts, nothing put back or moved,
   as that step says), and the copy left in place, nothing of it removed but what the owner made for
   it, as above, and otherwise its verdict standing unless a known file is missing, no copy the owner
@@ -429,15 +431,16 @@ for this release).
   copy, never removed, its current form first moved out of the vault and every copy (`rm` used only
   on a file known to be one the check wrote), one that cannot be told moved outside the vault and
   every copy, never deleted, nothing put back, moved or removed in a folder of the vault the owner
-  did not make for the copy, kept as above, but the markers found, that folder checked by hand (with
-  no such copy, nothing put back or moved, the `rm` limit still holding: what was found listed and
-  each file of it checked by hand, and only once each is settled such a copy made, kept outside the
-  vault and every copy, any file still not told listed beside it and never taken as the owner's,
-  before the check is run again), and the check run again on a copy given folders of its own outside
-  the vault at another path; once the search has found each known file and no marker, the copy's
-  markers removed, the one in its `.git/` apart; the marker search does not depend on spelling
-  (measured on Windows), while the resolved comparison, on Windows, can read one folder spelled two
-  ways as two), the wrapper fires none, where the same wrapper with the measure taken away fires
+  did not make for the copy, kept as above, but the markers found and what that clause allows, that
+  folder checked by hand (for every file, with no such copy, nothing put back or moved, the `rm`
+  limit still holding: what was found listed and each file of it checked by hand, and only once each
+  is settled such a copy made, kept outside the vault and every copy, any file still not told listed
+  beside it and never taken as the owner's, before the check is run again), and the check run again
+  on a copy given folders of its own outside the vault at another path; once the search has found
+  each known file and no marker, the copy's markers removed, the one in its `.git/` apart; the
+  marker search does not depend on spelling (measured on Windows), while the resolved comparison, on
+  Windows, can read one folder spelled two ways as two), the wrapper fires none, where the same
+  wrapper with the measure taken away fires
   one. A control that fires no canary leaves the check not verified, never passed (a `hook-canary`
   found where step 1 looks for the marker failing it, with step 1's route for one found after its
   canary run then followed, and

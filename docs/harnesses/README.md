@@ -788,25 +788,29 @@ environment the schedule uses:
    removing it, its current form first moved out of the vault and every copy, use `rm` only on a
    file you know the check wrote, and move any file you cannot tell outside the vault and every
    copy, never deleting it, but put back, move and remove nothing in a folder step 1's sentence that
-   begins "Wherever" keeps but the markers found, and check that folder by hand (where you have no
-   such copy, put back and move nothing, the `rm` limit above still holding: list what was
-   found and check each file of it by hand, and only once each is settled make such a copy, kept
-   outside the vault and every copy, before you run the check again, listing beside it any file you
-   still cannot tell, never taken as the owner's); then run the check again on the copy given
-   folders of its own outside the vault at another path; after a known file of the vault missing
-   when step 1 reads them after a marker is found or a removal, put the vault back from a copy you
-   trust and check the steering surfaces by hand, as step 5 says, before anything else, and run the
-   check again on a copy of its own; after a copy's folder left inside the vault, remove it there,
-   by that path, as step 1 says (unless step 5's stop for a marker found in the vault, or step 1's
+   begins "Wherever" keeps but the markers found and what that sentence lets you remove, and check
+   that folder by hand (for every file, where you have no such copy, put back and move nothing, the
+   `rm` limit above still holding: list what was found and check each file of it by hand, and only
+   once each is settled make such a copy, kept outside the vault and every copy, before you run the
+   check again, listing beside it any file you still cannot tell, never taken as the owner's); then
+   run the check again on the copy given folders of its own outside the vault at another path; after
+   a known file of the vault missing when step 1 reads them after a marker is found or a removal,
+   put the vault back from a copy you trust and check the steering surfaces by hand, as step 5 says,
+   before anything else, and run the check again on a copy of its own; after a copy's folder left
+   inside the vault, remove it there, by that path, as step 1 says (unless step 5's stop for a
+   marker found in the vault, or step 1's
    re-read, left it where it is), only where that folder is, or lies inside, a folder you made for
    the copy (where you cannot tell, it is not one),
    otherwise leave it and check it by hand, and run the check again on a copy given folders of its
    own outside the vault; after a FAILED for having no copy you trust made before the check began,
-   where the look found nothing else, make such a copy, kept outside the vault and every copy, and
-   run the check again; after any other FAILED, in a container, fix what failed and run the check
-   again, and on a switch route the
-   container is the way on. FAILED takes precedence: any of those is FAILED whatever else a run
-   shows. A step 5 that is NOT VERIFIED leaves the check NOT VERIFIED, and so does any other result
+   where the look found nothing else, do as the parenthesis above says where you have no such copy:
+   check by hand what the check could have written or changed, the steering surfaces among them as
+   step 5 says, and only once each is settled make such a copy, kept outside the vault and every
+   copy, listing beside it any file you still cannot tell, never taken as the owner's; then run the
+   check again; after any other FAILED, in a container, fix what failed and run the check again, and
+   on a switch route the container is the way on. FAILED takes precedence: any of those is FAILED
+   whatever else a run shows. A step 5 that is NOT VERIFIED leaves the check NOT VERIFIED, and so
+   does any other result
    short of PASS.
 
 The canary does not depend on where a hook logs. It depends on step 1 for any variable a hook's
