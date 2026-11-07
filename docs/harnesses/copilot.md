@@ -72,9 +72,32 @@ exec copilot -p "$(cat "$1")"
 ```
 
 `-p` runs Copilot CLI in programmatic mode. Add the tool-approval options your installed version
-documents (`copilot --help`), because a programmatic run cannot answer approval prompts. Those options
-are not a sandbox, so run the wrapper in a container that blocks the network and, for the dream
-pass, gives the agent no shell. Only then set `VAULT_ALLOW_UNENFORCED_TOOLS=1`.
+documents (`copilot --help`), because a programmatic run cannot answer approval prompts. Those
+options are not a sandbox, so run the wrapper in a container that blocks the network and, for both
+passes, gives the agent no shell and mounts only the vault writable.
+
+Copilot CLI also runs the vault's hooks: `.github/hooks/vault.json`, and the hooks in
+`.claude/settings.json` and `.claude/settings.local.json`, which its hooks reference says it reads
+too. Each runs a script inside the vault, and Copilot CLI 1.0.86 runs the vault's repository hooks
+in `-p` mode in a folder it trusts (measured on Windows, 2026-10-18), so a pass that rewrote such a
+script would get a shell through its next edit (reasoned). Keep them out of the container: mount
+`.github/` read-only with its `hooks/vault.json` from a copy that has no hooks (Copilot also reads
+`.github/copilot/settings.json` and `.github/copilot/settings.local.json`, which a pass could
+otherwise create), `.claude/` read-only from the vault's own folder, with its `settings.json`, and
+any `settings.local.json`, mounted over it from copies without their hooks (run the check again
+whenever one appears or changes), the vault's `.git` read-only, and an empty file from outside the
+vault read-only over its `.env` (if the vault has no `.env`, create an empty one there first, as the
+README says), with each name these mounts cover a folder or file in the vault, not a link, and,
+where a file, with a single name (the README's step 5 says which), load none of your
+home configuration (Copilot reads hooks from `~/.copilot/` too), start a new container for each run,
+whose own filesystem is discarded at exit, as the README's container rule says, so that a hook a
+pass wrote under `~/.copilot/` in the container cannot run at the next run (reasoned; within the
+same run it stays open, as the README says, because the hooks reference does not say when Copilot
+loads its hooks), and run the check in `docs/harnesses/README.md`, "No vault hook in a scheduled
+pass", which shows that the vault's hook scripts do not run and that writes into `.git` and
+`.claude/` are refused. Copilot also documents a `disableAllHooks` setting; this guide does not use
+it, because the file it would sit in is one a pass could write, or one a mount would create inside
+the vault. Only then set `VAULT_ALLOW_UNENFORCED_TOOLS=1`.
 
 ## Known limits
 
@@ -86,6 +109,7 @@ pass, gives the agent no shell. Only then set `VAULT_ALLOW_UNENFORCED_TOOLS=1`.
 
 - Repository instructions and AGENTS.md: <https://docs.github.com/en/copilot/how-tos/configure-custom-instructions/add-repository-instructions>
 - Hooks (file format, `bash`/`powershell`, payload formats, matchers): <https://docs.github.com/en/copilot/how-tos/use-copilot-agents/coding-agent/use-hooks> and <https://docs.github.com/en/copilot/reference/hooks-configuration>
+- Hooks reference (hook sources incl. `.claude/settings.json` and `~/.copilot/`, `disableAllHooks`; checked 2026-10-18; `.github/copilot/settings.local.json` read 2026-10-19): <https://docs.github.com/en/copilot/reference/hooks-reference>
 - Copilot CLI (`-p`, trusted directories, AGENTS.md): <https://docs.github.com/en/copilot/how-tos/use-copilot-agents/use-copilot-cli>
 - Agent skills (skill directories): <https://docs.github.com/en/copilot/concepts/agents/about-agent-skills>
 - VS Code instructions (`chat.useAgentsMdFile`, `.claude/rules`): <https://code.visualstudio.com/docs/copilot/customization/custom-instructions>
