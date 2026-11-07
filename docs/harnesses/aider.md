@@ -207,9 +207,11 @@ Once the check is over, before you change anything in the copy, make the README'
 as for a removal, on the host, through the path you will change the copy by and in the shell you
 will change it from. Where a marker is found in the vault other than inside a folder you made for
 the copy (where you cannot tell, it is not one), change nothing through the copy's path, then or
-later, but the markers found, which you remove, and remove nothing of it but a link, junction, mount
-or drive you made for it, as the README's step 1 says; the check is FAILED (the README's step 6):
-see the known files as the README's step 1 says; check the steering surfaces by hand, without git,
+later, but the markers found, which you remove, and remove nothing of the copy but a link, junction,
+mount or drive you made for it, as the README's step 1 says (where the copy's path is the vault's
+own path itself, not another path to the vault, neither limit applies: make the clean-up below
+through it, as the README's step 6 says); the check is FAILED (the README's step 6): see the known
+files as the README's step 1 says; check the steering surfaces by hand, without git,
 before any git command, as `docs/setup.md`'s `UNVERIFIED` troubleshooting row says, since a look by
 name cannot show the second canary; look in the vault by hand for what the README's step 5 stop
 names for a marker found in the vault, where the check stopped before that step, or for what its
@@ -221,10 +223,11 @@ every copy; a commit is not seen without git). These looks leave the check FAILE
 each other file the check changed back from the copy you trust, its current form first moved out of
 the vault and every copy, never removing it (nothing in a folder the README's step 1 sentence that
 begins "Wherever" keeps, which you check by hand, and, where you have no copy you trust, put back
-and move nothing, as the README's step 6 says); clean up the rest of what they find through the
-vault's own path, never the copy's, as the README's step 6 says, and run the check again on a copy
-given folders of its own outside the vault at another path. Where you cannot put or see a marker, or
-cannot trust the search, change nothing in it. Otherwise remove the markers, and then the second
+and move nothing, and do as the README's step 6 clause that begins "for every file" says); clean up
+the rest of what they find through the vault's own path, never the copy's where the two differ, as
+the README's step 6 says, and run the check again on a copy given folders of its own outside the
+vault at another path. Where you cannot put or see a marker, or cannot trust the search, change
+nothing in it. Otherwise remove the markers, and then the second
 canary from the copy's git configuration, with
 the copy of the canary script it points at in the copy's `.claude/hooks/`. If the scheduled runs
 do not show the rules in the chat, check the absolute `read:` paths.
