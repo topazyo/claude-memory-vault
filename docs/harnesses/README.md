@@ -245,29 +245,30 @@ environment the schedule uses:
    put in one of the copy's five folders" says, and the check is FAILED (step 6). Step 5's stop and
    step 6's remedy remove or move nothing of such a folder either, but the markers found and what
    the sentence above lets you remove (step 6's taking out by hand of a change you can tell is the
-   check's, by editing the file, is neither). Where the marker you put in one of the copy's five
-   folders (its root, `.git/`, `.claude/`, `.claude/hooks/`, `.claude/githooks/`) was found in the
-   matching folder of the vault (or a folder that one resolves to or names), that folder of the copy
-   is the vault's own under another path (a link or junction at or above it, a mount at or above it,
-   a substituted or mapped drive, another spelling of the
-   vault's path, or the vault's own path): remove nothing at or through that path but a link,
-   junction, mount or drive at or above the copy's root that you made for it, a link or junction at
-   one of the copy's own four folders, or a mount there that you made (a link or junction by its own
-   name, as below; a mount by unmounting it; a drive by removing it); where that folder is the
-   copy's root, remove nothing more, and otherwise remove what is left of the copy as below. Remove
-   any other copy as below; where no marker was found in a matching folder, and the one you put in
-   the copy's root was found in a folder of the vault below its root, and the other four in that
-   folder's `.git/`, `.claude/`, `.claude/hooks/` and `.claude/githooks/`, the copy lies inside the
-   vault at that folder: remove it there too, by that path, as below, only where that folder is, or
-   lies inside, a folder you made for the copy (where you cannot tell, it is not one); otherwise
-   remove nothing of that folder but the markers found, nor anything of the copy but what the
-   sentence that begins "Wherever" lets you remove, and the check is FAILED (step 6). Where the
-   marker you put in the copy's root was found in a folder of the vault below its root, see, after
-   the removal as below, that this folder is gone: one still there may hold what the copy wrote into
-   the vault, and the check is FAILED (step 6): do as step 6 says for it before you start this step
-   again. In every case where a marker was found, then see that each known file this step names
-   still lies in the vault: one missing is a write that reached the vault, and the check is FAILED
-   (step 6): put the vault back from a copy you
+   check's, by editing the file, removes and moves nothing, so this does not bar it). Where the
+   marker you put in one of the copy's five folders (its root, `.git/`, `.claude/`,
+   `.claude/hooks/`, `.claude/githooks/`) was found in the matching folder of the vault (or a folder
+   that one resolves to or names), that folder of the copy is the vault's own under another path (a
+   link or junction at or above it, a mount at or above it, a substituted or mapped drive, another
+   spelling of the vault's path, or the vault's own path): remove nothing at or through that path
+   but a link, junction, mount or drive at or above the copy's root that you made for it, a link or
+   junction at one of the copy's own four folders, or a mount there that you made (a link or
+   junction by its own name, as below; a mount by unmounting it; a drive by removing it); where that
+   folder is the copy's root, remove nothing more (step 6 says what its clean-up does where the
+   copy's path is the vault's own path itself), and otherwise remove what is left of the copy as
+   below. Remove any other copy as below; where no marker was found in a matching folder, and the
+   one you put in the copy's root was found in a folder of the vault below its root, and the other
+   four in that folder's `.git/`, `.claude/`, `.claude/hooks/` and `.claude/githooks/`, the copy
+   lies inside the vault at that folder: remove it there too, by that path, as below, only where
+   that folder is, or lies inside, a folder you made for the copy (where you cannot tell, it is not
+   one); otherwise remove nothing of that folder but the markers found, nor anything of the copy but
+   what the sentence that begins "Wherever" lets you remove, and the check is FAILED (step 6). Where
+   the marker you put in the copy's root was found in a folder of the vault below its root, see,
+   after the removal as below, that this folder is gone: one still there may hold what the copy
+   wrote into the vault, and the check is FAILED (step 6): do as step 6 says for it before you start
+   this step again. In every case where a marker was found, then see that each known file this step
+   names still lies in the vault: one missing is a write that reached the vault, and the check is
+   FAILED (step 6): put the vault back from a copy you
    trust and check the steering surfaces by hand, as step 5 says, before anything else; otherwise
    give the copy folders of its own outside the vault (a fresh clone at a path of its own, not a
    link), and start this step again. Whenever you remove a copy (never one that step 5's stop for a
@@ -278,7 +279,8 @@ environment the schedule uses:
    inside a folder you made for the copy there (where you cannot tell, it is not one), shows the
    path to be the vault's own: remove nothing of it but a link, junction, mount or drive you made
    for the copy, each as above (none below a folder of the vault this step keeps), and the markers
-   found; then see that each known file this step names still lies in the vault (one missing is
+   found (step 6 says what its clean-up does where the copy's path is the vault's own path itself);
+   then see that each known file this step names still lies in the vault (one missing is
    FAILED, as above), and, during the check or once a check that stopped before step 5 is over, do
    as step 5's stop says for a marker found in the vault. Where the path is shown to be the vault's
    own once a check that reached step 5 is over, no stop is made: look in the vault by hand, without
@@ -784,27 +786,32 @@ environment the schedule uses:
    in place of one of them, found there, any such script put back from a copy you trust, made before
    the check began, and the copy given folders of its own, with an earlier copy removed as step 1
    says unless step 5's stop for a marker found in the vault, or step 1's re-read, left it where it
-   is); in that clean-up, made through the vault's own path (where the copy's path is the vault's
-   own path itself, through it: no limit of step 1 on what you remove of the copy bars this clean-up
-   but its sentence that begins "Wherever", and nothing else of the copy is removed), and wherever
-   step 5 itself says to remove what it wrote, put any file of the vault the check changed back from
-   a copy you trust, made before the check began, never removing it, its current form first moved
-   out of the vault and every copy, use `rm` only on a file you know the check wrote, and move any
-   file you cannot tell outside the vault and every copy, never deleting it, but put back, move and
-   remove nothing in a folder step 1's sentence that begins "Wherever" keeps but the markers found
-   and what that sentence lets you remove, and check that folder by hand, taking out by hand there,
-   with or without such a copy, any change you can tell is the check's, by editing the file, which
-   puts back, removes and moves no file, its current form first copied outside the vault and every
-   copy; for every file of the vault, in that folder or not, where you have no such copy, put back
-   and move nothing, the `rm` limit above and that folder's rule still holding: list what was found,
-   check by hand each file of it and what else the check could have written or changed, the steering
-   surfaces among what you check as step 5 says, take out by hand any change you can tell is the
-   check's, the file's current form first copied outside the vault and every copy (in that folder
-   too, by editing the file, which puts back, removes and moves no file), and only once each is
-   settled make such a copy, kept outside the vault and every copy, before you run the check again,
-   listing beside it any file you still cannot tell, never taken as the owner's; then run the check
-   again on the copy given folders of its own outside the vault at another path; after a known file
-   of the vault missing when step 1 reads them after a marker is found or a removal,
+   is); in that clean-up, made through the vault's own path (through the copy's only where that is
+   the vault's own path itself, not another path to the vault; a path you cannot tell is another
+   path; no limit of step 1 or of step 5's stop on what you remove of the copy bars this clean-up's
+   putting back, its moving out of a file's current form or of a file you cannot tell, or its `rm`
+   of a file you know the check wrote, but step 1's sentence that begins "Wherever"; and where the
+   copy's path is the vault's own path itself, the copy, being the vault, is never removed, nor
+   anything of it but by this clean-up), and wherever step 5 itself says to remove what it wrote,
+   put any file of the vault the check changed back from a copy you trust, made before the check
+   began, never removing it, its current form first moved out of the vault and every copy, use `rm`
+   only on a file you know the check wrote, and move any file you cannot tell outside the vault and
+   every copy, never deleting it, but put back, move and remove nothing in a folder step 1's
+   sentence that begins "Wherever" keeps but the markers found and what that sentence lets you
+   remove, and check that folder by hand, taking out by hand there, with or without such a copy, any
+   change you can tell is the check's, by editing the file, which puts back, removes and moves no
+   file, its current form first copied outside the vault and every copy, and listing beside the next
+   copy you make to trust any file of that folder the check wrote or you cannot tell, never taken as
+   the owner's; for every file of the vault, in that folder or not, where you have no such copy, put
+   back and move nothing, the `rm` limit above and that folder's rule still holding: list what was
+   found, check by hand each file of it and what else the check could have written or changed, the
+   steering surfaces among what you check as step 5 says, take out by hand any change you can tell
+   is the check's, the file's current form first copied outside the vault and every copy (in that
+   folder too, by editing the file, which puts back, removes and moves no file), and only once each
+   is settled make such a copy, kept outside the vault and every copy, before you run the check
+   again, listing beside it any file you still cannot tell, never taken as the owner's; then run the
+   check again on the copy given folders of its own outside the vault at another path; after a known
+   file of the vault missing when step 1 reads them after a marker is found or a removal,
    put the vault back from a copy you trust and check the steering surfaces by hand, as step 5 says,
    before anything else, and run the check again on a copy of its own; after a copy's folder left
    inside the vault, remove it there, by that path, as step 1 says (unless step 5's stop for a
