@@ -379,17 +379,20 @@ for this release).
   check; what was found listed, each file of it and what else the check could have written or
   changed, the steering surfaces among them, checked by hand, any change that can be told to be the
   check's taken out by hand, the current form of each file so changed first copied outside the vault
-  and every copy, and only once each file so checked is settled a copy to trust made, any file still
-  not told listed beside it and never taken as the owner's, before the check is run again on a copy
-  given folders of its own outside the vault at another path, as the README's step 6 says), a file
-  that cannot be told to be the check's or not counted as the check's for the verdict, the README's
-  step 6 saying what is done with it, a commit not seen without git), one found failing the check,
-  the vault then cleaned up as the README's step 6 says (a file the check changed put back from a
-  copy the owner trusts, its current form first moved out of the vault and every copy, never
+  and every copy, and only once each file so checked is settled (a file known to be one the check
+  changed settled only once brought back, by editing it, to its form before the check) a copy to
+  trust made, kept outside the vault and every copy, any file still not told listed beside it and
+  never taken as the owner's, before the check is run again on a copy given folders of its own
+  outside the vault at another path, as the README's step 6 says), a file that cannot be told to be
+  the check's or not counted as the check's for the verdict, the README's step 6 saying what is done
+  with it, a commit not seen without git), one found failing the check, the vault then cleaned up as
+  the README's step 6 says (a file the check changed put back from a copy the owner trusts, its
+  current form first moved out of the vault and every copy, never
   removed; `rm` used only on a file known to be one the check
   wrote; one that cannot be told moved outside
-  the vault and every copy, never deleted; with no copy the owner trusts, nothing put back or moved,
-  any change that can be told to be the check's taken out by hand, the current form of each file so
+  the vault and every copy, never deleted; with no copy the owner trusts, and for a file known to be
+  one the check changed that a copy the owner trusts does not hold, nothing put back or moved, any
+  change that can be told to be the check's taken out by hand, the current form of each file so
   changed first copied outside the vault and every copy, as that step says), and the copy left in
   place, nothing of it removed but what the owner made for it, as above, and otherwise its verdict
   standing unless a known file is missing, no copy the owner trusts was made before the check began,
@@ -451,15 +454,17 @@ for this release).
   removed or moved, its current form first copied outside the vault and every copy, and any file of
   that folder the check wrote or that cannot be told listed beside the next copy made to trust, made
   only once that folder is checked and each such change taken out, never taken as the owner's; for
-  every file of the vault, in that folder or not, with no such
-  copy, nothing put back or moved, the `rm` limit and that folder's rule still holding: what was
-  found listed, each file of it and what else the check could have written or changed checked by
-  hand, the steering surfaces among them as the README's step 5 says, any change that can be told to
-  be the check's taken out by hand, each such file's current form first copied outside the vault and
-  every copy (in that folder too, by editing the file, no file being put back, removed or moved),
-  and only once each is settled a copy to trust made, kept outside the vault and every copy, any
-  file still not told listed beside it and never taken as the owner's, before the check is run
-  again; the check then run again on a copy given folders of its own outside the vault at another
+  every file of the vault, in that folder or not, with no such copy, and for a file known to be one
+  the check changed that such a copy does not hold, nothing put back or moved, the `rm` limit and
+  that folder's rule still holding: what was found listed, each file of it and what else the check
+  could have written or changed checked by hand, the steering surfaces among them as the README's
+  step 5 says, any change that can be told to be the check's taken out by hand, each such file's
+  current form first copied outside the vault and every copy (in that folder too, by editing the
+  file, no file being put back, removed or moved), and only once each is settled (a file known to be
+  one the check changed settled only once brought back, by editing it, to its form before the check)
+  a copy to trust made, kept outside the vault and every copy, any file still not told listed beside
+  it and never taken as the owner's, before the check is run again; the check then run again on a
+  copy given folders of its own outside the vault at another
   path; once the search has found each known file and no marker, the copy's markers removed, the one
   in its `.git/` apart; the marker search does not depend on spelling (measured on Windows), while
   the resolved comparison, on Windows, can read one folder spelled two ways as two), the wrapper
@@ -600,14 +605,17 @@ for this release).
   copy, and any file of that folder the check wrote or that cannot be told listed beside the next
   copy made to trust, made only once that folder is checked and each such change taken out, never
   taken as the owner's; and, for every file of the vault, in that folder or not, with no copy
-  the owner trusts, nothing put back or moved, the `rm` limit below and that folder's rule still
+  the owner trusts, and for a file known to be one the check changed that a copy the owner trusts
+  does not hold, nothing put back or moved, the `rm` limit below and that folder's rule still
   holding: what was found listed, each file of it and what else the check could have written or
   changed checked by hand, the steering surfaces among them as the README's step 5 says, any change
   that can be told to be the check's taken out by hand, each such file's current form first copied
   outside the vault and every copy (in that folder too, by editing the file, no file being put back,
-  removed or moved), and only once each is settled a copy to trust made, kept outside the vault and
-  every copy, any file still not told listed beside it and never taken as the owner's, before the
-  check is run again, as the README's step 6 says), and the rest cleaned up in the vault by its own
+  removed or moved), and only once each is settled (a file known to be one the check changed settled
+  only once brought back, by editing it, to its form before the check) a copy to trust made, kept
+  outside the vault and every copy, any file still not told listed beside it and never taken as the
+  owner's, before the check is run again, as the README's step 6 says), and the rest cleaned up in
+  the vault by its own
   path, never the copy's where the two differ, as the README's step 6 says, `rm` used only on a file
   known to be one the check wrote, a file that cannot be told to be the check's moved outside the
   vault and every copy and never deleted, the check then run again on a copy given folders of its

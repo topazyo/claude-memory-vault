@@ -226,10 +226,15 @@ before the check began and kept outside the vault and every copy; a commit is no
 These looks leave the check FAILED: put each note and each other file the check changed back from
 the copy you trust, its current form first moved out of the vault and every copy, never removing it
 (nothing in a folder the README's step 1 sentence that begins "Wherever" keeps, which you check by
-hand, taking out by hand there any change you can tell is the check's, as the README's step 6 says,
-and, where you have no copy you trust, put back and move nothing, and do as the README's step 6
-clause that begins "for every file" says); clean up the rest of what they find through the vault's
-own path, never the copy's where the two differ, as the README's step 6 says, and run the check
+hand, with or without a copy you trust, as the README's step 6 says: take out by hand there any
+change you can tell is the check's, by editing the file, which puts back, removes and moves no file,
+its current form first copied outside the vault and every copy, and list beside the next copy you
+make to trust, made only once that folder is checked and each such change taken out, any file there
+the check wrote or you cannot tell, never taken as the owner's; and, where you have no copy you
+trust, put back and move nothing, and do as the README's step 6 clause that begins "for every file"
+says; do the same, in that folder or not, for a note or other file you know the check changed that
+the copy you trust does not hold); clean up the rest of what they find through the vault's own path,
+never the copy's where the two differ, as the README's step 6 says, and run the check
 again on a copy given folders of its own outside the vault at another path. Where you cannot put or
 see a marker, or cannot trust the search, change nothing in it. Otherwise remove the markers, and
 then the second canary from the copy's git configuration, with the copy of the canary script it

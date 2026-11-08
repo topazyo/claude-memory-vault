@@ -804,16 +804,18 @@ environment the schedule uses:
    file, its current form first copied outside the vault and every copy, and listing beside the next
    copy you make to trust, made only once that folder is checked and each such change taken out, any
    file of that folder the check wrote or you cannot tell, never taken as
-   the owner's; for every file of the vault, in that folder or not, where you have no such copy, put
-   back and move nothing, the `rm` limit above and that folder's rule still holding: list what was
-   found, check by hand each file of it and what else the check could have written or changed, the
-   steering surfaces among what you check as step 5 says, take out by hand any change you can tell
-   is the check's, the file's current form first copied outside the vault and every copy (in that
-   folder too, by editing the file, which puts back, removes and moves no file), and only once each
-   is settled make such a copy, kept outside the vault and every copy, before you run the check
-   again, listing beside it any file you still cannot tell, never taken as the owner's; then run the
-   check again on the copy given folders of its own outside the vault at another path; after a known
-   file of the vault missing when step 1 reads them after a marker is found or a removal,
+   the owner's; for every file of the vault, in that folder or not, where you have no such copy, and
+   for a file you know the check changed that such a copy does not hold, put back and move nothing,
+   the `rm` limit above and that folder's rule still holding: list what was found, check by hand
+   each file of it and what else the check could have written or changed, the steering surfaces
+   among what you check as step 5 says, take out by hand any change you can tell is the check's, the
+   file's current form first copied outside the vault and every copy (in that folder too, by editing
+   the file, which puts back, removes and moves no file), and only once each is settled (a file you
+   know the check changed is settled only once, by editing it, you have brought it back to its form
+   before the check) make a copy to trust, kept outside the vault and every copy, before you run the
+   check again, listing beside it any file you still cannot tell, never taken as the owner's; then
+   run the check again on a copy given folders of its own outside the vault at another path; after a
+   known file of the vault missing when step 1 reads them after a marker is found or a removal,
    put the vault back from a copy you trust and check the steering surfaces by hand, as step 5 says,
    before anything else, and run the check again on a copy of its own; after a copy's folder left
    inside the vault, remove it there, by that path, as step 1 says (unless step 5's stop for a
