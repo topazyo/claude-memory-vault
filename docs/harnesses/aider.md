@@ -230,10 +230,11 @@ hand, with or without a copy you trust, as the README's step 6 says: take out by
 change you can tell is the check's, by editing the file, which puts back, removes and moves no file,
 its current form first copied outside the vault and every copy, and list beside the next copy you
 make to trust, made only once that folder is checked and each such change taken out, any file there
-the check wrote or you cannot tell, never taken as the owner's; and, where you have no copy you
-trust, put back and move nothing, and do as the README's step 6 clause that begins "for every file"
-says; do the same, in that folder or not, for a note or other file you know the check changed that
-the copy you trust does not hold); clean up the rest of what they find through the vault's own path,
+the check wrote or you cannot tell, never taken as the owner's; and, for every file, in that folder
+or not, where you have no copy you trust, put back and move nothing, and do as the README's step 6
+clause that begins "for every file" says; do the same, in that folder or not, for a note or other
+file you know the check changed that the copy you trust does not hold); clean up the rest of what
+they find through the vault's own path,
 never the copy's where the two differ, as the README's step 6 says, and run the check
 again on a copy given folders of its own outside the vault at another path. Where you cannot put or
 see a marker, or cannot trust the search, change nothing in it. Otherwise remove the markers, and

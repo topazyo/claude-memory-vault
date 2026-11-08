@@ -784,7 +784,7 @@ environment the schedule uses:
    vault (it removes nothing of the copy but what you made for it); then clean up as step 5 says
    (the vault's hook scripts among the surfaces you check by hand after a `hook-canary`, or a canary
    in place of one of them, found there, any such script put back from a copy you trust, made before
-   the check began, and the copy given folders of its own, with an earlier copy removed as step 1
+   the check began, and a copy given folders of its own, with an earlier copy removed as step 1
    says unless step 5's stop for a marker found in the vault, or step 1's re-read, left it where it
    is); in that clean-up, made through the vault's own path (through the copy's only where that is
    the vault's own path itself, not another path to the vault; a path you cannot tell is another
@@ -811,12 +811,13 @@ environment the schedule uses:
    among what you check as step 5 says, take out by hand any change you can tell is the check's, the
    file's current form first copied outside the vault and every copy (in that folder too, by editing
    the file, which puts back, removes and moves no file), and only once each is settled (a file you
-   know the check changed is settled only once, by editing it, you have brought it back to its form
-   before the check) make a copy to trust, kept outside the vault and every copy, before you run the
-   check again, listing beside it any file you still cannot tell, never taken as the owner's; then
-   run the check again on a copy given folders of its own outside the vault at another path; after a
-   known file of the vault missing when step 1 reads them after a marker is found or a removal,
-   put the vault back from a copy you trust and check the steering surfaces by hand, as step 5 says,
+   know the check changed, other than one you have put back from such a copy, is settled only once,
+   by editing it, you have brought it back to its form before the check) make a copy to trust, kept
+   outside the vault and every copy, before you run the check again, listing beside it any file you
+   still cannot tell, never taken as the owner's; then run the check again on a copy given folders
+   of its own outside the vault at another path; after a known file of the vault missing when step 1
+   reads them after a marker is found or a removal, put the vault back from a copy you trust and
+   check the steering surfaces by hand, as step 5 says,
    before anything else, and run the check again on a copy of its own; after a copy's folder left
    inside the vault, remove it there, by that path, as step 1 says (unless step 5's stop for a
    marker found in the vault, or step 1's
