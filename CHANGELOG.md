@@ -395,10 +395,11 @@ for this release).
   one the check changed that a copy the owner trusts does not hold, nothing put back or moved, any
   change that can be told to be the check's taken out by hand, the current form of each file so
   changed first copied outside the vault and every copy, and only once each is settled, as above, a
-  copy to trust made, kept outside the vault and every copy, as that step says), and the copy left
-  in place, nothing of it removed but what the owner made for it, as above, and otherwise its
-  verdict standing unless a known file is missing, no copy the owner trusts was made before the
-  check began, or the marker put in the copy's root was found in a folder of the vault below its
+  copy to trust made, kept outside the vault and every copy, any file still not told listed beside
+  it and never taken as the owner's, as that step says), and the copy left in place, nothing of it
+  removed but what the owner made for it, as above, and otherwise its verdict standing unless a
+  known file is missing, no copy the owner trusts was made before the check began, or the marker put
+  in the copy's root was found in a folder of the vault below its
   root that is not, and does not lie inside, one the owner made for the copy (each failing the
   check, the last as the clause on a folder of the vault the owner did not make
   for the copy says); a marker that cannot be put or seen, or a search that cannot be trusted,
