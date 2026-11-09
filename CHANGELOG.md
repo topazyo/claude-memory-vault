@@ -457,8 +457,10 @@ for this release).
   again, or step 1 started again, only once no known file is still missing, that is, each known file
   found missing seen back in the vault where the README's step 1 search looks for it, through the
   vault's own path (for a folder outside it that the vault names, through the path it names),
-  without git); a canary's record found where the marker is looked for fails it, the stop in the
-  README's step 5
+  without git, and, for a folder the README's step 1 clause that begins "except as follows" keeps,
+  only once, the folder made readable, any steering surface in it has been checked by hand, without
+  git, as the README's step 5 says); a canary's record found where the marker is looked for fails
+  it, the stop in the README's step 5
   for a marker found in the vault then followed (nothing of the copy removed but what the owner made
   for it), the vault cleaned up as the README's step 6 says, its hook scripts among the surfaces
   checked by hand and any a canary replaced put back from a copy the owner trusts, made before the

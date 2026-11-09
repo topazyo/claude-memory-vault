@@ -863,7 +863,9 @@ environment the schedule uses:
    does any other result short of PASS. Whatever any step or a route above says, run the check
    again, or start step 1 again, only once no known file is still missing: see each known file found
    missing back in the vault where step 1's search looks for it, through the vault's own path (for a
-   folder outside it that the vault names, through the path it names), without git.
+   folder outside it that the vault names, through the path it names), without git, and, for a
+   folder step 1's clause that begins "except as follows" keeps, only once, the folder made
+   readable, any steering surface in it has been checked by hand, without git, as step 5 says.
 
 The canary does not depend on where a hook logs. It depends on step 1 for any variable a hook's
 command reads: the shipped `.claude/settings.json` names its scripts through
