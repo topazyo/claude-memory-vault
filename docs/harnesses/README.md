@@ -268,8 +268,11 @@ environment the schedule uses:
    wrote into the vault, and the check is FAILED (step 6): do as step 6 says for it before you start
    this step again. In every case where a marker was found, then see that each known file this step
    names still lies in the vault: one missing is a write that reached the vault, and the check is
-   FAILED (step 6): put the vault back from a copy you
-   trust and check the steering surfaces by hand, as step 5 says, before anything else; otherwise
+   FAILED (step 6): check the steering surfaces by hand, without git, as step 5 says, before
+   anything else; then put each known file found missing back from a copy you trust, made before the
+   check began, that holds it, and clean up the rest of what the check wrote or changed in the vault
+   as step 6 says (a known file still missing is not settled); where no known file was found
+   missing,
    give the copy folders of its own outside the vault (a fresh clone at a path of its own, not a
    link), and start this step again. Whenever you remove a copy (never one that step 5's stop for a
    marker found in the vault leaves where it is) after the folder test or the canary run below,
@@ -802,9 +805,10 @@ environment the schedule uses:
    remove, and check that folder by hand, taking out by hand there, with or without such a copy, any
    change you can tell is the check's, by editing the file, which puts back, removes and moves no
    file, its current form first copied outside the vault and every copy, and listing beside the next
-   copy you make to trust, made only once that folder is checked and each such change taken out, any
-   file of that folder the check wrote or you cannot tell, never taken as
-   the owner's; for every file of the vault, in that folder or not, where you have no such copy, and
+   copy you make to trust any file of that folder the check wrote or you cannot tell, never taken as
+   the owner's, that copy made only once that folder is checked, each such change taken out and each
+   file there you know the check changed, other than one it wrote, settled as below; for every file
+   of the vault, in that folder or not, where you have no such copy, and
    for a file you know the check changed that such a copy does not hold, put back and move nothing,
    the `rm` limit above and that folder's rule still holding: list what was found, check by hand
    each file of it and what else the check could have written or changed, the steering surfaces
@@ -816,11 +820,13 @@ environment the schedule uses:
    outside the vault and every copy, before you run the check again, listing beside it any file you
    still cannot tell, never taken as the owner's; then run the check again on a copy given folders
    of its own outside the vault at another path; after a known file of the vault missing when step 1
-   reads them after a marker is found or a removal, put the vault back from a copy you trust and
-   check the steering surfaces by hand, as step 5 says,
-   before anything else, and run the check again on a copy of its own; after a copy's folder left
-   inside the vault, remove it there, by that path, as step 1 says (unless step 5's stop for a
-   marker found in the vault, or step 1's
+   reads them after a marker is found or a removal, check the steering surfaces by hand, without
+   git, as step 5 says, before anything else; then put each known file found missing back from a
+   copy you trust, made before the check began, that holds it, clean up the rest of what the check
+   wrote or changed in the vault as the clean-up above says (a known file still missing is not
+   settled), and run the check again on a copy given folders of its own outside the vault at another
+   path; after a copy's folder left inside the vault, remove it there, by that path, as step 1 says
+   (unless step 5's stop for a marker found in the vault, or step 1's
    re-read, left it where it is), only where that folder is, or lies inside, a folder you made for
    the copy (where you cannot tell, it is not one),
    otherwise leave it and check it by hand, and run the check again on a copy given folders of its
