@@ -626,14 +626,14 @@ for this release).
   the README's step 6 says), and the rest cleaned up in the vault by its own
   path, never the copy's where the two differ, as the README's step 6 says, `rm` used only on a file
   known to be one the check wrote, a file that cannot be told to be the check's moved outside the
-  vault and every copy and never deleted, the check then run again on a copy given folders of its
-  own outside the vault at another path; one that cannot put or see a marker, or trust its search,
-  changing nothing; and the second canary removed only otherwise), adds a canary in the copy's git
-  configuration to the `pre-commit` one, with a control that turns git back on, says that a control
-  fired by a commit alone shows only that Aider made no commit, and passes only where that opening
-  reading, trusted by its control, found no mount below the copy's root, on a copy not on a mapped
-  drive, its identity control found no marker, and the README check's step 5, run in the schedule's
-  container, passed.
+  vault and every copy and never deleted, the check then run again, once no known file is still
+  missing, on a copy given folders of its own outside the vault at another path; one that cannot put
+  or see a marker, or trust its search, changing nothing; and the second canary removed only
+  otherwise), adds a canary in the copy's git configuration to the `pre-commit` one, with a control
+  that turns git back on, says that a control fired by a commit alone shows only that Aider made no
+  commit, and passes only where that opening reading, trusted by its control, found no mount below
+  the copy's root, on a copy not on a mapped drive, its identity control found no marker, and the
+  README check's step 5, run in the schedule's container, passed.
   The Copilot, Cursor, Hermes and OpenCode guides keep the hooks out of their containers; those
   containers, and the Aider and Pi ones, now also mount the vault's `.git` read-only, and `.claude/`
   read-only from the vault's own folder, with its `settings.json`, and any `settings.local.json`,

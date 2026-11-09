@@ -236,11 +236,11 @@ file, in that folder or not, where you have no copy you trust, put back and move
 the README's step 6 clause that begins "for every file" says; do the same, in that folder or not,
 for a note or other file you know the check changed that the copy you trust does not hold); clean up
 the rest of what they find through the vault's own path,
-never the copy's where the two differ, as the README's step 6 says, and run the check
-again on a copy given folders of its own outside the vault at another path. Where you cannot put or
-see a marker, or cannot trust the search, change nothing in it. Otherwise remove the markers, and
-then the second canary from the copy's git configuration, with the copy of the canary script it
-points at in the copy's `.claude/hooks/`. If the scheduled runs
+never the copy's where the two differ, as the README's step 6 says, and, once no known file is still
+missing, run the check again on a copy given folders of its own outside the vault at another path.
+Where you cannot put or see a marker, or cannot trust the search, change nothing in it. Otherwise
+remove the markers, and then the second canary from the copy's git configuration, with the copy of
+the canary script it points at in the copy's `.claude/hooks/`. If the scheduled runs
 do not show the rules in the chat, check the absolute `read:` paths.
 
 Run the schedule in a container that blocks the network and mounts only the vault writable, with the
