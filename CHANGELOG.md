@@ -436,7 +436,8 @@ for this release).
   missing failing the check, the vault's steering surfaces then checked by hand, without git, as the
   README's step 5 says, before anything else, then each known file found missing put back from a
   copy the owner trusts, made before the check began, that holds it, and the rest of what the check
-  wrote or changed cleaned up as the README's step 6 says (a known file still missing not settled);
+  wrote or changed cleaned up as the README's step 6 says (a known file still missing not settled,
+  and no copy to trust made until it is);
   a canary's record found where the marker is looked for fails it, the stop in the README's step 5
   for a marker found in the vault then followed (nothing of the copy removed but what the owner made
   for it), the vault cleaned up as the README's step 6 says, its hook scripts among the surfaces
