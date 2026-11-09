@@ -25,7 +25,7 @@ bash .claude/scripts/vault-update.sh --check --from ../template-new
 
 ---
 
-## 1.4.2 — 2026-11-08
+## 1.4.2 — 2026-11-09
 
 A hardening release for the scheduled runners, and a fix for `/resume`. Each runner now clears
 the inherited git settings that pointed git at another repository (with a `WARNING:`), refuses the
