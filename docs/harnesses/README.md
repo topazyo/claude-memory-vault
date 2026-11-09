@@ -272,7 +272,7 @@ environment the schedule uses:
    anything else; then put each known file found missing back from a copy you trust, made before the
    check began, that holds it, and clean up the rest of what the check wrote or changed in the vault
    as step 6 says (a known file still missing is not settled, and no copy to trust is made until it
-   is); where no known file was found missing,
+   is settled); where no known file was found missing,
    give the copy folders of its own outside the vault (a fresh clone at a path of its own, not a
    link), and start this step again. Whenever you remove a copy (never one that step 5's stop for a
    marker found in the vault leaves where it is) after the folder test or the canary run below,
@@ -824,8 +824,9 @@ environment the schedule uses:
    git, as step 5 says, before anything else; then put each known file found missing back from a
    copy you trust, made before the check began, that holds it, clean up the rest of what the check
    wrote or changed in the vault as the clean-up above says (a known file still missing is not
-   settled, and no copy to trust is made until it is), and run the check again on a copy given
-   folders of its own outside the vault at another path; after a copy's folder left inside the
+   settled, and no copy to trust is made until it is settled), and, once no known file is still
+   missing, run the check again on a copy given folders of its own outside the vault at another
+   path; after a copy's folder left inside the
    vault, remove it there, by that path, as step 1 says (unless step 5's stop for a marker found in
    the vault, or step 1's re-read, left it where it is), only where that folder is, or lies inside,
    a folder you made for the copy (where you cannot tell, it is not one),
