@@ -416,7 +416,9 @@ for this release).
   owner did not make for the copy included; a search still not trusted leaving the copy in place and
   a folder it could not read kept as that clause keeps one, the README's step 6 limits on such a
   folder included, and not moved out of the vault when the README's step 1 starts again, in that
-  check or a later one, until a search that can be trusted has looked there), and the known files
+  check or a later one, until, once it is made readable, any steering surface in it is checked by
+  hand, without git, before any git command, the folder checked by hand as the README's step 6 says,
+  and a search that can be trusted has looked there), and the known files
   seen through the vault's own path as after a removal, one missing failing the check, any new copy
   then made only as the README's step 6 says); in every other case the markers are removed and the
   removal goes on as below, the folder the root's marker was found in, where that was in the vault,
@@ -659,8 +661,10 @@ for this release).
   1 says before any clean-up (one found in the vault read as above, the README's step 1 sentence
   that begins "Wherever" included; a search still not trusted changing nothing in the copy and
   keeping a folder it could not read as that sentence keeps one, the README's step 6 limits on such
-  a folder included, and not moving it out of the vault when the README's step 1 starts again, in
-  that check or a later one, until a search that can be trusted has looked there), the known files
+  a folder included, that folder not moved out of the vault when the README's step 1 starts again,
+  in that check or a later one, until, once it is made readable, any steering surface in it is
+  checked by hand, without git, before any git command, the folder checked by hand as the README's
+  step 6 says, and a search that can be trusted has looked there), the known files
   seen through the vault's own path as the README's step 1 says
   to see them after a removal, and the vault looked at and cleaned up as above, a clean-up the limit
   does not bar); and the second canary removed only in every other case), adds a canary in the

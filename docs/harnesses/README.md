@@ -311,7 +311,9 @@ environment the schedule uses:
    "Wherever" included; a search you still cannot trust leaves the check FAILED and the copy where
    it is, and a folder it could not read is kept as that sentence keeps one, step 6's limits on such
    a folder included, and is not moved out of the vault when this step starts again, in this check
-   or a later one, until a search you can trust has looked there), and see the known files through
+   or a later one, until, once it is made readable, any steering surface in it has been checked by
+   hand, without git, as step 5 says, before any git command, the folder has been checked by hand as
+   step 6 says, and a search you can trust has looked there), and see the known files through
    the vault's own path as after a removal (one missing is FAILED, as above); any new copy is then
    made only as step 6 says). In every other case, remove the markers and go on as below, and where
    the one in its root was found in the
@@ -840,9 +842,10 @@ environment the schedule uses:
    still cannot tell, never taken as the owner's; then run the check again on a copy given folders
    of its own outside the vault at another path; after a known file of the vault missing when step 1
    reads them after a marker is found, a removal, or a search you cannot trust that follows one step
-   1 trusted, or after such a search that reports a folder it could not read (as step 1 says), check
-   the steering surfaces by hand, without git, as step 5 says, before anything else; then, after
-   such a search, do as step 1 says before any put-back; then put each known file found missing back
+   1 trusted, or after such a search that reports a folder it could not read, or does not find a
+   known file the earlier one found (as step 1 says), check the steering surfaces by hand, without
+   git, as step 5 says, before anything else; then, after such a search, do as step 1 says before
+   any put-back; then put each known file found missing back
    from a copy you trust, made before the check began, that holds it, clean up the rest of what the
    check wrote or changed in the vault as the clean-up above says (a known file still missing is not
    settled, and no copy to trust is made until it is settled), and, once no known file is still
