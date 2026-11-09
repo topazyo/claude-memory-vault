@@ -223,25 +223,41 @@ over, and for what this guide's steps 1 to 4 wrote (the copy of the canary scrip
 `.claude/hooks/`, the prompt files, the copies of the wrapper and of the scheduled config where you
 put them in the copy, and the notes steps 2 and 4 changed, compared with a copy you trust, made
 before the check began and kept outside the vault and every copy; a commit is not seen without git).
-These looks leave the check FAILED: put each note and each other file the check changed back from
-the copy you trust, its current form first moved out of the vault and every copy, never removing it
-(nothing in a folder the README's step 1 sentence that begins "Wherever" keeps, which you check by
-hand, with or without a copy you trust, as the README's step 6 says: take out by hand there any
-change you can tell is the check's, by editing the file, which puts back, removes and moves no file,
-its current form first copied outside the vault and every copy, and list beside the next copy you
-make to trust any file there the check wrote or you cannot tell, never taken as the owner's, that
-copy made only once that folder is checked, each such change taken out and each file there you know
-the check changed, other than one it wrote, settled as the README's step 6 says; and, for every
-file, in that folder or not, where you have no copy you trust, put back and move nothing, and do as
-the README's step 6 clause that begins "for every file" says; do the same, in that folder or not,
-for a note or other file you know the check changed that the copy you trust does not hold); clean up
-the rest of what they find through the vault's own path,
+These looks leave the check FAILED: put each known file found missing back from a copy you trust,
+made before the check began, that holds it (a known file still missing is not settled, and no copy
+to trust is made until it is settled), and each note and each other file the check changed back from
+the copy you trust that the looks above compared with, its current form first moved out of the vault
+and every copy, never removing it (nothing in a folder the README's step 1 sentence that begins
+"Wherever" keeps, which you check by hand, with or without a copy you trust, as the README's step 6
+says: take out by hand there any change you can tell is the check's, by editing the file, which puts
+back, removes and moves no file, its current form first copied outside the vault and every copy, and
+list beside the next copy you make to trust any file there the check wrote or you cannot tell, never
+taken as the owner's, that copy made only once that folder is checked, each such change taken out
+and each file there you know the check changed, other than one it wrote, settled as the README's
+step 6 says; and, for every file, in that folder or not, where you have no copy you trust, put back
+and move nothing, and do as the README's step 6 clause that begins "for every file" says; do the
+same, in that folder or not, for a note or other file you know the check changed that the copy you
+trust does not hold); clean up the rest of what they find through the vault's own path,
 never the copy's where the two differ, as the README's step 6 says, and, once no known file is still
-missing, run the check again on a copy given folders of its own outside the vault at another path.
-Where you cannot put or see a marker, or cannot trust the search, change nothing in it. Otherwise
-remove the markers, and then the second canary from the copy's git configuration, with the copy of
-the canary script it points at in the copy's `.claude/hooks/`. If the scheduled runs
-do not show the rules in the chat, check the absolute `read:` paths.
+missing (seen back in the vault as the README's step 6 says), run the check again on a copy given
+folders of its own outside the vault at another path. Where you cannot put or see a marker, or
+cannot trust the search, change nothing in the copy, except as follows (where a search the README's
+step 1 trusted came earlier in this check, a search here that reports a folder it could not read, or
+does not find a known file that step names that the earlier search found, counts as a write that
+reached the vault (where you cannot tell its source, it is the check's for the verdict), and the
+check is FAILED, not NOT VERIFIED, once the check is over too, whatever verdict it had reached, and
+no such folder is moved out of the vault, whatever that step says: check the steering surfaces by
+hand, without git, before any git command; then make each such folder readable again, moving
+nothing, look for the markers again as the README's step 1 says, before any clean-up (one found in
+the vault is read as the sentence that begins "Where a marker is found" above says, the README's
+step 1 sentence that begins "Wherever" included; a search you still cannot trust leaves the check
+FAILED, the copy unchanged and a folder it could not read kept as that README sentence keeps one
+until a search you can trust has looked there), see the known files through the vault's own path as
+the README's step 1 says to see them after a removal, make the looks above and clean up as above, a
+clean-up this limit does not bar). In every other case, remove the markers, and then the second
+canary from the copy's git configuration, with the copy of the canary script it points at in the
+copy's `.claude/hooks/`. If the scheduled runs do not show the rules in the chat, check the absolute
+`read:` paths.
 
 Run the schedule in a container that blocks the network and mounts only the vault writable, with the
 vault's `.claude/` (its settings files mounted over it from copies without their hooks) and `.git`

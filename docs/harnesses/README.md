@@ -298,8 +298,22 @@ environment the schedule uses:
    missing, you have no copy you trust made before the check began, or the sentence that begins
    "Wherever" applies (FAILED, as each says). A marker you cannot put or see, or a search you cannot
    trust as this step says, leaves the copy where it is: remove nothing of it, and make any new copy
-   at another path. Otherwise remove the markers and go on as below, and where the one in its root
-   was found in the vault, see afterwards that the folder it was found in is gone (one still there
+   at another path, except as follows (where a search this step trusted came earlier in this check,
+   a search here that reports a folder it could not read, or does not find a known file this step
+   names that the earlier search found, counts as a write that reached the vault (where you cannot
+   tell its source, it is the check's for the verdict), and the check is FAILED (step 6), not NOT
+   VERIFIED, once the check is over too, whatever verdict it had reached, and no such folder is
+   moved out of the vault, whatever this step says above: check the steering surfaces by hand,
+   without git, as step 5 says, before anything else; then make each such folder readable again,
+   moving nothing, check by hand, without git, any steering surface in such a folder, as step 5
+   says, before any git command and before any put-back, look for `copy-marker` again as this step
+   says, before any clean-up (one found in the vault is read as above, the sentence that begins
+   "Wherever" included; a search you still cannot trust leaves the check FAILED and the copy where
+   it is, and a folder it could not read is kept as that sentence keeps one until a search you can
+   trust has looked there), and see the known files through the vault's own path as after a removal
+   (one missing is FAILED, as above); any new copy is then made only as step 6 says). In every other
+   case, remove the markers and go on as below, and where the one in its root was found in the
+   vault, see afterwards that the folder it was found in is gone (one still there
    is FAILED: step 6). Whenever you remove a copy (never one that step 5's stop for a marker found
    in the vault
    leaves where it is), here, after the folder test or the canary run, after a later step or once
@@ -757,7 +771,10 @@ environment the schedule uses:
    there (its remedy below), reached the vault (a
    `hook-canary` found where step 1 looks for the marker among them), or if a known file of the
    vault is missing when step 1 reads them after a marker is found or a copy, or a link, junction,
-   mount or drive made for one, is removed, or if a copy's folder is still inside the vault after
+   mount or drive made for one, is removed, or after a search you cannot trust that follows one step
+   1 trusted earlier in the check (as step 1 says), or if such a search reports a folder it could
+   not read or does not find a known file the earlier one found, whatever the source of that change
+   (step 1 says when), or if a copy's folder is still inside the vault after
    step 1's removal (step 1 says when). After a file or folder found inside
    the vault or the copy, by any of its names, or a folder found holding the source of a mount in
    the host's own list from outside both into either, move it out or remove the name inside (for a
@@ -820,25 +837,27 @@ environment the schedule uses:
    outside the vault and every copy, before you run the check again, listing beside it any file you
    still cannot tell, never taken as the owner's; then run the check again on a copy given folders
    of its own outside the vault at another path; after a known file of the vault missing when step 1
-   reads them after a marker is found or a removal, check the steering surfaces by hand, without
-   git, as step 5 says, before anything else; then put each known file found missing back from a
-   copy you trust, made before the check began, that holds it, clean up the rest of what the check
-   wrote or changed in the vault as the clean-up above says (a known file still missing is not
-   settled, and no copy to trust is made until it is settled), and, once no known file is still
-   missing, run the check again on a copy given folders of its own outside the vault at another
-   path; after a copy's folder left inside the
-   vault, remove it there, by that path, as step 1 says (unless step 5's stop for a marker found in
-   the vault, or step 1's re-read, left it where it is), only where that folder is, or lies inside,
-   a folder you made for the copy (where you cannot tell, it is not one),
+   reads them after a marker is found, a removal, or a search you cannot trust that follows one step
+   1 trusted (as step 1 says), check the steering surfaces by hand, without git, as step 5 says,
+   before anything else; then put each known file found missing back from a copy you trust, made
+   before the check began, that holds it, clean up the rest of what the check wrote or changed in
+   the vault as the clean-up above says (a known file still missing is not settled, and no copy to
+   trust is made until it is settled), and, once no known file is still missing, run the check again
+   on a copy given folders of its own outside the vault at another path; after a copy's folder left
+   inside the vault, remove it there, by that path, as step 1 says (unless step 5's stop for a
+   marker found in the vault, or step 1's re-read, left it where it is), only where that folder is,
+   or lies inside, a folder you made for the copy (where you cannot tell, it is not one),
    otherwise leave it and check it by hand, and run the check again on a copy given folders of its
    own outside the vault; after a FAILED for having no copy you trust made before the check began,
    where the look found nothing else, do as the clause that begins "for every file" says; then run
    the check again on a copy given folders of its own outside the vault at another path; after any
    other FAILED, in a container, fix what failed and run the check again, and on a switch route the
-   container is the way on. FAILED takes precedence: any of those is FAILED
-   whatever else a run shows. A step 5 that is NOT VERIFIED leaves the check NOT VERIFIED, and so
-   does any other result
-   short of PASS.
+   container is the way on. FAILED takes precedence: any of those is FAILED whatever else a run
+   shows. A step 5 that is NOT VERIFIED leaves the check NOT VERIFIED, and so does any other result
+   short of PASS. Whatever any step or a route above says, run the check again, or start step 1
+   again, only once no known file is still missing: see each known file found missing back in the
+   vault where step 1's search looks for it, through the vault's own path (for a folder outside it
+   that the vault names, through the path it names), without git.
 
 The canary does not depend on where a hook logs. It depends on step 1 for any variable a hook's
 command reads: the shipped `.claude/settings.json` names its scripts through
