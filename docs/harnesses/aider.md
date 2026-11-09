@@ -251,9 +251,11 @@ hand, without git, before any git command; then make each such folder readable a
 nothing, look for the markers again as the README's step 1 says, before any clean-up (one found in
 the vault is read as the sentence that begins "Where a marker is found" above says, the README's
 step 1 sentence that begins "Wherever" included; a search you still cannot trust leaves the check
-FAILED, the copy unchanged and a folder it could not read kept as that README sentence keeps one
-until a search you can trust has looked there), see the known files through the vault's own path as
-the README's step 1 says to see them after a removal, make the looks above and clean up as above, a
+FAILED, the copy unchanged and a folder it could not read kept as that README sentence keeps one,
+the README's step 6 limits on such a folder included, and not moved out of the vault when the
+README's step 1 starts again, in this check or a later one, until a search you can trust has looked
+there), see the known files through the vault's own path as the README's step 1 says to see them
+after a removal, make the looks above and clean up as above, a
 clean-up this limit does not bar). In every other case, remove the markers, and then the second
 canary from the copy's git configuration, with the copy of the canary script it points at in the
 copy's `.claude/hooks/`. If the scheduled runs do not show the rules in the chat, check the absolute

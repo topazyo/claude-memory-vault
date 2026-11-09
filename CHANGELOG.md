@@ -414,16 +414,17 @@ for this release).
   git command and before any put-back, the markers looked for again as the README's step 1 says
   before any clean-up (one found in the vault read as above, the clause on a folder of the vault the
   owner did not make for the copy included; a search still not trusted leaving the copy in place and
-  a folder it could not read kept as that clause keeps one until a search that can be trusted has
-  looked there), and the known files seen through the vault's own path as after a removal, one
-  missing failing the check, any new copy then made only as the README's step 6 says); in every
-  other case the markers are removed and the removal goes on as below, the folder the root's marker
-  was found in, where that was in the vault, then seen gone, one still there failing the check;
-  nothing of a copy on a mapped drive (told as above, in the shell it is removed from), whose share
-  a server serves, this host included, is removed through the drive, though a drive made for the
-  copy may be, as above, any new copy then made on a local drive;
-  every removal of a copy (never one the stop in the README's step 5 for a marker found in the vault
-  leaves in place), during the check or
+  a folder it could not read kept as that clause keeps one, the README's step 6 limits on such a
+  folder included, and not moved out of the vault when the README's step 1 starts again, in that
+  check or a later one, until a search that can be trusted has looked there), and the known files
+  seen through the vault's own path as after a removal, one missing failing the check, any new copy
+  then made only as the README's step 6 says); in every other case the markers are removed and the
+  removal goes on as below, the folder the root's marker was found in, where that was in the vault,
+  then seen gone, one still there failing the check; nothing of a copy on a mapped drive (told as
+  above, in the shell it is removed from), whose share a server serves, this host included, is
+  removed through the drive, though a drive made for the copy may be, as above, any new copy then
+  made on a local drive; every removal of a copy (never one the stop in the README's step 5 for a
+  marker found in the vault leaves in place), during the check or
   once it is over, is made only
   after the host's own list of mounts, read as step 5 reads it, in the shell the copy is removed
   from, for mounts at or under the copy, its path spelled as step 5 spells the paths it compares,
@@ -657,8 +658,10 @@ for this release).
   such folder made readable again, nothing moved, the markers looked for again as the README's step
   1 says before any clean-up (one found in the vault read as above, the README's step 1 sentence
   that begins "Wherever" included; a search still not trusted changing nothing in the copy and
-  keeping a folder it could not read as that sentence keeps one until a search that can be trusted
-  has looked there), the known files seen through the vault's own path as the README's step 1 says
+  keeping a folder it could not read as that sentence keeps one, the README's step 6 limits on such
+  a folder included, and not moving it out of the vault when the README's step 1 starts again, in
+  that check or a later one, until a search that can be trusted has looked there), the known files
+  seen through the vault's own path as the README's step 1 says
   to see them after a removal, and the vault looked at and cleaned up as above, a clean-up the limit
   does not bar); and the second canary removed only in every other case), adds a canary in the
   copy's git configuration to the `pre-commit` one, with a control
