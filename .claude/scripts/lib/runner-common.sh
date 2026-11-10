@@ -3167,8 +3167,8 @@ STALL_MIN_RUNS=3
 # stall_plan <state-dir> <runner> <log> [<timeout>]
 # Sets AGENT_STALL_SECONDS and AGENT_STALL_NOTE, the threshold and a phrase
 # saying where it came from. With <timeout>, each recorded pass counts for at
-# most the timeout, and a threshold measured from the record at or above it is
-# halved (stall_capped).
+# most the timeout, and a threshold measured from the record is held to three
+# quarters of it, or to the floor where that is higher (stall_capped).
 stall_plan() {
   local state="$1" runner="$2" log="$3" cap="${4:-}" floor file runs n p99 t
   floor="$(uint_setting RUNNER_STALL_FLOOR 600 1 "$log")"
@@ -3199,8 +3199,9 @@ stall_plan() {
   # streaming pass cannot hide the long ones. An older record with a line per
   # gap reduces to the same thing.
   # A pass's silence is held to the pass's timeout, when one is given: the
-  # watchdog never records more, so a larger value was written by something
-  # else, and one such value would otherwise set the threshold for every pass.
+  # watchdog records at most about the timeout (its silence plus one poll), so
+  # a larger value was written by something else, and one such value would
+  # otherwise set the threshold for every pass while the record is short.
   awk -v cap="$cap" '$1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ && length($2) <= 9 { v = $2 + 0; if (cap ~ /^[0-9]+$/ && cap + 0 > 0 && v > cap + 0) v = cap + 0; if (!($1 in m) || v > m[$1] + 0) m[$1] = v }
     END { for (r in m) print m[r] }' "$file" | LC_ALL=C sort -n > "$file.longest.$$" 2>/dev/null
   n="$(awk 'END { print NR }' "$file.longest.$$" 2>/dev/null)"
@@ -3214,33 +3215,38 @@ stall_plan() {
   else
     AGENT_STALL_SECONDS="$t"
     AGENT_STALL_NOTE="1.5 times the p99 of each pass's longest silence, ${p99}s over $runs recorded passes"
-    stall_capped "$cap"
+    stall_capped "$cap" "$floor"
   fi
 }
 
-# stall_capped <timeout>
-# A threshold measured from the record that is at or above the pass's timeout
-# would never fire before the timeout does, and the record is not sealed, so
-# one forged value could switch stall detection off for every later pass: such
-# a threshold becomes half the timeout (at least 1 second) and the note says so.
-# The watchdog checks the timeout before the stall, in steps of its poll
-# interval, so a threshold less than one poll below the timeout still loses to
-# it. The floor is a setting, not a measurement, and is left as it is, as are a
-# threshold below the timeout, RUNNER_STALL_SECONDS and command mode. Does
-# nothing without a timeout.
+# stall_capped <timeout> <floor>
+# The record is not sealed, so a forged value could raise a threshold measured
+# from it to where it fires only just before the timeout, or never: the watchdog
+# checks the timeout before the stall, in steps of its poll interval. Such a
+# threshold is held to three quarters of the pass's timeout (at least 1 second),
+# or to the floor where that is higher, and the note says so; one at or below
+# that is left as it is, so the cap never lowers a threshold below the floor
+# and a slower history keeps a threshold that rises with it up to the cap. The
+# floor is a setting, not a measurement, and is never changed here: one at or
+# above the timeout leaves stall detection off, as it always has. So are
+# RUNNER_STALL_SECONDS and command mode. Does nothing without a timeout.
 stall_capped() {
+  local c
   is_uint "${1:-}" && [ "$1" -gt 0 ] || return 0
-  [ "$AGENT_STALL_SECONDS" -ge "$1" ] || return 0
-  AGENT_STALL_SECONDS=$(( $1 / 2 ))
-  [ "$AGENT_STALL_SECONDS" -ge 1 ] || AGENT_STALL_SECONDS=1
-  AGENT_STALL_NOTE="$AGENT_STALL_NOTE, capped at half the pass's timeout, since a threshold at or above the timeout would never fire before it"
+  c=$(( $1 * 3 / 4 ))
+  [ "$c" -ge 1 ] || c=1
+  if is_uint "${2:-}" && [ "$2" -gt "$c" ]; then c="$2"; fi
+  [ "$AGENT_STALL_SECONDS" -gt "$c" ] || return 0
+  AGENT_STALL_SECONDS="$c"
+  AGENT_STALL_NOTE="$AGENT_STALL_NOTE, capped at three quarters of the pass's timeout, or the floor where that is higher, since a forged record could raise it to where it would not fire before the timeout"
 }
 
 # record_stream_gaps <state-dir> <runner> <gaps-file> [<timeout>]
 # Adds the longest silent stretch of a pass that ended OK to the runner's record,
 # one line per pass, which keeps the latest 5000 passes. With <timeout>, a
 # stretch longer than the pass's timeout is recorded as the timeout: the
-# watchdog never records more, and the gaps file is not sealed.
+# watchdog records at most about the timeout (its silence plus one poll), and
+# the gaps file is not sealed.
 record_stream_gaps() {
   local file="$1/$2.stream-gaps" cap="${4:-}" run longest
   [ -s "$3" ] || return 0
@@ -3680,7 +3686,7 @@ work_dir_resolve() {
 # holds: on Linux the spelled and resolved paths are equal. Returns 1, with the
 # reason in <log>, when the pass must not start.
 work_dir_checks() {
-  local root="$1" log="$4" for="$5" win="$6" arg="$7/x" work="$WORK_DIR_REAL" tp="$WORK_DIR_ABOVE" pu="$WORK_DIR_UNREACHED" p q up nm nw
+  local root="$1" log="$4" for="$5" win="$6" arg="$7/x" work="${WORK_DIR_REAL-}" tp="${WORK_DIR_ABOVE-}" pu="${WORK_DIR_UNREACHED-}" p q up nm nw
   if [ "${WORK_DIR_GIVEN-}" != "$3" ]; then
     printf '[%s] ERROR: the folder for the pass, %s, was checked without being resolved first (a programming error no control holds). Refusing to run.\n' "$(ts)" "$(shown_name "$3")" >> "$log"
     return 1

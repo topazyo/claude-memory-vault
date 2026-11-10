@@ -3165,7 +3165,7 @@ tmp_dir() {
 }
 
 main() {
-  local rc=0 lock_rc=0 state_rc=0 folder_rc=0 fd="" copy_ok=0 copy_rc=0 copy_reason="" copy_line=""
+  local rc=0 lock_rc=0 state_rc=0 folder_rc=0 fd="" copy_ok=0 copy_rc=0 copy_reason="" copy_line="" copy_tag=""
   # The run lock's own variables, and the pid of a watched git, emptied before
   # any trap is set. Inherited from the caller's environment, the first would
   # have on_exit remove a lock this run never took, and RUN_PID would have
@@ -3250,20 +3250,25 @@ main() {
   # because it writes them as errors that refuse the run.
   copy_ok=0
   if [ -n "$COPY_DIR" ]; then
-    copy_reason="$(runner_folder_checked "$ROOT" "" "$COPY_DIR" /dev/stdout)"
+    # The path the check passed comes back out of the subshell, after its lines,
+    # so the copy goes into the folder that was checked, never one resolved again.
+    copy_reason="$(runner_folder_checked "$ROOT" "" "$COPY_DIR" /dev/stdout && printf 'CHECKED:%s\n' "$RUNNER_FOLDER")"
     copy_rc=$?
-    if [ "$copy_rc" -eq 0 ]; then
-      work_dir_resolve "$ROOT" "" "$COPY_DIR" ""
-      COPY_DIR="$WORK_DIR_REAL"
-      copy_ok=1
-    else
-      while IFS= read -r copy_line; do
-        copy_line="${copy_line/ ERROR: / WARNING: }"
-        printf '%s\n' "${copy_line% Refusing to run.} So this run keeps no copy of its log, which goes to the log alone." >> "$LOG"
-      done <<COPYEOF
+    case "$copy_rc:$copy_reason" in
+      0:CHECKED:/*) COPY_DIR="${copy_reason#CHECKED:}"; copy_ok=1 ;;
+      *)
+        if [ -z "$copy_reason" ] || [ "$copy_rc" -eq 0 ]; then
+          printf '[%s] WARNING: the folder for this run'"'"'s copy of its log could not be checked, so this run keeps no copy of its log, which goes to the log alone.\n' "$(ts)" >> "$LOG"
+        else
+          copy_tag="WARNING: (the folder for this run's copy of its log)"
+          while IFS= read -r copy_line; do
+            copy_line="${copy_line/ ERROR: / $copy_tag }"
+            printf '%s\n' "${copy_line% Refusing to run.} So this run keeps no copy of its log, which goes to the log alone." >> "$LOG"
+          done <<COPYEOF
 $copy_reason
 COPYEOF
-    fi
+        fi ;;
+    esac
   fi
   if [ "$copy_ok" = 1 ] && { : > "$COPY_DIR/run.log" && : > "$COPY_DIR/lib.log"; } 2>/dev/null; then
     RUN_LOG="$COPY_DIR/run.log"
