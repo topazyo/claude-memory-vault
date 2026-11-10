@@ -6521,6 +6521,26 @@ case "$#:$*" in
   1:-d|2:-d\ */vaultretention.XXXXXXXX) ;;
   *) exec "$MO_K4_MKTEMP" "$@" ;;
 esac
+# 1.5.0 fixture switches, all optional; only the 1.5.0 block's legs set them.
+# MO_K4_COUNT names a file counting the intercepted calls; with it, MO_K4_NTH
+# makes only that call the fixture, and every other call goes to the real
+# mktemp, so the folder the runner makes before or after it is a plain one.
+# MO_K4_FIXED hands over that path and makes nothing; MO_K4_MODE is set on the
+# folder made; MO_K4_LINKAT=1 makes a link at the spelled path to it (a
+# junction on Windows) and hands that over. The fixture's folder is noted in
+# $MO_K4_COUNT.made.
+if [ -n "${MO_K4_COUNT:-}" ]; then
+  n="$(cat "$MO_K4_COUNT" 2>/dev/null)"
+  n=$(( ${n:-0} + 1 ))
+  printf '%s\n' "$n" > "$MO_K4_COUNT"
+  if [ -n "${MO_K4_NTH:-}" ] && [ "$n" != "$MO_K4_NTH" ]; then
+    exec "$MO_K4_MKTEMP" "$@"
+  fi
+fi
+if [ -n "${MO_K4_FIXED:-}" ]; then
+  printf '%s\n' "$MO_K4_FIXED"
+  exit 0
+fi
 d="$("$MO_K4_MKTEMP" -d "$MO_K4_REAL/tmp.XXXXXXXXXX")" || exit 1
 if [ -n "${MO_K4_DECOY:-}" ]; then
   mkdir -p "$MO_K4_DECOY/${d##*/}/nohooks"
@@ -6528,6 +6548,20 @@ if [ -n "${MO_K4_DECOY:-}" ]; then
     printf '#!/bin/sh\necho %s >> "%s"\nexit 0\n' "$h" "$MO_K4_MARK" > "$MO_K4_DECOY/${d##*/}/nohooks/$h"
     chmod +x "$MO_K4_DECOY/${d##*/}/nohooks/$h"
   done
+fi
+if [ -n "${MO_K4_MODE:-}" ]; then
+  chmod "$MO_K4_MODE" "$d" || exit 1
+fi
+if [ "${MO_K4_LINKAT:-}" = 1 ]; then
+  case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*)
+      MSYS_NO_PATHCONV=1 cmd /c mklink /J "$(LC_ALL=C.UTF-8 cygpath -w "$MO_K4_SPELL/${d##*/}")" "$(LC_ALL=C.UTF-8 cygpath -w "$d")" >/dev/null 2>&1 ;;
+    *) ln -s "$d" "$MO_K4_SPELL/${d##*/}" 2>/dev/null ;;
+  esac
+  [ -L "$MO_K4_SPELL/${d##*/}" ] || exit 1
+fi
+if [ -n "${MO_K4_COUNT:-}" ]; then
+  printf '%s\n' "$d" > "$MO_K4_COUNT.made"
 fi
 printf '%s\n' "$MO_K4_SPELL/${d##*/}"
 MO_K4_EOF
@@ -8524,6 +8558,385 @@ else
 fi
 rm -rf "$SA_DIR" "$REC.argv"
 CASE_STATE="$v142_case_state"
+# --- 1.5.0: the runner's own folder for the pass, and the stall cap ---
+# Each runner checks the folder mktemp -d made for the pass with
+# runner_folder_checked, right after runner_folder_ok and before its first git
+# call, in every mode: the state directory's checks on the folder as resolved,
+# and off Windows that no other account has any access to it (mode 0700).
+# Through the K4 stand-ins, with MO_K4_CYG empty so the platform reads as it is,
+# the dream and promotion runners in claude and command mode and the retention
+# runner (whose second folder, SNAP_DIR, is the fixture: MO_K4_NTH=2) must each
+# refuse (1) on an ERROR: line that names the cause, before any git call names a
+# nohooks folder and with no agent started, for: a link at the folder itself
+# (F1: code 8, and the folder the link names is left there, empty); the folder
+# inside the vault, reached through a link above it (F2: code 4, and no nohooks
+# folder made in the vault); and off Windows the folder open to its group (F3:
+# the 0700 line), writable by every account (F4: code 3), owned by another
+# account (F5: code 2, where sudo -n can make one) and a find that fails only on
+# the 0700 check (F8, with a control that the same find passes everything
+# else). A link ABOVE the folder (F6) is accepted, and git and the settings
+# file are handed the folder's resolved path, never the spelling. The retention
+# runner's first folder, the copy of its log (COPY_DIR), failing the same checks
+# (F9, F9b) costs only the copy: a WARNING, no ERROR, exit 0 and no run.log
+# there. Then the stall cap (F10): a recorded silence is held to the pass's
+# timeout, a threshold measured from the record at or above the timeout is
+# halved, the floor is left as it is, and a claude-mode pass logs the halved
+# threshold on its starting line.
+rf15_cs="$CASE_STATE"
+CASE_STATE="$TMP/state-rf150"
+rm -rf "$CASE_STATE"
+MO_K4_CYG=
+RF15_LIB="$RV/.claude/scripts/lib/runner-common.sh"
+RF15_P2="$( . "$RF15_LIB" >/dev/null 2>&1; state_dir_problem 2 )"
+RF15_P3="$( . "$RF15_LIB" >/dev/null 2>&1; state_dir_problem 3 )"
+RF15_P4="$( . "$RF15_LIB" >/dev/null 2>&1; state_dir_problem 4 )"
+RF15_P8="$( . "$RF15_LIB" >/dev/null 2>&1; state_dir_problem 8 )"
+RF15_MODE="is open to other accounts (its mode is not 0700), $RF_WORK."
+RF15_FIND='for permissions open to other accounts could not run (find failed)'
+RF15_COPY='So this run keeps no copy of its log, which goes to the log alone.'
+RF15_LEGS='dream-claude dream-command promotion-claude promotion-command retention'
+if [ -z "$RF15_P2" ] || [ -z "$RF15_P3" ] || [ "$RF15_P4" != 'resolves into the vault' ] || [ -z "$RF15_P8" ] \
+   || [ "$RF15_P8" = "$RF15_P2" ]; then
+  bad "rf-150: fixture: state_dir_problem gave no distinct words for codes 2, 3, 4 and 8 from $RF15_LIB (got [$RF15_P2] [$RF15_P3] [$RF15_P4] [$RF15_P8]), so the legs below cannot match their lines"
+fi
+rf15_unlink() {  # rf15_unlink <link> - removes a link by its bare name, never what it names (a junction on Windows)
+  if [ -L "$1" ]; then
+    if is_windows_host; then
+      MSYS_NO_PATHCONV=1 cmd /c rmdir "$(cygpath -w "$1")" >/dev/null 2>&1
+    else
+      rm -f "$1"
+    fi
+  fi
+}
+rf15_clear() {  # rf15_clear <dir> - unlinks every link directly in <dir>, then removes <dir>
+  local e
+  for e in "$1"/*; do rf15_unlink "$e"; done
+  rm -rf "$1"
+}
+# rf15_run <leg> <spelling> <real folder> [NAME=value...] - one pass through the
+# K4 stand-ins, counting mktemp's calls; sets rf15_rc, rf15_log, rf15_before,
+# rf15_nh (git calls naming a nohooks folder) and rf15_started. The retention
+# leg makes its second folder the fixture, and starts from no log, so every line
+# in it is this run's. Assignments given last win.
+rf15_run() {
+  local leg="$1" spell="$2" real="$3" s mode= nth=
+  shift 3
+  rf15_log="$MO_LOG"
+  case "$leg" in
+    dream-claude) s=dream-pass.sh ;;
+    dream-command) s=dream-pass.sh mode=command ;;
+    promotion-claude) s=promotion-pass.sh rf15_log="$RV/.claude/logs/promotion-agent.log" ;;
+    promotion-command) s=promotion-pass.sh rf15_log="$RV/.claude/logs/promotion-agent.log" mode=command ;;
+    retention) s=vault-retention.sh rf15_log="$MO_K4_RV/.claude/logs/vault-retention.log" nth=2 ;;
+  esac
+  if [ "$leg" = retention ]; then
+    rm -f "$rf15_log"
+  fi
+  rm -f "$MO_K4/count" "$MO_K4/count.made"
+  rf15_before="$(mo_lines "$rf15_log")"
+  if [ "$mode" = command ]; then
+    rf15_rc="$(mo_k4_run "$s" "$spell" "$real" "" MO_K4_COUNT="$MO_K4/count" MO_K4_NTH="$nth" \
+      VAULT_AGENT=command VAULT_AGENT_CMD="$FAKE" VAULT_ALLOW_UNENFORCED_TOOLS=1 "$@")"
+  else
+    rf15_rc="$(mo_k4_run "$s" "$spell" "$real" "" MO_K4_COUNT="$MO_K4/count" MO_K4_NTH="$nth" \
+      VAULT_AGENT=claude VAULT_AGENT_CMD= VAULT_ALLOW_UNENFORCED_TOOLS= "$@")"
+  fi
+  rf15_nh="$(mo_k4_nohooks)"
+  rf15_started=no
+  [ -e "$REC.argv" ] && rf15_started=yes
+}
+rf15_has() {  # rf15_has <kind> <text> - present when one of this run's log lines starts [...] <kind>: and holds <text>
+  if tail -n +"$((rf15_before + 1))" "$rf15_log" 2>/dev/null | grep -F -- "$2" | grep -q "^\[[^]]*\] $1: "; then
+    echo present
+  else
+    echo absent
+  fi
+}
+rf15_errs() {  # how many of this run's log lines start [...] ERROR:
+  tail -n +"$((rf15_before + 1))" "$rf15_log" 2>/dev/null | grep -c '^\[[^]]*\] ERROR: ' | tr -d ' '
+}
+# rf15_refused <label> <text> [<problem>] - the run refused (1) on an ERROR: line
+# holding <text>, no git call named a nohooks folder, no agent started, and the
+# caller found no <problem>
+rf15_refused() {
+  local said
+  said="$(rf15_has ERROR "$2")"
+  if [ "$rf15_rc" = 1 ] && [ "$said" = present ] && [ "${rf15_nh:-0}" -eq 0 ] && [ "$rf15_started" = no ] && [ -z "${3:-}" ]; then
+    ok "$1 -> refused (1) on an ERROR: line giving the cause, before any git call named a nohooks folder, and no agent started"
+  else
+    bad "$1 -- expected exit 1, an ERROR: line in this run's log holding [$2], no git call naming nohooks and no agent start; got exit $rf15_rc, line $said, git calls naming nohooks ${rf15_nh:-0}, agent started: $rf15_started${3:+; $3}"
+  fi
+}
+# F1: a link at the folder itself, to a plain folder of this account's. The
+# folder the link names must be left there and empty: the refusal removes the
+# link by the name mktemp gave, and nothing is made through it.
+for rf15_leg in $RF15_LEGS; do
+  rf15_clear "$MO_K4/lk"
+  rm -rf "$MO_K4/lkt"
+  mkdir -p "$MO_K4/lk" "$MO_K4/lkt"
+  rf15_run "$rf15_leg" "$MO_K4/lk" "$MO_K4/lkt" MO_K4_LINKAT=1
+  rf15_t="$(cat "$MO_K4/count.made" 2>/dev/null)"
+  rf15_x=
+  if [ -z "$rf15_t" ]; then
+    rf15_x="fixture: the mktemp stand-in made no link, so the leg shows nothing"
+  elif [ ! -d "$rf15_t" ] || [ -L "$rf15_t" ]; then
+    rf15_x="the folder the link named, $rf15_t, is gone"
+  elif [ -n "$(ls -A "$rf15_t" 2>/dev/null)" ]; then
+    rf15_x="the folder the link named holds: $(ls -A "$rf15_t" 2>/dev/null | tr '\n' ' ')"
+  fi
+  rf15_refused "rf-link: $rf15_leg, a link at the runner's folder for the pass" "$RF15_P8, $RF_WORK" "$rf15_x"
+  tripwire_clear
+done
+rf15_clear "$MO_K4/lk"
+rm -rf "$MO_K4/lkt"
+# F2: the folder inside the vault the runner runs in, reached through a link
+# above it, so only its resolved path shows where it is.
+for rf15_leg in $RF15_LEGS; do
+  rf15_v="$RV"
+  [ "$rf15_leg" = retention ] && rf15_v="$MO_K4_RV"
+  rf15_in="$rf15_v/.claude/logs/rf-in"
+  rf15_unlink "$MO_K4/vl"
+  rm -rf "$rf15_in"
+  ( umask 077 && mkdir -p "$rf15_in" )
+  if [ ! -d "$rf15_in" ] || ! mo_link "$rf15_in" "$MO_K4/vl"; then
+    bad "rf-vault: $rf15_leg: fixture: the folder in the vault, or the link to it, could not be made"
+    rf15_unlink "$MO_K4/vl"
+    rm -rf "$rf15_in"
+    continue
+  fi
+  rf15_run "$rf15_leg" "$MO_K4/vl" "$rf15_in"
+  rf15_x=
+  [ -s "$MO_K4/count.made" ] || rf15_x="fixture: the mktemp stand-in made no folder in the vault, so the leg shows nothing"
+  if [ -n "$(find "$rf15_in" -name nohooks 2>/dev/null)" ]; then
+    rf15_x="${rf15_x:+$rf15_x; }a nohooks folder was made in the vault"
+  fi
+  rf15_refused "rf-vault: $rf15_leg, the runner's folder for the pass inside the vault, reached through a link above it" "$RF15_P4, $RF_WORK" "$rf15_x"
+  rf15_unlink "$MO_K4/vl"
+  rm -rf "$rf15_in"
+  tripwire_clear
+done
+# F3 and F4: the folder's mode, which only the check off Windows reads.
+if is_windows_host; then
+  skip rf-mode 'Windows: Git Bash mode bits are not Windows permissions, so the runner checks a folder open to its group off Windows only'
+  skip rf-world 'Windows: Git Bash mode bits are not Windows permissions, so chmod cannot make a folder every account can write'
+else
+  ran rf-mode
+  for rf15_leg in $RF15_LEGS; do
+    rf15_run "$rf15_leg" "$MO_K4/tgt" "$MO_K4/tgt" MO_K4_MODE=0750
+    rf15_x=
+    [ -s "$MO_K4/count.made" ] || rf15_x="fixture: the mktemp stand-in made no folder, so the leg shows nothing"
+    rf15_refused "rf-mode: $rf15_leg, the runner's folder for the pass at mode 0750 (open to its group)" "$RF15_MODE" "$rf15_x"
+    tripwire_clear
+  done
+  ran rf-world
+  for rf15_leg in $RF15_LEGS; do
+    rf15_run "$rf15_leg" "$MO_K4/tgt" "$MO_K4/tgt" MO_K4_MODE=0777
+    rf15_x=
+    [ -s "$MO_K4/count.made" ] || rf15_x="fixture: the mktemp stand-in made no folder, so the leg shows nothing"
+    rf15_refused "rf-world: $rf15_leg, the runner's folder for the pass at mode 0777 (writable by every account)" "$RF15_P3, $RF_WORK" "$rf15_x"
+    tripwire_clear
+  done
+fi
+# F5: a folder another account owns, handed over as the folder mktemp made.
+if is_windows_host; then
+  skip rf-owner 'Windows: Git Bash cannot make a folder another account owns without elevation'
+elif [ "$(id -u)" = 0 ]; then
+  skip rf-owner 'running as root, which may write any folder, so a folder of another account is not refused for its owner alone'
+elif ! command -v sudo >/dev/null 2>&1 || ! sudo -n true >/dev/null 2>&1; then
+  skip rf-owner 'sudo -n is not available, so no folder another account owns can be made'
+else
+  rf15_o="$MO_K4/other"
+  sudo -n rm -rf "$rf15_o" >/dev/null 2>&1
+  if sudo -n install -d -o nobody -m 0711 "$rf15_o" >/dev/null 2>&1 && [ -d "$rf15_o" ] && [ ! -O "$rf15_o" ]; then
+    ran rf-owner
+    rf15_run dream-command "$MO_K4/tgt" "$MO_K4/tgt" MO_K4_FIXED="$rf15_o"
+    rf15_refused "rf-owner: dream-command, the runner's folder for the pass owned by nobody" "$RF15_P2, $RF_WORK"
+    tripwire_clear
+  else
+    bad "rf-owner: fixture: sudo -n install could not make $rf15_o owned by nobody, so the leg shows nothing"
+  fi
+  sudo -n rm -rf "$rf15_o" >/dev/null 2>&1
+fi
+# F6: a link above the folder is resolved and accepted. git is handed the
+# nohooks folder under the folder's resolved path, never the spelling, and in
+# claude mode so is Claude Code the settings file.
+[ -L "$MO_K4/base/lnk" ] || mo_link "$MO_K4/tgt/in" "$MO_K4/base/lnk"
+rf15_phys="$(cd "$MO_K4/tgt/in" 2>/dev/null && pwd -P)"
+if [ -z "$rf15_phys" ] || [ ! -L "$MO_K4/base/lnk" ]; then
+  bad "rf-above: fixture: the link above the folder, or the folder it names, is not there"
+else
+  rf15_run dream-command "$MO_K4/base/lnk" "$MO_K4/tgt/in"
+  rf15_ph="$(grep -F -- "$rf15_phys/tmp." "$MO_K4/git.log" 2>/dev/null | grep -c 'nohooks' | tr -d ' ')"
+  rf15_sp="$(mo_k4_spelled "$MO_K4/base/lnk")"
+  if [ "$rf15_rc" = 0 ] && [ "$rf15_started" = yes ] && [ "${rf15_ph:-0}" -ge 1 ] && [ "${rf15_sp:-0}" -eq 0 ]; then
+    ok "rf-above: dream-command, the runner's folder for the pass under a link -> runs (0), its agent started, and git was handed the nohooks folder under the resolved path ($rf15_ph call(s)), never the spelling"
+  else
+    bad "rf-above: dream-command, the runner's folder for the pass under a link -- expected exit 0, the agent started, at least one git call naming nohooks under $rf15_phys/tmp.* and none under the spelling; got exit $rf15_rc, agent started: $rf15_started, git calls under the resolved path naming nohooks ${rf15_ph:-0}, under the spelling ${rf15_sp:-0}"
+  fi
+  tripwire_clear
+  rm -f "$MO_CAP.json" "$MO_CAP.where"
+  rf15_run dream-claude "$MO_K4/base/lnk" "$MO_K4/tgt/in" CLAUDE_BIN="$MO_CAP"
+  rf15_arg="$(awk 'prev == "--settings" { print; exit } { prev = $0 }' "$REC.argv" 2>/dev/null)"
+  rf15_want="$rf15_phys"
+  is_windows_host && rf15_want="$(cygpath -m "$rf15_phys")"
+  rf15_under=no
+  case "$rf15_arg" in "$rf15_want"/tmp.*) rf15_under=yes ;; esac
+  if [ "$rf15_rc" = 0 ] && [ "$rf15_under" = yes ]; then
+    ok "rf-above: dream-claude, the runner's folder for the pass under a link -> runs (0), and Claude Code was handed the settings file under the resolved path"
+  else
+    bad "rf-above: dream-claude, the runner's folder for the pass under a link -- expected exit 0 and --settings under $rf15_want/tmp.*; got exit $rf15_rc, --settings ${rf15_arg:-none}"
+  fi
+  rm -f "$MO_CAP.json" "$MO_CAP.where"
+  tripwire_clear
+fi
+# F8: a find that fails only for the 0700 check of the runner's folder (the one
+# call that asks -perm -0001, on a path named tmp.* or vaultretention.*); every
+# other call goes to the real find. The control first: with failing off, the
+# same stand-in on PATH lets the pass run (0), and it was asked the 0700 check,
+# so the refusal below can only come from that check.
+if is_windows_host; then
+  skip rf-findfail 'Windows: the check that no other account has access to the folder runs off Windows only'
+else
+  ran rf-findfail
+  rf15_find="$(command -v find)"
+  mkdir -p "$MO_K4/findshim"
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> %q\nperm=0 tmp=0 prev=\nfor a; do\n  [ "$prev" = -perm ] && [ "$a" = -0001 ] && perm=1\n  case "$a" in */tmp.*|*/vaultretention.*) tmp=1 ;; esac\n  prev="$a"\ndone\nif [ -n "${MO_K4_FINDFAIL:-}" ] && [ "$perm" = 1 ] && [ "$tmp" = 1 ]; then exit 1; fi\nexec %q "$@"\n' \
+    "$MO_K4/find.log" "$rf15_find" > "$MO_K4/findshim/find"
+  chmod +x "$MO_K4/findshim/find"
+  rf15_path="$PATH"
+  rm -f "$MO_K4/find.log"
+  PATH="$MO_K4/findshim:$PATH"
+  rf15_run dream-command "$MO_K4/tgt" "$MO_K4/tgt"
+  PATH="$rf15_path"
+  rf15_asked=no
+  grep -qF -- '-perm -0001' "$MO_K4/find.log" 2>/dev/null && rf15_asked=yes
+  if [ -z "$rf15_find" ] || [ "$rf15_rc" != 0 ] || [ "$rf15_started" = no ] || [ "$rf15_asked" = no ]; then
+    bad "rf-findfail: fixture: with the find stand-in on PATH and failing off, the pass did not run through it -- expected exit 0, the agent started and the stand-in asked the 0700 check; got exit $rf15_rc, agent started: $rf15_started, asked: $rf15_asked (real find: ${rf15_find:-none})"
+  else
+    ok "rf-findfail: the find stand-in on PATH, failing off -> the pass runs (0) and the stand-in was asked the 0700 check, so it fails nothing else"
+  fi
+  tripwire_clear
+  rm -f "$MO_K4/find.log"
+  PATH="$MO_K4/findshim:$PATH"
+  rf15_run dream-command "$MO_K4/tgt" "$MO_K4/tgt" MO_K4_FINDFAIL=1
+  PATH="$rf15_path"
+  rf15_e="$(rf15_errs)"
+  rf15_x=
+  [ "${rf15_e:-0}" = 1 ] || rf15_x="this run's log holds ${rf15_e:-0} ERROR: lines, not the one"
+  rf15_refused "rf-findfail: dream-command, find failing for the 0700 check alone" "$RF15_FIND" "$rf15_x"
+  tripwire_clear
+  rm -rf "$MO_K4/findshim" "$MO_K4/find.log"
+fi
+# F9: the retention runner's first folder, the copy of its log, a link to a
+# plain folder; F9b: inside the vault through a link above it. The run goes on
+# (0) logging to the log alone: the check's line as a WARNING, no ERROR line,
+# and no run.log written there.
+rf15_clear "$MO_K4/lk"
+rm -rf "$MO_K4/lkt"
+mkdir -p "$MO_K4/lk" "$MO_K4/lkt"
+rf15_run retention "$MO_K4/lk" "$MO_K4/lkt" MO_K4_NTH=1 MO_K4_LINKAT=1
+rf15_t="$(cat "$MO_K4/count.made" 2>/dev/null)"
+rf15_w=absent
+tail -n +"$((rf15_before + 1))" "$rf15_log" 2>/dev/null | grep -F -- "$RF15_P8" | grep -F -- "$RF15_COPY" \
+  | grep -q '^\[[^]]*\] WARNING: ' && rf15_w=present
+rf15_e="$(rf15_errs)"
+rf15_x=
+if [ -z "$rf15_t" ]; then
+  rf15_x="; fixture: the mktemp stand-in made no link, so the leg shows nothing"
+elif [ ! -d "$rf15_t" ] || [ -L "$rf15_t" ]; then
+  rf15_x="; the folder the link named, $rf15_t, is gone"
+elif [ -e "$rf15_t/run.log" ] || [ -e "$rf15_t/lib.log" ]; then
+  rf15_x="; the copy of the log was written in the folder the link named"
+fi
+if [ "$rf15_rc" = 0 ] && [ "$rf15_w" = present ] && [ "${rf15_e:-0}" = 0 ] && [ -z "$rf15_x" ]; then
+  ok "rf-copy: retention, a link at the folder for the copy of its log -> runs (0), the check's line logged as a WARNING that the run keeps no copy, no ERROR: line, and nothing written through the link"
+else
+  bad "rf-copy: retention, a link at the folder for the copy of its log -- expected exit 0, a WARNING: line holding [$RF15_P8] and [$RF15_COPY], no ERROR: line and no run.log through the link; got exit $rf15_rc, WARNING $rf15_w, ERROR: lines ${rf15_e:-0}$rf15_x"
+fi
+tripwire_clear
+rf15_clear "$MO_K4/lk"
+rm -rf "$MO_K4/lkt"
+rf15_in="$MO_K4_RV/.claude/logs/rf-in"
+rf15_unlink "$MO_K4/vl"
+rm -rf "$rf15_in"
+( umask 077 && mkdir -p "$rf15_in" )
+if [ ! -d "$rf15_in" ] || ! mo_link "$rf15_in" "$MO_K4/vl"; then
+  bad "rf-copy: retention, the folder for the copy of its log in the vault: fixture: the folder in the vault, or the link to it, could not be made"
+else
+  rf15_run retention "$MO_K4/vl" "$rf15_in" MO_K4_NTH=1
+  rf15_w=absent
+  tail -n +"$((rf15_before + 1))" "$rf15_log" 2>/dev/null | grep -F -- "$RF15_P4, $RF_WORK" | grep -F -- "$RF15_COPY" \
+    | grep -q '^\[[^]]*\] WARNING: ' && rf15_w=present
+  rf15_e="$(rf15_errs)"
+  rf15_x=
+  [ -s "$MO_K4/count.made" ] || rf15_x="; fixture: the mktemp stand-in made no folder in the vault, so the leg shows nothing"
+  if [ -n "$(find "$MO_K4_RV" -name run.log 2>/dev/null)" ]; then
+    rf15_x="$rf15_x; a run.log is in the vault: $(find "$MO_K4_RV" -name run.log 2>/dev/null | tr '\n' ' ')"
+  fi
+  if [ "$rf15_rc" = 0 ] && [ "$rf15_w" = present ] && [ "${rf15_e:-0}" = 0 ] && [ -z "$rf15_x" ]; then
+    ok "rf-copy: retention, the folder for the copy of its log inside the vault, reached through a link above it -> runs (0), the check's line logged as a WARNING that the run keeps no copy, no ERROR: line, and no run.log in the vault"
+  else
+    bad "rf-copy: retention, the folder for the copy of its log inside the vault -- expected exit 0, a WARNING: line holding [$RF15_P4, $RF_WORK] and [$RF15_COPY], no ERROR: line and no run.log in the vault; got exit $rf15_rc, WARNING $rf15_w, ERROR: lines ${rf15_e:-0}$rf15_x"
+  fi
+  tripwire_clear
+fi
+rf15_unlink "$MO_K4/vl"
+rm -rf "$rf15_in"
+# F10: the stall cap, in the library, then in a claude-mode dream pass.
+rf15_d="$TMP/rf150-stall"
+rm -rf "$rf15_d"
+mkdir -p "$rf15_d"
+printf '999999999\n' > "$rf15_d/gaps"
+rf15_got="$( . "$RF15_LIB" >/dev/null 2>&1
+  record_stream_gaps "$rf15_d" dream "$rf15_d/gaps" 3600
+  awk '{ printf "%s%s", (NR > 1 ? "|" : ""), $2 }' "$rf15_d/dream.stream-gaps" 2>/dev/null )"
+if [ "$rf15_got" = 3600 ]; then
+  ok "stall-cap: record_stream_gaps with a 3600s timeout -> a silence of 999999999s is recorded as 3600"
+else
+  bad "stall-cap: record_stream_gaps with a 3600s timeout, a silence of 999999999s -- expected one record of 3600; got [$rf15_got]"
+fi
+printf '100 999999999\n200 5\n300 6\n' > "$rf15_d/b.stream-gaps"
+rf15_got="$( . "$RF15_LIB" >/dev/null 2>&1
+  unset RUNNER_STALL_SECONDS
+  AGENT_KIND=claude STALL_MIN_RUNS=3 RUNNER_STALL_FLOOR=600 stall_plan "$rf15_d" b /dev/null 3600
+  printf '%s|%s' "$AGENT_STALL_SECONDS" "$AGENT_STALL_NOTE" )"
+rf15_want="1800|1.5 times the p99 of each pass's longest silence, 3600s over 3 recorded passes, capped at half the pass's timeout, since a threshold at or above the timeout would never fire before it"
+if [ "$rf15_got" = "$rf15_want" ]; then
+  ok "stall-cap: stall_plan with a 3600s timeout and a recorded silence of 999999999s -> the silence counts as 3600, and the measured 5400 is halved to 1800 with the note saying so"
+else
+  bad "stall-cap: stall_plan with a 3600s timeout and a recorded silence of 999999999s -- expected [$rf15_want]; got [$rf15_got]"
+fi
+rf15_got="$( . "$RF15_LIB" >/dev/null 2>&1
+  unset RUNNER_STALL_SECONDS
+  AGENT_KIND=claude STALL_MIN_RUNS=3 RUNNER_STALL_FLOOR=600 stall_plan "$rf15_d" none /dev/null 300
+  printf '%s|%s' "$AGENT_STALL_SECONDS" "$AGENT_STALL_NOTE" )"
+rf15_want="600|the floor, because 0 of the 3 passes needed to measure one are recorded"
+if [ "$rf15_got" = "$rf15_want" ]; then
+  ok "stall-cap: stall_plan with no record and a floor of 600s above a 300s timeout -> the floor is kept as it is, not halved"
+else
+  bad "stall-cap: stall_plan with no record and a floor of 600s above a 300s timeout -- expected [$rf15_want]; got [$rf15_got]"
+fi
+rm -rf "$rf15_d"
+CASE_STATE="$TMP/state-rf150-stall"
+rm -rf "$CASE_STATE"
+( umask 077 && mkdir -p "$CASE_STATE" )
+printf '100 999999999\n200 5\n300 6\n' > "$CASE_STATE/dream-pass.stream-gaps"
+rf15_before="$(mo_lines "$MO_LOG")"
+rf15_rc="$(runner dream-pass.sh journal FAKE_RECORD="$REC" DREAM_PASS_TIMEOUT=100 RUNNER_STALL_FLOOR=1)"
+rf15_line="$(tail -n +"$((rf15_before + 1))" "$MO_LOG" 2>/dev/null | grep -E -- "$MO_STARTING" | head -n 1)"
+rf15_want="starting dream-agent via claude (timeout 100s, stall 50s, 1.5 times the p99 of each pass's longest silence, 100s over 3 recorded passes, capped at half the pass's timeout, since a threshold at or above the timeout would never fire before it, session "
+case "$rf15_line" in
+  *"$rf15_want"*) rf15_said=present ;;
+  *) rf15_said=absent ;;
+esac
+if [ "$rf15_rc" = 0 ] && [ "$rf15_said" = present ]; then
+  ok "stall-cap: a claude-mode dream pass with a 100s timeout, a floor of 1s and a recorded silence of 999999999s -> runs (0) and logs stall 50s, capped at half the timeout, on its starting line"
+else
+  bad "stall-cap: a claude-mode dream pass with a 100s timeout, a floor of 1s and a recorded silence of 999999999s -- expected exit 0 and a starting line holding [$rf15_want]; got exit $rf15_rc, starting line: ${rf15_line:-none}"
+fi
+tripwire_clear
+rm -rf "$TMP/state-rf150" "$TMP/state-rf150-stall" "$REC.argv"
+CASE_STATE="$rf15_cs"
 mo_k4_clean
 # A folder above the runner's folder for the pass whose name ends in a line
 # break is cut by $(...), so resolving it gives another path, which the checks
