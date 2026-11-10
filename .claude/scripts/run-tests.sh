@@ -15057,11 +15057,14 @@ wait "$rp_reader" 2>/dev/null
 # The lines cannot be made ready in the copy folder: an rm stand-in puts a
 # folder named print there as the run removes its working folder, just before
 # it prints. The run prints its own lines all the same, straight from awk.
+# The stand-in looks for the folder by its resolved path, which is the one the
+# run removes since 1.5.0; TMPDIR keeps the spelling, which on Windows can be an
+# 8.3 short name that resolves to another path.
 RF="$(ret_copy print-fallback)"
 mkdir -p "$RF.tmp"
 ret_shims "$RET/shim-print" rm
 rp_bad=''
-rp_rc="$( export RET_SH_FLAGS="$RET/shim-print.flags" RET_SH_RM_DO=print RET_SH_TMP="$RF.tmp" TMPDIR="$RF.tmp"
+rp_rc="$( export RET_SH_FLAGS="$RET/shim-print.flags" RET_SH_RM_DO=print RET_SH_TMP="$(cd -P "$RF.tmp" && pwd -P)" TMPDIR="$RF.tmp"
   RET_PATH="$RET/shim-print" ret_out "$RF" "$RF.out" --dry-run )"
 printf '%s\n' "vault-retention: evaluated 0 candidate(s): 0 eligible, 0 legacy, 0 kept, 0 left alone, 0 refused, 0 moved" \
   "vault-retention: OK: there is nothing in 20-projects/_logs to evaluate." > "$RF.want"
