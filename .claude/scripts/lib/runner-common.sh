@@ -3162,11 +3162,13 @@ write_agent_prompt() {
 
 STALL_MIN_RUNS=3
 
-# stall_plan <state-dir> <runner> <log>
+# stall_plan <state-dir> <runner> <log> [<timeout>]
 # Sets AGENT_STALL_SECONDS and AGENT_STALL_NOTE, the threshold and a phrase
-# saying where it came from.
+# saying where it came from. With <timeout>, each recorded pass counts for at
+# most the timeout, and in claude mode a threshold at or above it is halved
+# (stall_capped).
 stall_plan() {
-  local state="$1" runner="$2" log="$3" floor file runs n p99 t
+  local state="$1" runner="$2" log="$3" cap="${4:-}" floor file runs n p99 t
   floor="$(uint_setting RUNNER_STALL_FLOOR 600 1 "$log")"
   if [ -n "${RUNNER_STALL_SECONDS:-}" ]; then
     if AGENT_STALL_SECONDS="$(uint_setting RUNNER_STALL_SECONDS "" 0 /dev/null)" && [ -n "$AGENT_STALL_SECONDS" ]; then
@@ -3189,12 +3191,16 @@ stall_plan() {
   if [ "$runs" -lt "$STALL_MIN_RUNS" ]; then
     AGENT_STALL_SECONDS="$floor"
     AGENT_STALL_NOTE="the floor, because $runs of the $STALL_MIN_RUNS passes needed to measure one are recorded"
+    stall_capped "$cap"
     return 0
   fi
   # Each pass counts once, by its longest silence, so the many short gaps of a
   # streaming pass cannot hide the long ones. An older record with a line per
   # gap reduces to the same thing.
-  awk '$1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ && length($2) <= 9 { if (!($1 in m) || $2 + 0 > m[$1] + 0) m[$1] = $2 }
+  # A pass's silence is held to the pass's timeout, when one is given: the
+  # watchdog never records more, so a larger value was written by something
+  # else, and one such value would otherwise set the threshold for every pass.
+  awk -v cap="$cap" '$1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ && length($2) <= 9 { v = $2 + 0; if (cap ~ /^[0-9]+$/ && cap + 0 > 0 && v > cap + 0) v = cap + 0; if (!($1 in m) || v > m[$1] + 0) m[$1] = v }
     END { for (r in m) print m[r] }' "$file" | LC_ALL=C sort -n > "$file.longest.$$" 2>/dev/null
   n="$(awk 'END { print NR }' "$file.longest.$$" 2>/dev/null)"
   p99="$(awk -v n="${n:-0}" 'BEGIN { k = int((n * 99 + 99) / 100); if (k < 1) k = 1 } NR == k { print; exit }' "$file.longest.$$" 2>/dev/null)"
@@ -3208,16 +3214,36 @@ stall_plan() {
     AGENT_STALL_SECONDS="$t"
     AGENT_STALL_NOTE="1.5 times the p99 of each pass's longest silence, ${p99}s over $runs recorded passes"
   fi
+  stall_capped "$cap"
 }
 
-# record_stream_gaps <state-dir> <runner> <gaps-file>
+# stall_capped <timeout>
+# In claude mode, a threshold at or above the pass's timeout would never fire
+# before the timeout does, which leaves a stalled pass running to its end, so
+# it becomes half the timeout (at least 1 second) and the note says so. The
+# watchdog checks the timeout before the stall, in steps of its poll interval,
+# so a threshold less than one poll below the timeout still loses to it. A
+# threshold below the timeout, RUNNER_STALL_SECONDS and command mode are left as
+# they are. Does nothing without a timeout.
+stall_capped() {
+  is_uint "${1:-}" && [ "$1" -gt 0 ] || return 0
+  [ "$AGENT_STALL_SECONDS" -ge "$1" ] || return 0
+  AGENT_STALL_SECONDS=$(( $1 / 2 ))
+  [ "$AGENT_STALL_SECONDS" -ge 1 ] || AGENT_STALL_SECONDS=1
+  AGENT_STALL_NOTE="$AGENT_STALL_NOTE, capped at half the pass's timeout, since a threshold at or above the timeout would never fire before it"
+}
+
+# record_stream_gaps <state-dir> <runner> <gaps-file> [<timeout>]
 # Adds the longest silent stretch of a pass that ended OK to the runner's record,
-# one line per pass, which keeps the latest 5000 passes.
+# one line per pass, which keeps the latest 5000 passes. With <timeout>, a
+# stretch longer than the pass's timeout is recorded as the timeout: the
+# watchdog never records more, and the gaps file is not sealed.
 record_stream_gaps() {
-  local file="$1/$2.stream-gaps" run longest
+  local file="$1/$2.stream-gaps" cap="${4:-}" run longest
   [ -s "$3" ] || return 0
   longest="$(awk '/^[0-9]+$/ && length($0) <= 9 { if ($0 + 0 > m + 0) m = $0 } END { if (m != "") print m }' "$3")"
   is_uint "${longest:-}" || return 0
+  if is_uint "$cap" && [ "$cap" -gt 0 ] && [ "$longest" -gt "$cap" ]; then longest="$cap"; fi
   run="$(date +%s)"
   printf '%s %s\n' "$run" "$longest" >> "$file" 2>/dev/null || return 0
   tail -n 5000 "$file" > "$file.new" 2>/dev/null && mv -f "$file.new" "$file" 2>/dev/null

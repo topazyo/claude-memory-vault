@@ -500,7 +500,7 @@ main() {
   INFLIGHT=1
   # The stall threshold, the session id, and where the watchdog notes the
   # silent stretches this pass has.
-  stall_plan "$STATE" "$RUNNER" "$LOG"
+  stall_plan "$STATE" "$RUNNER" "$LOG" "$TIMEOUT"
   AGENT_SESSION_ID="$(new_uuid)"
   AGENT_GAPS_FILE="$SNAP_DIR/gaps"
   printf '[%s] starting promotion-agent weekly pass via %s (timeout %ss, stall %ss, %s, session %s)\n' \
@@ -743,7 +743,7 @@ main() {
   esac
 
   # Only a pass that ended OK teaches the stall threshold.
-  [ "$AGENT_KIND" = claude ] && record_stream_gaps "$STATE" "$RUNNER" "$AGENT_GAPS_FILE"
+  [ "$AGENT_KIND" = claude ] && record_stream_gaps "$STATE" "$RUNNER" "$AGENT_GAPS_FILE" "$TIMEOUT"
   printf '[%s] OK: %s long-tier file(s) changed; %s\n' \
     "$(ts)" "${long_changes:-0}" "${summary:-no summary line}" >> "$LOG"
   exit 0
