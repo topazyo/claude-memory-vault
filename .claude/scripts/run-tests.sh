@@ -8841,12 +8841,15 @@ fi
 if is_windows_host; then
   skip rf-gone 'Windows: the drive-path map-back refuses a folder that is not there first, on its own line'
 else
-  rm -rf "$MO_K4/tgt/gone.tmp" "$MO_K4/noabove"
   ran rf-gone
   for rf15_leg in $RF15_LEGS; do
+    # Removed before each leg, so a run that made them cannot hand the next leg
+    # a folder that is there.
+    rm -rf "$MO_K4/tgt/gone.tmp" "$MO_K4/noabove"
     rf15_run "$rf15_leg" "$MO_K4/tgt" "$MO_K4/tgt" MO_K4_FIXED="$MO_K4/tgt/gone.tmp"
     rf15_refused "rf-gone: $rf15_leg, the runner's folder for the pass not there" "is not there as a folder, though the runner made it a moment ago"
     tripwire_clear
+    rm -rf "$MO_K4/tgt/gone.tmp" "$MO_K4/noabove"
     rf15_run "$rf15_leg" "$MO_K4/tgt" "$MO_K4/tgt" MO_K4_FIXED="$MO_K4/noabove/tmp.gone"
     rf15_refused "rf-gone: $rf15_leg, the folder above the runner's folder for the pass not there" "or that folder is not there, so the checks cannot see the folder the runner made. Give this account back its access"
     tripwire_clear
