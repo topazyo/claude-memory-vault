@@ -52,9 +52,10 @@ detection off.
   checks of its owner and that it is not writable by every account; and that it does not lie inside
   the vault, by file identity and, on Windows or wherever a `cygpath` is found, walked as a drive
   path too. There it must also convert to a drive path that maps back to it. Off Windows it must
-  also be open to no other account, mode 0700, which the state directory's checks do not ask
-  because they allow a group-writable folder; `mktemp -d` makes the folder 0700 (measured on Linux;
-  macOS not yet measured). From then on the snapshots, the backup, git's hooks folder, the settings
+  also be open to no other account, with no permission bit for its group or for others, which the
+  state directory's checks do not ask because they allow a group-writable folder; `mktemp -d` makes
+  the folder 0700 (measured on Linux, and on macOS in CI's bash 3.2 job, where a pass ran through
+  this check). From then on the snapshots, the backup, git's hooks folder, the settings
   file and the record of the folder use the resolved path. A folder reached through a link above
   it, as a `TMPDIR` spelled through a link gives, still runs, now with git and Claude Code handed
   the resolved path rather than the spelling.
@@ -137,13 +138,18 @@ detection off.
   `runner_folder_checked` directly: the identity walk and the drive-path walk decide it as they
   decide the override, and a `cygpath` that cannot convert the folder, or gives a network path for
   it, refuses before any walk. `stall-cap` holds a forged silence to the timeout when written and
-  when read; holds a measured 5400s to 2700s, three quarters of a 3600s timeout, and a measured 2s
-  to the 1s minimum; logs `stall 75s` on the starting line of a claude-mode dream and promotion
+  when read; holds a measured 5400s to 2700s, three quarters of a 3600s timeout, a measured 2s to
+  1s with a 1s timeout and a 1s floor, and, with a 700s timeout and a 600s floor, a measured 1050s
+  to the floor, 600s, not to 525s; leaves a measured 818s under a 3600s timeout, and a measured
+  750s equal to its cap of 750s, as they are, with no note; logs `stall 75s` on the starting line of a claude-mode dream and promotion
   pass with a 100s timeout, a floor of 1s and a forged record; and, in its floor legs, keeps a
   floor of 600s above a 300s timeout as it is, with no record and when it beats a measured
-  threshold. Each was seen failing against 1.4.2's library and runners on its own assertion, except
-  `rf-drive-walk` and `rf-cygpath`, which call the new function directly; `stall-cap`'s floor legs,
-  which hold behaviour this release leaves as it was; and `rf-owner`, which skipped in that run
+  threshold. Each was seen failing against 1.4.2's library and runners on its own assertion (the
+  1s and 700s legs, added later, by the same call against 1.4.2's library, which gives 1499999999
+  for both), except
+  `rf-drive-walk` and `rf-cygpath`, which call the new function directly; `stall-cap`'s floor legs
+  and its two legs for a threshold the cap leaves as it is, which hold behaviour this release
+  leaves as it was; and `rf-owner`, which skipped in that run
   because `sudo -n` was not available.
 
 ### Adopting this
@@ -164,8 +170,13 @@ detection off.
    `find` on the task's `PATH`. For the `cygpath` lines, see their rows in `docs/setup.md`,
    Troubleshooting.
 4. **The retention runner may log `WARNING:` lines ending `So this run keeps no copy of its log,
-   which goes to the log alone.`** The run goes on, and its lines are in the log only. Fix its
-   temporary folder as step 3 says.
+   which goes to the log alone.`** The run goes on, and its lines are in the log only. After the
+   tag `(the folder for this run's copy of its log)` each line is the check's own, worded for the
+   runner's folder for the pass and what it keeps there; here the folder was to hold only the copy
+   of the log. Fix its temporary folder as step 3 says. The single line `WARNING: the folder for
+   this run's copy of its log could not be checked, so this run keeps no copy …` means the check
+   printed nothing, which 1.5.0's library never does when it refuses: take the four scripts again,
+   together, as step 1 says.
 5. **A claude-mode pass may now stop as stalled (exit 125) once it has been silent for three
    quarters of its timeout, or for the floor where that is higher, where it could run on to the
    timeout (124).** It happens only when the threshold measured from the record was above that

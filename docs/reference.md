@@ -572,8 +572,10 @@ a lint that does nothing and a lint that found nothing wrong print the same thin
   folder, or cannot convert it, `runner_folder_checked` refuses (1) on its own line before any walk,
   `RUNNER_FOLDER` unset. `stall-cap`: `record_stream_gaps` with a 3600s timeout records a silence of
   999999999s as 3600; `stall_plan` counts such a recorded silence as the timeout and holds the
-  measured 5400 to 2700, three quarters of the timeout, saying so, holds a measured 2 to the 1s
-  minimum with a 1s timeout and floor, and keeps a floor of 600s above a 300s timeout as it is,
+  measured 5400 to 2700, three quarters of the timeout, saying so, holds a measured 2 to 1 with a
+  1s timeout and floor, holds a measured 1050 to the floor, 600, not to 525, with a 700s timeout
+  and a 600s floor, leaves a measured 818 under a 3600s timeout and a measured 750 equal to its
+  cap of 750 as they are, with no note, and keeps a floor of 600s above a 300s timeout as it is,
   both with no record and when that floor beats a measured 9s; a claude-mode dream and promotion
   pass with a 100s timeout, a floor of 1s and that record run (0) with `stall 75s`, capped at
   three quarters of the timeout, on the starting line; and a claude-mode dream and
@@ -1372,8 +1374,9 @@ Around that call, each runner does several things an exit code cannot:
     that it is not writable by every account; and that it does not lie inside the vault, by file
     identity and, on Windows or wherever a `cygpath` is found, walked as a drive path too. There it
     must also convert to a drive path that maps back to it, and off Windows it must also
-    be open to no other account, mode 0700, which the state directory's checks do not ask (`mktemp
-    -d` makes it 0700, measured on Linux; macOS not yet measured). A folder that fails refuses the
+    be open to no other account, with no permission bit for its group or for others, which the
+    state directory's checks do not ask (`mktemp -d` makes it 0700, measured on Linux, and on macOS
+    in CI's bash 3.2 job, where a pass ran through this check). A folder that fails refuses the
     run (1) before any git call, and no agent starts. From then on the snapshots, the steering
     backup, git's hooks folder, the settings file and the record of the folder use the resolved
     path, so a link above the folder, as a `TMPDIR` spelled through a link gives, still runs, and
