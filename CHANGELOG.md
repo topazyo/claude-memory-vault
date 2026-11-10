@@ -120,8 +120,8 @@ detection off.
   for a folder that cannot be reached or whose resolution led to another folder now name every
   runner.
 - The control suite holds each of these. New control ids: `rf-link`, `rf-vault`, `rf-mode`,
-  `rf-world`, `rf-owner`, `rf-above`, `rf-findfail`, `rf-copy`, `rf-drive-walk`, `rf-cygpath` and
-  `stall-cap`. `rf-mode`, `rf-world`, `rf-owner` and `rf-findfail` run off Windows only, because Git
+  `rf-world`, `rf-owner`, `rf-gone`, `rf-above`, `rf-findfail`, `rf-copy`, `rf-drive-walk`,
+  `rf-cygpath` and `stall-cap`. `rf-mode`, `rf-world`, `rf-owner` and `rf-findfail` run off Windows only, because Git
   Bash mode bits are not Windows permissions, and are required on the ubuntu, macOS and bash 3.2
   jobs; `rf-owner` also needs `sudo -n`, and skips without it. `rf-link`, `rf-vault`, `rf-mode` and
   `rf-world` take the dream and promotion runners in claude and command mode and the retention
@@ -130,7 +130,10 @@ detection off.
   cause, with no git call naming a hooks folder and no agent started. `rf-owner` refuses a dream
   pass in command mode whose folder another account owns; `rf-findfail` refuses one whose `find`
   fails for the 0700 check alone, after the same stand-in, not failing, let a pass run (0).
-  `rf-above` runs a pass whose folder lies under a link (0), git handed the hooks folder under the
+  `rf-gone` takes every runner and mode: a folder handed over as the one `mktemp` made that is not
+  there, and one whose folder above is not there, each refuse (1) on the runner's own line,
+  `… is not there as a folder, though the runner made it a moment ago …` and `… cannot be
+  reached: … Give this account back its access …`. `rf-above` runs a pass whose folder lies under a link (0), git handed the hooks folder under the
   resolved path and never the spelling, and in claude mode Claude Code handed the settings file
   there. `rf-copy` has the retention runner, with a link at the folder for the copy of its log, or
   that folder inside the vault, run (0) with the check's line as a `WARNING:` that it keeps no copy,
@@ -140,17 +143,18 @@ detection off.
   it, refuses before any walk. `stall-cap` holds a forged silence to the timeout when written and
   when read; holds a measured 5400s to 2700s, three quarters of a 3600s timeout, a measured 2s to
   1s with a 1s timeout and a 1s floor, and, with a 700s timeout and a 600s floor, a measured 1050s
-  to the floor, 600s, not to 525s; leaves a measured 818s under a 3600s timeout, and a measured
-  750s equal to its cap of 750s, as they are, with no note; logs `stall 75s` on the starting line of a claude-mode dream and promotion
-  pass with a 100s timeout, a floor of 1s and a forged record; and, in its floor legs, keeps a
-  floor of 600s above a 300s timeout as it is, with no record and when it beats a measured
+  to the floor, 600s, not to 525s; leaves a measured 818s under a 3600s timeout and a 600s floor
+  (cap 2700s), and a measured 750s under a 1000s timeout and a 600s floor, equal to its cap of
+  750s, as they are, with no note; logs `stall 75s` on the starting line of a claude-mode dream and
+  promotion pass with a 100s timeout, a floor of 1s and a forged record; and, in its floor legs,
+  keeps a floor of 600s above a 300s timeout as it is, with no record and when it beats a measured
   threshold. Each was seen failing against 1.4.2's library and runners on its own assertion (the
-  1s and 700s legs, added later, by the same call against 1.4.2's library, which gives 1499999999
-  for both), except
-  `rf-drive-walk` and `rf-cygpath`, which call the new function directly; `stall-cap`'s floor legs
-  and its two legs for a threshold the cap leaves as it is, which hold behaviour this release
-  leaves as it was; and `rf-owner`, which skipped in that run
-  because `sudo -n` was not available.
+  `rf-gone` legs and the 1s and 700s `stall-cap` legs were added later: `rf-gone` was run against
+  1.4.2 the same way, and the two `stall-cap` legs' call against 1.4.2's library gives 1499999999
+  for both), except `rf-drive-walk` and `rf-cygpath`, which call the new function directly;
+  `stall-cap`'s floor legs and its two legs for a threshold the cap leaves as it is, which hold
+  behaviour this release leaves as it was; and `rf-owner`, which skipped in that run because
+  `sudo -n` was not available (it passes on CI's ubuntu and macOS jobs, which have it).
 
 ### Adopting this
 
