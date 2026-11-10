@@ -50,8 +50,8 @@ detection off.
   `cd -P` and `pwd -P`, its own name kept), and checks the result with the checks the memory
   override runs: that it is the folder `mktemp` made, compared by identity; the state directory's
   checks of its owner and that it is not writable by every account; and that it does not lie inside
-  the vault, by file identity and, on Windows, walked as a drive path too. On Windows, or wherever a
-  `cygpath` is found, it must also convert to a drive path that maps back to it. Off Windows it must
+  the vault, by file identity and, on Windows or wherever a `cygpath` is found, walked as a drive
+  path too. There it must also convert to a drive path that maps back to it. Off Windows it must
   also be open to no other account, mode 0700, which the state directory's checks do not ask
   because they allow a group-writable folder; `mktemp -d` makes the folder 0700 (measured on Linux;
   macOS not yet measured). From then on the snapshots, the backup, git's hooks folder, the settings
@@ -75,38 +75,49 @@ detection off.
   not a Windows drive path …` and `ERROR: cygpath turned the runner's temporary folder, …, into …,
   which is not the same folder …`.
 - **The retention runner's folder for its own copy of the log is checked the same way.** It makes
-  that folder before its run lock, and now checks it before anything is written into it. A folder
-  that fails costs the run only its copy of the log: the check's lines go to the log as `WARNING:`
-  lines ending `So this run keeps no copy of its log, which goes to the log alone.`, and the run
-  goes on, its exit unchanged.
-- **One forged silence turned stall detection off for every later claude-mode pass.** The record
-  of each pass's longest silence (`<runner>.stream-gaps` in the state directory) is not sealed, so
-  one value written by something other than the watchdog, such as 999999999, set the stall
-  threshold (1.5 times the p99 of each pass's longest silence) to about 1.5e9 seconds for every
-  later pass, which is stall detection off. Each recorded silence is now held to the pass's timeout,
-  when it is written and when it is read (a record already holding a larger value is read as the
-  timeout), and a threshold measured from the record that is at or above the pass's timeout becomes
-  half the timeout, at least 1 second. The run's starting line then says so, for example `stall
-  50s, 1.5 times the p99 of each pass's longest silence, 100s over 3 recorded passes, capped at half
-  the pass's timeout, since a threshold at or above the timeout would never fire before it`. The
-  floor (`RUNNER_STALL_FLOOR`, default 600) is a setting, not a measurement, and is left as it is,
-  even at or above the timeout; so are `RUNNER_STALL_SECONDS` and command mode. A pass whose
-  measured threshold was at or above its timeout, and so could never fire, now stops as stalled
-  (exit 125) at half the timeout instead of running to the timeout (124). The watchdog checks the
-  timeout before the stall, in steps of its poll interval, so a threshold less than one poll below
-  the timeout still loses to it.
+  that folder before its run lock, and now checks it before anything is written into it. The check
+  hands back the path it passed, and the copy goes into exactly that folder, never one resolved
+  again. A folder that fails costs the run only its copy of the log: each of the check's lines goes
+  to the log as `WARNING: (the folder for this run's copy of its log) …`, ending `So this run keeps
+  no copy of its log, which goes to the log alone.`, and the run goes on, its exit unchanged. A
+  check that prints nothing gives one line, `WARNING: the folder for this run's copy of its log
+  could not be checked, so this run keeps no copy of its log, which goes to the log alone.`
+- **One forged silence turned stall detection off for later claude-mode passes.** The record of
+  each pass's longest silence (`<runner>.stream-gaps` in the state directory) is not sealed, so one
+  value written by something other than the watchdog, such as 999999999, set the stall threshold
+  (1.5 times the p99 of each pass's longest silence) to about 1.5e9 seconds, which is stall
+  detection off, for every later pass while the record held fewer than 100 passes; beyond that a
+  few such values did the same (reasoned from the p99). A recorded silence of up to nine digits that
+  is larger than the pass's timeout is now read as the timeout, and is written as the timeout in
+  the first place; one of more than nine digits is ignored, as before. A threshold measured from
+  the record (1.5 times the p99, when that is at or above the floor) that is above three quarters
+  of the pass's timeout (at least 1 second), or above the floor where that is higher, becomes that
+  value. The run's starting line then says so: with a 100s timeout, a floor of 1s and a forged
+  999999999, read as 100, the measured 150s becomes `stall 75s, 1.5 times the p99 of each pass's
+  longest silence, 100s over 3 recorded passes, capped at three quarters of the pass's timeout, or
+  the floor where that is higher, since a forged record could raise it to where it would not fire
+  before the timeout`. The threshold is never below the floor. The floor (`RUNNER_STALL_FLOOR`,
+  default 600) is a setting, not a measurement, and is never changed: one at or above the timeout
+  leaves stall detection off, as in 1.4.2. `RUNNER_STALL_SECONDS` and command mode are unchanged
+  too. A pass whose measured threshold was above three quarters of its timeout, or above the floor
+  where that is higher, now stops as stalled (exit 125) once it has been silent that long, where it
+  could run on to the timeout (124). The watchdog checks the timeout before the stall, in steps of
+  its poll interval, so a threshold less than one poll below the timeout still loses to it.
 
 ### Changed
 
 - **`memory_override` keeps all its own checks for any other caller.** They were moved,
-  unchanged, into two shared functions, `work_dir_resolve` and `work_dir_checks`, which the runner's
-  own check (`runner_folder_checked`) calls too, and the override's log lines are byte for byte
-  1.4.2's. In claude mode the folder is therefore checked by the runner before its first git call
-  and again by the override.
+  unchanged apart from a programming guard no caller reaches, into two shared functions,
+  `work_dir_resolve` and `work_dir_checks`, which the runner's own check (`runner_folder_checked`)
+  calls too, and the override's log lines are byte for byte 1.4.2's, apart from that guard's. In
+  claude mode the folder is therefore checked by the runner before its first git call and again by
+  the override.
 - **`docs/reference.md`** says that every runner, in every mode, resolves and checks its folder
   before its first git call; lists the new refusals under exit 1 for all three runners, and the
   retention runner's `WARNING:` for its copy of the log; and says how the stall threshold is held to
-  the pass's timeout.
+  the pass's timeout. `docs/setup.md`, Troubleshooting, has a row for each new line, and its rows
+  for a folder that cannot be reached or whose resolution led to another folder now name every
+  runner.
 - The control suite holds each of these. New control ids: `rf-link`, `rf-vault`, `rf-mode`,
   `rf-world`, `rf-owner`, `rf-above`, `rf-findfail`, `rf-copy`, `rf-drive-walk`, `rf-cygpath` and
   `stall-cap`. `rf-mode`, `rf-world`, `rf-owner` and `rf-findfail` run off Windows only, because Git
@@ -125,13 +136,15 @@ detection off.
   no `ERROR:` line and nothing written there. `rf-drive-walk` and `rf-cygpath` call
   `runner_folder_checked` directly: the identity walk and the drive-path walk decide it as they
   decide the override, and a `cygpath` that cannot convert the folder, or gives a network path for
-  it, refuses before any walk.
-  `stall-cap` holds a forged silence to the timeout when written and when read, halves a measured
-  threshold at or above the timeout on the starting line of a claude-mode dream and promotion pass,
-  and keeps a floor above the timeout as it is. Each was seen failing against 1.4.2's library and
-  runners on its own assertion, except `rf-drive-walk` and `rf-cygpath`, which call the new
-  function directly, and `stall-cap`'s floor leg, which holds behaviour this release leaves as it
-  was.
+  it, refuses before any walk. `stall-cap` holds a forged silence to the timeout when written and
+  when read; holds a measured 5400s to 2700s, three quarters of a 3600s timeout, and a measured 2s
+  to the 1s minimum; logs `stall 75s` on the starting line of a claude-mode dream and promotion
+  pass with a 100s timeout, a floor of 1s and a forged record; and, in its floor legs, keeps a
+  floor of 600s above a 300s timeout as it is, with no record and when it beats a measured
+  threshold. Each was seen failing against 1.4.2's library and runners on its own assertion, except
+  `rf-drive-walk` and `rf-cygpath`, which call the new function directly; `stall-cap`'s floor legs,
+  which hold behaviour this release leaves as it was; and `rf-owner`, which skipped in that run
+  because `sudo -n` was not available.
 
 ### Adopting this
 
@@ -148,16 +161,17 @@ detection off.
    Windows, leave it unset and schedule the task as your own account). Off Windows, the line
    `is open to other accounts (its mode is not 0700)` means something changed the folder's mode
    after `mktemp -d` made it; find what did. The line `could not run (find failed)` needs a working
-   `find` on the task's `PATH`. The `cygpath` lines need the temporary folder on a drive, not a
-   network path.
+   `find` on the task's `PATH`. For the `cygpath` lines, see their rows in `docs/setup.md`,
+   Troubleshooting.
 4. **The retention runner may log `WARNING:` lines ending `So this run keeps no copy of its log,
    which goes to the log alone.`** The run goes on, and its lines are in the log only. Fix its
    temporary folder as step 3 says.
-5. **A claude-mode pass may now stop as stalled (exit 125) at half its timeout, where it ran to the
-   timeout (124).** It happens only when the threshold measured from the record was at or above the
-   timeout; the run's starting line then says `capped at half the pass's timeout`. If a pass of
-   yours is silent for longer than that and is still working, set `RUNNER_STALL_SECONDS`, or raise
-   `DREAM_PASS_TIMEOUT` or `PROMOTION_PASS_TIMEOUT`.
+5. **A claude-mode pass may now stop as stalled (exit 125) once it has been silent for three
+   quarters of its timeout, or for the floor where that is higher, where it could run on to the
+   timeout (124).** It happens only when the threshold measured from the record was above that
+   value; the run's starting line then says `capped at three quarters of the pass's timeout, or the
+   floor where that is higher`. If a pass of yours is silent for that long and is still working,
+   set `RUNNER_STALL_SECONDS`, or raise `DREAM_PASS_TIMEOUT` or `PROMOTION_PASS_TIMEOUT`.
 6. The shipped files this release touches: `.claude/scripts/lib/runner-common.sh`,
    `.claude/scripts/dream-pass.sh`, `.claude/scripts/promotion-pass.sh`,
    `.claude/scripts/vault-retention.sh`, `.claude/scripts/run-tests.sh`, `docs/reference.md`,

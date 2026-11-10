@@ -571,10 +571,12 @@ a lint that does nothing and a lint that found nothing wrong print the same thin
   `RUNNER_FOLDER` unset. `rf-cygpath`: with a `cygpath` stand-in that gives a network path for the
   folder, or cannot convert it, `runner_folder_checked` refuses (1) on its own line before any walk,
   `RUNNER_FOLDER` unset. `stall-cap`: `record_stream_gaps` with a 3600s timeout records a silence of
-  999999999s as 3600; `stall_plan` counts such a recorded silence as the timeout and halves the
-  measured 5400 to 1800, saying so, and keeps a floor of 600s above a 300s timeout as it is; a
-  claude-mode dream and promotion pass with a 100s timeout, a floor of 1s and that record run (0)
-  with `stall 50s`, capped at half the timeout, on the starting line; and a claude-mode dream and
+  999999999s as 3600; `stall_plan` counts such a recorded silence as the timeout and holds the
+  measured 5400 to 2700, three quarters of the timeout, saying so, holds a measured 2 to the 1s
+  minimum with a 1s timeout and floor, and keeps a floor of 600s above a 300s timeout as it is,
+  both with no record and when that floor beats a measured 9s; a claude-mode dream and promotion
+  pass with a 100s timeout, a floor of 1s and that record run (0) with `stall 75s`, capped at
+  three quarters of the timeout, on the starting line; and a claude-mode dream and
   promotion pass with a 100s timeout whose gaps file a stand-in gave a silence of 999999999s runs
   (0) and records it as 100. `shown-name-c1`:
   under `LC_ALL=C`, `shown_name` shows U+0080, U+0085, U+009B and U+009F as `?`, as it does a line
@@ -829,22 +831,26 @@ Around that call, each runner does several things an exit code cannot:
   output is unknown. Any new output counts as progress, including a partial message. The
   threshold is `RUNNER_STALL_FLOOR` (10 minutes) until three passes that ended OK are measured.
   The runner records each such pass's longest silent stretch, and from then on the threshold is
-  1.5 times the 99th percentile of those, and never below the floor but through the cap that
-  follows. The record (`<runner>.stream-gaps` in the state directory) is not sealed, so each
-  silence in it is held to the pass's timeout, when it is written and when it is read (a record
-  already holding a larger value is read as the timeout), and a threshold measured from the record
-  that is at or above the pass's timeout becomes half the timeout, at least 1 second, which the
-  start line says with `capped at half the pass's timeout`. On 1.4.2 one value written there by
-  something other than the watchdog, such as 999999999, set the threshold to about 1.5e9 seconds
-  for every later pass, which is stall detection off. A pass whose measured threshold is at or
-  above its timeout therefore stops as stalled (125) at half the timeout rather than running to the
-  timeout (124). The watchdog checks the timeout before the stall, in steps of its poll interval,
-  so a threshold less than one poll below the timeout still loses to it. The floor is a setting,
-  not a measurement, and is left as it is, even at or above the timeout, and so are
-  `RUNNER_STALL_SECONDS` and command mode. The start line of every run logs the threshold, where it
-  came from, and the session id. `RUNNER_STALL_SECONDS` sets the threshold outright, and `0` turns
-  stall detection off. A value that is not digits only, with no leading zero and at most nine
-  digits, is ignored with a warning.
+  1.5 times the 99th percentile of those, and never below the floor. The record
+  (`<runner>.stream-gaps` in the state directory) is not sealed. On 1.4.2 one value written there
+  by something other than the watchdog, such as 999999999, set the threshold to about 1.5e9
+  seconds, which is stall detection off, for every later pass while the record held fewer than 100
+  passes, and a few such values did beyond that (reasoned from the p99). So a recorded silence of
+  up to nine digits that is larger than the pass's timeout is read as the timeout, and is written
+  as the timeout in the first place; one of more than nine digits is ignored, as before. And a
+  threshold measured from the record (1.5 times the p99, when that is at or above the floor) that is
+  above three quarters of the pass's timeout (at least 1 second), or above the floor where that is
+  higher, becomes that value, which the start line says with `capped at three quarters of the
+  pass's timeout, or the floor where that is higher`: with a 100s timeout, a floor of 1s and a
+  forged record, `stall 75s`. A pass whose measured threshold is above that value therefore stops
+  as stalled (125) once it has been silent that long, where it could run on to the timeout (124).
+  The watchdog checks the timeout before the stall, in steps of its poll interval, so a threshold
+  less than one poll below the timeout still loses to it. The floor is a setting, not a
+  measurement, and is never changed: one at or above the timeout leaves stall detection off, as in
+  1.4.2. `RUNNER_STALL_SECONDS` and command mode are unchanged too. The start line of every run
+  logs the threshold, where it came from, and the session id. `RUNNER_STALL_SECONDS` sets the
+  threshold outright, and `0` turns stall detection off. A value that is not digits only, with no
+  leading zero and at most nine digits, is ignored with a warning.
 
   A stop reaches everything the pass started. Outside Windows the agent starts in a process group
   of its own. The runner signals that group only after `ps` shows the agent leads it and it is
@@ -1347,10 +1353,14 @@ Around that call, each runner does several things an exit code cannot:
     own account, whose `TEMP` is a folder of its own: a task run as SYSTEM gets `C:\Windows\Temp`
     instead (unmeasured), whose permissions the per-user default does not describe. The same folder
     has held the pass's snapshots, its steering backup and the folder git takes hooks from since
-    1.4.0, reached through `TMPDIR` as spelled until 1.4.2, so name the folder itself, with no
-    `..` and no part ending in a dot in its spelling. On Windows, or wherever a `cygpath` is found
-    on `PATH`, every runner, the retention runner included, refuses a `..`, a part ending in a dot
-    or a colon that is not a drive letter's in every mode, before its first git call, and on every
+    1.4.0, reached through `TMPDIR` as spelled through 1.4.2. Name the folder with no `..` and no
+    part ending in a dot in its spelling all the same: git on Windows reads such a spelling as text,
+    a `..` after a junction and a dropped dot leading it to another folder than the one `mktemp`
+    made, so the 1.4.2 spelling checks still refuse it before the folder is resolved. A link above
+    the folder is resolved and accepted; one at the folder itself is refused. On Windows, or
+    wherever a `cygpath` is found on `PATH`, every runner, the retention runner included, refuses a
+    `..`, a part ending in a dot or a colon that is not a drive letter's in every mode, before its
+    first git call, and on every
     platform it refuses a folder that is not an absolute path, as a relative `TMPDIR` or one
     starting with `~` gives (a drive path counts only under Git Bash, MSYS or Cygwin). The retention
     pass takes `TMPDIR` only when it starts with `/`, and otherwise uses `/tmp`, for its temporary
@@ -1360,8 +1370,8 @@ Around that call, each runner does several things an exit code cannot:
     result before its first git call, with the checks the memory override runs on it: that it is
     the folder `mktemp` made, compared by identity; the state directory's checks of its owner and
     that it is not writable by every account; and that it does not lie inside the vault, by file
-    identity and, on Windows, walked as a drive path too. On Windows, or wherever a `cygpath` is
-    found, it must also convert to a drive path that maps back to it, and off Windows it must also
+    identity and, on Windows or wherever a `cygpath` is found, walked as a drive path too. There it
+    must also convert to a drive path that maps back to it, and off Windows it must also
     be open to no other account, mode 0700, which the state directory's checks do not ask (`mktemp
     -d` makes it 0700, measured on Linux; macOS not yet measured). A folder that fails refuses the
     run (1) before any git call, and no agent starts. From then on the snapshots, the steering
@@ -1370,9 +1380,13 @@ Around that call, each runner does several things an exit code cannot:
     git and Claude Code are handed the resolved path. On 1.4.2 only a claude-mode pass checked the
     folder itself, inside the override and after the runner's first git calls, and command mode
     did not check it at all. The retention runner gives the folder for its own copy of the log, made
-    before its run lock, the same check before it writes anything there; a folder that fails costs
-    the run only that copy, with the check's lines logged as `WARNING:` lines ending `So this run
-    keeps no copy of its log, which goes to the log alone.` and the run going on. The checks share
+    before its run lock, the same check before it writes anything there, and puts the copy into
+    exactly the path the check passed, never one resolved again. A folder that fails costs the run
+    only that copy: each of the check's lines is logged as `WARNING: (the folder for this run's copy
+    of its log) …`, ending `So this run keeps no copy of its log, which goes to the log alone.`, and
+    the run goes on; a check that prints nothing gives one line, `WARNING: the folder for this run's
+    copy of its log could not be checked, so this run keeps no copy of its log, which goes to the
+    log alone.` The checks share
     the limits above: a group-writable folder above, one another account owns, and an access control
     list are not seen. The settings file adds a file there that Claude Code reads at every
     claude-mode pass, whether or not the vault is a git repository: the runner's own file turns
@@ -1956,7 +1970,7 @@ Known limits, each failing in the quiet direction:
 | Exit | Meaning (`vault-retention.sh`) |
 | --- | --- |
 | `0` | OK: the moves were committed, nothing was eligible, this was a dry run, or there is no `20-projects/_logs` folder. Its last printed line, and the log, say which |
-| `1` | setup failure, `20-projects/_logs` cannot be listed or entered, git cannot read the vault, the vault is not the top of its own repository, a shallow clone, `info/grafts`, or a sparse checkout, or, on Windows or wherever a `cygpath` is found on `PATH`, the vault's path holds a part ending in a dot, a colon that is not a drive letter's or a last part ending in a space ("the vault, ..., is spelled with a part that ends in a dot", before the state directory, the run lock or any git call), or the run's temporary folder is spelled with a `..` or a part ending in a dot, which git there would read as another folder ("is spelled with .. or with a part that ends in a dot", before any git call). Also, before any git call, when neither `$TMPDIR` nor `/tmp` can hold the run's folder ("could not create a temporary directory"; there is no last-resort folder), when that folder is not an absolute path ("is not an absolute path, so it was made inside the vault", which this runner cannot meet through `TMPDIR`, since it uses `TMPDIR` only when it starts with `/`), or when, on Windows or wherever a `cygpath` is found, it holds a colon that is not a drive letter's ("is spelled with a colon that is not a drive letter's"). Also, before any git call, when the run's folder, resolved, fails the checks every runner runs on it from 1.5.0 (§ 4.3, Known limits): the state directory's checks, inside the vault by file identity, or not the path it resolves to ("the runner's folder for the pass", then the check, then "and the runner keeps the pass's snapshots, its backup and git's hooks folder there"), not there as a folder, a folder above it that cannot be reached, a resolution that led to another folder, a walk that gave no answer or a vault that cannot be resolved; off Windows, a mode other than 0700 ("is open to other accounts (its mode is not 0700)") or a `find` that could not check it ("could not run (find failed)"); and, on Windows or wherever a `cygpath` is found, a `cygpath` that cannot convert the folder ("cygpath could not convert the runner's temporary folder"), gives a path that is not a drive path ("for the runner's temporary folder, which is not a Windows drive path") or gives another folder ("which is not the same folder"). The folder for the run's own copy of its log gets the same checks, but one that fails them is not a refusal: the lines are logged as `WARNING:` lines ending "So this run keeps no copy of its log, which goes to the log alone.", and the run goes on. With 1.4.2's `lib/runner-common.sh` a 1.5.0 runner exits 1 before its first git call with `runner_folder_checked: command not found` on stderr, not in its log, and 1.4.2's runner with 1.5.0's library runs as 1.4.2 did, without the new checks (both reasoned, not measured). With 1.4.1's `lib/runner-common.sh` a 1.4.2 runner exits 1 with `git_env_warning: command not found` and `vault_root_spelling_ok: command not found` on stderr, not in its log, and with 1.4.0's a 1.4.1 runner exits 1 with `temp_dir_spelling_ok: command not found` there (both measured on Linux; older libraries are unmeasured). Also the script failing in itself, such as on an unset variable, which bash ends with `1`. A folder that cannot be listed is never read as an empty one, which is a clean `0` |
+| `1` | setup failure, `20-projects/_logs` cannot be listed or entered, git cannot read the vault, the vault is not the top of its own repository, a shallow clone, `info/grafts`, or a sparse checkout, or, on Windows or wherever a `cygpath` is found on `PATH`, the vault's path holds a part ending in a dot, a colon that is not a drive letter's or a last part ending in a space ("the vault, ..., is spelled with a part that ends in a dot", before the state directory, the run lock or any git call), or the run's temporary folder is spelled with a `..` or a part ending in a dot, which git there would read as another folder ("is spelled with .. or with a part that ends in a dot", before any git call). Also, before any git call, when neither `$TMPDIR` nor `/tmp` can hold the run's folder ("could not create a temporary directory"; there is no last-resort folder), when that folder is not an absolute path ("is not an absolute path, so it was made inside the vault", which this runner cannot meet through `TMPDIR`, since it uses `TMPDIR` only when it starts with `/`), or when, on Windows or wherever a `cygpath` is found, it holds a colon that is not a drive letter's ("is spelled with a colon that is not a drive letter's"). Also, before any git call, when the run's folder, resolved, fails the checks every runner runs on it from 1.5.0 (§ 4.3, Known limits): the state directory's checks, inside the vault by file identity, or not the path it resolves to ("the runner's folder for the pass", then the check, then "and the runner keeps the pass's snapshots, its backup and git's hooks folder there"), not there as a folder, a folder above it that cannot be reached, a resolution that led to another folder, a walk that gave no answer or a vault that cannot be resolved; off Windows, a mode other than 0700 ("is open to other accounts (its mode is not 0700)") or a `find` that could not check it ("could not run (find failed)"); and, on Windows or wherever a `cygpath` is found, a `cygpath` that cannot convert the folder ("cygpath could not convert the runner's temporary folder"), gives a path that is not a drive path ("for the runner's temporary folder, which is not a Windows drive path") or gives another folder ("which is not the same folder"). The folder for the run's own copy of its log gets the same checks, and the copy goes into exactly the path they passed, but one that fails them is not a refusal: each line is logged as `WARNING: (the folder for this run's copy of its log) …`, ending "So this run keeps no copy of its log, which goes to the log alone.", or, when the check prints nothing, as "WARNING: the folder for this run's copy of its log could not be checked, …", and the run goes on. With 1.4.2's `lib/runner-common.sh` a 1.5.0 runner exits 1 before its first git call with `runner_folder_checked: command not found` on stderr, not in its log, and 1.4.2's runner with 1.5.0's library runs as 1.4.2 did, without the new checks (both reasoned, not measured). With 1.4.1's `lib/runner-common.sh` a 1.4.2 runner exits 1 with `git_env_warning: command not found` and `vault_root_spelling_ok: command not found` on stderr, not in its log, and with 1.4.0's a 1.4.1 runner exits 1 with `temp_dir_spelling_ok: command not found` there (both measured on Linux; older libraries are unmeasured). Also the script failing in itself, such as on an unset variable, which bash ends with `1`. A folder that cannot be listed is never read as an empty one, which is a clean `0` |
 | `2` | REPORT-REFUSED: the `--adopt-legacy` report was not written by this runner, or its list has changed since. Nothing moved |
 | `3` | PARTIAL: a move failed while HEAD was unchanged, and every file was put back. Nothing is committed. Also when the archive folders could not be made, or one turned out to be a link or not a folder just as the move was about to use it (the log says `ERROR:` or `PATH-BLOCKED:`), where nothing had moved to put back |
 | `4` | COMMIT-FAILED: the commit failed with HEAD unchanged, and the moves were put back |
@@ -2002,11 +2016,11 @@ Known limits, each failing in the quiet direction:
 | `RUN_LOCK_WAIT` | `1800` seconds | all three runners: how long to wait for the run lock before exiting 75 |
 | `RUN_LOCK_POLL` | `30` seconds | all three runners: how often to check the run lock while waiting |
 | `RUNNER_STALL_SECONDS` | unset | both runners: the stall threshold in seconds, replacing the measured one. `0` turns stall detection off. Setting it is the only way to turn stall detection on in command mode |
-| `RUNNER_STALL_FLOOR` | `600` seconds | both runners in claude mode: the stall threshold until three passes are measured, and the lowest it can be after, unless a measured threshold at or above the pass's timeout is cut to half the timeout (§ 4.3, Watchdog). Kept as set even at or above the timeout |
+| `RUNNER_STALL_FLOOR` | `600` seconds | both runners in claude mode: the stall threshold until three passes are measured, and the lowest it can be after. A measured threshold above three quarters of the pass's timeout, or above the floor where that is higher, is cut to that value (§ 4.3, Watchdog). The floor itself is never changed: one at or above the timeout leaves stall detection off |
 | `RUNNER_RUN_LOG_MAX_BYTES` | `10000000` | both runners: the size above which a pass's run log in `.claude/logs` is cut to its newest part after the pass |
 | `RUNNER_GIT_TIMEOUT` | `120` seconds | all three runners: how long each git step of the runner commit (staging, then the commit and its signing) may take before it is stopped and the run exits 4. In `vault-retention.sh` it bounds the history walk and the move as well, and a step it stops there gives 75 before any move or 71 after one |
 | `VAULT_STATE_DIR` | per-vault directory under `%LOCALAPPDATA%` or `~/.local/state` | all three runners: the run lock, the quarantine, the tripwire and in-flight copies, the pre-pass backup of a running pass, and the retention runner's legacy reports and its `retention-inflight` recovery file, all outside the vault, and `vault-check.sh`, which looks for the tripwire copy there. An absolute path is required, and a Windows path is converted. A relative one, one containing `..`, or one inside the vault is replaced with a directory under the system temp folder, and the runner logs a warning. A state directory the runner's account does not own or cannot write stops the run with exit 1. Give each vault its own value |
-| `TMPDIR` | unset (`/tmp`; for the dream and promotion runners on macOS Apple's `mktemp` takes the per-user temporary folder, whatever `TMPDIR` says) | the dream and promotion runners: where each makes its own folder for the pass with `mktemp -d`, holding the snapshots, the steering backup, git's hooks folder and, in claude mode, `pass-settings.json`, which Claude Code reads as settings, hooks and other commands among them; the retention runner, when it starts with `/`, for its own folders and git's hooks folder, which it names by a template, so macOS honours it too (otherwise `/tmp`, and a `TMPDIR` that does not start with `/` is set to `/tmp` for the whole run, so its temporary files go there too; it has no last-resort folder, so a run where neither can hold its folder refuses). Keep it an absolute path to a folder only your account can change, named with no link, no `..`, no part ending in a dot and no colon but a drive letter's (every runner, in every mode and before its first git call, refuses a folder that is not an absolute path, a drive path counting only under Git Bash, MSYS or Cygwin, and, on Windows or wherever a `cygpath` is found on `PATH`, a `..`, a part ending in a dot or a colon that is not a drive letter's, because git there reads the spelling as text; from 1.5.0 each also resolves the folder it made and, before its first git call, refuses one that fails the checks in § 4.3, Known limits, off Windows one not at mode 0700 among them); on Windows schedule the task as your own account, and leave it unset unless a path near 260 characters needs a shorter folder (§ 4.3, Known limits) |
+| `TMPDIR` | unset (`/tmp`; for the dream and promotion runners on macOS Apple's `mktemp` takes the per-user temporary folder, whatever `TMPDIR` says) | the dream and promotion runners: where each makes its own folder for the pass with `mktemp -d`, holding the snapshots, the steering backup, git's hooks folder and, in claude mode, `pass-settings.json`, which Claude Code reads as settings, hooks and other commands among them; the retention runner, when it starts with `/`, for its own folders and git's hooks folder, which it names by a template, so macOS honours it too (otherwise `/tmp`, and a `TMPDIR` that does not start with `/` is set to `/tmp` for the whole run, so its temporary files go there too; it has no last-resort folder, so a run where neither can hold its folder refuses). Keep it an absolute path to a folder only your account can change, named with no `..`, no part ending in a dot and no colon but a drive letter's (a link above the folder the runner makes is resolved and accepted, and one at that folder itself is refused; every runner, in every mode and before its first git call, refuses a folder that is not an absolute path, a drive path counting only under Git Bash, MSYS or Cygwin, and, on Windows or wherever a `cygpath` is found on `PATH`, a `..`, a part ending in a dot or a colon that is not a drive letter's, because git there reads the spelling as text; from 1.5.0 each also resolves the folder it made and, before its first git call, refuses one that fails the checks in § 4.3, Known limits, off Windows one not at mode 0700 among them); on Windows schedule the task as your own account, and leave it unset unless a path near 260 characters needs a shorter folder (§ 4.3, Known limits) |
 | `BASH_EXE` | standard Git for Windows paths | all three `.cmd` wrappers |
 | `VAULT_FORCE_NO_JQ` | unset | `vault-lint.sh` and `postcompact-wrap-up.sh`: take the no-jq branch even when `jq` is installed |
 
