@@ -8833,6 +8833,19 @@ else
   fi
   sudo -n rm -rf "$rf15_o" >/dev/null 2>&1
 fi
+# F5b: the folder handed over as the one mktemp made is not there, under a
+# folder of this account's; or the folder above it is not there. Each refuses on
+# the runner's own line, which 1.5.0 adds, not on the memory override's.
+rm -rf "$MO_K4/tgt/gone.tmp" "$MO_K4/noabove"
+ran rf-gone
+for rf15_leg in $RF15_LEGS; do
+  rf15_run "$rf15_leg" "$MO_K4/tgt" "$MO_K4/tgt" MO_K4_FIXED="$MO_K4/tgt/gone.tmp"
+  rf15_refused "rf-gone: $rf15_leg, the runner's folder for the pass not there" "is not there as a folder, though the runner made it a moment ago"
+  tripwire_clear
+  rf15_run "$rf15_leg" "$MO_K4/tgt" "$MO_K4/tgt" MO_K4_FIXED="$MO_K4/noabove/tmp.gone"
+  rf15_refused "rf-gone: $rf15_leg, the folder above the runner's folder for the pass not there" "or that folder is not there, so the checks cannot see the folder the runner made. Give this account back its access"
+  tripwire_clear
+done
 # F6: a link above the folder is resolved and accepted. git is handed the
 # nohooks folder under the folder's resolved path, never the spelling, and in
 # claude mode so is Claude Code the settings file.
