@@ -6574,9 +6574,15 @@ MO_K4_EOF
 # the legs whose refusal comes from the spelling check (MO_K4_CYG=1), because
 # the runner's own folder check (runner_folder_checked) converts the folder to
 # a drive path wherever a cygpath is found, and one that gives a POSIX path back
-# is refused there, which the plainly spelled controls must not be.
+# is refused there, which the plainly spelled controls must not be. It answers
+# as DW_SHIM does, with a C: drive (-m adds C: to its last argument, -u strips
+# a leading C:, anything else gives the argument back), so the runner's own
+# check passes wherever it is reached and only the rule under test refuses:
+# vault_root_spelling_ok, temp_dir_spelling_ok and runner_folder_ok each run
+# before runner_folder_checked in every runner, and the retention runner's
+# check of its log-copy folder only turns a refusal into a WARNING.
 if ! is_windows_host; then
-  printf '#!/usr/bin/env bash\nfor a; do :; done\nprintf "%%s\\n" "$a"\n' > "$MO_K4/cyg/cygpath"
+  printf '#!/usr/bin/env bash\nfor a; do :; done\ncase "$1" in\n  -m) printf "C:%%s\\n" "$a" ;;\n  -u) case "$a" in C:*) printf "%%s\\n" "${a#C:}" ;; *) printf "%%s\\n" "$a" ;; esac ;;\n  *) printf "%%s\\n" "$a" ;;\nesac\n' > "$MO_K4/cyg/cygpath"
   chmod +x "$MO_K4/cyg/cygpath"
 fi
 MO_K4_CYG=
@@ -7396,6 +7402,8 @@ else
         printf '%s\n' "$1" >> "$TMP/v142-dw.calls"
         case "$1" in Z:/*) return "$DW_DRIVE" ;; *) return "$DW_FIRST" ;; esac
       }
+      # A value left from before must be unset by the check, or folder=unset holds nothing.
+      RUNNER_FOLDER=stale
       runner_folder_checked "$RV" "${CASE_STATE:-$TMP/state}" "$dw_w" "$TMP/v142-dw.log"
       echo "rc=$? folder=${RUNNER_FOLDER-unset}" > "$TMP/v150-dw.set" )
     dw_set="$(cat "$TMP/v150-dw.set" 2>/dev/null)"
@@ -7433,6 +7441,8 @@ else
     rm -f "$TMP/v150-dw.set"
     ( LC_ALL=C; export LC_ALL; PATH="$TMP/v150-cg:$PATH"; . "$RV/.claude/scripts/lib/runner-common.sh"
       path_under_by_identity() { printf '%s\n' "$1" >> "$TMP/v142-dw.calls"; return 1; }
+      # A value left from before must be unset by the check, or folder=unset holds nothing.
+      RUNNER_FOLDER=stale
       runner_folder_checked "$RV" "${CASE_STATE:-$TMP/state}" "$dw_w" "$TMP/v142-dw.log"
       echo "rc=$? folder=${RUNNER_FOLDER-unset}" > "$TMP/v150-dw.set" )
     dw_set="$(cat "$TMP/v150-dw.set" 2>/dev/null)"
@@ -8641,9 +8651,9 @@ CASE_STATE="$v142_case_state"
 # runner's first folder, the copy of its log (COPY_DIR), failing the same checks
 # (F9, F9b) costs only the copy: a WARNING, no ERROR, exit 0 and no run.log
 # there. Then the stall cap (F10): a recorded silence is held to the pass's
-# timeout, a threshold measured from the record at or above the timeout is
-# halved, the floor is left as it is, and a claude-mode pass logs the halved
-# threshold on its starting line.
+# timeout, a threshold measured from the record above three quarters of the
+# timeout (or the floor, where that is higher) is held there, the floor is left
+# as it is, and a claude-mode pass logs the held threshold on its starting line.
 rf15_cs="$CASE_STATE"
 CASE_STATE="$TMP/state-rf150"
 rm -rf "$CASE_STATE"
@@ -8656,6 +8666,7 @@ RF15_P8="$( . "$RF15_LIB" >/dev/null 2>&1; state_dir_problem 8 )"
 RF15_MODE="is open to other accounts (its mode is not 0700), $RF_WORK."
 RF15_FIND='for permissions open to other accounts could not run (find failed)'
 RF15_COPY='So this run keeps no copy of its log, which goes to the log alone.'
+RF15_TAG="WARNING: (the folder for this run's copy of its log) the runner's folder for the pass, "
 RF15_LEGS='dream-claude dream-command promotion-claude promotion-command retention'
 if [ -z "$RF15_P2" ] || [ -z "$RF15_P3" ] || [ "$RF15_P4" != 'resolves into the vault' ] || [ -z "$RF15_P8" ] \
    || [ "$RF15_P8" = "$RF15_P2" ]; then
@@ -8921,20 +8932,22 @@ rf15_run retention "$MO_K4/lk" "$MO_K4/lkt" MO_K4_NTH=1 MO_K4_LINKAT=1
 rf15_t="$(cat "$MO_K4/count.made" 2>/dev/null)"
 rf15_w=absent
 tail -n +"$((rf15_before + 1))" "$rf15_log" 2>/dev/null | grep -F -- "$RF15_P8" | grep -F -- "$RF15_COPY" \
-  | grep -q '^\[[^]]*\] WARNING: ' && rf15_w=present
+  | grep -F -- "] $RF15_TAG" | grep -q '^\[[^]]*\] WARNING: ' && rf15_w=present
 rf15_e="$(rf15_errs)"
+rf15_rr="$(tail -n +"$((rf15_before + 1))" "$rf15_log" 2>/dev/null | grep -cF 'Refusing to run.' | tr -d ' ')"
 rf15_x=
+[ "${rf15_rr:-0}" = 0 ] || rf15_x="; ${rf15_rr} line(s) of this run say Refusing to run."
 if [ -z "$rf15_t" ]; then
-  rf15_x="; fixture: the mktemp stand-in made no link, so the leg shows nothing"
+  rf15_x="$rf15_x; fixture: the mktemp stand-in made no link, so the leg shows nothing"
 elif [ ! -d "$rf15_t" ] || [ -L "$rf15_t" ]; then
-  rf15_x="; the folder the link named, $rf15_t, is gone"
+  rf15_x="$rf15_x; the folder the link named, $rf15_t, is gone"
 elif [ -e "$rf15_t/run.log" ] || [ -e "$rf15_t/lib.log" ]; then
-  rf15_x="; the copy of the log was written in the folder the link named"
+  rf15_x="$rf15_x; the copy of the log was written in the folder the link named"
 fi
 if [ "$rf15_rc" = 0 ] && [ "$rf15_w" = present ] && [ "${rf15_e:-0}" = 0 ] && [ -z "$rf15_x" ]; then
   ok "rf-copy: retention, a link at the folder for the copy of its log -> runs (0), the check's line logged as a WARNING that the run keeps no copy, no ERROR: line, and nothing written through the link"
 else
-  bad "rf-copy: retention, a link at the folder for the copy of its log -- expected exit 0, a WARNING: line holding [$RF15_P8] and [$RF15_COPY], no ERROR: line and no run.log through the link; got exit $rf15_rc, WARNING $rf15_w, ERROR: lines ${rf15_e:-0}$rf15_x"
+  bad "rf-copy: retention, a link at the folder for the copy of its log -- expected exit 0, a WARNING: line holding [$RF15_TAG], [$RF15_P8] and [$RF15_COPY], no ERROR: line, no line saying Refusing to run. and no run.log through the link; got exit $rf15_rc, WARNING $rf15_w, ERROR: lines ${rf15_e:-0}$rf15_x"
 fi
 tripwire_clear
 rf15_clear "$MO_K4/lk"
@@ -8949,17 +8962,19 @@ else
   rf15_run retention "$MO_K4/vl" "$rf15_in" MO_K4_NTH=1
   rf15_w=absent
   tail -n +"$((rf15_before + 1))" "$rf15_log" 2>/dev/null | grep -F -- "$RF15_P4, $RF_WORK" | grep -F -- "$RF15_COPY" \
-    | grep -q '^\[[^]]*\] WARNING: ' && rf15_w=present
+    | grep -F -- "] $RF15_TAG" | grep -q '^\[[^]]*\] WARNING: ' && rf15_w=present
   rf15_e="$(rf15_errs)"
+  rf15_rr="$(tail -n +"$((rf15_before + 1))" "$rf15_log" 2>/dev/null | grep -cF 'Refusing to run.' | tr -d ' ')"
   rf15_x=
-  [ -s "$MO_K4/count.made" ] || rf15_x="; fixture: the mktemp stand-in made no folder in the vault, so the leg shows nothing"
+  [ "${rf15_rr:-0}" = 0 ] || rf15_x="; ${rf15_rr} line(s) of this run say Refusing to run."
+  [ -s "$MO_K4/count.made" ] || rf15_x="$rf15_x; fixture: the mktemp stand-in made no folder in the vault, so the leg shows nothing"
   if [ -n "$(find "$MO_K4_RV" -name run.log 2>/dev/null)" ]; then
     rf15_x="$rf15_x; a run.log is in the vault: $(find "$MO_K4_RV" -name run.log 2>/dev/null | tr '\n' ' ')"
   fi
   if [ "$rf15_rc" = 0 ] && [ "$rf15_w" = present ] && [ "${rf15_e:-0}" = 0 ] && [ -z "$rf15_x" ]; then
     ok "rf-copy: retention, the folder for the copy of its log inside the vault, reached through a link above it -> runs (0), the check's line logged as a WARNING that the run keeps no copy, no ERROR: line, and no run.log in the vault"
   else
-    bad "rf-copy: retention, the folder for the copy of its log inside the vault -- expected exit 0, a WARNING: line holding [$RF15_P4, $RF_WORK] and [$RF15_COPY], no ERROR: line and no run.log in the vault; got exit $rf15_rc, WARNING $rf15_w, ERROR: lines ${rf15_e:-0}$rf15_x"
+    bad "rf-copy: retention, the folder for the copy of its log inside the vault -- expected exit 0, a WARNING: line holding [$RF15_TAG], [$RF15_P4, $RF_WORK] and [$RF15_COPY], no ERROR: line, no line saying Refusing to run. and no run.log in the vault; got exit $rf15_rc, WARNING $rf15_w, ERROR: lines ${rf15_e:-0}$rf15_x"
   fi
   tripwire_clear
 fi
@@ -8983,9 +8998,10 @@ rf15_got="$( . "$RF15_LIB" >/dev/null 2>&1
   unset RUNNER_STALL_SECONDS
   AGENT_KIND=claude STALL_MIN_RUNS=3 RUNNER_STALL_FLOOR=600 stall_plan "$rf15_d" b /dev/null 3600
   printf '%s|%s' "$AGENT_STALL_SECONDS" "$AGENT_STALL_NOTE" )"
-rf15_want="1800|1.5 times the p99 of each pass's longest silence, 3600s over 3 recorded passes, capped at half the pass's timeout, since a threshold at or above the timeout would never fire before it"
+RF15_CAPNOTE=", capped at three quarters of the pass's timeout, or the floor where that is higher, since a forged record could raise it to where it would not fire before the timeout"
+rf15_want="2700|1.5 times the p99 of each pass's longest silence, 3600s over 3 recorded passes$RF15_CAPNOTE"
 if [ "$rf15_got" = "$rf15_want" ]; then
-  ok "stall-cap: stall_plan with a 3600s timeout and a recorded silence of 999999999s -> the silence counts as 3600, and the measured 5400 is halved to 1800 with the note saying so"
+  ok "stall-cap: stall_plan with a 3600s timeout and a recorded silence of 999999999s -> the silence counts as 3600, and the measured 5400 is held to three quarters of the timeout, 2700, with the note saying so"
 else
   bad "stall-cap: stall_plan with a 3600s timeout and a recorded silence of 999999999s -- expected [$rf15_want]; got [$rf15_got]"
 fi
@@ -8995,9 +9011,49 @@ rf15_got="$( . "$RF15_LIB" >/dev/null 2>&1
   printf '%s|%s' "$AGENT_STALL_SECONDS" "$AGENT_STALL_NOTE" )"
 rf15_want="600|the floor, because 0 of the 3 passes needed to measure one are recorded"
 if [ "$rf15_got" = "$rf15_want" ]; then
-  ok "stall-cap: stall_plan with no record and a floor of 600s above a 300s timeout -> the floor is kept as it is, not halved"
+  ok "stall-cap: stall_plan with no record and a floor of 600s above a 300s timeout -> the floor is kept as it is, not capped"
 else
   bad "stall-cap: stall_plan with no record and a floor of 600s above a 300s timeout -- expected [$rf15_want]; got [$rf15_got]"
+fi
+# A floor that beats the measured threshold, and is at or above the timeout,
+# is left as it is.
+printf '100 5\n200 5\n300 6\n' > "$rf15_d/f.stream-gaps"
+rf15_got="$( . "$RF15_LIB" >/dev/null 2>&1
+  unset RUNNER_STALL_SECONDS
+  AGENT_KIND=claude STALL_MIN_RUNS=3 RUNNER_STALL_FLOOR=600 stall_plan "$rf15_d" f /dev/null 300
+  printf '%s|%s' "$AGENT_STALL_SECONDS" "$AGENT_STALL_NOTE" )"
+rf15_want="600|the floor, above 1.5 times the p99 of each pass's longest silence, 6s over 3 recorded passes"
+if [ "$rf15_got" = "$rf15_want" ]; then
+  ok "stall-cap: stall_plan with a record of short silences and a floor of 600s above a 300s timeout -> the floor beats the measured 9s and is kept as it is, not capped"
+else
+  bad "stall-cap: stall_plan with a record of short silences and a floor of 600s above a 300s timeout -- expected [$rf15_want]; got [$rf15_got]"
+fi
+# A 1s timeout and a 1s floor: every recorded silence counts as 1, the measured
+# 2 is held to the minimum, 1.
+printf '100 999999999\n200 5\n300 6\n' > "$rf15_d/m.stream-gaps"
+rf15_got="$( . "$RF15_LIB" >/dev/null 2>&1
+  unset RUNNER_STALL_SECONDS
+  AGENT_KIND=claude STALL_MIN_RUNS=3 RUNNER_STALL_FLOOR=1 stall_plan "$rf15_d" m /dev/null 1
+  printf '%s|%s' "$AGENT_STALL_SECONDS" "$AGENT_STALL_NOTE" )"
+rf15_want="1|1.5 times the p99 of each pass's longest silence, 1s over 3 recorded passes$RF15_CAPNOTE"
+if [ "$rf15_got" = "$rf15_want" ]; then
+  ok "stall-cap: stall_plan with a 1s timeout, a 1s floor and a recorded silence of 999999999s -> held to the minimum, 1, with the note saying so"
+else
+  bad "stall-cap: stall_plan with a 1s timeout, a 1s floor and a recorded silence of 999999999s -- expected [$rf15_want]; got [$rf15_got]"
+fi
+# A 700s timeout and a 600s floor: every recorded silence counts as 700, the
+# measured 1050 is held to the floor, 600, which is above three quarters of the
+# timeout (525), so the cap never takes a threshold below the floor.
+printf '100 999999999\n200 5\n300 6\n' > "$rf15_d/c.stream-gaps"
+rf15_got="$( . "$RF15_LIB" >/dev/null 2>&1
+  unset RUNNER_STALL_SECONDS
+  AGENT_KIND=claude STALL_MIN_RUNS=3 RUNNER_STALL_FLOOR=600 stall_plan "$rf15_d" c /dev/null 700
+  printf '%s|%s' "$AGENT_STALL_SECONDS" "$AGENT_STALL_NOTE" )"
+rf15_want="600|1.5 times the p99 of each pass's longest silence, 700s over 3 recorded passes$RF15_CAPNOTE"
+if [ "$rf15_got" = "$rf15_want" ]; then
+  ok "stall-cap: stall_plan with a 700s timeout, a 600s floor and a recorded silence of 999999999s -> the measured 1050 is held to the floor, 600, not to three quarters of the timeout, 525"
+else
+  bad "stall-cap: stall_plan with a 700s timeout, a 600s floor and a recorded silence of 999999999s -- expected [$rf15_want]; got [$rf15_got]"
 fi
 rm -rf "$rf15_d"
 CASE_STATE="$TMP/state-rf150-stall"
@@ -9007,13 +9063,13 @@ printf '100 999999999\n200 5\n300 6\n' > "$CASE_STATE/dream-pass.stream-gaps"
 rf15_before="$(mo_lines "$MO_LOG")"
 rf15_rc="$(runner dream-pass.sh journal FAKE_RECORD="$REC" DREAM_PASS_TIMEOUT=100 RUNNER_STALL_FLOOR=1)"
 rf15_line="$(tail -n +"$((rf15_before + 1))" "$MO_LOG" 2>/dev/null | grep -E -- "$MO_STARTING" | head -n 1)"
-rf15_want="starting dream-agent via claude (timeout 100s, stall 50s, 1.5 times the p99 of each pass's longest silence, 100s over 3 recorded passes, capped at half the pass's timeout, since a threshold at or above the timeout would never fire before it, session "
+rf15_want="starting dream-agent via claude (timeout 100s, stall 75s, 1.5 times the p99 of each pass's longest silence, 100s over 3 recorded passes$RF15_CAPNOTE, session "
 case "$rf15_line" in
   *"$rf15_want"*) rf15_said=present ;;
   *) rf15_said=absent ;;
 esac
 if [ "$rf15_rc" = 0 ] && [ "$rf15_said" = present ]; then
-  ok "stall-cap: a claude-mode dream pass with a 100s timeout, a floor of 1s and a recorded silence of 999999999s -> runs (0) and logs stall 50s, capped at half the timeout, on its starting line"
+  ok "stall-cap: a claude-mode dream pass with a 100s timeout, a floor of 1s and a recorded silence of 999999999s -> runs (0) and logs stall 75s, capped at three quarters of the timeout, on its starting line"
 else
   bad "stall-cap: a claude-mode dream pass with a 100s timeout, a floor of 1s and a recorded silence of 999999999s -- expected exit 0 and a starting line holding [$rf15_want]; got exit $rf15_rc, starting line: ${rf15_line:-none}"
 fi
@@ -9026,13 +9082,13 @@ rf15_plog="$RV/.claude/logs/promotion-agent.log"
 rf15_before="$(mo_lines "$rf15_plog")"
 rf15_rc="$(runner promotion-pass.sh summary FAKE_RECORD="$REC" PROMOTION_PASS_TIMEOUT=100 RUNNER_STALL_FLOOR=1)"
 rf15_line="$(tail -n +"$((rf15_before + 1))" "$rf15_plog" 2>/dev/null | grep -E -- "$MO_STARTING" | head -n 1)"
-rf15_want="starting promotion-agent weekly pass via claude (timeout 100s, stall 50s, 1.5 times the p99 of each pass's longest silence, 100s over 3 recorded passes, capped at half the pass's timeout, since a threshold at or above the timeout would never fire before it, session "
+rf15_want="starting promotion-agent weekly pass via claude (timeout 100s, stall 75s, 1.5 times the p99 of each pass's longest silence, 100s over 3 recorded passes$RF15_CAPNOTE, session "
 case "$rf15_line" in
   *"$rf15_want"*) rf15_said=present ;;
   *) rf15_said=absent ;;
 esac
 if [ "$rf15_rc" = 0 ] && [ "$rf15_said" = present ]; then
-  ok "stall-cap: a claude-mode promotion pass with a 100s timeout, a floor of 1s and a recorded silence of 999999999s -> runs (0) and logs stall 50s, capped at half the timeout, on its starting line"
+  ok "stall-cap: a claude-mode promotion pass with a 100s timeout, a floor of 1s and a recorded silence of 999999999s -> runs (0) and logs stall 75s, capped at three quarters of the timeout, on its starting line"
 else
   bad "stall-cap: a claude-mode promotion pass with a 100s timeout, a floor of 1s and a recorded silence of 999999999s -- expected exit 0 and a starting line holding [$rf15_want]; got exit $rf15_rc, starting line: ${rf15_line:-none}"
 fi
