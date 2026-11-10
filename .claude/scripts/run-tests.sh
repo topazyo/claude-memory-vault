@@ -6577,7 +6577,10 @@ MO_K4_EOF
 # is refused there, which the plainly spelled controls must not be. It answers
 # as DW_SHIM does, with a C: drive (-m adds C: to its last argument, -u strips
 # a leading C:, anything else gives the argument back), so the runner's own
-# check passes wherever it is reached and only the rule under test refuses:
+# check passes for a folder that is there, and only the rule under test refuses.
+# For the runner-folder legs whose folder is not there at its spelling (a
+# relative one, or one with a colon) the runner's own check would refuse too,
+# so those legs tell the two apart by their line alone (RF_ABS, RF_COLON).
 # vault_root_spelling_ok, temp_dir_spelling_ok and runner_folder_ok each run
 # before runner_folder_checked in every runner, and the retention runner's
 # check of its log-copy folder only turns a refusal into a WARNING.
@@ -9029,7 +9032,8 @@ else
   bad "stall-cap: stall_plan with a record of short silences and a floor of 600s above a 300s timeout -- expected [$rf15_want]; got [$rf15_got]"
 fi
 # A 1s timeout and a 1s floor: every recorded silence counts as 1, the measured
-# 2 is held to the minimum, 1.
+# 2 is held to 1, which the floor decides here: the floor is never below 1, so
+# the cap's own minimum of 1 is not reached through stall_plan.
 printf '100 999999999\n200 5\n300 6\n' > "$rf15_d/m.stream-gaps"
 rf15_got="$( . "$RF15_LIB" >/dev/null 2>&1
   unset RUNNER_STALL_SECONDS
@@ -9037,7 +9041,7 @@ rf15_got="$( . "$RF15_LIB" >/dev/null 2>&1
   printf '%s|%s' "$AGENT_STALL_SECONDS" "$AGENT_STALL_NOTE" )"
 rf15_want="1|1.5 times the p99 of each pass's longest silence, 1s over 3 recorded passes$RF15_CAPNOTE"
 if [ "$rf15_got" = "$rf15_want" ]; then
-  ok "stall-cap: stall_plan with a 1s timeout, a 1s floor and a recorded silence of 999999999s -> held to the minimum, 1, with the note saying so"
+  ok "stall-cap: stall_plan with a 1s timeout, a 1s floor and a recorded silence of 999999999s -> held to 1, the floor, with the note saying so"
 else
   bad "stall-cap: stall_plan with a 1s timeout, a 1s floor and a recorded silence of 999999999s -- expected [$rf15_want]; got [$rf15_got]"
 fi
@@ -9054,6 +9058,31 @@ if [ "$rf15_got" = "$rf15_want" ]; then
   ok "stall-cap: stall_plan with a 700s timeout, a 600s floor and a recorded silence of 999999999s -> the measured 1050 is held to the floor, 600, not to three quarters of the timeout, 525"
 else
   bad "stall-cap: stall_plan with a 700s timeout, a 600s floor and a recorded silence of 999999999s -- expected [$rf15_want]; got [$rf15_got]"
+fi
+# A threshold at or below the cap is left as it is, with no note: a measured
+# 818 under a 3600s timeout (cap 2700) stays 818, and a measured 750 under a
+# 1000s timeout with a 600s floor (cap 750, equal to it) stays 750.
+printf '100 545\n200 545\n300 545\n' > "$rf15_d/u.stream-gaps"
+rf15_got="$( . "$RF15_LIB" >/dev/null 2>&1
+  unset RUNNER_STALL_SECONDS
+  AGENT_KIND=claude STALL_MIN_RUNS=3 RUNNER_STALL_FLOOR=600 stall_plan "$rf15_d" u /dev/null 3600
+  printf '%s|%s' "$AGENT_STALL_SECONDS" "$AGENT_STALL_NOTE" )"
+rf15_want="818|1.5 times the p99 of each pass's longest silence, 545s over 3 recorded passes"
+if [ "$rf15_got" = "$rf15_want" ]; then
+  ok "stall-cap: stall_plan with a 3600s timeout, a 600s floor and a record of 545s silences -> the measured 818 is below the cap, 2700, and is left as it is, with no note"
+else
+  bad "stall-cap: stall_plan with a 3600s timeout, a 600s floor and a record of 545s silences -- expected [$rf15_want]; got [$rf15_got]"
+fi
+printf '100 500\n200 500\n300 500\n' > "$rf15_d/e.stream-gaps"
+rf15_got="$( . "$RF15_LIB" >/dev/null 2>&1
+  unset RUNNER_STALL_SECONDS
+  AGENT_KIND=claude STALL_MIN_RUNS=3 RUNNER_STALL_FLOOR=600 stall_plan "$rf15_d" e /dev/null 1000
+  printf '%s|%s' "$AGENT_STALL_SECONDS" "$AGENT_STALL_NOTE" )"
+rf15_want="750|1.5 times the p99 of each pass's longest silence, 500s over 3 recorded passes"
+if [ "$rf15_got" = "$rf15_want" ]; then
+  ok "stall-cap: stall_plan with a 1000s timeout, a 600s floor and a record of 500s silences -> the measured 750 equals the cap, 750, and is left as it is, with no note"
+else
+  bad "stall-cap: stall_plan with a 1000s timeout, a 600s floor and a record of 500s silences -- expected [$rf15_want]; got [$rf15_got]"
 fi
 rm -rf "$rf15_d"
 CASE_STATE="$TMP/state-rf150-stall"
