@@ -7389,14 +7389,16 @@ else
   for dw_leg in 1:2 2:1 0:1; do
     dw_first="${dw_leg%%:*}" dw_drive="${dw_leg#*:}"
     rm -f "$TMP/v142-dw.log" "$TMP/v142-dw.calls"
-    dw_set="$( LC_ALL=C; export LC_ALL; PATH="$DW_SHIM:$PATH"; . "$RV/.claude/scripts/lib/runner-common.sh"
+    rm -f "$TMP/v150-dw.set"
+    ( LC_ALL=C; export LC_ALL; PATH="$DW_SHIM:$PATH"; . "$RV/.claude/scripts/lib/runner-common.sh"
       DW_FIRST="$dw_first" DW_DRIVE="$dw_drive"
       path_under_by_identity() {
         printf '%s\n' "$1" >> "$TMP/v142-dw.calls"
         case "$1" in Z:/*) return "$DW_DRIVE" ;; *) return "$DW_FIRST" ;; esac
       }
       runner_folder_checked "$RV" "${CASE_STATE:-$TMP/state}" "$dw_w" "$TMP/v142-dw.log"
-      echo "rc=$? folder=${RUNNER_FOLDER-unset}" )"
+      echo "rc=$? folder=${RUNNER_FOLDER-unset}" > "$TMP/v150-dw.set" )
+    dw_set="$(cat "$TMP/v150-dw.set" 2>/dev/null)"
     dw_z="$(grep -c '^Z:/' "$TMP/v142-dw.calls" 2>/dev/null | tr -d ' ')"
     case "$dw_first" in
       0) dw_want=", resolves into the vault, $RF_WORK" dw_not='ended with status' dw_zwant=0 ;;
@@ -7428,10 +7430,12 @@ else
     esac
     chmod +x "$TMP/v150-cg/cygpath"
     rm -f "$TMP/v142-dw.log" "$TMP/v142-dw.calls"
-    dw_set="$( LC_ALL=C; export LC_ALL; PATH="$TMP/v150-cg:$PATH"; . "$RV/.claude/scripts/lib/runner-common.sh"
+    rm -f "$TMP/v150-dw.set"
+    ( LC_ALL=C; export LC_ALL; PATH="$TMP/v150-cg:$PATH"; . "$RV/.claude/scripts/lib/runner-common.sh"
       path_under_by_identity() { printf '%s\n' "$1" >> "$TMP/v142-dw.calls"; return 1; }
       runner_folder_checked "$RV" "${CASE_STATE:-$TMP/state}" "$dw_w" "$TMP/v142-dw.log"
-      echo "rc=$? folder=${RUNNER_FOLDER-unset}" )"
+      echo "rc=$? folder=${RUNNER_FOLDER-unset}" > "$TMP/v150-dw.set" )
+    dw_set="$(cat "$TMP/v150-dw.set" 2>/dev/null)"
     dw_n="$(grep -c '' "$TMP/v142-dw.calls" 2>/dev/null | tr -d ' ')"
     if [ "$dw_set" = "rc=1 folder=unset" ] && grep -F -- "$dw_want" "$TMP/v142-dw.log" 2>/dev/null | grep -q '^\[[^]]*\] ERROR: ' \
        && [ "${dw_n:-0}" -eq 0 ]; then
