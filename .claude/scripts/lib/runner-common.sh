@@ -3165,8 +3165,8 @@ STALL_MIN_RUNS=3
 # stall_plan <state-dir> <runner> <log> [<timeout>]
 # Sets AGENT_STALL_SECONDS and AGENT_STALL_NOTE, the threshold and a phrase
 # saying where it came from. With <timeout>, each recorded pass counts for at
-# most the timeout, and in claude mode a threshold at or above it is halved
-# (stall_capped).
+# most the timeout, and a threshold measured from the record at or above it is
+# halved (stall_capped).
 stall_plan() {
   local state="$1" runner="$2" log="$3" cap="${4:-}" floor file runs n p99 t
   floor="$(uint_setting RUNNER_STALL_FLOOR 600 1 "$log")"
@@ -3191,7 +3191,6 @@ stall_plan() {
   if [ "$runs" -lt "$STALL_MIN_RUNS" ]; then
     AGENT_STALL_SECONDS="$floor"
     AGENT_STALL_NOTE="the floor, because $runs of the $STALL_MIN_RUNS passes needed to measure one are recorded"
-    stall_capped "$cap"
     return 0
   fi
   # Each pass counts once, by its longest silence, so the many short gaps of a
@@ -3213,18 +3212,20 @@ stall_plan() {
   else
     AGENT_STALL_SECONDS="$t"
     AGENT_STALL_NOTE="1.5 times the p99 of each pass's longest silence, ${p99}s over $runs recorded passes"
+    stall_capped "$cap"
   fi
-  stall_capped "$cap"
 }
 
 # stall_capped <timeout>
-# In claude mode, a threshold at or above the pass's timeout would never fire
-# before the timeout does, which leaves a stalled pass running to its end, so
-# it becomes half the timeout (at least 1 second) and the note says so. The
-# watchdog checks the timeout before the stall, in steps of its poll interval,
-# so a threshold less than one poll below the timeout still loses to it. A
-# threshold below the timeout, RUNNER_STALL_SECONDS and command mode are left as
-# they are. Does nothing without a timeout.
+# A threshold measured from the record that is at or above the pass's timeout
+# would never fire before the timeout does, and the record is not sealed, so
+# one forged value could switch stall detection off for every later pass: such
+# a threshold becomes half the timeout (at least 1 second) and the note says so.
+# The watchdog checks the timeout before the stall, in steps of its poll
+# interval, so a threshold less than one poll below the timeout still loses to
+# it. The floor is a setting, not a measurement, and is left as it is, as are a
+# threshold below the timeout, RUNNER_STALL_SECONDS and command mode. Does
+# nothing without a timeout.
 stall_capped() {
   is_uint "${1:-}" && [ "$1" -gt 0 ] || return 0
   [ "$AGENT_STALL_SECONDS" -ge "$1" ] || return 0
