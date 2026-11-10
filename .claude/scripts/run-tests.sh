@@ -7411,6 +7411,36 @@ else
     fi
   done
   rm -f "$TMP/v142-dw.calls"
+  # 1.5.0: a cygpath that gives a network path for the runner's own folder, or
+  # cannot convert it, refuses the runner's check on its own line, before any
+  # walk, with RUNNER_FOLDER unset. Stand-ins in a folder of their own, on every
+  # platform.
+  for dw_leg in unc fail; do
+    rm -rf "$TMP/v150-cg"
+    mkdir -p "$TMP/v150-cg"
+    case "$dw_leg" in
+      unc)
+        printf '#!/usr/bin/env bash\nfor a; do :; done\ncase "$1" in\n  -m) printf "//uncvault/share%%s\\n" "$a" ;;\n  *) printf "%%s\\n" "${a#//uncvault/share}" ;;\nesac\n' > "$TMP/v150-cg/cygpath"
+        dw_want="for the runner's temporary folder, which is not a Windows drive path, so git could read it as another folder" ;;
+      fail)
+        printf '#!/usr/bin/env bash\nfor a; do :; done\ncase "$1" in\n  -m) exit 1 ;;\n  *) printf "%%s\\n" "$a" ;;\nesac\n' > "$TMP/v150-cg/cygpath"
+        dw_want="cygpath could not convert the runner's temporary folder" ;;
+    esac
+    chmod +x "$TMP/v150-cg/cygpath"
+    rm -f "$TMP/v142-dw.log" "$TMP/v142-dw.calls"
+    dw_set="$( LC_ALL=C; export LC_ALL; PATH="$TMP/v150-cg:$PATH"; . "$RV/.claude/scripts/lib/runner-common.sh"
+      path_under_by_identity() { printf '%s\n' "$1" >> "$TMP/v142-dw.calls"; return 1; }
+      runner_folder_checked "$RV" "${CASE_STATE:-$TMP/state}" "$dw_w" "$TMP/v142-dw.log"
+      echo "rc=$? folder=${RUNNER_FOLDER-unset}" )"
+    dw_n="$(grep -c '' "$TMP/v142-dw.calls" 2>/dev/null | tr -d ' ')"
+    if [ "$dw_set" = "rc=1 folder=unset" ] && grep -F -- "$dw_want" "$TMP/v142-dw.log" 2>/dev/null | grep -q '^\[[^]]*\] ERROR: ' \
+       && [ "${dw_n:-0}" -eq 0 ]; then
+      ok "rf-cygpath: a cygpath that $( [ "$dw_leg" = unc ] && echo 'gives a network path for' || echo 'cannot convert' ) the runner's folder -> runner_folder_checked refused (1) on its own line before any walk, RUNNER_FOLDER unset"
+    else
+      bad "rf-cygpath: a cygpath that $( [ "$dw_leg" = unc ] && echo 'gives a network path for' || echo 'cannot convert' ) the runner's folder -- expected rc=1 folder=unset, an ERROR: line holding [$dw_want] and no walk; got [$dw_set], walks ${dw_n:-0}: $(tr '\n' '|' < "$TMP/v142-dw.log" 2>/dev/null | cut -c1-300)"
+    fi
+  done
+  rm -rf "$TMP/v150-cg" "$TMP/v142-dw.calls"
 fi
 rm -rf "$DW_SHIM" "$TMP/v142-dw" "$TMP/v142-dw.log"
 # memory_override takes the folder above the runner's folder physically. For a
@@ -8820,6 +8850,23 @@ else
   fi
   rm -f "$MO_CAP.json" "$MO_CAP.where"
   tripwire_clear
+  # The promotion and retention runners take the resolved path too (each sets
+  # SNAP_DIR="$RUNNER_FOLDER" itself), so each is held by a leg of its own; the
+  # retention runner's second folder, SNAP_DIR, is the one under the link.
+  for rf15_leg in promotion-command retention; do
+    rf15_run "$rf15_leg" "$MO_K4/base/lnk" "$MO_K4/tgt/in"
+    rf15_ph="$(grep -F -- "$rf15_phys/tmp." "$MO_K4/git.log" 2>/dev/null | grep -c 'nohooks' | tr -d ' ')"
+    rf15_sp="$(mo_k4_spelled "$MO_K4/base/lnk")"
+    rf15_x=
+    [ "$rf15_leg" = retention ] || [ "$rf15_started" = yes ] || rf15_x="; the agent never started"
+    [ -s "$MO_K4/count.made" ] || rf15_x="$rf15_x; fixture: the mktemp stand-in made no folder under the link"
+    if [ "$rf15_rc" = 0 ] && [ "${rf15_ph:-0}" -ge 1 ] && [ "${rf15_sp:-0}" -eq 0 ] && [ -z "$rf15_x" ]; then
+      ok "rf-above: $rf15_leg, the runner's folder for the pass under a link -> runs (0), and git was handed the nohooks folder under the resolved path ($rf15_ph call(s)), never the spelling"
+    else
+      bad "rf-above: $rf15_leg, the runner's folder for the pass under a link -- expected exit 0, at least one git call naming nohooks under $rf15_phys/tmp.* and none under the spelling; got exit $rf15_rc, git calls under the resolved path naming nohooks ${rf15_ph:-0}, under the spelling ${rf15_sp:-0}$rf15_x"
+    fi
+    tripwire_clear
+  done
 fi
 # F8: a find that fails only for the 0700 check of the runner's folder (the one
 # call that asks -perm -0001, on a path named tmp.* or vaultretention.*); every
@@ -8967,6 +9014,54 @@ else
   bad "stall-cap: a claude-mode dream pass with a 100s timeout, a floor of 1s and a recorded silence of 999999999s -- expected exit 0 and a starting line holding [$rf15_want]; got exit $rf15_rc, starting line: ${rf15_line:-none}"
 fi
 tripwire_clear
+# The promotion runner's twin: it hands stall_plan its own timeout.
+rm -rf "$CASE_STATE"
+( umask 077 && mkdir -p "$CASE_STATE" )
+printf '100 999999999\n200 5\n300 6\n' > "$CASE_STATE/promotion-pass.stream-gaps"
+rf15_plog="$RV/.claude/logs/promotion-agent.log"
+rf15_before="$(mo_lines "$rf15_plog")"
+rf15_rc="$(runner promotion-pass.sh summary FAKE_RECORD="$REC" PROMOTION_PASS_TIMEOUT=100 RUNNER_STALL_FLOOR=1)"
+rf15_line="$(tail -n +"$((rf15_before + 1))" "$rf15_plog" 2>/dev/null | grep -E -- "$MO_STARTING" | head -n 1)"
+rf15_want="starting promotion-agent weekly pass via claude (timeout 100s, stall 50s, 1.5 times the p99 of each pass's longest silence, 100s over 3 recorded passes, capped at half the pass's timeout, since a threshold at or above the timeout would never fire before it, session "
+case "$rf15_line" in
+  *"$rf15_want"*) rf15_said=present ;;
+  *) rf15_said=absent ;;
+esac
+if [ "$rf15_rc" = 0 ] && [ "$rf15_said" = present ]; then
+  ok "stall-cap: a claude-mode promotion pass with a 100s timeout, a floor of 1s and a recorded silence of 999999999s -> runs (0) and logs stall 50s, capped at half the timeout, on its starting line"
+else
+  bad "stall-cap: a claude-mode promotion pass with a 100s timeout, a floor of 1s and a recorded silence of 999999999s -- expected exit 0 and a starting line holding [$rf15_want]; got exit $rf15_rc, starting line: ${rf15_line:-none}"
+fi
+tripwire_clear
+# Each runner hands record_stream_gaps its own timeout. A stand-in for Claude
+# Code adds a silence of 999999999s to the gaps file the watchdog keeps beside
+# the settings file (the runner's own folder for the pass), notes that folder
+# in a marker, and starts the fake agent; the pass that ends OK must record
+# that silence as its 100s timeout. The marker shows the stand-in ran.
+RF15_GAPW="$TMP/rf150-gapw/claude"
+rm -rf "$TMP/rf150-gapw" "$TMP/rf150-gapw.ran"
+mkdir -p "$TMP/rf150-gapw"
+printf '#!/usr/bin/env bash\nprev=\nfor a in "$@"; do\n  if [ "$prev" = --settings ]; then\n    f="$a"\n    command -v cygpath >/dev/null 2>&1 && f="$(LC_ALL=C.UTF-8 cygpath -u "$a")"\n    printf "999999999\\n" >> "$(dirname "$f")/gaps"\n    printf "%%s\\n" "$(dirname "$f")" >> %q\n  fi\n  prev="$a"\ndone\nexec %q "$@"\n' \
+  "$TMP/rf150-gapw.ran" "$FAKE" > "$RF15_GAPW"
+chmod +x "$RF15_GAPW"
+for rf15_leg in dream promotion; do
+  rf15_s=dream-pass.sh rf15_m=journal rf15_tv=DREAM_PASS_TIMEOUT
+  [ "$rf15_leg" = promotion ] && rf15_s=promotion-pass.sh rf15_m=summary rf15_tv=PROMOTION_PASS_TIMEOUT
+  CASE_STATE="$TMP/state-rf150-gapw"
+  rm -rf "$CASE_STATE" "$TMP/rf150-gapw.ran"
+  ( umask 077 && mkdir -p "$CASE_STATE" )
+  rf15_rc="$(runner "$rf15_s" "$rf15_m" FAKE_RECORD="$REC" CLAUDE_BIN="$RF15_GAPW" "$rf15_tv=100")"
+  rf15_got="$(awk 'END { print $2 }' "$CASE_STATE/${rf15_s%.sh}.stream-gaps" 2>/dev/null)"
+  rf15_ran=no
+  [ -s "$TMP/rf150-gapw.ran" ] && rf15_ran=yes
+  if [ "$rf15_rc" = 0 ] && [ "$rf15_ran" = yes ] && [ "$rf15_got" = 100 ]; then
+    ok "stall-cap: a claude-mode $rf15_leg pass with a 100s timeout whose gaps file holds a silence of 999999999s -> runs (0) and records it as 100"
+  else
+    bad "stall-cap: a claude-mode $rf15_leg pass with a 100s timeout whose gaps file holds a silence of 999999999s -- expected exit 0, the stand-in run and the last record's silence exactly 100; got exit $rf15_rc, stand-in ran: $rf15_ran, last record: $(tail -n 1 "$CASE_STATE/${rf15_s%.sh}.stream-gaps" 2>/dev/null || echo none)"
+  fi
+  tripwire_clear
+done
+rm -rf "$TMP/rf150-gapw" "$TMP/rf150-gapw.ran" "$TMP/state-rf150-gapw"
 rm -rf "$TMP/state-rf150" "$TMP/state-rf150-stall" "$REC.argv"
 CASE_STATE="$rf15_cs"
 mo_k4_clean
