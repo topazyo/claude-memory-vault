@@ -121,11 +121,13 @@ detection off.
   runner.
 - The control suite holds each of these. New control ids: `rf-link`, `rf-vault`, `rf-mode`,
   `rf-world`, `rf-owner`, `rf-gone`, `rf-above`, `rf-findfail`, `rf-copy`, `rf-drive-walk`,
-  `rf-cygpath` and `stall-cap`. `rf-mode`, `rf-world`, `rf-owner` and `rf-findfail` run off Windows only, because Git
-  Bash mode bits are not Windows permissions, and are required on the ubuntu, macOS and bash 3.2
-  jobs; `rf-owner` also needs `sudo -n`, and skips without it. `rf-link`, `rf-vault`, `rf-mode` and
-  `rf-world` take the dream and promotion runners in claude and command mode and the retention
-  runner: a link at the folder, the folder inside the vault reached through a link above it, and,
+  `rf-cygpath` and `stall-cap`. `rf-mode`, `rf-world`, `rf-owner` and `rf-findfail` run off
+  Windows only, because Git Bash mode bits are not Windows permissions, and so does `rf-gone`,
+  because on Windows the drive path's map-back refuses a folder that is not there first, on its
+  own line; all five are required on the ubuntu, macOS and bash 3.2 jobs; `rf-owner` also needs
+  `sudo -n`, and skips without it. `rf-link`, `rf-vault`, `rf-mode` and `rf-world` take the dream
+  and promotion runners in claude and command mode and the retention runner: a link at the folder,
+  the folder inside the vault reached through a link above it, and,
   off Windows, the folder at mode 0750 and at 0777 each refuse (1) on the `ERROR:` line giving the
   cause, with no git call naming a hooks folder and no agent started. `rf-owner` refuses a dream
   pass in command mode whose folder another account owns; `rf-findfail` refuses one whose `find`
@@ -133,9 +135,10 @@ detection off.
   `rf-gone` takes every runner and mode: a folder handed over as the one `mktemp` made that is not
   there, and one whose folder above is not there, each refuse (1) on the runner's own line,
   `… is not there as a folder, though the runner made it a moment ago …` and `… cannot be
-  reached: … Give this account back its access …`. `rf-above` runs a pass whose folder lies under a link (0), git handed the hooks folder under the
-  resolved path and never the spelling, and in claude mode Claude Code handed the settings file
-  there. `rf-copy` has the retention runner, with a link at the folder for the copy of its log, or
+  reached: … Give this account back its access …`. `rf-above` runs a pass whose folder lies under
+  a link (0), git handed the hooks folder under the resolved path and never the spelling, and in
+  claude mode Claude Code handed the settings file there. `rf-copy` has the retention runner, with
+  a link at the folder for the copy of its log, or
   that folder inside the vault, run (0) with the check's line as a `WARNING:` that it keeps no copy,
   no `ERROR:` line and nothing written there. `rf-drive-walk` and `rf-cygpath` call
   `runner_folder_checked` directly: the identity walk and the drive-path walk decide it as they

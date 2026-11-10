@@ -559,12 +559,13 @@ a lint that does nothing and a lint that found nothing wrong print the same thin
   root; it skips otherwise): a dream pass in command mode whose folder another account owns refuses
   the same way. `rf-findfail` (off Windows): with a `find` stand-in on `PATH`, a pass runs (0) and
   the stand-in was asked the 0700 check, and with the stand-in failing that check alone the pass
-  refuses (1) on the `find failed` line, the only `ERROR:` line of the run. `rf-gone`: in every
-  runner and mode, a folder handed over as the one `mktemp` made that is not there, and one whose
-  folder above is not there, each refuse (1) on the runner's own line (`… though the runner made it
-  a moment ago …`, `… Give this account back its access …`), not the memory override's, with no git
-  call naming a hooks folder and no agent started. `rf-above`: a dream pass
-  in command and claude mode, a promotion pass in command mode and a retention run, each with the
+  refuses (1) on the `find failed` line, the only `ERROR:` line of the run. `rf-gone` (off Windows,
+  where the drive path's map-back refuses such a folder first): in every runner and mode, a folder
+  handed over as the one `mktemp` made that is not there, and one whose folder above is not there,
+  each refuse (1) on the runner's own line (`… though the runner made it a moment ago …`, `… Give
+  this account back its access …`), not the memory override's, with no git call naming a hooks
+  folder and no agent started. `rf-above`: a dream pass in command and claude mode, a promotion
+  pass in command mode and a retention run, each with the
   folder under a link, run (0), git handed the hooks folder under the resolved path and never the
   spelling, and the claude-mode pass hands Claude Code the settings file there too. `rf-copy`: the
   retention runner, with a link at the folder for the copy of its log, or that folder inside the
