@@ -235,7 +235,11 @@ environment the schedule uses:
    there (such as `HEAD` in a git folder), and one three folders down outside `.claude/` (such as
    `20-projects/_logs/templates/medium-term-project-log.md`); a search that does not find each of
    them, or that reports a folder it could not read (read its errors), leaves the check NOT
-   VERIFIED: make such a folder readable, or move it out of the vault, and start this step again. A
+   VERIFIED, unless a search this step trusted came earlier in this check: then such a search
+   leaves the check FAILED (step 6) and is read as the clause below that begins "except as follows"
+   reads the searches it names, each of its acts in its order, and no such folder is moved out of
+   the vault. In any other such case, make such a folder readable, or move it out of the vault
+   (never a folder that clause keeps), and start this step again. A
    marker found leaves the check NOT VERIFIED: remove every marker found where you looked. Wherever
    the marker you put in the copy's root was found in a folder of the vault below its root that is
    not, and does not lie inside, a folder you made for the copy (where you cannot tell, it is not
@@ -268,8 +272,12 @@ environment the schedule uses:
    wrote into the vault, and the check is FAILED (step 6): do as step 6 says for it before you start
    this step again. In every case where a marker was found, then see that each known file this step
    names still lies in the vault: one missing is a write that reached the vault, and the check is
-   FAILED (step 6): check the steering surfaces by hand, without git, as step 5 says, before
-   anything else; then put each known file found missing back from a copy you trust, made before the
+   FAILED (step 6): check the steering surfaces by hand, without git, as step 5 says,
+   before anything else; then put each known file found missing back (never through a
+   link, junction or mount on its path at or below the vault's root unless the owner has
+   checked by hand that it is their own and stood there before the check began; otherwise,
+   or where they cannot tell, the file stays still missing, whatever a later look sees,
+   until the owner can tell) from a copy you trust, made before the
    check began, that holds it, and clean up the rest of what the check wrote or changed in the vault
    as step 6 says (a known file still missing is not settled, and no copy to trust is made until it
    is settled); where no known file was found missing,
@@ -295,12 +303,15 @@ environment the schedule uses:
    it is the check's for the verdict, and step 6 says what is done with it; a commit is not seen
    without git); one found is FAILED (step 6), and the copy is left where it is (nothing of it
    removed but what you made for it, as above); otherwise its verdict stands unless a known file is
-   missing, you have no copy you trust made before the check began, or the sentence that begins
-   "Wherever" applies (FAILED, as each says). A marker you cannot put or see, or a search you cannot
-   trust as this step says, leaves the copy where it is: remove nothing of it, and make any new copy
-   at another path, except as follows (where a search this step trusted came earlier in this check,
-   a search here that reports a folder it could not read, or does not find a known file this step
-   names that the earlier search found, counts as a write that reached the vault (where you cannot
+   missing, you have no copy you trust made before the check began, the sentence that begins
+   "Wherever" applies, or the clause below that begins "except as follows" does (FAILED, as each
+   says). A marker you cannot put or see (look all the same, as this step says, and check the
+   steering surfaces by hand, without git, as step 5 says, before any git command), or a search you
+   cannot trust as this step says, leaves the copy where it is: remove nothing of it, and make any
+   new copy at another path, except as follows (where a search this step trusted came earlier in
+   this check, a search here, or one this step makes when it starts again, that reports a folder it
+   could not read, or does not find a known file this step names that the earlier search found,
+   counts as a write that reached the vault (where you cannot
    tell its source, it is the check's for the verdict), and the check is FAILED (step 6), not NOT
    VERIFIED, once the check is over too, whatever verdict it had reached, and no such folder is
    moved out of the vault, whatever this step says above: check the steering surfaces by hand,
@@ -310,8 +321,9 @@ environment the schedule uses:
    says, before any clean-up (one found in the vault is read as above, the sentence that begins
    "Wherever" included; a search you still cannot trust leaves the check FAILED and the copy where
    it is, and a folder it could not read is kept as that sentence keeps one, step 6's limits on such
-   a folder included, and is not moved out of the vault when this step starts again, in this check
-   or a later one, until, once it is made readable, any steering surface in it has been checked by
+   a folder included, and is not moved out of the vault when this step starts again,
+   in this check or a later one, the keep and this bar each lasting until, once it is
+   made readable, any steering surface in it has been checked by
    hand, without git, as step 5 says, before any git command, the folder has been checked by hand as
    step 6 says, and a search you can trust has looked there), and see the known files through
    the vault's own path as after a removal (one missing is FAILED, as above); any new copy is then
@@ -844,8 +856,12 @@ environment the schedule uses:
    reads them after a marker is found, a removal, or a search you cannot trust that follows one step
    1 trusted, or after such a search that reports a folder it could not read, or does not find a
    known file the earlier one found (as step 1 says), check the steering surfaces by hand, without
-   git, as step 5 says, before anything else; then, after such a search, do as step 1 says before
-   any put-back; then put each known file found missing back
+   git, as step 5 says, before anything else; then, after such a search, do all that step 1's
+   clause that begins "except as follows" says, in its order, before any put-back; then put each
+   known file found missing back (never through a link, junction or mount on its path at or
+   below the vault's root unless the owner has checked by hand that it is their own and stood
+   there before the check began; otherwise, or where they cannot tell, the file stays still
+   missing, whatever a later look sees, until the owner can tell)
    from a copy you trust, made before the check began, that holds it, clean up the rest of what the
    check wrote or changed in the vault as the clean-up above says (a known file still missing is not
    settled, and no copy to trust is made until it is settled), and, once no known file is still
@@ -861,11 +877,15 @@ environment the schedule uses:
    switch route the container is the way on. FAILED takes precedence: any of those is FAILED
    whatever else a run shows. A step 5 that is NOT VERIFIED leaves the check NOT VERIFIED, and so
    does any other result short of PASS. Whatever any step or a route above says, run the check
-   again, or start step 1 again, only once no known file is still missing: see each known file found
-   missing back in the vault where step 1's search looks for it, through the vault's own path (for a
-   folder outside it that the vault names, through the path it names), without git, and, for a
-   folder step 1's clause that begins "except as follows" keeps, only once, the folder made
-   readable, any steering surface in it has been checked by hand, without git, as step 5 says.
+   again, start step 1 again, or begin a later check, only once no known file is still missing (one
+   the look below does not see is found missing, and the check FAILED, as step 1 says for a search
+   that follows one it trusted, step 6's route after such a search included): see each known file
+   step 1 names, and each one found missing back, in the vault where step 1's search looks for it,
+   through the vault's own path (for a folder outside it that the vault names, through the path it
+   names), without git. For a folder step 1's clause that begins "except as follows", or the Aider
+   guide's, keeps, do any of them only once that folder has been made readable, any steering surface
+   in it checked by hand, without git, as step 5 says, and the folder checked by hand as step 6
+   says.
 
 The canary does not depend on where a hook logs. It depends on step 1 for any variable a hook's
 command reads: the shipped `.claude/settings.json` names its scripts through

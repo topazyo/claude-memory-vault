@@ -25,7 +25,7 @@ bash .claude/scripts/vault-update.sh --check --from ../template-new
 
 ---
 
-## 1.4.2 — 2026-11-09
+## 1.4.2 — 2026-11-10
 
 A hardening release for the scheduled runners, and a fix for `/resume`. Each runner now clears
 the inherited git settings that pointed git at another repository (with a `WARNING:`), refuses the
@@ -326,8 +326,11 @@ for this release).
   copy, on the file system that holds the file read, then removed, not a link, before its hook
   scripts are replaced with canaries, each run once by hand and seen to write at the copy's root
   (else the check is not verified: a link test or a count whose control did not show is replaced and
-  read again, a search that misses a known file or cannot read a folder is put right and the step
-  started again, and otherwise every marker found is removed and the step is started again on a copy
+  read again, a search that misses a known file or cannot read a folder, where no search the step
+  trusted came earlier in the check, is put right (never by moving out a folder the clause below
+  that begins "except as follows" keeps) and the step started again (where one did, failing the
+  check as the removal's search does below, no such folder moved out of the vault), and, for a
+  marker found, every marker found is removed and the step is started again on a copy
   of its own at a path of its own outside the vault, not a link; a marker put in one of the copy's
   five folders and found in the matching folder of the vault, or a folder that one resolves
   to or names, shows that folder of the copy to be the vault's own under another path (a link or
@@ -398,29 +401,33 @@ for this release).
   copy to trust made, kept outside the vault and every copy, any file still not told listed beside
   it and never taken as the owner's, as that step says), and the copy left in place, nothing of it
   removed but what the owner made for it, as above, and otherwise its verdict standing unless a
-  known file is missing, no copy the owner trusts was made before the check began, or the marker put
-  in the copy's root was found in a folder of the vault below its
+  known file is missing, a search after a trusted one reports a folder it could not read or misses a
+  known file the earlier one found, no copy the owner trusts was made before the check began, or the
+  marker put in the copy's root was found in a folder of the vault below its
   root that is not, and does not lie inside, one the owner made for the copy (each failing the
   check, the last as the clause on a folder of the vault the owner did not make
-  for the copy says); a marker that cannot be put or seen, or a search that cannot be trusted,
-  leaves the copy in place, nothing of it removed and any new copy made at another path, except as
-  follows (where a search the README's step 1 trusted came earlier in the check, the removal's
-  search reporting a folder it could not read, or not finding a known file the earlier search found,
-  counted as a write that reached the vault, its source unknown being the check's for the verdict,
-  and failing the check, not leaving it not verified, once the check is over too, whatever verdict
-  it had reached, no such folder moved out of the vault: the steering surfaces checked by hand,
-  without git, as the README's step 5 says, before anything else, then each such folder made
-  readable again, nothing moved, any steering surface in it checked by hand, without git, before any
-  git command and before any put-back, the markers looked for again as the README's step 1 says
-  before any clean-up (one found in the vault read as above, the clause on a folder of the vault the
-  owner did not make for the copy included; a search still not trusted leaving the copy in place and
-  a folder it could not read kept as that clause keeps one, the README's step 6 limits on such a
-  folder included, and not moved out of the vault when the README's step 1 starts again, in that
-  check or a later one, until, once it is made readable, any steering surface in it is checked by
-  hand, without git, before any git command, the folder checked by hand as the README's step 6 says,
-  and a search that can be trusted has looked there), and the known files
-  seen through the vault's own path as after a removal, one missing failing the check, any new copy
-  then made only as the README's step 6 says); in every other case the markers are removed and the
+  for the copy says); a marker that cannot be put or seen (the search made all the same, and the
+  steering surfaces checked by hand, without git, as the README's step 5 says, before any git
+  command), or a search that cannot be trusted, leaves the copy in place, nothing of it removed and
+  any new copy made at another path, except as follows (where a search the README's step 1 trusted
+  came earlier in the check, the removal's search, or the step's own search when it starts again,
+  reporting a folder it could not read, or not finding a known file the earlier search found,
+  counted as a write that reached the vault (the check's for the verdict where its source cannot be
+  told), and failing the check, not leaving it not verified, once the check is over too, whatever
+  verdict it had reached, no such folder moved out of the vault: the steering surfaces checked by
+  hand, without git, as the README's step 5 says, before anything else, then each such folder made
+  readable again, nothing moved, any steering surface in it checked by hand, without git, as the
+  README's step 5 says, before any git command and before any put-back, the markers looked for again
+  as the README's step 1 says before any clean-up (one found in the vault read as above, the clause
+  on a folder of the vault the owner did not make for the copy included; a search still not trusted
+  leaving the check failed and the copy in place and a folder it could not read kept as that clause
+  keeps one, the README's step 6 limits on such a folder included, and not moved out of the vault
+  when the README's step 1 starts again, in that check or a later one, the keep and this bar each
+  lasting until, once it is made readable, any steering surface in it is checked by hand, without
+  git, as the README's step 5 says, before any git command, the folder checked by hand as the
+  README's step 6 says, and a search that can be trusted has looked there), and the known files seen
+  through the vault's own path as after a removal, one missing failing the check, any new copy then
+  made only as the README's step 6 says); in every other case the markers are removed and the
   removal goes on as below, the folder the root's marker was found in, where that was in the vault,
   then seen gone, one still there failing the check; nothing of a copy on a mapped drive (told as
   above, in the shell it is removed from), whose share a server serves, this host included, is
@@ -450,16 +457,23 @@ for this release).
   file, and a scratch folder holding such a link, leaving the file each time, the rest then removed
   with that command; in every case the vault's known files, a sample, seen in place afterwards, one
   missing failing the check, the vault's steering surfaces then checked by hand, without git, as the
-  README's step 5 says, before anything else, then each known file found missing put back from a
-  copy the owner trusts, made before the check began, that holds it, and the rest of what the check
+  README's step 5 says, before anything else, then each known file found missing put back (never
+  through a link, junction or mount on its path at or below the vault's root unless the owner has
+  checked by hand that it is their own and stood there before the check began, the file otherwise
+  staying still missing, whatever a later look sees, until the owner can tell) from a copy the owner
+  trusts, made before the check began, that holds it, and the rest of what the check
   wrote or changed cleaned up as the README's step 6 says (a known file still missing not settled,
   no copy to trust made until it is settled, and the check, by any route the README gives, run
-  again, or step 1 started again, only once no known file is still missing, that is, each known file
-  found missing seen back in the vault where the README's step 1 search looks for it, through the
+  again, step 1 started again, or a later check begun, only once no known file is still missing,
+  that is, each known file the README's step 1 names, each one found missing included, seen back in
+  the vault where the README's step 1 search looks for it, through the
   vault's own path (for a folder outside it that the vault names, through the path it names),
-  without git, and, for a folder the README's step 1 clause that begins "except as follows" keeps,
-  only once, the folder made readable, any steering surface in it has been checked by hand, without
-  git, as the README's step 5 says); a canary's record found where the marker is looked for fails
+  without git (one that look does not see found missing, and the check failed, as the README's step
+  1 says for a search that follows one it trusted, the README's step 6 route after such a search
+  included), and, for a folder the README's step 1 clause, or the Aider guide's, that begins "except
+  as follows" keeps, only once that folder has been made readable, any steering surface in it
+  checked by hand, without git, as the README's step 5 says, and the folder checked by hand as the
+  README's step 6 says); a canary's record found where the marker is looked for fails
   it, the stop in the README's step 5
   for a marker found in the vault then followed (nothing of the copy removed but what the owner made
   for it), the vault cleaned up as the README's step 6 says, its hook scripts among the surfaces
@@ -624,8 +638,11 @@ for this release).
   never removed, nor anything of it removed but the markers found and what that clean-up's moving
   out and `rm` remove), the known files then seen, the steering surfaces checked by hand, without
   git, before any git command, the vault looked at for what the README's step 5 stop or step 1 names
-  and for what the check's own steps wrote, each known file found missing put back from a copy the
-  owner trusts, made before the check began, that holds it (a known file still missing not settled,
+  and for what the check's own steps wrote, each known file found missing put back (never through a
+  link, junction or mount on its path at or below the vault's root unless the owner has checked by
+  hand that it is their own and stood there before the check began, the file otherwise staying still
+  missing, whatever a later look sees, until the owner can tell) from a copy the owner trusts, made
+  before the check began, that holds it (a known file still missing not settled,
   and no copy to trust made until it is settled), and each note and each other file the check
   changed put back from a copy the owner trusts, made before the check began and kept outside the
   vault and every copy, its current form first moved out of the vault and every copy, and never
@@ -650,28 +667,38 @@ for this release).
   before the check is run again, as the README's step 6 says), and the rest cleaned up in the vault
   by its own path, never the copy's where the two differ, as the README's step 6 says, `rm` used
   only on a file known to be one the check wrote, a file that cannot be told to be the check's moved
-  outside the vault and every copy and never deleted, the check then run again, once no known file
-  is still missing (seen back in the vault as the README's step 6 says), on a copy given folders of
-  its own outside the vault at another path; one that cannot put or see a marker, or trust its
-  search, changing nothing in the copy, except as follows (where a search the README's step 1
-  trusted came earlier in the check, the re-read's search reporting a folder it could not read, or
-  not finding a known file the earlier search found, counted as a write that reached the vault, its
-  source unknown being the check's for the verdict, and failing the check, not leaving it not
+  outside the vault and every copy and never deleted, the check then run again, once the
+  README's step 6 lets it run again (each known file the README's step 1 names, each one
+  found missing included, seen back in the vault as the README's step 6 says, through the
+  vault's own path, without git, and any folder the README's step 1 clause that begins
+  "except as follows", or the Aider guide's, keeps, that folder made readable, any steering
+  surface in it checked by hand, without git, as the README's step 5 says, and the folder
+  checked by hand as the README's step 6 says), on a copy given folders of
+  its own outside the vault at another path; one that cannot put or see a marker (the
+  search made all the same, and the steering surfaces checked by hand, without git, as the
+  README's step 5 says, before any git command), or trust its search, changing nothing in
+  the copy, except as follows (where a search the README's step 1
+  trusted came earlier in the check, the re-read's search reporting a folder it
+  could not read, or not finding a known file the earlier search found, counted as
+  a write that reached the vault (the check's for the verdict where its source
+  cannot be told), and failing the check, not leaving it not
   verified, once the check is over too, whatever verdict it had reached, no such folder moved out of
-  the vault: the steering surfaces checked by hand, without git, before any git command, then each
-  such folder made readable again, nothing moved, the markers looked for again as the README's step
+  the vault: the steering surfaces checked by hand, without git, as the README's step 5 says, before
+  any git command, then each such folder made readable again, nothing moved, any steering surface in
+  it checked by hand, without git, as the README's step 5 says, before any git command and before
+  any put-back, the markers looked for again as the README's step
   1 says before any clean-up (one found in the vault read as above, the README's step 1 sentence
   that begins "Wherever" included; a search still not trusted changing nothing in the copy and
   keeping a folder it could not read as that sentence keeps one, the README's step 6 limits on such
   a folder included, that folder not moved out of the vault when the README's step 1 starts again,
-  in that check or a later one, until, once it is made readable, any steering surface in it is
-  checked by hand, without git, before any git command, the folder checked by hand as the README's
-  step 6 says, and a search that can be trusted has looked there), the known files
-  seen through the vault's own path as the README's step 1 says
-  to see them after a removal, and the vault looked at and cleaned up as above, a clean-up the limit
-  does not bar); and the second canary removed only in every other case), adds a canary in the
-  copy's git configuration to the `pre-commit` one, with a control
-  that turns git back on, says that a control fired by a commit alone shows only that Aider made no
+  in that check or a later one, the keep and this bar each lasting until, once it is made readable,
+  any steering surface in it is checked by hand, without git, as the README's step 5 says, before
+  any git command, the folder checked by hand as the README's step 6 says, and a search that can be
+  trusted has looked there), the known files seen through the vault's own path as the README's step
+  1 says to see them after a removal, and the vault looked at and cleaned up as above, a clean-up
+  the limit on changing the copy does not bar); and the second canary removed only in every other
+  case), adds a canary in the copy's git configuration to the `pre-commit` one, with a control that
+  turns git back on, says that a control fired by a commit alone shows only that Aider made no
   commit, and passes only where that opening reading, trusted by its control, found no mount below
   the copy's root, on a copy not on a mapped drive, its identity control found no marker, and the
   README check's step 5, run in the schedule's container, passed.
