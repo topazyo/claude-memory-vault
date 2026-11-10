@@ -3613,6 +3613,147 @@ runner_folder_ok() {
   return 0
 }
 
+# work_dir_resolve <root> <state-dir> <work-dir> <log>
+#
+# memory_override's resolution of the folder for the pass, lifted out unchanged
+# (see the comment in memory_override): the folder above <work-dir> resolved
+# physically and its own name kept. Sets WORK_DIR_GIVEN (<work-dir>),
+# WORK_DIR_REAL (the path the checks use), WORK_DIR_ABOVE (the folder above as
+# given) and WORK_DIR_UNREACHED (set when that folder could not be entered), by
+# plain assignment, after clearing all four. Writes nothing.
+work_dir_resolve() {
+  local work="$3" p pd tp=/ pu=
+  WORK_DIR_GIVEN= WORK_DIR_REAL= WORK_DIR_ABOVE= WORK_DIR_UNREACHED=
+  p="$work"
+  while :; do case "$p" in ?*/) p="${p%/}" ;; *) break ;; esac; done
+  if [ -n "$p" ]; then
+    case "$p" in */*) pd="${p%/*}"; [ -n "$pd" ] || pd=/ ;; *) pd=. ;; esac
+    case "$pd" in /*|[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]:*) ;; *) pd="./$pd" ;; esac
+    tp="$pd"
+    if pd="$(CDPATH= cd -P -- "$pd" 2>/dev/null && pwd -P)" && [ -n "$pd" ]; then
+      work="${pd%/}/${p##*/}"
+    else
+      pu=1
+    fi
+  fi
+  WORK_DIR_GIVEN="$3" WORK_DIR_REAL="$work" WORK_DIR_ABOVE="$tp" WORK_DIR_UNREACHED="$pu"
+}
+
+# work_dir_checks <root> <state-dir> <work-dir> <log> <for> <win> <drive-dir>
+#
+# memory_override's checks of the folder for the pass, lifted out unchanged
+# (see the comment in memory_override), on the path work_dir_resolve gave for the
+# same <work-dir>. <for> is settings (memory_override: its lines exactly as
+# before) or runner (runner_folder_checked: four lines name what the runner
+# keeps there instead of the settings file). <win> is 1 where the folder is also
+# walked as a drive path, <drive-dir> being that spelling. The first check, that
+# work_dir_resolve was given this <work-dir>, is a programming guard no control
+# holds: on Linux the spelled and resolved paths are equal. Returns 1, with the
+# reason in <log>, when the pass must not start.
+work_dir_checks() {
+  local root="$1" log="$4" for="$5" win="$6" arg="$7/x" work="$WORK_DIR_REAL" tp="$WORK_DIR_ABOVE" pu="$WORK_DIR_UNREACHED" p q up nm nw
+  if [ "${WORK_DIR_GIVEN-}" != "$3" ]; then
+    printf '[%s] ERROR: the folder for the pass, %s, was checked without being resolved first (a programming error no control holds). Refusing to run.\n' "$(ts)" "$(shown_name "$3")" >> "$log"
+    return 1
+  fi
+  # The lines below name the folder as the runner made it (nm) or as the checks
+  # see it (nw), with each C0 control character and DEL in its name shown as ?.
+  nm="$(shown_name "$3")"
+  nw="$(shown_name "$work")"
+  # A spelling with .. or a part ending in a dot, which git on Windows can read
+  # as another folder: the runners refuse it before their first git call, and
+  # this refuses it for any other caller.
+  temp_dir_spelling_ok "$3" "$log" || return 1
+  # The file can name hooks Claude Code runs, so its folder must pass the state
+  # directory's checks. On Windows they run under a UTF-8 locale, as the
+  # conversions above do: under C, cygpath cut the vault's path and the folder's
+  # at a folder above both named outside the ANSI code page, a profile folder
+  # among them, and the folder looked as if it lay inside the vault. The check
+  # never makes the folder: the runner made it before the "before" snapshot,
+  # which it holds, so a folder that is not there now may have taken the
+  # snapshot with it, and the fence would compare the pass with nothing.
+  case "$RUNNER_UNAME" in
+    MINGW*|MSYS*|CYGWIN*) up="$( LC_ALL=C.UTF-8; export LC_ALL; state_dir_ready "$work" "$root" nocreate )" ;;
+    *) up="$(state_dir_ready "$work" "$root" nocreate)" ;;
+  esac
+  p=$?
+  # Code 9 says the folder is not there as the checks spell it, which is so for
+  # three causes, and each gets its own line, naming the folder as the runner
+  # made it. Where the folder above is not there, or, off Windows, could not be
+  # entered, the checks cannot see the folder at all.
+  if [ "$p" -eq 9 ] && [ -n "$pu" ]; then
+    [ "$for" = runner ] && { printf '[%s] ERROR: the runner'"'"'s folder for the pass, %s, cannot be reached: this account cannot enter the folder above it, or that folder is not there, so the checks cannot see the folder the runner made. Give this account back its access to that folder, or point TMPDIR at a folder outside the vault that this account can enter and only it can change (on Windows, leave it unset and schedule the task as your own account). Refusing to run.\n' "$(ts)" "$nm" >> "$log"; return 1; }
+    printf '[%s] ERROR: the runner'"'"'s folder for the pass, %s, cannot be reached: this account cannot enter the folder above it, or that folder is not there, so the checks cannot see the folder the runner made. If that folder was removed, the pass'"'"'s snapshot went with it: find what removed it. Otherwise give this account back its access to that folder, or point TMPDIR at a folder outside the vault that this account can enter and only it can change (on Windows, leave it unset and schedule the task as your own account). Refusing to run.\n' "$(ts)" "$nm" >> "$log"
+    return 1
+  fi
+  # The folder above was resolved above, where it could be entered, and the
+  # folder's own name kept, so the path that check resolves it to must be the
+  # same, or the folder is a link, or one above it changed in between, and the
+  # file would go through another folder.
+  [ "$p" -eq 0 ] && [ "$up" != "$work" ] && p=8
+  # And the path the checks looked at must be the folder as given, compared by
+  # file identity: where the folder as given is there and that path is not, or
+  # where the checks answered for a path that is not it, whether they passed it
+  # or refused it for a cause of its own, resolving the folder above led
+  # elsewhere (a link above it changed between cd -P and pwd -P, or a folder's
+  # name ends in a line break, which $(...) drops), and the file would go to
+  # another folder, one someone else may have made, or the refusal would name it.
+  # A refusal for a cause of its own keeps its own line where the folder above,
+  # as resolved, is the folder above as given (tp): the two paths then name the
+  # same entry, and -ef fails only where nothing is there to compare (a dangling
+  # link, say). Where the checks passed (p=0) the line is the backstop's either
+  # way, for a folder replaced in between, a race no control can stage. A folder
+  # above at / is compared as /., not //., which Git Bash reads as a network path.
+  if { [ "$p" -eq 9 ] && [ -d "$3" ]; } \
+     || { [ "$p" -ne 9 ] && [ "$p" -ne 10 ] && ! [ "$work" -ef "$3" ] \
+          && { [ "$p" -eq 0 ] || ! [ "${work%/*}/." -ef "${tp%/}/." ]; }; }; then
+    [ "$for" = runner ] && { printf '[%s] ERROR: the runner'"'"'s folder for the pass, %s, is not the folder that resolving the folder above it led to: a folder above it changed while it was resolved, or a folder'"'"'s name ends in a line break, which the resolution drops, so the snapshots, the backup and git'"'"'s hooks folder would go to another folder. Refusing to run.\n' "$(ts)" "$nm" >> "$log"; return 1; }
+    printf '[%s] ERROR: the runner'"'"'s folder for the pass, %s, is not the folder that resolving the folder above it led to: a folder above it changed while it was resolved, or a folder'"'"'s name ends in a line break, which the resolution drops, so the settings file would go to another folder. Refusing to run.\n' "$(ts)" "$nm" >> "$log"
+    return 1
+  fi
+  if [ "$p" -eq 9 ]; then
+    [ "$for" = runner ] && { printf '[%s] ERROR: the runner'"'"'s folder for the pass, %s, is not there as a folder, though the runner made it a moment ago, so the pass'"'"'s snapshot could not be kept there. Refusing to run.\n' "$(ts)" "$nm" >> "$log"; return 1; }
+    printf '[%s] ERROR: the runner'"'"'s folder for the pass, %s, is not there as a folder, though the runner made it before the pass'"'"'s snapshot and keeps the snapshot in it, so the fence could not see what the pass changes. Refusing to run.\n' "$(ts)" "$nm" >> "$log"
+    return 1
+  fi
+  if [ "$p" -eq 10 ]; then
+    printf '[%s] ERROR: the vault, %s, cannot be resolved (this account cannot enter it, or it is not there), so whether the runner'"'"'s folder for the pass lies inside it cannot be checked. Refusing to run.\n' "$(ts)" "$(shown_name "$root")" >> "$log"
+    return 1
+  fi
+  # The state directory's check of the vault compares the two paths by name, and
+  # on Windows and macOS a letter outside ASCII in another case or an 8.3 name
+  # spells the same folder another way, and on every platform path_key gives a
+  # vault at a drive or file-system root a trailing slash the name never
+  # matches, so neither the folder nor any folder above it may be the vault
+  # itself, walked as Git Bash spells it and, on Windows, as a drive path, since
+  # a folder under Git Bash's /tmp mount, where pwd -P keeps that spelling,
+  # walks up to / and not to the drive. A subst or mapped drive, or a mount,
+  # whose root lies inside the vault is not seen (reasoned). A walk answers 0
+  # (under) or 1 (not under); any other status is no answer, so it refuses
+  # rather than pass as "not under".
+  if [ "$p" -eq 0 ]; then
+    path_under_by_identity "$work" "$root"
+    q=$?
+    if [ "$q" -eq 1 ] && [ "$win" = 1 ]; then
+      path_under_by_identity "${arg%/*}" "$root"
+      q=$?
+    fi
+    case "$q" in
+      0) p=4 ;;
+      1) ;;
+      *)
+        printf '[%s] ERROR: the walk that checks whether the runner'"'"'s folder for the pass, %s, lies inside the vault ended with status %s, which is not an answer, so the folder cannot be shown to lie outside the vault. Refusing to run.\n' "$(ts)" "$nw" "$q" >> "$log"
+        return 1 ;;
+    esac
+  fi
+  if [ "$p" -ne 0 ]; then
+    [ "$for" = runner ] && { printf '[%s] ERROR: the runner'"'"'s folder for the pass, %s, %s, and the runner keeps the pass'"'"'s snapshots, its backup and git'"'"'s hooks folder there. Point TMPDIR at a folder outside the vault that only this account can change (on macOS Apple'"'"'s mktemp does not take TMPDIR), or, on Windows, leave it unset and schedule the task as your own account; if the vault holds the default temporary folder, as one at a drive root does, move the vault into a folder of its own, or point TMPDIR outside it. Refusing to run.\n' "$(ts)" "$nw" "$(state_dir_problem "$p")" >> "$log"; return 1; }
+    printf '[%s] ERROR: the runner'"'"'s folder for the pass, %s, %s, and the memory override'"'"'s settings file there can name hooks Claude Code runs. Point TMPDIR at a folder outside the vault that only this account can change (on macOS Apple'"'"'s mktemp does not take TMPDIR), or, on Windows, leave it unset and schedule the task as your own account; if the vault holds the default temporary folder, as one at a drive root does, move the vault into a folder of its own, or point TMPDIR outside it. Refusing to run.\n' "$(ts)" "$nw" "$(state_dir_problem "$p")" >> "$log"
+    return 1
+  fi
+  return 0
+}
+
 # memory_override <root> <state-dir> <work-dir> <log>
 #
 # Claude mode only. Claude Code grants the agent's Write and Edit tools its
@@ -3730,18 +3871,8 @@ memory_override() {
   # account may by default pass through a folder it cannot enter, they reach the
   # folder mktemp made and accept it (measured in Git Bash for a folder spelled
   # with no link).
-  p="$work"
-  while :; do case "$p" in ?*/) p="${p%/}" ;; *) break ;; esac; done
-  if [ -n "$p" ]; then
-    case "$p" in */*) pd="${p%/*}"; [ -n "$pd" ] || pd=/ ;; *) pd=. ;; esac
-    case "$pd" in /*|[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]:*) ;; *) pd="./$pd" ;; esac
-    tp="$pd"
-    if pd="$(CDPATH= cd -P -- "$pd" 2>/dev/null && pwd -P)" && [ -n "$pd" ]; then
-      work="${pd%/}/${p##*/}"
-    else
-      pu=1
-    fi
-  fi
+  work_dir_resolve "$@"
+  work="$WORK_DIR_REAL" tp="$WORK_DIR_ABOVE" pu="$WORK_DIR_UNREACHED"
   file="$work/pass-settings.json" arg="$work/pass-settings.json"
   # On Windows a path left in Git Bash form is read by Claude Code as a folder
   # under the drive root, so either the platform or cygpath picks this branch.
@@ -3825,97 +3956,7 @@ memory_override() {
       return 1
     fi
   fi
-  # The lines below name the folder as the runner made it (nm) or as the checks
-  # see it (nw), with each C0 control character and DEL in its name shown as ?.
-  nm="$(shown_name "$3")"
-  nw="$(shown_name "$work")"
-  # A spelling with .. or a part ending in a dot, which git on Windows can read
-  # as another folder: the runners refuse it before their first git call, and
-  # this refuses it for any other caller.
-  temp_dir_spelling_ok "$3" "$log" || return 1
-  # The file can name hooks Claude Code runs, so its folder must pass the state
-  # directory's checks. On Windows they run under a UTF-8 locale, as the
-  # conversions above do: under C, cygpath cut the vault's path and the folder's
-  # at a folder above both named outside the ANSI code page, a profile folder
-  # among them, and the folder looked as if it lay inside the vault. The check
-  # never makes the folder: the runner made it before the "before" snapshot,
-  # which it holds, so a folder that is not there now may have taken the
-  # snapshot with it, and the fence would compare the pass with nothing.
-  case "$RUNNER_UNAME" in
-    MINGW*|MSYS*|CYGWIN*) up="$( LC_ALL=C.UTF-8; export LC_ALL; state_dir_ready "$work" "$root" nocreate )" ;;
-    *) up="$(state_dir_ready "$work" "$root" nocreate)" ;;
-  esac
-  p=$?
-  # Code 9 says the folder is not there as the checks spell it, which is so for
-  # three causes, and each gets its own line, naming the folder as the runner
-  # made it. Where the folder above is not there, or, off Windows, could not be
-  # entered, the checks cannot see the folder at all.
-  if [ "$p" -eq 9 ] && [ -n "$pu" ]; then
-    printf '[%s] ERROR: the runner'"'"'s folder for the pass, %s, cannot be reached: this account cannot enter the folder above it, or that folder is not there, so the checks cannot see the folder the runner made. If that folder was removed, the pass'"'"'s snapshot went with it: find what removed it. Otherwise give this account back its access to that folder, or point TMPDIR at a folder outside the vault that this account can enter and only it can change (on Windows, leave it unset and schedule the task as your own account). Refusing to run.\n' "$(ts)" "$nm" >> "$log"
-    return 1
-  fi
-  # The folder above was resolved above, where it could be entered, and the
-  # folder's own name kept, so the path that check resolves it to must be the
-  # same, or the folder is a link, or one above it changed in between, and the
-  # file would go through another folder.
-  [ "$p" -eq 0 ] && [ "$up" != "$work" ] && p=8
-  # And the path the checks looked at must be the folder as given, compared by
-  # file identity: where the folder as given is there and that path is not, or
-  # where the checks answered for a path that is not it, whether they passed it
-  # or refused it for a cause of its own, resolving the folder above led
-  # elsewhere (a link above it changed between cd -P and pwd -P, or a folder's
-  # name ends in a line break, which $(...) drops), and the file would go to
-  # another folder, one someone else may have made, or the refusal would name it.
-  # A refusal for a cause of its own keeps its own line where the folder above,
-  # as resolved, is the folder above as given (tp): the two paths then name the
-  # same entry, and -ef fails only where nothing is there to compare (a dangling
-  # link, say). Where the checks passed (p=0) the line is the backstop's either
-  # way, for a folder replaced in between, a race no control can stage. A folder
-  # above at / is compared as /., not //., which Git Bash reads as a network path.
-  if { [ "$p" -eq 9 ] && [ -d "$3" ]; } \
-     || { [ "$p" -ne 9 ] && [ "$p" -ne 10 ] && ! [ "$work" -ef "$3" ] \
-          && { [ "$p" -eq 0 ] || ! [ "${work%/*}/." -ef "${tp%/}/." ]; }; }; then
-    printf '[%s] ERROR: the runner'"'"'s folder for the pass, %s, is not the folder that resolving the folder above it led to: a folder above it changed while it was resolved, or a folder'"'"'s name ends in a line break, which the resolution drops, so the settings file would go to another folder. Refusing to run.\n' "$(ts)" "$nm" >> "$log"
-    return 1
-  fi
-  if [ "$p" -eq 9 ]; then
-    printf '[%s] ERROR: the runner'"'"'s folder for the pass, %s, is not there as a folder, though the runner made it before the pass'"'"'s snapshot and keeps the snapshot in it, so the fence could not see what the pass changes. Refusing to run.\n' "$(ts)" "$nm" >> "$log"
-    return 1
-  fi
-  if [ "$p" -eq 10 ]; then
-    printf '[%s] ERROR: the vault, %s, cannot be resolved (this account cannot enter it, or it is not there), so whether the runner'"'"'s folder for the pass lies inside it cannot be checked. Refusing to run.\n' "$(ts)" "$(shown_name "$root")" >> "$log"
-    return 1
-  fi
-  # The state directory's check of the vault compares the two paths by name, and
-  # on Windows and macOS a letter outside ASCII in another case or an 8.3 name
-  # spells the same folder another way, and on every platform path_key gives a
-  # vault at a drive or file-system root a trailing slash the name never
-  # matches, so neither the folder nor any folder above it may be the vault
-  # itself, walked as Git Bash spells it and, on Windows, as a drive path, since
-  # a folder under Git Bash's /tmp mount, where pwd -P keeps that spelling,
-  # walks up to / and not to the drive. A subst or mapped drive, or a mount,
-  # whose root lies inside the vault is not seen (reasoned). A walk answers 0
-  # (under) or 1 (not under); any other status is no answer, so it refuses
-  # rather than pass as "not under".
-  if [ "$p" -eq 0 ]; then
-    path_under_by_identity "$work" "$root"
-    q=$?
-    if [ "$q" -eq 1 ] && [ "$win" = 1 ]; then
-      path_under_by_identity "${arg%/*}" "$root"
-      q=$?
-    fi
-    case "$q" in
-      0) p=4 ;;
-      1) ;;
-      *)
-        printf '[%s] ERROR: the walk that checks whether the runner'"'"'s folder for the pass, %s, lies inside the vault ended with status %s, which is not an answer, so the folder cannot be shown to lie outside the vault. Refusing to run.\n' "$(ts)" "$nw" "$q" >> "$log"
-        return 1 ;;
-    esac
-  fi
-  if [ "$p" -ne 0 ]; then
-    printf '[%s] ERROR: the runner'"'"'s folder for the pass, %s, %s, and the memory override'"'"'s settings file there can name hooks Claude Code runs. Point TMPDIR at a folder outside the vault that only this account can change (on macOS Apple'"'"'s mktemp does not take TMPDIR), or, on Windows, leave it unset and schedule the task as your own account; if the vault holds the default temporary folder, as one at a drive root does, move the vault into a folder of its own, or point TMPDIR outside it. Refusing to run.\n' "$(ts)" "$nw" "$(state_dir_problem "$p")" >> "$log"
-    return 1
-  fi
+  work_dir_checks "$1" "$2" "$3" "$4" settings "$win" "${arg%/*}" || return 1
   # Nothing reads a copy an earlier build left in the state directory.
   rm -f "$state/pass-settings.json" 2>/dev/null
   # The file is written through these names, and none of them is in the folder
