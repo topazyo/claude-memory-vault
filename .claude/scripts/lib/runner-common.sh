@@ -3754,6 +3754,64 @@ work_dir_checks() {
   return 0
 }
 
+# runner_folder_checked <root> <state-dir> <folder> <log>
+#
+# The runner's own check of the folder mktemp -d made for the pass, in every
+# runner and mode, right after runner_folder_ok and before the first git call:
+# the same resolution and checks memory_override runs on it in claude mode
+# (work_dir_resolve, work_dir_checks), so its owner, its permissions, that it is
+# the folder mktemp made and that it lies outside the vault are checked whatever
+# the mode, on the path git, the snapshots, the backup and the settings file then
+# use. On Windows (the platform, or wherever a cygpath is found) the folder is
+# also converted to a drive path, which must map back to it, and walked as one.
+# Off Windows it must also be open to no other account (mode 0700, which mktemp
+# -d gives it, measured on Linux), which the state directory's checks do not
+# ask, since they accept a folder its group can write. On success
+# RUNNER_FOLDER is the resolved path, which the runner uses from then on; the
+# runner keeps its own spelling until then, so a refusal removes the folder by
+# the name mktemp gave. Returns 1, with the reason in <log>, when the pass must
+# not start.
+runner_folder_checked() {
+  local log="$4" win=0 dw= p nm nw
+  unset RUNNER_FOLDER
+  work_dir_resolve "$@"
+  nm="$(shown_name "$3")"
+  case "$RUNNER_UNAME" in MINGW*|MSYS*|CYGWIN*) win=1 ;; esac
+  command -v cygpath >/dev/null 2>&1 && win=1
+  if [ "$win" = 1 ]; then
+    if ! dw="$(LC_ALL=C.UTF-8 cygpath -m "$WORK_DIR_REAL" 2>/dev/null)" || [ -z "$dw" ]; then
+      printf '[%s] ERROR: cygpath could not convert the runner'"'"'s temporary folder, %s, to a drive path, so git could be handed another folder for its hooks. Refusing to run.\n' "$(ts)" "$nm" >> "$log"
+      return 1
+    fi
+    case "$dw" in
+      [ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]:/*) ;;
+      *)
+        printf '[%s] ERROR: cygpath gave %s for the runner'"'"'s temporary folder, which is not a Windows drive path, so git could read it as another folder. Keep the temporary folder on a drive. Refusing to run.\n' "$(ts)" "$(shown_name "$dw")" >> "$log"
+        return 1 ;;
+    esac
+    if ! [ "$(LC_ALL=C.UTF-8 cygpath -u "$dw" 2>/dev/null)" -ef "$WORK_DIR_REAL" ]; then
+      printf '[%s] ERROR: cygpath turned the runner'"'"'s temporary folder, %s, into %s, which is not the same folder, so git could be handed another folder for its hooks. Refusing to run.\n' "$(ts)" "$nm" "$(shown_name "$dw")" >> "$log"
+      return 1
+    fi
+  fi
+  work_dir_checks "$1" "$2" "$3" "$4" runner "$win" "${dw:-$WORK_DIR_REAL}" || return 1
+  case "$RUNNER_UNAME" in
+    MINGW*|MSYS*|CYGWIN*) ;;
+    *)
+      nw="$(shown_name "$WORK_DIR_REAL")"
+      if ! p="$(find "$WORK_DIR_REAL" -maxdepth 0 \( -perm -0001 -o -perm -0002 -o -perm -0004 -o -perm -0010 -o -perm -0020 -o -perm -0040 \) -print 2>/dev/null)"; then
+        printf '[%s] ERROR: the check of the runner'"'"'s folder for the pass, %s, for permissions open to other accounts could not run (find failed), so the folder cannot be shown to be this account'"'"'s alone. Refusing to run.\n' "$(ts)" "$nw" >> "$log"
+        return 1
+      fi
+      if [ -n "$p" ]; then
+        printf '[%s] ERROR: the runner'"'"'s folder for the pass, %s, is open to other accounts (its mode is not 0700), and the runner keeps the pass'"'"'s snapshots, its backup and git'"'"'s hooks folder there. mktemp -d makes it 0700, so something changed it. Point TMPDIR at a folder outside the vault that only this account can change, or leave it unset. Refusing to run.\n' "$(ts)" "$nw" >> "$log"
+        return 1
+      fi ;;
+  esac
+  RUNNER_FOLDER="$WORK_DIR_REAL"
+  return 0
+}
+
 # memory_override <root> <state-dir> <work-dir> <log>
 #
 # Claude mode only. Claude Code grants the agent's Write and Edit tools its

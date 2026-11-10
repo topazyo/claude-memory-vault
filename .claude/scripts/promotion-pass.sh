@@ -369,6 +369,13 @@ main() {
   # is a folder that is not an absolute path.
   temp_dir_spelling_ok "$SNAP_DIR" "$LOG" || exit 1
   runner_folder_ok "$SNAP_DIR" "$LOG" || exit 1
+  # Resolved once and checked (its owner, its permissions, that it is the folder
+  # mktemp made, that it lies outside the vault), in every mode; from here on the
+  # snapshots, the backup, git's hooks folder and the settings file use the
+  # resolved path. Until then the folder keeps the name mktemp gave, which is the
+  # one a refusal removes.
+  runner_folder_checked "$ROOT" "$STATE" "$SNAP_DIR" "$LOG" || exit 1
+  SNAP_DIR="$RUNNER_FOLDER"
   mkdir -p "$SNAP_DIR/nohooks"
 
   # A git operation in progress or a detached HEAD stops the run before the agent
