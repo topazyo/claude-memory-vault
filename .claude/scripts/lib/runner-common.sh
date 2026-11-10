@@ -1158,11 +1158,13 @@ state_dir_ready() {
   printf '%s\n' "$real"
 }
 # state_dir_problem <code> - the words for a state_dir_ready code, and for 8,
-# which only memory_override gives: a folder that is not the path it resolves to,
-# because it is a link, a folder above it changed between memory_override's
+# which only the checks of the folder for the pass give (work_dir_checks, for
+# memory_override and for the runner's own check): a folder that is not the path
+# it resolves to, because it is a link, a folder above it changed between the
 # resolution and the check's, or pwd -P spells its last part another way. A link
-# above it that is there all along is resolved and accepted for the settings
-# file; the snapshots, the backup and git's hooks folder use TMPDIR as spelled.
+# above it that is there all along is resolved and accepted, and from 1.5.0 the
+# snapshots, the backup, git's hooks folder and the settings file all use the
+# resolved path.
 state_dir_problem() {
   case "$1" in
     2) printf 'is not owned by this account, or this account cannot write it' ;;
@@ -3906,9 +3908,10 @@ runner_folder_checked() {
 # last part pwd -P spells another way (. or .., and on Windows an 8.3 name, which
 # pwd -P expands; a letter in another case it keeps, so that spelling of the
 # same folder passes, measured in Git Bash), which no runner passes. A link
-# above it that is there all along is resolved and accepted for the settings
-# file (the snapshots, the backup and git's hooks folder use TMPDIR as
-# spelled). A folder emptied,
+# above it that is there all along is resolved and accepted (from 1.5.0 the
+# runners resolve and check the folder themselves first, runner_folder_checked,
+# and hand memory_override the resolved path, which the snapshots, the backup
+# and git's hooks folder use too). A folder emptied,
 # or removed and made again, by another process of this account, by root, or on
 # Windows by any account
 # that can change the temporary folder, is not seen: it is checked like the

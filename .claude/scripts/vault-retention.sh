@@ -74,7 +74,12 @@
 #        PATH, the vault or the temporary folder whose path git is given
 #        spelled with .., a part ending in a dot or a colon that is not a drive
 #        letter's, or a vault whose last part ends in a space (git there can
-#        read it as another folder). Also this script failing in itself, such
+#        read it as another folder), or a temporary folder whose path git is
+#        given that is a link, lies inside the vault, or, off Windows, is not
+#        this account's alone at mode 0700 (the run resolves it once and uses
+#        that path from then on; the folder for its copy of the log gets the
+#        same check, and one that fails it costs the run only that copy, with a
+#        WARNING:). Also this script failing in itself, such
 #        as on an unset variable, which bash ends with 1
 #   2    REPORT-REFUSED: the report was not written by this runner, or changed
 #   3    PARTIAL: the move failed and the vault was put back to HEAD, or an

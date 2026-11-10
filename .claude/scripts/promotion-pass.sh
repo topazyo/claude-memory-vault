@@ -54,7 +54,11 @@
 #                           folder that is not an absolute path, and on Windows,
 #                           or wherever a cygpath is found on PATH, one with a
 #                           .., a part ending in a dot or another colon, in
-#                           every mode, before its first git call); on Windows
+#                           every mode, before its first git call, and so is
+#                           one that is a link, lies inside the vault, or, off
+#                           Windows, is not this account's alone at mode 0700:
+#                           the runner resolves it once and uses that path for
+#                           everything it keeps there); on Windows
 #                           schedule the task as your own account, and leave it
 #                           unset unless a long path needs a shorter folder
 #                           (docs/reference.md, Known limits)
