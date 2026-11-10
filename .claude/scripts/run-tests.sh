@@ -2353,6 +2353,9 @@ MO_PATH="the vault's path holds a character the settings file cannot carry"
 MO_SAME='which is not the same folder or file, so the memory override would name a path outside the vault'
 MO_SAMEFILE='which is not the same folder or file, so Claude Code would be handed another settings file'
 MO_DRIVE='which is not a Windows drive path'
+# 1.5.0: the runner's own check (runner_folder_checked) converts its folder for
+# the pass first, so a cygpath that maps it to another folder is refused there.
+RF_SAME='which is not the same folder, so git could be handed another folder for its hooks'
 MO_WINBIN='looks like a Windows program, but this runner is not running under Git Bash'
 MO_NOTFILE='is not a file the runner can check, so it could be a Windows program'
 MO_UTF8='is not valid UTF-8, or iconv could not check it'
@@ -2633,6 +2636,9 @@ fi
 # there on every host, because the pass removes its own folder when it ends and
 # only a folder the twin keeps can show the refusal wrote nothing.
 MO_WORK="and the memory override's settings file there can name hooks Claude Code runs"
+# 1.5.0: the same refusals on the runner's own path (runner_folder_checked), in
+# every runner and mode, before the first git call, end with this instead.
+RF_WORK="and the runner keeps the pass's snapshots, its backup and git's hooks folder there"
 mo_tmpdir_steers() {  # mo_tmpdir_steers <dir> - 0 when mktemp -d under TMPDIR=<dir> makes its folder there, 1 when elsewhere, 2 when mktemp fails
   local d
   d="$(TMPDIR="$1" mktemp -d 2>/dev/null)" || return 2
@@ -2664,7 +2670,9 @@ mo_direct() {
 # mktemp takes TMPDIR, and on every host memory_override with a folder in it does and writes nothing there
 mo_work_refused() {
   local rc
-  mo_steers "$3" && mo_refused "$1" "$2" dream-pass.sh journal "$MO_LOG" TMPDIR="$3"
+  # 1.5.0: the pass is now refused by the runner's own check, before any git
+  # call, so its line ends with RF_WORK; the direct call below keeps MO_WORK.
+  mo_steers "$3" && mo_refused "$1" "${2%"$MO_WORK"}$RF_WORK" dream-pass.sh journal "$MO_LOG" TMPDIR="$3"
   rm -rf "$3/w" "$TMP/memovr-direct.log"
   ( umask 077 && mkdir -p "$3/w" )
   mo_direct "$RV" "$3/w" "$TMP/memovr-direct.log"
@@ -3516,7 +3524,9 @@ else
   chmod +x "$MO_SC/cygpath"
   if [ "$(PATH="$MO_SC:$PATH" cygpath -m "$RV" 2>/dev/null)" = C:/stray ] && [ "$(PATH="$MO_SC:$PATH" cygpath -u "$RV" 2>/dev/null)" = "$RV" ]; then
     ran mem-override-stray-cygpath
-    mo_refused "claude mode off Windows with a stray cygpath on PATH" "$MO_SAME" dream-pass.sh journal "$MO_LOG" PATH="$MO_SC:$PATH"
+    # 1.5.0: the stand-in maps every folder to C:/stray, the runner's own folder
+    # first, so the runner refuses on its own check before memory_override runs.
+    mo_refused "claude mode off Windows with a stray cygpath on PATH" "$RF_SAME" dream-pass.sh journal "$MO_LOG" PATH="$MO_SC:$PATH"
   else
     bad "mem-override-stray-cygpath: the cygpath stand-in does not answer as it should"
   fi
@@ -3525,7 +3535,7 @@ else
   # and the same stand-in giving a drive path instead passes: it maps either
   # prefix back, so the prefix alone decides.
   mkdir -p "$MO_SC"
-  printf '#!/usr/bin/env bash\nif [ "$#" -eq 2 ] && [ "$1" = -m ]; then\n  case "$MO_SC_UNC:$2" in\n    settings:*/pass-settings.json) echo "//uncvault/share$2" ;;\n    *:*/pass-settings.json) echo "C:$2" ;;\n    vault:*) echo "//uncvault/share$2" ;;\n    *) echo "C:$2" ;;\n  esac\nelse\n  case "$2" in //uncvault/share/*) echo "${2#//uncvault/share}" ;; C:/*) echo "${2#C:}" ;; *) echo "$2" ;; esac\nfi\n' > "$MO_SC/cygpath"
+  printf '#!/usr/bin/env bash\nif [ "$#" -eq 2 ] && [ "$1" = -m ]; then\n  case "$MO_SC_UNC:$2" in\n    settings:*/pass-settings.json) echo "//uncvault/share$2" ;;\n    *:*/pass-settings.json) echo "C:$2" ;;\n    vault:*/runnervault) echo "//uncvault/share$2" ;;\n    *) echo "C:$2" ;;\n  esac\nelse\n  case "$2" in //uncvault/share/*) echo "${2#//uncvault/share}" ;; C:/*) echo "${2#C:}" ;; *) echo "$2" ;; esac\nfi\n' > "$MO_SC/cygpath"
   chmod +x "$MO_SC/cygpath"
   if [ "$(PATH="$MO_SC:$PATH" MO_SC_UNC=vault cygpath -m "$RV")" = "//uncvault/share$RV" ] \
      && [ "$(PATH="$MO_SC:$PATH" MO_SC_UNC=vault cygpath -m "$TMP/x/pass-settings.json")" = "C:$TMP/x/pass-settings.json" ] \
@@ -6504,7 +6514,7 @@ mo_k4_clean() {
   rm -rf "$MO_K4"
 }
 mo_k4_clean
-mkdir -p "$MO_K4/shim" "$MO_K4/base" "$MO_K4/tgt/in" "$MO_K4/x." "$MO_K4/x"
+mkdir -p "$MO_K4/shim" "$MO_K4/cyg" "$MO_K4/base" "$MO_K4/tgt/in" "$MO_K4/x." "$MO_K4/x"
 cat > "$MO_K4/shim/mktemp" <<'MO_K4_EOF'
 #!/usr/bin/env bash
 case "$#:$*" in
@@ -6526,9 +6536,16 @@ cat > "$MO_K4/shim/git" <<'MO_K4_EOF'
 printf '%s\n' "$*" >> "$MO_K4_GITLOG"
 exec "$MO_K4_GIT" "$@"
 MO_K4_EOF
+# 1.5.0: the cygpath stand-in sits in a folder of its own, put on PATH only for
+# the legs whose refusal comes from the spelling check (MO_K4_CYG=1), because
+# the runner's own folder check (runner_folder_checked) converts the folder to
+# a drive path wherever a cygpath is found, and one that gives a POSIX path back
+# is refused there, which the plainly spelled controls must not be.
 if ! is_windows_host; then
-  printf '#!/usr/bin/env bash\nfor a; do :; done\nprintf "%%s\\n" "$a"\n' > "$MO_K4/shim/cygpath"
+  printf '#!/usr/bin/env bash\nfor a; do :; done\nprintf "%%s\\n" "$a"\n' > "$MO_K4/cyg/cygpath"
+  chmod +x "$MO_K4/cyg/cygpath"
 fi
+MO_K4_CYG=
 chmod +x "$MO_K4/shim/"*
 MO_K4_MT="$(command -v mktemp)"
 MO_K4_G="$(command -v git)"
@@ -6554,7 +6571,7 @@ mo_k4_run() {
   fi
   if [ "$script" = vault-retention.sh ]; then
     env VAULT_STATE_DIR="$MO_K4/rstate" RUN_LOCK_WAIT=0 RUN_LOCK_POLL=1 WATCHDOG_POLL=1 WATCHDOG_GRACE=2 \
-      PATH="$MO_K4/shim:$PATH" MO_K4_MKTEMP="$MO_K4_MT" MO_K4_GIT="$MO_K4_G" MO_K4_GITLOG="$MO_K4/git.log" \
+      PATH="${MO_K4_CYG:+$MO_K4/cyg:}$MO_K4/shim:$PATH" MO_K4_MKTEMP="$MO_K4_MT" MO_K4_GIT="$MO_K4_G" MO_K4_GITLOG="$MO_K4/git.log" \
       MO_K4_MARK="$MO_K4/fired" MO_K4_SPELL="$spell" MO_K4_REAL="$real" MO_K4_DECOY="$decoy" "$@" \
       bash "$MO_K4_RV/.claude/scripts/vault-retention.sh" >/dev/null 2>&1
     rc=$?
@@ -6563,7 +6580,7 @@ mo_k4_run() {
     # The promotion runner's fake agent prints a summary and changes nothing.
     mode=journal
     [ "$script" = promotion-pass.sh ] && mode=summary
-    runner "$script" "$mode" FAKE_RECORD="$REC" PATH="$MO_K4/shim:$PATH" MO_K4_MKTEMP="$MO_K4_MT" MO_K4_GIT="$MO_K4_G" \
+    runner "$script" "$mode" FAKE_RECORD="$REC" PATH="${MO_K4_CYG:+$MO_K4/cyg:}$MO_K4/shim:$PATH" MO_K4_MKTEMP="$MO_K4_MT" MO_K4_GIT="$MO_K4_G" \
       MO_K4_GITLOG="$MO_K4/git.log" MO_K4_MARK="$MO_K4/fired" MO_K4_SPELL="$spell" MO_K4_REAL="$real" MO_K4_DECOY="$decoy" "$@"
   fi
 }
@@ -6571,7 +6588,9 @@ mo_k4_nohooks() {  # how many recorded git calls name a nohooks folder
   grep -c 'nohooks' "$MO_K4/git.log" 2>/dev/null | tr -d ' '
 }
 mo_k4_made() {  # how many recorded git calls name the nohooks folder in a folder the mktemp stand-in made
-  grep -F -- "$MO_K4/tgt/tmp." "$MO_K4/git.log" 2>/dev/null | grep -c 'nohooks' | tr -d ' '
+  # 1.5.0: the runner hands git the folder's resolved path, so it is compared as
+  # pwd -P spells it (macOS /private/var, a Windows 8.3 name expanded).
+  grep -F -- "$(cd "$MO_K4/tgt" && pwd -P)/tmp." "$MO_K4/git.log" 2>/dev/null | grep -c 'nohooks' | tr -d ' '
 }
 mo_k4_spelled() {  # how many recorded git calls name a path under the spelling handed to the runner
   grep -F -- "$1/" "$MO_K4/git.log" 2>/dev/null | grep -c '' | tr -d ' '
@@ -6597,6 +6616,7 @@ else
     bad "temp-dir-spelling: the control runs, with the folder spelled plainly, did not run through both stand-ins (dream in command mode exit $mo_rc with ${mo_n:-0} git call(s) naming the stand-in's nohooks folder, agent started: $mo_a; promotion in command mode exit $mo_rc3 with ${mo_n3:-0}, agent started: $mo_a3; retention exit $mo_rc2 with ${mo_n2:-0}), so the runner legs cannot show anything"
   else
     ok "temp-dir-spelling: the control runs, with the folder spelled plainly -> the dream and promotion runners in command mode started their agent, and they and the retention runner ran (0) and called git with the nohooks folder in the folder the mktemp stand-in made"
+    MO_K4_CYG=1
     for mo_leg in dream-claude dream-command promotion-claude promotion-command retention dream-dot; do
       mo_log="$MO_LOG" mo_sp="$MO_K4/base/lnk/.." mo_real="$MO_K4/tgt" mo_dec="$MO_K4/base"
       mo_agent=claude mo_cmd= mo_allow=
@@ -6625,6 +6645,7 @@ else
       fi
       tripwire_clear
     done
+    MO_K4_CYG=
   fi
 fi
 # --- 1.4.2 ---
@@ -6909,7 +6930,7 @@ cp -R "$MO_K4_RV" "$VR_B/rplain" 2>/dev/null && cp -R "$MO_K4_RV" "$VR_B/rdot" 2
 vr_ret() {  # vr_ret <vault> - the retention runner's status, through the mo_k4 stand-ins, the folder spelled plainly
   rm -f "$MO_K4/git.log" "$REC.argv"
   env VAULT_STATE_DIR="$TMP/state-v142-vr-ret" RUN_LOCK_WAIT=0 RUN_LOCK_POLL=1 WATCHDOG_POLL=1 WATCHDOG_GRACE=2 \
-    PATH="$MO_K4/shim:$PATH" MO_K4_MKTEMP="$MO_K4_MT" MO_K4_GIT="$MO_K4_G" MO_K4_GITLOG="$MO_K4/git.log" \
+    PATH="${MO_K4_CYG:+$MO_K4/cyg:}$MO_K4/shim:$PATH" MO_K4_MKTEMP="$MO_K4_MT" MO_K4_GIT="$MO_K4_G" MO_K4_GITLOG="$MO_K4/git.log" \
     MO_K4_MARK="$MO_K4/fired" MO_K4_SPELL="$MO_K4/tgt" MO_K4_REAL="$MO_K4/tgt" MO_K4_DECOY= \
     bash "$1/.claude/scripts/vault-retention.sh" >/dev/null 2>&1
   echo "$?"
@@ -6928,6 +6949,9 @@ else
   vr_rcalls="$(grep -c '' "$MO_K4/git.log" 2>/dev/null | tr -d ' ')"
   if [ "$vr_rc" -eq 0 ] && [ "${vr_calls:-0}" -ge 1 ] && [ "$vr_started" = yes ] && [ "$vr_rrc" -eq 0 ] && [ "${vr_rcalls:-0}" -ge 1 ]; then
     ok "vault-root-spelling: the control runs, the vault under a plain name -> the dream runner in command mode ran (0), called git ($vr_calls) and started its agent, and the retention runner ran (0) and called git ($vr_rcalls)"
+    # 1.5.0: the cygpath stand-in, which makes the platform read as Windows off
+    # it, only for the refusal legs (see where the K4 stand-ins are made).
+    MO_K4_CYG=1
     for vr_leg in dream-claude dream-command promotion-command retention; do
       vr_mode=
       case "$vr_leg" in
@@ -6957,6 +6981,7 @@ else
       fi
       tripwire_clear
     done
+    MO_K4_CYG=
   else
     bad "vault-root-spelling: the control runs, the vault under a plain name, did not run through the stand-ins (dream exit $vr_rc, ${vr_calls:-0} git call(s), agent started: $vr_started; retention exit $vr_rrc, ${vr_rcalls:-0} git call(s)), so the runner legs cannot show anything"
   fi
@@ -7041,6 +7066,9 @@ if v142_vault "$RF_V"; then
 else
   bad "runner-folder: the control pass's vault could not be made"
 fi
+# 1.5.0: the cygpath stand-in only for the refusal legs (see where the K4
+# stand-ins are made); the colon rule needs it off Windows.
+MO_K4_CYG=1
 for rf_leg in dream-claude dream-command promotion-command retention dream-colon; do
   rf_sp=rel rf_line="$RF_ABS" rf_mode=
   case "$rf_leg" in
@@ -7069,7 +7097,7 @@ for rf_leg in dream-claude dream-command promotion-command retention dream-colon
   rm -rf "$CASE_STATE" "$TMP/state-v142-rf-ret" "$MO_K4/git.log" "$REC.argv"
   if [ "$rf_leg" = retention ]; then
     env VAULT_STATE_DIR="$TMP/state-v142-rf-ret" RUN_LOCK_WAIT=0 RUN_LOCK_POLL=1 WATCHDOG_POLL=1 WATCHDOG_GRACE=2 \
-      PATH="$MO_K4/shim:$PATH" MO_K4_MKTEMP="$MO_K4_MT" MO_K4_GIT="$MO_K4_G" MO_K4_GITLOG="$MO_K4/git.log" \
+      PATH="${MO_K4_CYG:+$MO_K4/cyg:}$MO_K4/shim:$PATH" MO_K4_MKTEMP="$MO_K4_MT" MO_K4_GIT="$MO_K4_G" MO_K4_GITLOG="$MO_K4/git.log" \
       MO_K4_MARK="$MO_K4/fired" MO_K4_SPELL="$rf_sp" MO_K4_REAL="$MO_K4/tgt" MO_K4_DECOY= \
       bash "$RF_RV/.claude/scripts/vault-retention.sh" >/dev/null 2>&1
     rf_rc=$?
@@ -7093,6 +7121,7 @@ for rf_leg in dream-claude dream-command promotion-command retention dream-colon
   fi
   tripwire_clear
 done
+MO_K4_CYG=
 rm -rf "$RF_V" "$RF_RV" "$TMP/state-v142-rf" "$TMP/state-v142-rf-ret"
 # The retention runner makes its folders in TMPDIR when it starts with /, and in
 # /tmp otherwise; the plain mktemp -d it once fell back to read TMPDIR itself. A
