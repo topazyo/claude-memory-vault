@@ -50,7 +50,9 @@ ROOT="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "$0")/../.." && pwd)}"
 TODAY="$(date +%F)"
 
 # A scheduled pass sets this tripwire when it changed a steering or execution
-# surface (see "Containment" in lib/runner-common.sh). Until a human has read it
+# surface (see "Containment" in lib/runner-common.sh), when it was stopped and a
+# process may still be running, when it died before containment, or when the
+# runner's own folder for it changed while it ran. Until a human has read it
 # and deleted it, a clean report here would read as "the vault is fine", and the
 # commit gate would let the aftermath be committed. So refuse, loudly.
 # -L as well as -e: a dangling symlink planted at the path is not -e, and must

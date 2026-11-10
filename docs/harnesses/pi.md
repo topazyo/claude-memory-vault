@@ -174,7 +174,8 @@ without asking me.
 
 ```bash
 #!/usr/bin/env bash
-# pi-vault-agent.sh <prompt-file>
+# pi-vault-agent.sh <prompt-file>: keep it outside the vault and every folder a pass can write,
+# because its flags below are the switches this recipe rests on
 set -u
 case "${1:-}" in
   *dream-pass*)     tools=read,grep,find,ls,write ;;
@@ -195,10 +196,13 @@ exec pi --print --no-session --no-approve --no-extensions --no-skills --offline 
   already carries the agent's instructions. `--no-extensions` and `--no-skills` keep your personal
   extensions and skills out as well, and `--offline` stops Pi's own automatic network requests.
 - **No extension loads, this vault's included, so nothing refuses a read of `.env` or `secrets/`
-  during a pass.** Keep them out of the container: leave every `.env` and `.env.*` out of what you
-  mount, at any depth, and mount an empty folder over every `secrets/` folder. Adding
-  `-e .claude/adapters/pi/vault.js` would load the guard, since Pi loads an extension named with
-  `-e` even with `--no-extensions`, but it would also lint every write and could record a
+  during a pass.** Keep them out of the container: mount an empty file from outside the vault
+  read-only over the vault's `.env` (if the vault has none, create an empty one there yourself
+  first), as the README's container rule says, and over every other `.env` and `.env.*` at any
+  depth, and an empty folder over every `secrets/` folder, each of those names a file or folder in
+  the vault, not a link, and, where a file, with a single name (the README's step 5 says which).
+  Adding `-e .claude/adapters/pi/vault.js` would load the guard, since Pi loads an extension named
+  with `-e` even with `--no-extensions`, but it would also lint every write and could record a
   compaction into `20-projects/_logs/` during the pass.
 - Pi still loads its global `~/.pi/agent/AGENTS.md` and any `AGENTS.override.md`, `AGENTS.md` or
   `CLAUDE.md` in the folders above the vault. Those steer the pass, and the fence cannot see them.
@@ -207,12 +211,20 @@ exec pi --print --no-session --no-approve --no-extensions --no-skills --offline 
 - Leave `RUNNER_STALL_SECONDS` unset for this wrapper. `--print` may write nothing until it has
   finished, and with it unset a command-mode pass is never stopped for silence.
 
-Pi cannot confine `write` and `edit` to a folder. So run the wrapper in a container that mounts
-only the vault, without its secrets and with none of your home configuration, and whose only
-network route is your model provider. Pi's grep and find need ripgrep and fd, and Pi downloads
-them into `~/.pi/agent/bin` when it cannot find them, so put both in the image. Run the wrapper
-once against a scratch copy of the vault and diff the tree before you schedule it. Only then set
-`VAULT_ALLOW_UNENFORCED_TOOLS=1`.
+Pi cannot confine `write` and `edit` to a folder. So run the wrapper in a container that mounts only
+the vault, without its secrets, with its `.claude/` (its settings files mounted over it from copies
+without their hooks) and `.git` read-only (`docs/harnesses/README.md`, whose step 5 fails any name
+these mounts cover that is a link in the vault, or a file with more than one name) and with none of
+your home configuration, and whose only network route is your model provider. Pi's grep and find
+need ripgrep and fd, and Pi downloads them into `~/.pi/agent/bin` when it cannot find them, so put
+both in the image. Start a new container for each run, whose own filesystem is discarded at exit, as
+the README's container rule says: Pi keeps its state, its global `AGENTS.md` and the tools it
+downloads under `~/.pi/agent/` in the container's home. Run the wrapper once against a scratch copy
+of the vault and diff the tree before you schedule it, and run the check in
+`docs/harnesses/README.md`, "No vault hook in a scheduled pass", which shows that the vault's hook
+scripts do not run and that writes into `.git` and `.claude/` are refused, with
+`-e .claude/adapters/pi/vault.js` in place of `--no-extensions` as its positive control. Only then
+set `VAULT_ALLOW_UNENFORCED_TOOLS=1`.
 
 ## Known limits
 

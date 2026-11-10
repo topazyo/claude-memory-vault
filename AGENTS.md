@@ -219,10 +219,20 @@ of its own git steps could not be stopped it marks that lock so no later pass st
 `docs/reference.md` §4.3. When a pass changes a steering or execution surface (Obsidian plugins,
 `.claude/`, harness configs, instruction files, memory, git config or hooks), the runner restores
 it, quarantines what the pass wrote outside the vault, and sets `.claude/logs/runner-tripwire`. It
-sets the same tripwire when a stopped pass may have left a process running (`KILL_FAILED`).
-**If that file exists, stop and tell the owner.** Runners exit 78, or 75 after `KILL_FAILED`, and
-`vault-check.sh` refuses with the same 78 until the owner has done what the tripwire says and
-deleted it. Never delete it yourself.
+sets the same tripwire when a stopped pass may have left a process running (`KILL_FAILED`), or
+when the runner's own folder changed while the pass ran (exit 78).
+**If that file exists, stop and tell the owner.** Look for it with
+`ls -ld .claude/logs/runner-tripwire` rather than by reading it, and show its contents only as
+`/resume`'s step 0 says, because a link there could point at a secret. Runners exit 78, or 75 after
+`KILL_FAILED`, and `vault-check.sh` refuses with the same 78 until the owner has done what the
+tripwire says and deleted it. Never delete it yourself. **In an interactive session, stop and tell
+the owner too unless `ls -ld .claude .claude/logs` prints a line for `.claude` and every line it
+prints starts with `drwx`.** A link (`l`), a file (`-`) or any other mode can make the
+runners write the tripwire only to their state directory (`docs/reference.md` §4.3), so its absence
+here proves nothing; a `.claude/logs` that `ls` reports as `No such file or directory` is fine, and
+any other `ls` error is a stop. A scheduled pass is exempt: its runner checked both copies before it
+started. Leave that check to the owner rather than running `vault-check.sh`, which loads the vault's
+own scripts, and a pass may have changed those.
 
 The five skills in `.claude/skills/` cover the session lifecycle: `resume` (start),
 `obsidian-save` and `wrap-up` (end of a working block), `preserve` (medium → long promotion),
@@ -257,7 +267,7 @@ there. The table below is the summary.
 | Compaction stub | PostCompact hook | Shipped for Codex, Gemini CLI and Cursor; OpenCode's opt-in plugin and Pi's opt-in extension |
 | Read deny for `.env`, `.env.*`, `secrets/` | Enforced by `.claude/settings.json` for its file-read tool | Blocked by Windsurf's read hook, OpenCode's opt-in plugin and, for the paths its file tools name, Pi's opt-in extension; hidden from Cursor's agent and Gemini CLI's search by ignore files; **guidance only** everywhere else. No harness stops a shell command from reading them |
 | Skills | Slash commands | Read natively from `.agents/skills/` by Codex, Gemini CLI, Cursor, Copilot and OpenCode, and by Hermes and Pi once the project is trusted; elsewhere follow `SKILL.md` as a checklist |
-| Scheduled passes | `VAULT_AGENT=claude` (default); the agents' `tools:` allowlists are enforced | `VAULT_AGENT=command` with your own wrapper. **Refused** (exit 3) until `VAULT_ALLOW_UNENFORCED_TOOLS=1`, which you set only after sandboxing the wrapper so that neither pass has a shell or network access. The runner does the git work itself |
+| Scheduled passes | `VAULT_AGENT=claude` (default); the agents' `tools:` allowlists are enforced | `VAULT_AGENT=command` with your own wrapper. **Refused** (exit 3) until `VAULT_ALLOW_UNENFORCED_TOOLS=1`, which you set only after sandboxing the wrapper so that neither pass has a shell or network access, each pass's tools can write only inside the vault, and no hook runs in a pass, nor can a pass write anything that turns one on, nor, where the harness itself can run git (assume any can), the vault's `.git` or, with the commit gate on, its `.claude/` (`docs/harnesses/README.md` gives a check that the vault's hook scripts do not run and that those folders refuse a pass's writes, and says what the rest rests on). The runner does the git work itself |
 | Retention pass | No agent and no `VAULT_AGENT`, so nothing to select or sandbox. Plain git and shell | The same in every harness |
 | Template updates | No agent, no harness wiring and no schedule. A person runs `vault-update.sh` | The same in every harness. It reads and reports, writes only the manifest, reaches no network, and runs nothing out of the folder it is given |
 

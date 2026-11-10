@@ -25,6 +25,1155 @@ bash .claude/scripts/vault-update.sh --check --from ../template-new
 
 ---
 
+## 1.4.2 — 2026-11-10
+
+A hardening release for the scheduled runners, and a fix for `/resume`. Each runner now clears
+the inherited git settings that pointed git at another repository (with a `WARNING:`), refuses the
+spellings under which git read another folder than the runner meant, checks its own temporary
+folder before trusting what it holds, and, in claude mode, starts Claude Code with every hook but
+managed ones turned off (measured for the vault's and plugins' hooks; for the account's own,
+reasoned). `/resume` no longer briefs from the scheduled passes' own journals and reports, and stops
+when `.claude` or `.claude/logs` is a link or does not list as a folder whose owner can write it
+(`drwx`), because a tripwire may then be set in the state directory only. The command-mode sandbox
+now also requires that a pass runs no hook and cannot write the vault's `.git` (or, with the commit
+gate on, its `.claude/`), the harness README gives a check that the vault's hook scripts do not run
+in one and that those folders refuse a pass's writes, the container recipes mount an empty file
+read-only over the vault's `.env` and start a new container for each run, and the Aider guide's
+scheduled config sets `git: false`, which Aider documents as stopping its use of git (not measured
+for this release).
+
+### Security
+
+- **An inherited `GIT_DIR` sent a pass's commit into another repository.** With `GIT_DIR` naming
+  a second repository, a dream pass and a promotion pass in command mode on 1.4.1 each exited 0
+  with their commit landed there (measured on Linux), and nothing in the runner could see it:
+  git took the vault as that repository's work tree. The library now clears, as it loads, git's
+  own list of the variables that belong to one repository (the 15 names `git rev-parse
+  --local-env-vars` prints, git 2.55.0), and each runner logs a `WARNING:` naming the ones it
+  cleared. The variables that only change where git's search for a repository stops are kept,
+  because a pass commits only when git's top level is the vault itself, and so are those naming
+  the account's own configuration and tools. `vault-check.sh` and `vault-update.sh` load the
+  library in a subshell, so their own git calls still honour inherited values.
+- **On Windows, an inherited `MSYS2_ARG_CONV_EXCL` covering `core.` left git's `core.hooksPath`
+  in Git Bash's form**, so `git.exe` looked for its hooks in a folder under the drive root, which
+  another account could make (measured in Git Bash on 1.4.0 and 1.4.1's code). The library clears
+  `MSYS_NO_PATHCONV`, `MSYS2_ARG_CONV_EXCL` and `MSYS2_ENV_CONV_EXCL` as it loads; the last does the
+  same to the `GIT_INDEX_FILE` the retention runner hands git (reasoned). A `MSYS_NO_PATHCONV=1`
+  set for the whole account, which made every pass fail at its first git step, now lets it run
+  (measured in Git Bash with a dream pass in command mode).
+- **A vault spelled with a part ending in a dot made git read another folder's repository.** On
+  Windows, or wherever a `cygpath` is found on `PATH`, Win32 drops such a dot, so with a folder `v`
+  beside a vault `v.` git read the repository in `v` (measured in Git Bash). Every runner, in every
+  mode, now refuses such a vault, and one whose path holds a colon that is not a drive letter's or
+  whose last part ends in a space (both reasoned), before the state directory, the run lock or any
+  git call. On 1.4.1 a dream pass and a promotion pass in command mode, and the retention runner,
+  each ran on such a vault and called git (measured on Linux, the platform read as Windows through
+  a `cygpath` stand-in).
+- **A relative `TMPDIR` put the runner's own folder inside the vault.** `mktemp` returns a relative
+  path when `TMPDIR` is relative or starts with `~` (measured in Git Bash and on Linux), and the
+  runners have moved into the vault by then, so on 1.4.1 the dream and promotion runners made their
+  folder there and called git with that folder's hooks folder (measured on Linux, through a
+  `mktemp` stand-in); in command mode their agents then started. The retention runner did the same
+  only when a `mktemp` stand-in handed it a relative folder: its own rule takes `TMPDIR` only when it
+  starts with `/`, and a relative `TMPDIR` reached it only through the fallback the next item
+  describes. Every runner, in every mode, now refuses a temporary folder that is not an absolute
+  path (a drive path counts only under Git Bash, MSYS or Cygwin), and, on Windows or wherever a
+  `cygpath` is found, one holding a colon that is not a drive letter's: NTFS reads a part such as
+  `x::$INDEX_ALLOCATION` as the folder `x`, and MSYS leaves a path with a colon unconverted
+  (reasoned; on 1.4.1 a dream pass in command mode ran with such a folder, measured on Linux
+  through the stand-ins).
+- **The retention runner could make its folders, and its temporary files, inside the vault.** When
+  neither `$TMPDIR` nor `/tmp` could hold a folder it fell back to a plain `mktemp -d`, which reads
+  `TMPDIR` itself, a relative one included; and its git calls saw a relative `TMPDIR` as given (all
+  16 saw `TMPDIR=rel`, measured on 1.4.1, through stand-ins), so the library's own temporary files,
+  the watchdog's among them, follow it there (reasoned). The fallback is gone, so such a run
+  refuses with `could not create a temporary directory`, and the runner sets `TMPDIR` to `/tmp` for
+  the whole run when it does not start with `/`.
+- **The fence trusted a folder the pass could change.** The runner keeps its snapshot of the vault,
+  its backup of the steering surfaces and git's hooks folder in its own temporary folder. Measured
+  on 1.4.1 with stand-in agents in command mode, on Linux: with that folder removed, or with the
+  snapshot moved to a name holding a line break that forges the folder's listing, the pass exited
+  1, its writes kept and no tripwire set; with its write added to the snapshot, or the snapshot
+  replaced by a link, it exited 0; hooks planted in the hooks folder ran at the runner's commit; and
+  a link put at the name of the "after" snapshot had a file outside the vault written through. Each
+  runner now records the folder before the agent starts and again as soon as it returns, before
+  writing anything there. When the two differ, or the second cannot be made, the pass ends with
+  exit 78: an `UNVERIFIED:` line, the tripwire in a shape that says nothing was moved or restored,
+  no in-flight marker, and the pre-pass backup and the folder kept for review. When no tripwire can
+  be written the exit is 70 instead, with a `TRIPWIRE-ERROR:` line in place of the `UNVERIFIED:`
+  one and the in-flight marker kept. When the watchdog also stopped the agent, 78 or 70 takes the
+  place of 124 or 125, and the `TIMEOUT:` or `STALLED:` line is logged as well. Nothing is restored
+  on that path, so `.git/config`, `.git/hooks` and `.obsidian/` may still hold what the pass
+  planted: a `core.fsmonitor` command runs at the first `git status`, hooks run at git calls, and
+  Obsidian loads plugins (reasoned). The `UNVERIFIED:` line now says not to open the vault in
+  Obsidian or an agent session until it is reviewed, and to run no git command in it before the
+  steering surfaces have been compared without git with the pre-pass backup, or checked by hand
+  when there is no backup; with a backup it points to the tripwire for how. The tripwire says how:
+  git that starts on its own in a shell prompt or an editor counts as a git command; the backup is
+  unpacked into an empty folder with `tar -xf` and compared with the vault with `diff -r`, with
+  `--no-dereference` where that `diff` has it, so a link is compared rather than followed; where
+  `.git` is a file, the git folder it names is outside the vault and the backup, and is checked by
+  hand too; and a `.git` deeper in the vault, which `diff -r` shows only as a new folder above it,
+  is found with `find . -name .git` and its config and hooks checked. A link in `.claude/logs`, or
+  `.claude` itself as a link, is in neither the backup nor git, so links are listed with
+  `find .claude -type l`, and any the owner did not make is removed once what it names has been
+  checked. Then the rest is
+  reviewed, starting with
+  `git -c core.fsmonitor=false --no-pager status --ignore-submodules=all`, which starts no
+  fsmonitor command or pager and stays out of repositories nested in the vault, because a nested
+  repository's own config, which is not a steering path of the vault, would run at a plain
+  `git status` (reasoned). A backup an earlier pass kept is removed before the next pass copies
+  its own, and a copy that fails, or leaves something other than a regular file, now refuses the
+  pass with exit 1 before the in-flight marker and the agent; on 1.4.1 the copy was unchecked and
+  the agent ran after a failed one (measured), so an older backup could be named as the pass's
+  (reasoned). That covers a link already at the backup's name, which is removed before the copy,
+  and a copy that succeeds leaving a link, or nothing, there: on 1.4.1 such a link was followed and
+  the file it named overwritten, and a copy that left a link or nothing was taken and the agent ran
+  (measured on 1.4.1). The record holds each file's digest (`sha256sum`, else `shasum`, else
+  `cksum` with a `WARNING:`) and whether it has one link or more, refuses any name outside letters,
+  digits, dot, underscore and hyphen, and passes the watchdog's `run` and `gaps` only as regular
+  files with one link. Folders in it are recorded
+  as empty or not, never entered, and one that cannot be listed fails the record: on Linux a hooks
+  folder made searchable but not readable (`chmod 100`) listed as empty while a hook in it still
+  ran through its search bit (measured on Linux; on Windows `chmod` does not stop a listing,
+  measured in Git Bash), so such a folder now refuses the pass with exit 1 before the agent starts
+  (reasoned) and ends it with 78 after. The library also clears `GLOBIGNORE` as it loads, because
+  set before then it would hide names from both records (bash 5.3 does not take it from the
+  environment, measured in Git Bash and on Linux; bash 3.2 is unmeasured). The record does not see
+  a change undone before the agent returns, or one made after the check by a process still
+  running; with `cksum`, anyone able to write the folder can forge a match.
+- **The tripwire after a pass that never reached containment said the vault had been restored.**
+  The tripwire a signal writes before containment ran (`INTERRUPTED before containment. Tripwire
+  set.`, exit 130 or 143), and the one the next run writes from an in-flight marker a dead pass
+  left (exit 78), said that changed files were moved to the quarantine and restored from the
+  pre-pass backup, and sent the owner to `git reflog` (measured on 1.4.1). Containment never ran
+  on either path, so nothing was moved or restored, and `git reflog` honours the `core.pager`, as
+  `git status` runs the `core.fsmonitor`, of a `.git/config` the pass may have changed (reasoned).
+  Both now say "Nothing was moved or restored, because containment did not run." and give the
+  advice the `UNVERIFIED:` tripwire gives: check the steering surfaces against the pre-pass backup
+  without git, before any git command.
+- **After a signal before containment, the runner wrote its log through a symbolic link the pass
+  made.** Containment had not run, so a symbolic link the pass put in place of
+  `.claude/logs/<agent>.log` was still there, and the runner wrote the rest of its lines through it
+  (measured on 1.4.1; through a link at `.claude` or `.claude/logs`, reasoned), so a command-mode
+  pass could make the runner append to any file the account can write through a symbolic link. The
+  78 path above leaves such a link in place too, and so does a pass that ended there or died, for
+  the next run: on 1.4.1 that run wrote its `TRIPWIRE:` refusal, or the line it writes from a dead
+  pass's in-flight marker, through a link at the log, and a run that waited for the run lock wrote
+  its refusal through a link the log became while it waited (measured on 1.4.1, each for every
+  runner). On all three paths, when the log, `.claude` or `.claude/logs` is a symbolic link,
+  `.claude/logs` is not a folder, or the log is there and not a file, the runner now writes the rest
+  of the run's lines to `dream-pass.uncontained.log`,
+  `promotion-pass.uncontained.log` or `vault-retention.uncontained.log` in the state directory,
+  with a `WARNING:` there, and a tripwire it writes says so. The retention runner's printed lines
+  carry the `WARNING:` once when the run could keep its own copy of them; when it could keep none,
+  or could not read it back, it prints instead that the lines are only in the state directory's
+  log, and names it. A later run checks as soon as its state directory is known, before its run
+  lock, whenever the tripwire or the passes' in-flight marker (`runner-inflight`) is there in
+  either copy, and again once it holds the lock, because the pass holding the lock could make the
+  link, and set the tripwire, while the run waited. A line logged before the first check, in every
+  runner (a setting's warning, the state-directory error, the `WARNING:` naming the git variables
+  the runner cleared, or the `ERROR:` refusing the vault's spelling), still goes to the vault's log
+  path, and opening
+  the log there may create, empty, a file a link at it names. A line a dream or promotion run logs
+  while waiting for the lock (a stale-lock line, or the `LOCKED` line when the wait runs out) goes
+  where the first check left the log: to the state directory when that check moved it, otherwise
+  to the vault's log path. The retention runner passes on the lines it logged while waiting only
+  after its second check, so they go to the state directory too, when it could keep its own copy of
+  its lines and was not stopped while waiting; otherwise they too go where the first check left the
+  log (reasoned). The signal handler checks only after it has stopped the agent's process tree,
+  so a link that a process the stop reaches makes once it is reached is found too, where 1.4.1
+  wrote its lines through such a link (measured on 1.4.1); a process that has left the tree and
+  its process group is neither
+  stopped nor recorded (reasoned).
+  Besides the lines listed above as still going to the vault's log path, these are still open, and
+  carried to a later release, each needing a command-mode pass with a shell, which `docs/setup.md`
+  says not to give it (what the harness itself runs during a pass could give one all the same,
+  reasoned: the vault's own hooks, where the wrapper left them on, git, which runs what the vault's
+  git configuration and hooks name, or a tool the harness starts by itself (carried); so
+  `docs/setup.md` now asks for hooks off too, and for the vault's `.git`, and, with the commit gate
+  on, its `.claude/`, out of a pass's reach, the Aider guide sets Aider's documented `git: false`
+  (not measured for this release) and the container recipes mount `.claude/` and the vault's `.git`
+  read-only, while whether the Codex and Gemini CLI sandboxes leave those folders writable is
+  carried; see Changed): a hard link at a log, which has the runner append its lines, names the pass
+  chose included, to the file it shares, and one at `.claude/logs/dream-pass.git-state.txt`, which
+  has the next dream run empty that file and write `git status`, those names included, into it; a
+  FIFO at a log, which blocks every later run of that runner at the log's first write, before any
+  check, and one at the git-state file, which blocks the next dream run while it holds the run lock,
+  so a promotion run is refused with 75 and every later dream run blocks the same way, each with no
+  tripwire at all, an outside time limit ending each run; and a symbolic link containment cannot
+  move, as in a `.claude/logs` made read-only, which the runner still writes through (measured with
+  this release; 1.4.1 behaves the same; the FIFO at a log measured for the dream runner only, and on
+  1.4.1 by reading). A process that outlives the pass can also give the vault's `runner-tripwire` a
+  second name, and a later note is then appended to the file it shares, and, after a stop that could
+  not end it, put a link at the log once containment has run, so the runner's later lines go through
+  it (both reasoned).
+- **The vault's copy of the tripwire was written through a name a pass could work out.** The
+  runner copied it first to `runner-tripwire.tmp.<pid>`, a name a command-mode pass could work out
+  from the runner's pid in the vault's in-flight marker, and `cp` followed a link planted there: a
+  file outside the vault was written through it, and the vault's tripwire was not a file (measured
+  on 1.4.1). A note added to the tripwire was written through a linked `.claude/logs` too (measured
+  on 1.4.1), the vault's in-flight marker was copied the same way, a link planted at
+  `runner-inflight.tmp.<pid>` having a file outside the vault written through it (measured on
+  1.4.1), and a link to a folder at the tripwire's own name had the copy moved into that folder,
+  outside the vault, leaving the vault's tripwire not a file (measured on 1.4.1). The vault's
+  copies of the tripwire and of the marker now go first into a file `mktemp` makes, or, where
+  `mktemp` fails or makes no file, so the tripwire still does not depend on it, into one made under
+  a name from `$RANDOM`, refused when anything is already there, because a pass can read the clock
+  and the pid that seed `$RANDOM`, and created with noclobber, which refuses a file, a link to a
+  file or a dangling link put there after that check but still opens a device or a FIFO (the seed,
+  and the device and FIFO race, which only a process still running could win, reasoned); neither
+  copy nor a note is written while `.claude` or `.claude/logs` is a link; a link at the copy's own
+  name is removed before the copy is renamed into place, because `mv` would otherwise move the
+  copy into a folder the link names, and nothing is written when that link cannot be removed, as
+  an immutable link on macOS can make it (the cause reasoned).
+  While `.claude` or `.claude/logs` is a link only the state directory's copies are written; the
+  runners read both copies of each, and `vault-check.sh` the tripwire's, so they still refuse.
+- **A pass that removed the runner's folder and then signalled its runner was not stopped.** The
+  signal handler recorded its stop in the runner's folder for the pass. On 1.4.1 a pass that
+  removed that folder and then sent its runner TERM was still running after the runner exited
+  (measured on 1.4.1), and would run on until its own end or the watchdog's timeout (reasoned),
+  and a link put at the folder had the stop's record written through it (measured on 1.4.1). The
+  stop is now recorded in the state directory (`signal-stop.<pid>`), and once the runner's folder
+  for the pass has been made, the agent's process tree is stopped whether or not that folder is
+  still there.
+- **A signal copied what a link at `run` named into the state directory.** Before the pass's
+  output reached the run log, the signal handler kept it by copying the runner's `run` file, and
+  followed a link put there to whatever it named (measured on 1.4.1), so a command-mode pass could
+  have the runner copy any file the account can read into the state directory. The signal handler
+  and the 78 path now keep no output when `run`, or the runner's folder itself, is a link, and the
+  78 path logs `WARNING: the run output, …, is missing, is not a regular file or is in a folder that
+  is a link, so it was not kept.`
+- **Hooks ran inside every claude-mode pass.** Hooks in enabled plugins
+  and in the vault's own settings ran inside the unattended pass, as the account, with a shell the
+  agent's allowlist never sees, and so, by the same route, would hooks in the account's own settings
+  (reasoned). With 1.4.1's settings file, Claude Code 2.1.301 ran a probe folder's
+  own hooks and plugins' `SessionStart` and `Stop` hooks, one of which wrote a file outside the
+  folder; with the runner's file now holding `"disableAllHooks":true`, it ran none, and the
+  account's `CLAUDE.md` was still sent in the request (measured on Windows, `-p`); a live dream
+  pass through the 1.4.2 runner ran to its journal (measured). The probe held no hook in the
+  account's user settings, nor in an agent's or a skill's frontmatter, so that the line turns those
+  off too is reasoned, not measured. Hooks from managed settings are not
+  turned off (measured 2026-09-15 on an earlier version), and MCP servers, and the commands a
+  settings file names outside hooks, still start (reasoned). The new line is measured on 2.1.301
+  only.
+
+### Changed
+
+- **`/resume` skips the dream journals and promotion reports.** It read the three newest files in
+  `20-projects/_logs/`, skipping only templates and compaction stubs, so in a vault where the
+  passes run it briefed from their proposals and results as if they were the last session's work.
+  Both copies of the skill, `docs/agent-onboarding.md`'s spelled-out form and `docs/reference.md`
+  now name `dream-*.md` and `promotion-*.md` too.
+- **`/resume` stops when `.claude` or `.claude/logs` is a link or does not list as `drwx`.** While
+  either is a link, the runners now write their tripwire to the state directory only (see
+  Security), as they do when `.claude/logs` is a file or a folder they cannot write, so `/resume`,
+  which reads the vault's copy, would brief as if none were set. Both copies of the skill and a new
+  first step in `docs/agent-onboarding.md`'s spelled-out form now run `ls -ld .claude .claude/logs`
+  first and stop unless it prints a line for `.claude` and every line starts with `drwx` (a missing
+  `.claude/logs` is fine), and look at the tripwire with `ls -ld` before reading it, without running
+  any of the vault's scripts, which a pass may have changed. `AGENTS.md` adds the same folder check
+  for an interactive session. The test reads the mode bits `ls` prints, not whether the runner can
+  write, so a folder that lists as `drwx` but refuses the runner (a Windows ACL, a macOS `uchg`
+  flag, or a folder another account owns) still lets `/resume` brief; that case is carried to a
+  later release.
+- **The command-mode sandbox text covers both passes.** The Codex, Copilot, Cursor, Hermes and
+  OpenCode guides took the shell away for the dream pass only, against `docs/setup.md`, which asks
+  it for the dream pass and the promotion pass alike; they now say both passes, and the Codex
+  guide's wrapper gives both its profile with Codex's shell tool off, and the OpenCode wrapper picks
+  an agent for each. `AGENTS.md`, the harness README and the Aider, Codex, Copilot, Cursor, Gemini
+  CLI, Hermes and OpenCode guides now also say that each pass's tools may write only inside the
+  vault.
+- **The command-mode sandbox now requires every hook off, and the vault's `.git` out of a pass's
+  reach.** The hooks the template ships for interactive sessions (`.claude/settings.json`,
+  `.codex/hooks.json`, `.cursor/hooks.json`, `.github/hooks/vault.json`, `.gemini/settings.json`,
+  `.windsurf/hooks.json`, Hermes's snippet, OpenCode's plugin and Pi's extension once enabled, and
+  the commit gate's `pre-commit`) run scripts inside the vault after a write, at a compaction or at
+  a commit. A command-mode pass whose tools can write the vault could change such a script and get a
+  shell through the next hook, whatever its shell tool was set to, so taking the shell tool away, as
+  the guides did, was not enough (reasoned). With a stand-in agent that was itself a shell, on
+  Linux, a script changed and put back before the agent returned left the runner nothing to see
+  (exit 0, no tripwire); left changed, it was contained with a tripwire (measured). Whether each
+  harness runs project hooks in its non-interactive mode was not measured for this release on any
+  harness but one: Copilot CLI 1.0.86 runs the vault's repository hooks in `-p` mode in a folder it
+  trusts (measured on Windows, 2026-10-18). A harness can also run git during a pass, and git runs
+  what the vault's git configuration and hooks name, which a pass could write too (reasoned).
+  `docs/setup.md`, `AGENTS.md` and the harness README now require that a scheduled pass runs no hook
+  and can write nothing that turns one on, nor, where the harness itself can run git (assume any
+  can), the vault's `.git` or, with the commit gate on, its `.claude/`, and the README gives a check
+  every recipe must pass: on a scratch copy of the vault, below whose root the host's own list of
+  mounts, read as below, its control included, but in the shell the check runs from, shows none
+  before any other write (one there leaving the check not verified until the copy is made at another
+  path with none, a reading that control does not let be trusted until one whose control fires is
+  used, and a copy on a mapped drive, whose share a server serves, this host included (on Windows,
+  a drive that `net use` lists in the shell the check runs from; whether a share is caught when it
+  is reached another way, or from WSL, Linux or macOS (a network path, a share mounted there, a link
+  or mount above the copy's root that leads to one), stated open), until the copy is made on a local
+  drive), in whose root and whose `.git`, `.claude/`, `.claude/hooks/` and `.claude/githooks/` an
+  empty marker is put before any
+  other write and seen, and then found nowhere in the vault's folder, links not followed, nor in the
+  folders the vault's own four resolve to or name, with any shared folder that one names, by a
+  search that honours no ignore file (which rests on the tool: reasoned), reports no folder it could
+  not read, and is seen to find a file known to lie in the vault's root, in each of those four
+  folders and each folder they resolve to or name, and three folders down outside `.claude/`, as the
+  README's step 1 says, whose root and four folders are seen to be folders, not files or links, by a
+  link test first seen to show a link made for the purpose in a scratch folder outside the vault and
+  the copy, to a scratch folder holding a file, and then removed by its own name (on Windows a
+  junction and, where the account can make one, a symbolic link, a kind it cannot make stated open),
+  and to resolve outside the vault and outside every folder the vault's own resolve to or name, with
+  every script in its two hook folders a file with a single name, read by a count first seen to read
+  2 on a file given a second name for the purpose in a scratch folder outside the vault and the
+  copy, on the file system that holds the file read, then removed, not a link, before its hook
+  scripts are replaced with canaries, each run once by hand and seen to write at the copy's root
+  (else the check is not verified: a link test or a count whose control did not show is replaced and
+  read again, a search that misses a known file or cannot read a folder, where no search the step
+  trusted came earlier in the check, is put right (never by moving out a folder the clause below
+  that begins "except as follows" keeps) and the step started again (where one did, failing the
+  check as the removal's search does below, no such folder moved out of the vault), and, for a
+  marker found, every marker found is removed and the step is started again on a copy
+  of its own at a path of its own outside the vault, not a link; a marker put in one of the copy's
+  five folders and found in the matching folder of the vault, or a folder that one resolves
+  to or names, shows that folder of the copy to be the vault's own under another path (a link or
+  junction at or above it, a mount at or above it, a substituted or mapped drive, another spelling
+  of the vault's path, or the vault's own path), at or through which nothing is removed but a link,
+  junction, mount or drive at or above the copy's root that the owner made for it, a link or
+  junction at one of the copy's four folders, or a mount there the owner made (a link or junction by
+  its own name, a mount by unmounting it, a drive by removing it), and nothing more where that
+  folder is the copy's root, and otherwise what is left of the copy removed as below; where the
+  marker put in the copy's root lies in a folder of the vault below its root that is not, and does
+  not lie inside, a folder the owner made for the copy (where that cannot be told, it is not one),
+  nothing of that folder is removed by any branch, a link, junction or mount below it included, but
+  the markers found, nor anything of the copy but a link, junction, mount or drive at or above its
+  root that the owner made for it, each as above, and the check fails; nor is anything of such a
+  folder removed or moved by the stop in the README's step 5 for a marker found in the vault or by
+  the README's step 6 remedy, but the markers found and what the clause before it allows (the taking
+  out by hand, in the README's step 6, of a change that can be told to be the check's, by editing
+  the file, removes and moves no file, and so this rule does not bar it); where no marker lies in a
+  matching folder, a copy found inside the vault (its root's marker in a folder of the vault below
+  its root, the other four in that folder's own four) is removed there too, by that path, only where
+  the folder of the vault it lies at is, or lies inside, a folder the owner made for the copy (where
+  that cannot be told, it is not one), and otherwise nothing of that folder is removed but the
+  markers found, nor anything of the copy but what the clause on a folder of the vault the owner did
+  not make for the copy allows, and the check fails; where its root's marker was found in a folder
+  of the vault below its root, that folder is seen gone after the removal, one still there, which
+  may hold what the copy wrote into the vault, failing the check, with step 6's remedy made before
+  the step is started again: removed there, by that path, as the README's step 1 says (unless the
+  stop in the README's step 5 for a marker found in the vault, or the README's step 1 re-read, left
+  it in place), only
+  where it is, or lies inside, a folder the owner made for the copy (where that cannot be told, it
+  is not one), and otherwise left and checked by hand, the check then run again on a copy given
+  folders of its own outside the vault; a removal of a copy
+  (never one the stop in the README's step 5 for a marker found in the vault leaves in place) after
+  the folder test or the canary run, after a later step, or once the check is over first puts the
+  marker, through the path the copy is removed by and in the shell it is removed from, in the copy's
+  root and, where it has one, its `.git/` again and looks for it as the
+  README's step 1 says, one found in the vault, other than inside a folder the owner made for the
+  copy there (where that cannot be told, it is not one), showing the path to be the vault's own, so
+  that nothing of it is removed but a link, junction, mount or drive the owner made for the copy,
+  each as above (none below a folder of the vault kept as above), and the markers found, the known
+  files then seen, one missing failing the check,
+  and, during the check or once a check that stopped before the README's step 5 is over, that stop
+  followed for a marker found in the vault; where the path is shown to be the vault's own once a
+  check that reached the README's step 5 is over, no stop made, the vault looked at by hand, without
+  git, as that stop says, for a `hook-canary` where the marker is looked for, for the rest of what
+  the README's steps 1 to 4 wrote and for what its step 5 wrote (its control files, any file whose
+  name starts with `probe-ro`, and what its passes wrote or changed, compared with a copy the owner
+  trusts, made before the check began and kept outside the vault and every copy (none failing the
+  check; what was found listed, each file of it and what else the check could have written or
+  changed, the steering surfaces among them, checked by hand, any change that can be told to be the
+  check's taken out by hand, the current form of each file so changed first copied outside the vault
+  and every copy, and only once each file so checked is settled (a file known to be one the check
+  changed, other than one put back from a copy the owner trusts, settled only once brought back, by
+  editing it, to its form before the check) a copy to trust made, kept outside the vault and every
+  copy, any file still not told listed beside it and never taken as the owner's, before the check is
+  run again on a copy given folders of its own outside the vault at another path, as the README's
+  step 6 says), a file that cannot be told to be the check's or not counted as the check's for the
+  verdict, the README's step 6 saying what is done
+  with it, a commit not seen without git), one found failing the check, the vault then cleaned up as
+  the README's step 6 says (a file the check changed put back from a copy the owner trusts, its
+  current form first moved out of the vault and every copy, never
+  removed; `rm` used only on a file known to be one the check
+  wrote; one that cannot be told moved outside
+  the vault and every copy, never deleted; with no copy the owner trusts, and for a file known to be
+  one the check changed that a copy the owner trusts does not hold, nothing put back or moved, any
+  change that can be told to be the check's taken out by hand, the current form of each file so
+  changed first copied outside the vault and every copy, and only once each is settled, as above, a
+  copy to trust made, kept outside the vault and every copy, any file still not told listed beside
+  it and never taken as the owner's, as that step says), and the copy left in place, nothing of it
+  removed but what the owner made for it, as above, and otherwise its verdict standing unless a
+  known file is missing, a search after a trusted one reports a folder it could not read or misses a
+  known file the earlier one found, no copy the owner trusts was made before the check began, or the
+  marker put in the copy's root was found in a folder of the vault below its
+  root that is not, and does not lie inside, one the owner made for the copy (each failing the
+  check, the last as the clause on a folder of the vault the owner did not make
+  for the copy says); a marker that cannot be put or seen (the search made all the same, and the
+  steering surfaces checked by hand, without git, as the README's step 5 says, before any git
+  command), or a search that cannot be trusted, leaves the copy in place, nothing of it removed and
+  any new copy made at another path, except as follows (where a search the README's step 1 trusted
+  came earlier in the check, the removal's search, or the step's own search when it starts again,
+  reporting a folder it could not read, or not finding a known file the earlier search found,
+  counted as a write that reached the vault (the check's for the verdict where its source cannot be
+  told), and failing the check, not leaving it not verified, once the check is over too, whatever
+  verdict it had reached, no such folder moved out of the vault: the steering surfaces checked by
+  hand, without git, as the README's step 5 says, before anything else, then each such folder made
+  readable again, nothing moved, any steering surface in it checked by hand, without git, as the
+  README's step 5 says, before any git command and before any put-back, the markers looked for again
+  as the README's step 1 says before any clean-up (one found in the vault read as above, the clause
+  on a folder of the vault the owner did not make for the copy included; a search still not trusted
+  leaving the check failed and the copy in place and a folder it could not read kept as that clause
+  keeps one, the README's step 6 limits on such a folder included, and not moved out of the vault
+  when the README's step 1 starts again, in that check or a later one, the keep and this bar each
+  lasting until, once it is made readable, any steering surface in it is checked by hand, without
+  git, as the README's step 5 says, before any git command, the folder checked by hand as the
+  README's step 6 says, and a search that can be trusted has looked there), and the known files seen
+  through the vault's own path as after a removal, one missing failing the check, any new copy then
+  made only as the README's step 6 says); in every other case the markers are removed and the
+  removal goes on as below, the folder the root's marker was found in, where that was in the vault,
+  then seen gone, one still there failing the check; nothing of a copy on a mapped drive (told as
+  above, in the shell it is removed from), whose share a server serves, this host included, is
+  removed through the drive, though a drive made for the copy may be, as above, any new copy then
+  made on a local drive; every removal of a copy (never one the stop in the README's step 5 for a
+  marker found in the vault leaves in place), during the check or
+  once it is over, is made only
+  after the host's own list of mounts, read as step 5 reads it, in the shell the copy is removed
+  from, for mounts at or under the copy, its path spelled as step 5 spells the paths it compares,
+  and trusted once the same reading over a folder that is not itself a mount and below which the
+  list shows one has listed that mount and, read over that mount's own folder, has listed it as
+  well (on Linux and in WSL, `/sys/fs`, which holds
+  `/sys/fs/cgroup`, for one, measured in WSL), or, on Windows, where the list shows no volume
+  mounted at a folder, once it has shown the volume mounted at the root of the drive that holds the
+  copy, or, for a substituted drive, of the drive its folder
+  lies on (none then lying at or under the copy: reasoned; a folder mount's reading stated open
+  where none can be made), shows each mount at or under the copy that the owner made unmounted and
+  none left there (a control that cannot be made or does
+  not list, another mount there, one that cannot be unmounted, or no command passing the control
+  below leaving the old copy in place, nothing of it removed, and, during the check, sending the new
+  copy to another path), and
+  then after each link at its root or four folders is removed by its own name (the root's
+  alone, where the root is one; the two hook folders' only where `.claude/` is not one), never by a
+  path ending in `/` or `\` or through it, with a command first seen, spelled as it will be used, to
+  remove a link of each kind the account can make (what it does to another kind stated open), made
+  for the purpose in a scratch folder outside the vault and the copy, to a scratch folder holding a
+  file, and a scratch folder holding such a link, leaving the file each time, the rest then removed
+  with that command; in every case the vault's known files, a sample, seen in place afterwards, one
+  missing failing the check, the vault's steering surfaces then checked by hand, without git, as the
+  README's step 5 says, before anything else, then each known file found missing put back (never
+  through a link, junction or mount on its path at or below the vault's root unless the owner has
+  checked by hand that it is their own and stood there before the check began, the file otherwise
+  staying still missing, whatever a later look sees, until the owner can tell) from a copy the owner
+  trusts, made before the check began, that holds it, and the rest of what the check
+  wrote or changed cleaned up as the README's step 6 says (a known file still missing not settled,
+  no copy to trust made until it is settled, and the check, by any route the README gives, run
+  again, step 1 started again, or a later check begun, only once no known file is still missing,
+  that is, each known file the README's step 1 names, each one found missing included, seen back in
+  the vault where the README's step 1 search looks for it, through the
+  vault's own path (for a folder outside it that the vault names, through the path it names),
+  without git (one that look does not see found missing, and the check failed, as the README's step
+  1 says for a search that follows one it trusted, the README's step 6 route after such a search
+  included), and, for a folder the README's step 1 clause, or the Aider guide's, that begins "except
+  as follows" keeps, only once that folder has been made readable, any steering surface in it
+  checked by hand, without git, as the README's step 5 says, and the folder checked by hand as the
+  README's step 6 says); a canary's record found where the marker is looked for fails
+  it, the stop in the README's step 5
+  for a marker found in the vault then followed (nothing of the copy removed but what the owner made
+  for it), the vault cleaned up as the README's step 6 says, its hook scripts among the surfaces
+  checked by hand and any a canary replaced put back from a copy the owner trusts, made before the
+  check began, and that clean-up made through the vault's own path (through the copy's only where
+  that is the vault's own path itself, not another path to the vault; a path that cannot be told
+  being another path; no limit of the README's step 1 or of its step 5's stop on what is removed of
+  the copy barring the clean-up's putting back, its moving out of a file's current form or of a file
+  that cannot be told, or its `rm` of a file known to be one the check wrote, but the clause on a
+  folder of the vault the owner did not make for the copy; and where the copy's path is the vault's
+  own path itself, the copy, being the vault, never removed, nor anything of it removed but the
+  markers found and what that clean-up's moving out and `rm` remove), and, there and wherever
+  the README's step 5 itself says to remove what it wrote, a file the check changed put back from
+  such a copy, never removed, its current form first moved out of the vault and every copy
+  (`rm` used only on a file known to be one the check wrote), one that cannot be told moved outside
+  the vault and every copy, never deleted, nothing put back, moved or removed in a folder of the
+  vault the owner did not make for the copy, kept as above, but the markers found and what that
+  clause allows, that folder checked by hand, any change that can be told to be the check's taken
+  out by hand there, with or without such a copy, by editing the file, no file being put back,
+  removed or moved, its current form first copied outside the vault and every copy, and any file of
+  that folder the check wrote or that cannot be told listed beside the next copy made to trust,
+  never taken as the owner's, that copy made only once that folder is checked, each such change
+  taken out and each file there known to be one the check changed, other than one it wrote, settled
+  as below; for every file of the vault, in that folder or not, with no such copy, and for a file
+  known to be one the check changed that such a copy does not hold, nothing put back or moved, the
+  `rm` limit and that folder's rule still holding: what was found listed, each file of it and what
+  else the check could have written or changed checked by hand, the steering surfaces among them as
+  the README's step 5 says, any change that can be told to be the check's taken out by hand, each
+  such file's current form first copied outside the vault and every copy (in that folder too, by
+  editing the file, no file being put back, removed or moved), and only once each is settled (a file
+  known to be one the check changed, other than one put back from such a copy, settled only once
+  brought back, by editing it, to its form before the check) a copy to trust made, kept outside the
+  vault and every copy, any file still not told listed beside it and never taken as the owner's,
+  before the check is run again; the check then run again on a copy given folders of its own outside
+  the vault at another path; once the search has found each known file and no marker, the copy's
+  markers removed, the one in its `.git/` apart; the marker search does not depend on spelling
+  (measured on Windows), while the resolved comparison, on Windows, can read one folder spelled two
+  ways as two), the wrapper fires none, where the same wrapper with the measure taken away fires
+  one. A control that fires no canary leaves the check not verified, never passed (a `hook-canary`
+  found where step 1 looks for the marker failing it, with step 1's route for one found after its
+  canary run then followed, and
+  otherwise a copy folder found to be a link
+  sending the check back to step 1 on a copy of its own), and on a switch route the container is
+  then the way on, where the check is run again. The check shows that the wrapper, the container
+  definition, the switch file and the files they rest on, the home folders of the account the runner
+  runs as (the one the schedule's environment names and the account's own, where they differ; on a
+  switch route, the harness's too, the one the wrapper names among them), and every file of the
+  class `docs/setup.md` names in its `UNVERIFIED` troubleshooting row that the runner or the harness
+  reads at the per-user or the system level, or place named for one (in a container, outside the
+  vault's mount too, with no other mount of a folder or file of the vault at or above them, the
+  README's step 5 saying which), lie outside the vault and the copy, by their resolved paths (one
+  inside, by any of its names, fails the check, and so does a folder this check requires outside
+  both, or on a switch route a folder that holds the switch file or the wrapper, that holds the
+  source of a mount in the host's own list from outside both whose target lies below the vault's or
+  the copy's own folder), each file with a single name (a link count of 1, read by a count first
+  seen to read 2 on a file given a second name for the purpose in a scratch folder outside the vault
+  and the copy, on the file system that holds the file read, then removed, else the step not
+  verified) or each of its names, as many as its count, found outside both, and no file or
+  folder among them at or under a folder or file of the vault mounted elsewhere on the host, nor at
+  or under the source of a mount from outside both into the vault or the copy, by the host's own
+  list of mounts read as the README's step 5 says (each source and target spelled as an absolute
+  path on the host, a source another listed mount also shows spelled through that mount as well, the
+  list seen to show the mount that holds the vault, and a source spelled through another mount or on
+  a share this host serves seen to show what its target shows; a list of mounts that cannot be read
+  or does not show the vault's, a source that cannot be spelled or seen that way, or a pass-through
+  file system, such as an overlay, not a bind mount or a share, mounted below the vault's or the
+  copy's own folder leaving the step not verified), once a path inside the copy and one inside the
+  vault have each read as inside, each spelled every way the paths compared reach the check, whether
+  a file or a link's target spells them so (a short 8.3 name, another letter case, a substituted or
+  mapped drive, a second path the host gives a folder above the vault or the copy, as WSL does for
+  the distribution's root by default), unless the resolver used is seen, on that host, to turn each
+  such spelling of the vault's and the copy's paths into the one compared, that the host's own list
+  shows no mount at or under the vault's or the copy's `.git` or `.claude/`, nor any whose source
+  lies there and whose target lies elsewhere in either (on a switch route, one whose target lies
+  outside both leaving the step not verified), nor a mount of a folder or file of either at or under
+  a copy outside both that the definition mounts read-only, and that no link below their `.git` or
+  `.claude/` leads outside the one it lies below (the links listed only once the listing has shown
+  control links made for the purpose in the copy's `.git` and `.claude/`, each to a scratch folder
+  outside both holding a file and then removed by its own name, never by a path ending in `/` or
+  `\`, a listing that does not show every one of them, or that cannot be made, leaving the step not
+  verified, and on Windows a symbolic link, where the account cannot make one, stated open), that
+  the vault's `.git` and `.claude/` on every route, and in a container each other name in the vault
+  that the mounts cover (the harness's own folder, the `.claude/settings.json` and any
+  `.claude/settings.local.json` the container rule mounts over, `opencode.json`, `.env`, and the Pi
+  guide's `.env`, `.env.*` and `secrets/` at any depth), are folders or files, not links, and, where
+  files, have a single name (a link count of 1), each failing the check where it does not, read in
+  the vault by a link test first seen to show links made for the purpose in the copy, to a scratch
+  folder outside both holding a file and to that file, as links (then removed, each by its own name,
+  never by a path ending in `/` or `\` or through it, as the README's step 1 says), and by a link
+  count first seen to read 2 on a file given a second name for the purpose in a scratch folder
+  outside the vault and the copy, on the file system that holds the name read, a kind of link the
+  account cannot make stated open (where the vault's `.git` is a file, not a link, the folder it
+  names, and any shared folder that one names, standing in its place and lying outside both, and, on
+  a switch route, a vault whose `.git` is such a file leaving the step not verified; a link at a
+  folder above one of the Pi guide's names not looked for, reasoned and carried; a second name for
+  any other file under the vault's `.git`, or the folder a `.git` file names, or its `.claude/` not
+  looked for, reasoned and carried, since a clone made from the vault on the same disk shares the
+  object files under `.git` with it by hard links and in a container a pass cannot give a file under
+  the read-only mounts a second name through them (each measured; on a switch route that rests on
+  the sandbox), so what stays open is a second name made outside a pass and, on a switch route, one
+  the sandbox would let a pass make, which the check does not sample), that the vault's hook scripts
+  did not run, and that writes into the copy's `.git` and `.claude/` are refused, once step 1's
+  canary and the marker in the copy's `.git/` are seen from where the harness runs, and the marker
+  absent from the vault (else not verified until they are, a marker found in the vault removed,
+  nothing of the copy removed, now or later, but a link, junction, mount or drive made for it, each
+  as the README's step 1 says, since one marker cannot show which of the copy's folders are the
+  vault's, the known files seen, a `hook-canary` looked for where the marker is looked for and the
+  vault looked at by hand, without git, for the rest of what steps 1 to 4 wrote into the copy (among
+  them a canary in place of one of the vault's hook scripts, which the known files cannot show, step
+  4's probe, and what its passes wrote), any of them found failing the check, and in either case,
+  after step 6's remedy where it fails, the check sent back to step 1 on a copy at another path),
+  with a write the pass may make as that step's control (from a shell in the schedule's own
+  container, each pass's where the wrapper sets them up differently, opened as the user the harness
+  runs as, which must not be the superuser and whose home folder must lie outside the vault's mount,
+  with no other mount of a folder or file of the vault at, above or inside it, the README's step 5
+  saying which, once the definition shows a new container for each run, which the runtime removes at
+  exit, and every mount the README's rule and the guide require, and the container runtime's own
+  listing shows every mount over or inside the vault but the vault's own, every mount of a file the
+  wrapper or a switch rests on, and every mount over a hook or settings file a harness reads from
+  the container's home, read-only, and any other writable mount discarded at exit, and that shell's
+  own list of mounts, once it shows the definition's read-only `.git` mount with the vault's `.git`
+  (in the check's run, the copy's) as its source, shows each mount at or under one that must be
+  read-only as read-only too, and none of them, the `.git` and `.claude/` mounts apart where their
+  sources are the vault's own (in the check's run, the copy's), having a folder or file of the vault
+  or of the copy, or a folder that holds either, as its source (a source read as a file system and a
+  path within it, those of the vault, the copy and any folder of either located from the host's own
+  list, and the step not verified where that cannot be told); and each hook or settings file the
+  guide mounts in that home, and each folder above it up to the home folder, that folder included,
+  seen to be a file or folder in the container, not a link, by a link test first seen to show links
+  made for the purpose in the container's own filesystem, to a folder and to a file, and a write to
+  each such file refused; or, on a switch route, with the harness running as a user other than the
+  superuser (on Windows, not run elevated), through each of the harness's own tools for creating
+  files, with a control file for each, judged by the harness's record of its tool calls, where
+  writes into the folders that hold the switch file and the wrapper, into those home folders and
+  into Gemini CLI's `~/.gemini/`, must be refused too, and where the sandbox's documentation or
+  profile opens to a pass's writes any file or folder under those home folders outside the vault and
+  the copy, or does not say which it opens, the step is not verified, because each probe samples
+  only a new file, while files of that class that lie outside the vault and those home folders, at
+  the per-user level or the system level, are not sampled at all and rest on the sandbox's
+  documentation and the account's own permissions (reasoned; carried); this step was not run on any
+  harness for this release); it cannot see a hook of the account's own. That nothing a pass writes
+  turns one on rests on the switch file, the wrapper, the container definition and every file they
+  name lying outside what the pass can write, and on the mounts, with the runner's fence restoring a
+  harness config a pass leaves changed before a later run loads it (a root `.env`, `.hermes.md` and,
+  should OpenCode read one, a project `opencode.jsonc` excepted, reasoned and carried). The Codex
+  guide turns hooks off in its profile (`features.hooks`) and the Gemini CLI guide with
+  `hooksConfig.enabled`. The Aider guide's scheduled config, now kept outside the vault, turns
+  Aider's git off (`git: false`) and its lint after a change (`auto-lint: false`), so a pass's Aider
+  should neither commit nor run git in the vault (Aider's documentation; not measured for this
+  release); its check makes step 1's opening mount reading on the host, in the shell the container
+  is started from, before it starts (inside it the read-only `.claude/` mount would always be
+  listed), carries step 1's FAILED outcomes, a canary's record found where the marker is looked for
+  among them, re-reads the copy as step 1 says, on the host, through the path and in the shell that
+  will change it, before changing anything in it once the check is over (one that finds the path to
+  be the vault's own failing the check, stricter than the README's step 1, nothing changed through
+  the copy's path, then or later, but the markers found, which are removed, nor anything of the copy
+  removed but a link, junction, mount or drive the owner made for it, the clean-up below apart,
+  which neither limit bars but the README's step 1 sentence that begins "Wherever", and which is
+  made through the vault's own path, as the README's step 6 says (through the copy's only where that
+  is the vault's own path itself, not another path to the vault; a path that cannot be told being
+  another path; and where the copy's path is the vault's own path itself, the copy, being the vault,
+  never removed, nor anything of it removed but the markers found and what that clean-up's moving
+  out and `rm` remove), the known files then seen, the steering surfaces checked by hand, without
+  git, before any git command, the vault looked at for what the README's step 5 stop or step 1 names
+  and for what the check's own steps wrote, each known file found missing put back (never through a
+  link, junction or mount on its path at or below the vault's root unless the owner has checked by
+  hand that it is their own and stood there before the check began, the file otherwise staying still
+  missing, whatever a later look sees, until the owner can tell) from a copy the owner trusts, made
+  before the check began, that holds it (a known file still missing not settled,
+  and no copy to trust made until it is settled), and each note and each other file the check
+  changed put back from a copy the owner trusts, made before the check began and kept outside the
+  vault and every copy, its current form first moved out of the vault and every copy, and never
+  removed (nothing in a folder of the vault the owner did not make for the copy, which is checked by
+  hand and kept as the README's step 1 sentence that begins "Wherever" says, any change that can be
+  told to be the check's taken out by hand there, with or without a copy the owner trusts, by
+  editing the file, no file being put back, removed or moved, its current form first copied outside
+  the vault and every copy, and any file of that folder the check wrote or that cannot be told
+  listed beside the next copy made to trust, never taken as the owner's, that copy made only once
+  that folder is checked, each such change taken out and each file there known to be one the check
+  changed, other than one it wrote, settled as below; and, for every file of the vault, in that
+  folder or not, with no copy the owner trusts, and for a file known to be one the check changed
+  that a copy the owner trusts does not hold, nothing put back or moved, the `rm` limit below and
+  that folder's rule still holding: what was found listed, each file of it and what else the check
+  could have written or changed checked by hand, the steering surfaces among them as the README's
+  step 5 says, any change that can be told to be the check's taken out by hand, each such file's
+  current form first copied outside the vault and every copy (in that folder too, by editing the
+  file, no file being put back, removed or moved), and only once each is settled (a file known to be
+  one the check changed, other than one put back from a copy the owner trusts, settled only once
+  brought back, by editing it, to its form before the check) a copy to trust made, kept outside the
+  vault and every copy, any file still not told listed beside it and never taken as the owner's,
+  before the check is run again, as the README's step 6 says), and the rest cleaned up in the vault
+  by its own path, never the copy's where the two differ, as the README's step 6 says, `rm` used
+  only on a file known to be one the check wrote, a file that cannot be told to be the check's moved
+  outside the vault and every copy and never deleted, the check then run again, once the
+  README's step 6 lets it run again (each known file the README's step 1 names, each one
+  found missing included, seen back in the vault as the README's step 6 says, through the
+  vault's own path, without git, and any folder the README's step 1 clause that begins
+  "except as follows", or the Aider guide's, keeps, that folder made readable, any steering
+  surface in it checked by hand, without git, as the README's step 5 says, and the folder
+  checked by hand as the README's step 6 says), on a copy given folders of
+  its own outside the vault at another path; one that cannot put or see a marker (the
+  search made all the same, and the steering surfaces checked by hand, without git, as the
+  README's step 5 says, before any git command), or trust its search, changing nothing in
+  the copy, except as follows (where a search the README's step 1
+  trusted came earlier in the check, the re-read's search reporting a folder it
+  could not read, or not finding a known file the earlier search found, counted as
+  a write that reached the vault (the check's for the verdict where its source
+  cannot be told), and failing the check, not leaving it not
+  verified, once the check is over too, whatever verdict it had reached, no such folder moved out of
+  the vault: the steering surfaces checked by hand, without git, as the README's step 5 says, before
+  any git command, then each such folder made readable again, nothing moved, any steering surface in
+  it checked by hand, without git, as the README's step 5 says, before any git command and before
+  any put-back, the markers looked for again as the README's step
+  1 says before any clean-up (one found in the vault read as above, the README's step 1 sentence
+  that begins "Wherever" included; a search still not trusted changing nothing in the copy and
+  keeping a folder it could not read as that sentence keeps one, the README's step 6 limits on such
+  a folder included, that folder not moved out of the vault when the README's step 1 starts again,
+  in that check or a later one, the keep and this bar each lasting until, once it is made readable,
+  any steering surface in it is checked by hand, without git, as the README's step 5 says, before
+  any git command, the folder checked by hand as the README's step 6 says, and a search that can be
+  trusted has looked there), the known files seen through the vault's own path as the README's step
+  1 says to see them after a removal, and the vault looked at and cleaned up as above, a clean-up
+  the limit on changing the copy does not bar); and the second canary removed only in every other
+  case), adds a canary in the copy's git configuration to the `pre-commit` one, with a control that
+  turns git back on, says that a control fired by a commit alone shows only that Aider made no
+  commit, and passes only where that opening reading, trusted by its control, found no mount below
+  the copy's root, on a copy not on a mapped drive, its identity control found no marker, and the
+  README check's step 5, run in the schedule's container, passed.
+  The Copilot, Cursor, Hermes and OpenCode guides keep the hooks out of their containers; those
+  containers, and the Aider and Pi ones, now also mount the vault's `.git` read-only, and `.claude/`
+  read-only from the vault's own folder, with its `settings.json`, and any `settings.local.json`,
+  mounted over it from copies without their hooks, as the README's container rule says and each
+  container guide names, and OpenCode's all of `.opencode/` and `opencode.json`; every one of them
+  also mounts an empty file read-only over the vault's `.env` (if the vault has none, create an
+  empty one there yourself first), so that a pass can neither read the vault's `.env` nor leave one
+  for a later run to load (reasoned; the README's step 5 fails any name these mounts cover that is a
+  link in the vault, or a file with more than one name, and a `.env` that is either would leave the
+  vault's root `.env` changeable for anything that loads it outside the container); and each of
+  these recipes now starts a new container for each run, whose own filesystem is discarded at exit,
+  and follows the README's container rule, which keeps the home folder of the harness's user outside
+  the vault's mount, with no other mount of a folder or file of the vault at, above or inside it
+  (the README's step 5 says which), because several harnesses load settings or code at start from
+  their home folder inside the container (reasoned). That closes only the next run: within a run the
+  container's own filesystem stays writable, so the harness runs as a user other than the superuser,
+  and the Cursor guide mounts files holding no hooks read-only over its two user-level hook files,
+  and a Hermes schedule over its configuration where the owner mounts it (the README's container
+  rule), each of them, and each folder above it up to the home folder, that folder included, a file
+  or folder in the container, not a link (the README's step 5 fails one that is a link), because
+  Cursor documents that it reloads its config files, so a hook file a pass wrote at one of Cursor's
+  two without that mount could load within the same run, as could one a pass wrote at the vault's
+  `.cursor/` or
+  `.claude/` where that name is a link, which its read-only mount does not cover (a layout step 5
+  fails; reasoned); Cursor's other
+  home configuration, the folders that hold its two files included (step 5 reads only that they are
+  not links), Copilot's `~/.copilot/`, Hermes's configuration where it is not mounted read-only and
+  the folders that hold it where it is, any other home configuration whose load timing no guide
+  documents, and the class `docs/setup.md` names in its `UNVERIFIED` troubleshooting row at its
+  level in the home, stay open within a run (reasoned; carried), and a layout the owner builds that
+  puts the vault's own mount at, above or under a folder from which the harness loads its user
+  settings, home settings or code at start, other than the home folder and the files of that class
+  the README's step 5 reads, stays open at the next run too, since step 5 does not look for it
+  (reasoned; carried). Nor does step 5 look for (1) a link or junction in the vault or the copy,
+  outside their `.git` and `.claude/`, whose target lies at or above an item it requires outside
+  both, or at or under their `.git` or `.claude/`, or, for a link or junction in the copy, at or
+  under the vault's own folder (reasoned); (2) a link inside a folder copy the container
+  definition mounts read-only that leads, in the container, into a folder a pass can write (the
+  vault's writable mount or the container's own filesystem); (3) a mount or drive that only the
+  schedule's own process or session sees, or that a container's own list of mounts does not show;
+  (4) a pass-through file system at or above the vault's or the copy's own folder, or below it where
+  the lists read do not show its kind; (5) on a switch route, a link outside both to their `.git` or
+  `.claude/`, or a folder outside both that a pass-through file system above the vault presents as
+  part of it; or (6) on a switch route, the vault, or a folder or file of it mounted or linked
+  elsewhere, at, above or under a folder from which the harness loads its user settings, home
+  settings or code at start, other than the home folders and the files of that class step 5 reads:
+  those stay open too (reasoned; carried). One of kinds 1 to 5 that the owner finds fails the check
+  where it puts an item step 5 requires outside both inside the vault or the copy, gives their
+  `.git` or `.claude/` a second name, leads from a read-only folder copy into a folder a pass can
+  write, lies at or under their `.git` or `.claude/`, is writable under a mount that must be
+  read-only, or is one step 5 fails where its lists show it, and so does a folder or file of the
+  vault found mounted or linked at or under a folder the harness loads from at start (kind 6), the
+  harness's own folder in the vault and its own files apart, though not another folder or file of
+  the vault mounted or linked under it, the runner's fence covering that folder and its own files.
+  The Pi guide's wrapper loads no extension, and its check uses the vault's extension as the
+  positive control. Whether the Codex and Gemini CLI sandboxes leave the vault's `.git` writable to
+  a pass, or, with the commit gate on, its `.claude/`, or the folders that hold the switch file and
+  the wrapper, or the home folders of the accounts the runner and the harness run as (those the
+  schedule's environment and the wrapper name as homes, and the accounts' own), or, for Gemini CLI,
+  `~/.gemini/`, was not checked, nor which settings layer wins for Codex's `features.hooks` and
+  Gemini CLI's `hooksConfig.enabled`; the check's new step confirms part of it, a new file in each
+  of those folders, and where it does not confirm all of them refused, or the sandbox's
+  documentation or profile opens to a pass's writes any file or folder under those home folders
+  outside the vault and the copy, or does not say which it opens, their guides now point to the
+  container. The route is not new: 1.4.1's hooks and guides left it open in the same way.
+- **The lines `shown_name` prints show C1 control characters, and the state directory, safely.** The
+  `VIOLATION` list still prints the names it lists as they are (measured with U+009B on this release
+  and on 1.4.1). `shown_name` mapped C0 control characters and DEL only, because under the runners'
+  C locale `[:cntrl:]` matches nothing else, so a NEL or a CSI (U+0085, U+009B) in a name reached
+  the log as it was (measured on Linux on 1.4.1). It now maps the UTF-8 encodings of U+0080 to
+  U+009F too; a raw byte 0x80 to 0x9F that is not part of one, U+2028, U+2029 and the bidirectional
+  controls are printed as they are. The state directory's path, which the owner sets, now goes
+  through `shown_name` in every runner's log line and in the library's own; on 1.4.1 a line break in
+  it split the state-directory line (measured). The tripwire file still writes the paths it names as
+  they are, apart from its note that the log was moved.
+- The control suite holds each of these. New control ids, required on all four test jobs:
+  `resume-skips-pass-output`, `git-env-cleared`, `git-dir-pass`, `vault-root-spelling`,
+  `runner-folder`, `retention-tmp`, `mem-override-drive-walk`, `mem-override-folder-above`,
+  `shown-name-c1`, `state-shown` and `snapshot-sealed`; `msys-conv-pass` is required on the Windows
+  job only, where MSYS converts paths. Each was seen failing against 1.4.1's code on its own
+  assertion (on Linux; `msys-conv-pass`'s leg in Git Bash, run outside the suite, where all 18 of
+  a pass's `core.hooksPath` values reached `git.exe` in Git Bash's form), except
+  `mem-override-drive-walk` and `mem-override-folder-above`, which hold guards that were right in
+  1.4.1 (the drive-path walk's own guard, and resolving a folder above at `/` or with `CDPATH` set)
+  and were seen failing against mutants of them; and the unit rows of `vault-root-spelling` and
+  `runner-folder`, and `snapshot-sealed`'s `GLOBIGNORE` row and its no-backup row, whose functions
+  1.4.1 lacks, were seen failing against mutants of this release instead.
+  `snapshot-sealed` also covers a hooks folder that cannot be listed (the stand-in checks that it
+  can no longer list it), the folder replaced by a link and `run` replaced by a link (all three off
+  Windows; the last two need a `WARNING:` that the run output was not kept, and nothing copied),
+  `gaps` given a second name outside the folder, a stall with the folder removed (dream and
+  promotion), the `cksum` path (a pass and a 78), a name outside the set before the record (exit
+  1, no agent), `GLOBIGNORE` at load, both runners' logs linked to a file outside before the
+  folder is removed (78, the lines in the state directory's log, the file as it was, off Windows),
+  a TERM to the runner before containment (143, the tripwire in its uncontained shape, no marker),
+  the same with `run` and the logs, or the folder, replaced by links first (nothing written or
+  copied through them, off Windows), a copy of the pre-pass backup that fails after leaving an old
+  one (exit 1, no agent, no backup left), an in-flight marker a dead pass left (78, the uncontained
+  shape, no agent) and `snap_untrusted` with no backup (a unit row). It also covers, under the
+  suite's names: `twlink`, a tripwire in the vault and both logs links to a file outside, as a
+  pass that ended at 78 leaves them (78, no agent, the file as it was, the refusal and a
+  `WARNING:` in the state directory's log), and `inflightlink`, the same with an in-flight marker a
+  dead pass left (78, the file as it was, the tripwire saying the log was moved), each with the
+  runner warning about its `RUN_LOCK_WAIT` before the lock is held, a line only the check before
+  the lock keeps out of the link; for the
+  retention runner, a tripwire and its log a link to a file outside (78, the file as it was, the
+  refusal and a `WARNING:` in `vault-retention.uncontained.log`, and the `WARNING:` exactly once in
+  its printed lines), again with no temporary folder to be had and a lock warning logged before
+  the lock is held (that line not written through the link either, and its printed line saying it
+  could keep no copy of its lines and naming that log), and `marker`, the same with a dead pass's
+  in-flight marker in place of the tripwire (78, the file as it was, the lines and a `WARNING:` in
+  that log, and the `WARNING:` once in its printed lines); for each runner, its log made a link to
+  a file outside while it waited for the run lock, which a stand-in owner held, not aged, with a
+  tripwire in the vault and a `RUN_LOCK_WAIT` the runner warns about as it starts to wait, which
+  shows the run is past its first check (78, the file as it was, the refusal and a `WARNING:` in
+  the state directory's log); `sigtrap`, the links made by the stand-in in its own TERM handler,
+  so only once the runner stops the tree (the file as it was, the tripwire saying the log was
+  moved); `sigrmdir`, the stand-in removing the runner's folder, sending its runner TERM and
+  staying (143, the stand-in stopped all the same, the leg first checking that `ps` shows the
+  suite's own shell); `tmplink`, a link to a file outside at the name the tripwire's copy used to
+  take from the runner's pid, then TERM (the file as it was, the vault's tripwire a file);
+  `twdirlink`, a link to a folder at the tripwire's own name, then TERM (nothing moved into that
+  folder, the vault's tripwire a file); `sigtwfail`, folders where both copies of the tripwire
+  go, then TERM (143, the `TRIPWIRE-ERROR:` line with its no-git sentence, the in-flight marker
+  kept); `logdir`, folders at both logs' names, then the folder
+  removed (78, the lines and a `WARNING:` in the state directory's log, the tripwire saying so);
+  `logsdirlink`, `logsfile` and `claudelink`, `.claude/logs` moved and a link to it in its place,
+  `.claude/logs` a file, and `.claude` a link to a copy of itself (78, the lines in the state
+  directory's log, only the state directory's tripwire, nothing written through a link);
+  `backuplink` and `backupnone`, a copy of the pre-pass backup that succeeds leaving a link, or
+  nothing, at its name (exit 1 with the `ERROR:` line, no agent, nothing left there); and
+  `backupseed`, a link to a file outside already at the backup's name, in a state directory made
+  before the run (the pass ends 0, the file as it was). `sigdirlink` now also needs nothing of the
+  stop recorded through the link at the folder, and `sigterm` its lines in the vault's log and no
+  moved-log note, a control that the log is not moved when nothing is a link. Ten unit rows hold
+  `log_outside_links` with `.claude/logs` a file and `LOG_MOVED_NOTE` exported before the library
+  loads (cleared at load, the log moved once, a second call changing nothing, one `WARNING:` naming
+  the vault's log); `note_tripwire` with `.claude/logs` a link, in one row with a tripwire file
+  where the link points and in one without (the note in the state directory's copy only, and
+  nothing written through the link; each row first checks that the link was made);
+  `mark_inflight` with a link at `runner-inflight.tmp.<pid>` (the vault's marker a file, the file
+  the link named as it was); `write_vault_copy` with no `mktemp` and a link at
+  `runner-tripwire.tmp.<pid>` (the copy a file, the file the link named as it was), and with no
+  `mktemp` and a link to `/dev/null` already at the name `$RANDOM` gives, seeded (refused, nothing
+  at the copy's name), each first checking that its `mktemp` stand-in took; with a link to a
+  folder at the copy's name that `rm` cannot remove (an `rm` stand-in that removes nothing:
+  refused, nothing moved into the folder); with no `mktemp` and a link put at the `$RANDOM` name
+  between the check and the write, by a DEBUG trap the write's subshell inherits (refused, the
+  file the link named as it was); and, with no copy of
+  the tripwire writable, `snap_untrusted`, and `tripwire_check` with a dead pass's marker (each
+  70, the `TRIPWIRE-ERROR:` line saying to run no git command in the vault before the steering
+  surfaces have been checked). Of the legs and rows named from `twlink` on, these run on Windows:
+  `logdir`, both runners' `backupnone` and `sigtwfail`, `sigterm`'s new requirements, the
+  `log_outside_links` row and the two `TRIPWIRE-ERROR:` rows; the rest run off Windows only.
+  The legs that end 78 because the runner's folder changed, with a tripwire in the vault, also need
+  the `UNVERIFIED:` line to say that no git command is run in the vault before the steering surfaces
+  are checked, and their tripwire, that of every signal leg that writes one and that of the
+  `inflight` leg now need the advice: git that starts on its own, the
+  comparison without git with `--no-dereference` (where a backup is there), the line on a `.git`
+  deeper in the vault, the line on links in `.claude/logs` or at `.claude`, and the first
+  `git -c core.fsmonitor=false` status. Of the other 78 legs, `logsdirlink`, `logsfile` and
+  `claudelink` need the no-git sentence in the state directory's tripwire, the only copy written,
+  but not the advice, `inflightlink` needs neither, and `twlink` refuses a tripwire the suite wrote,
+  so neither applies. The first kind also need the tripwire to say that the runner's folder for the
+  pass is kept for the review, naming that folder, and the folder still there with its steering
+  backup in it once the runner has exited, unless the leg removed it itself; `logsdirlink`,
+  `logsfile` and `claudelink`, whose legs remove it, need the sentence and the name. `sigterm`
+  needs each runner's run output kept in the state directory, its stand-in first printing a line
+  and seeing it in `run`. The promotion runner takes the `rmdir`, `rmslow`, `hooks`,
+  `dirlink`, `runlink`, `rmstall`, `cksum`, `badname`, `loglink`, `sigterm`, `sigrunlink`,
+  `sigdirlink`, `backupfail`, `sigtrap`, `sigrmdir`, `sigtwfail`, `twlink`, `inflightlink`,
+  `backuplink`, `backupnone` and `backupseed` legs. Each new runner leg was seen failing against
+  1.4.1's code on its own assertion, and so were `sigdirlink`'s new need, both `note_tripwire`
+  rows, `mark_inflight`'s row and `tripwire_check`'s `TRIPWIRE-ERROR:` row (70, the line without
+  that sentence), except `logdir`, `logsdirlink`, `logsfile` and `claudelink`, which reach 78
+  through the folder check 1.4.1 lacks, so they say nothing about 1.4.1's log (a write through a
+  link at `.claude` or `.claude/logs` is reasoned for 1.4.1); the `log_outside_links` row,
+  `snap_untrusted`'s `TRIPWIRE-ERROR:` row and the four `write_vault_copy` rows, whose functions
+  1.4.1 lacks, were seen failing against mutants of this release. So were the kept-folder
+  requirement (with `on_exit` removing the folder, or only its steering backup, in either runner,
+  and with the sentence changed or naming another folder), a promise 1.4.1 does not make, and
+  `sigterm`'s run output (with either runner's signal path keeping none), which until now only the
+  dream runner's legs asserted.
+  `state-shown` covers all three forms of the tripwire refusal (a tripwire in the vault only, a
+  tripwire file in the state directory, and a folder where the state directory's copy goes) with a
+  state directory named with a line break and an escape (off Windows); and `git-dir-pass`'s
+  retention leg needs the run's move of an aged journal committed in the vault with its
+  `Vault-Pass: retention` trailer. Eleven
+  existing comparisons of the settings file's exact bytes now expect the new line, and two existing
+  controls, `mem-override-mixed-release` and `mem-override-settings-space`, now set
+  `SNAP_SEALS=sealed` after loading the library, which takes them past `run_agent`'s new refusal.
+
+### Adopting this
+
+1. **Take `.claude/scripts/lib/runner-common.sh`, `dream-pass.sh`, `promotion-pass.sh` and
+   `vault-retention.sh` together.** With the 1.4.2 library and 1.4.1's dream or promotion runner,
+   every pass, in either mode, exits 1 before its agent starts, with no tripwire, and the run log
+   (`.claude/logs/dream-agent.run.log` or `promotion-agent.run.log`) says `no record of the
+   runner's folder for the pass was taken before the agent started`; in claude mode the memory
+   override is written first. 1.4.1's retention runner runs with the 1.4.2 library, and gets
+   neither its refusals nor its `TMPDIR` rule. With 1.4.1's library and a 1.4.2 runner, every runner
+   exits 1 before its agent, with `git_env_warning: command not found` and `vault_root_spelling_ok:
+   command not found` on its stderr, not in its log. (All measured on Linux, for each runner and
+   mode, with 1.4.1's files.)
+2. **Nothing to configure for most vaults.** A vault whose `.claude` or `.claude/logs` is a link,
+   or does not list as `drwx`, reads step 8 first; a command-mode schedule reads step 9.
+3. **A runner refuses to start while the vault's path, on Windows or with a `cygpath` on `PATH`,
+   holds a part ending in a dot, a colon that is not a drive letter's, or a last part ending in a
+   space.** The log says `ERROR: the vault, …, is spelled with a part that ends in a dot`. Rename the
+   folder, or reach the vault through a path with none of these. The `.cmd` wrappers cannot reach
+   such a vault (reasoned); a Git Bash prompt can.
+4. **A runner refuses to start while its temporary folder is not an absolute path, or, on Windows
+   or wherever a `cygpath` is found on `PATH`, holds a colon that is not a drive letter's.** The log
+   says `is not an absolute path, so it was made inside the vault` or `is spelled with a colon that
+   is not a drive letter's`. Point `TMPDIR` at an absolute folder outside the vault, or leave it
+   unset. The retention runner uses `TMPDIR` only when it starts with `/` (otherwise `/tmp`, now for
+   its temporary files too), so it cannot meet the first line through `TMPDIR`. It now refuses with
+   `could not create a temporary directory` (exit 1) when neither an absolute `TMPDIR` nor `/tmp`
+   can hold its folder, where 1.4.1 fell back to a plain `mktemp -d`; make one of them writable.
+5. **A pass whose runner's folder changed while the agent ran now exits 78**, with `UNVERIFIED: the
+   runner's own folder for the pass, …, was changed while the pass ran`. Nothing was moved or
+   restored, so `.git/config`, `.git/hooks` and `.obsidian/` may still hold what the pass planted
+   (reasoned). Until you have reviewed the vault, do not open it in Obsidian or an agent session,
+   and run no git command in it before the steering surfaces have been checked, git that starts on
+   its own included: a shell prompt that shows git state, or an editor with git integration. First
+   copy the pre-pass backup in the state directory, `inflight-backup.tar`, because the next pass
+   replaces it. Compare the steering surfaces, those three among them, with it without git: unpack
+   the copy into an empty folder with `tar -xf`, compare that folder with the vault with `diff -r`
+   (with `--no-dereference` where your `diff` has it, so a link is compared rather than followed),
+   and put back what differs. When the line says no backup was made, check them by hand. Where
+   `.git` is a file (a linked worktree), the git folder it names is outside the vault and outside
+   the backup, so check its config and hooks by hand as well. A `.git` deeper in the vault is a
+   steering surface too, and `diff -r` shows a new one only as a new folder above it: list every
+   `.git` with `find . -name .git`, and check the config and hooks of any you did not make. A link
+   in `.claude/logs`, or `.claude` itself as a link, is in neither the backup nor git: list them
+   with `find .claude -type l`, and remove any you did not make once you have checked what it
+   names. Then review the rest of
+   the vault; where it is a git repository, start with
+   `git -c core.fsmonitor=false --no-pager status --ignore-submodules=all`, which starts no
+   fsmonitor command or pager and stays out of repositories nested in it. The folder named in the
+   line is kept for the review. Last, delete the tripwire as for any other. When no tripwire could
+   be written the exit is 70 instead, with a `TRIPWIRE-ERROR:` line in place of the `UNVERIFIED:`
+   one and the in-flight marker kept; the vault is as unrestored as at 78, so review it the same
+   way, because the only advice that line gives, as do the ones a signal before containment and a
+   run that finds a dead pass's marker log when they cannot write the tripwire, is "Treat the vault
+   as unverified, and run no git command in it before the steering surfaces have been checked." A
+   tripwire set by a signal before containment (the log says
+   `INTERRUPTED before containment. Tripwire set.`), or from an in-flight marker a pass that died
+   left, now says "Nothing was moved or restored, because containment did not run." and gives the
+   same advice: follow it before any git command. After a signal before containment, at 78, and on
+   a later run that finds the tripwire or the passes' in-flight marker (`runner-inflight`), when the
+   vault's log, `.claude` or `.claude/logs` is a symbolic link, `.claude/logs` is not a folder, or
+   the log is
+   there and not a file, the rest of the run's lines are in `dream-pass.uncontained.log`,
+   `promotion-pass.uncontained.log` or `vault-retention.uncontained.log` in the state directory. A
+   hard link or a FIFO at a log or at `dream-pass.git-state.txt`, and a symbolic link containment
+   cannot move, are still open and carried to a later release (see Security); keep command-mode
+   passes without a shell, with no hook running and, where the harness itself can run git (assume
+   any can), unable to write the vault's `.git` or, with the commit gate on, its `.claude/`, as
+   `docs/setup.md` and step 9 say. A later run checks before it takes the run lock and again once it
+   holds it. The lines any runner logs before its first check (a setting's warning, the
+   state-directory error, the `WARNING:` naming the git variables it cleared, or the `ERROR:`
+   refusing the vault's spelling) still go to the vault's log path, and so do those a dream or
+   promotion run, or a retention run that could keep no copy of its lines or was stopped while
+   waiting, logs while it waits for the lock, unless the first check already moved the log. A runner
+   that cannot record its folder before the agent starts exits 1 with
+   `the runner could not record its folder for the pass`, and the line names the six causes: the
+   folder missing or a link, a name in it outside letters, digits, dot, underscore and hyphen, a
+   file it could not checksum, a folder in it that could not be listed, no `sha256sum`, `shasum` or
+   `cksum` found, or a record that came out empty. Find what wrote into the runner's folder, put
+   `sha256sum` or `shasum` on the task's `PATH`, and point `TMPDIR` at a folder only this account
+   can change. A runner that finds no `sha256sum` or `shasum` logs a `WARNING:` and checks the
+   folder with `cksum`. A runner that cannot copy the pre-pass backup to the state directory exits 1
+   with `could not copy the pre-pass backup of the steering surfaces to the state directory`, before
+   the in-flight marker and the agent: free space there, or remove what is at the path the line
+   names once you have checked that it holds nothing you still need.
+6. **Hooks are off in claude-mode passes.** That includes plugins' hooks and the vault's own
+   (measured on 2.1.301), and the account's own user-level hooks, any guard hook among them
+   (reasoned: the probe held none, nor any in an agent's or a skill's frontmatter, so do not count
+   on a user-level guard hook running in a pass, or on its being off): the agent no longer gets
+   `vault-lint.sh`'s advice after each write (the runner still checks the notes a pass wrote with
+   `vault-check.sh` before committing them), and no compaction stub is written during a pass. Hooks
+   from managed settings still run (measured on an earlier version), and so do MCP servers
+   (reasoned). Command mode is unchanged: a
+   wrapper that starts Claude Code gets neither the memory override nor the hook switch.
+7. **Settings a parent git passed down with `-c` (in `GIT_CONFIG_PARAMETERS`), and those set
+   through `GIT_CONFIG_COUNT`, no longer reach a pass, `safe.directory` among them**; put such a
+   setting in the account's global git configuration. A `git` wrapper on `PATH` that adds `-c` to
+   every call is not affected. A vault git reached only through `GIT_DIR`, with no `.git` entry of
+   its own, now reads as no repository: dream and promotion passes run without committing, and the
+   retention runner refuses (reasoned). A `.git` file in the vault naming its git directory
+   (`gitdir: <path>`, with no part ending in a dot) would let git find it (reasoned). The runner's
+   `WARNING:` names the variables it cleared. A command-mode wrapper no longer inherits git's
+   per-repository variables or the MSYS switches (`MSYS_NO_PATHCONV`, `MSYS2_ARG_CONV_EXCL`,
+   `MSYS2_ENV_CONV_EXCL`), because the library clears them as it loads; a wrapper that needs one
+   sets it itself.
+8. **`/resume`**: take both copies of `.claude/skills/resume/SKILL.md` (`.claude/` and `.agents/`)
+   together, as the control suite requires them byte-identical.
+   **If your `.claude` or `.claude/logs` is a link** (to keep the logs out of a sync, for example),
+   **or does not list as `drwx`**, `/resume` now stops at its first step on every run,
+   and so does an agent that follows `AGENTS.md` in an interactive session, because the runners
+   may then write their tripwire to the state directory only. Look for `runner-tripwire` in the
+   state directory yourself before you start a session there, without running any of the vault's
+   scripts: the state directory is a folder under `claude-memory-vault/` in the account's state
+   folder, `VAULT_STATE_DIR` when you set it, or, when neither can be used,
+   `claude-memory-vault-state-<id>` under `TMPDIR` or `/tmp` (`docs/reference.md` §4.3), so
+   `ls <state folder>/claude-memory-vault/*/runner-tripwire`,
+   `ls "<the VAULT_STATE_DIR the scheduled task sets>/runner-tripwire"` or
+   `ls "${TMPDIR:-/tmp}"/claude-memory-vault-state-*/runner-tripwire` (the scheduler's `TMPDIR`)
+   finds it (the globs list every vault's folder). Clear one as for any other. Making the folder a
+   real one that lists as `drwx` afterwards (for example with `chmod u+rwx`) stops `/resume`
+   stopping, but does not show a tripwire set before. A vault whose `.claude` is a link, or whose
+   `.claude/logs` is a link to outside `.claude`, also fails the check in
+   `docs/harnesses/README.md`, "No vault hook in a scheduled pass", that a command-mode schedule
+   needs (step 9), until the folder is a real one.
+9. **A command-mode wrapper built from the Codex, Copilot, Cursor, Hermes or OpenCode guide** may
+   have left the promotion pass a shell, because those guides took it away for the dream pass
+   only. Take it away for both passes, as `docs/setup.md` asks: the Codex guide's wrapper now
+   gives both passes its profile with the shell tool off, and the OpenCode guide's wrapper selects
+   the agents `vault-dream` and `vault-promotion`: define both, with `bash` and `webfetch` denied,
+   deny any other tool an agent lists that can run a command or reach the web, and run the guide's
+   check that each refuses a shell command with no fallback warning, before you take it. Keep
+   each pass's tools writing only inside the vault. **Any command-mode wrapper**, from any guide,
+   must also run with no hook, because a pass can change the script a hook runs and get a shell
+   through it (reasoned); keep the wrapper, the container definition and every file they name
+   outside the vault and every folder a pass can write, because the runner starts what
+   `VAULT_AGENT_CMD` names outside every sandbox (`docs/setup.md` §8). Remove
+   `VAULT_ALLOW_UNENFORCED_TOOLS=1` from the scheduled task (or disable the task), follow your
+   harness's guide, and set it again only once the check in `docs/harnesses/README.md`, "No vault
+   hook in a scheduled pass", passes, including its new step that confirms, by their resolved paths,
+   that the wrapper, the container definition, the switch file and the files they rest on, the home
+   folders of the account the runner runs as (the one the schedule's environment names and the
+   account's own, where they differ; on a switch route, the harness's too, the one the wrapper names
+   among them), and every file of the class `docs/setup.md` names in its `UNVERIFIED`
+   troubleshooting row that the runner or the harness reads at the per-user or the system level, or
+   place named for one (in a container, outside the vault's mount too, with no other mount of a
+   folder or file of the vault at or above them, the README's step 5 saying which), lie outside the
+   vault and the copy (one inside, by any of its names, fails the check, and so does a folder this
+   check requires outside both, or on a switch route a folder that holds the switch file or the
+   wrapper, that holds the source of a mount in the host's own list from outside both whose target
+   lies below the vault's or the copy's own folder), each file with a single name (a link count of
+   1, read by a count first seen to read 2 on a file given a second name for the purpose in a
+   scratch folder outside the vault and the copy, on the file system that holds the file read, then
+   removed, else the step not verified) or each of its names, as many as its count, found outside
+   both, and no file or folder among them at or under a folder or file of the vault mounted
+   elsewhere on the host, nor at or under the source of a mount
+   from outside both into the vault or the copy, by the host's own list of mounts read as the
+   README's step 5 says (each source and target spelled as an absolute path on the host, a source
+   another listed mount also shows spelled through that mount as well, the list seen to show the
+   mount that holds the vault, and a source spelled through another mount or on a share this host
+   serves seen to show what its target shows; a list of mounts that cannot be read or does not show
+   the vault's, a source that cannot be spelled or seen that way, or a pass-through file system,
+   such as an overlay, not a bind mount or a share, mounted below the vault's or the copy's own
+   folder leaving the step not verified), once a path inside the copy and one inside the vault have
+   each read as inside, each spelled every way the paths compared reach the check, whether a file or
+   a link's target spells them so (a short 8.3 name, another letter case, a substituted or mapped
+   drive, a second path the host gives a folder above the vault or the copy, as WSL does for the
+   distribution's root by default), unless the resolver used is seen, on that host, to turn each
+   such spelling of the vault's and the copy's paths into the one compared, that the host's own list
+   shows no mount at or under the vault's or the copy's `.git` or `.claude/`, nor any whose source
+   lies there and whose target lies elsewhere in either (on a switch route, one whose target lies
+   outside both leaving the step not verified), nor a mount of a folder or file of either at or
+   under a copy outside both that the definition mounts read-only, and that no link below their
+   `.git` or `.claude/` leads outside the one it lies below (the links listed only once the listing
+   has shown control links made for the purpose in the copy's `.git` and `.claude/`, each to a
+   scratch folder outside both holding a file and then removed by its own name, never by a path
+   ending in `/` or `\`, a listing that does not show every one of them, or that cannot be made,
+   leaving the step not verified, and on Windows a symbolic link, where the account cannot make one,
+   stated open), that the vault's `.git` and `.claude/` on every route, and in a container each
+   other name in the vault that the mounts cover (the harness's own folder, the
+   `.claude/settings.json` and any `.claude/settings.local.json` the container rule mounts over,
+   `opencode.json`, `.env`, and the Pi guide's `.env`, `.env.*` and `secrets/` at any depth), are
+   folders or files, not links, and, where files, have a single name (a link count of 1), each
+   failing the check where it does not, read in the vault by a link test first seen to show links
+   made for the purpose in the copy, to a scratch folder outside both holding a file and to that
+   file, as links (then removed, each by its own name, never by a path ending in `/` or `\`), and by
+   a link count first seen to read 2 on a file given a second name for the purpose in a scratch
+   folder outside the vault and the copy, on the file system that holds the name read, a kind of
+   link the account cannot make stated open (where the vault's `.git` is a file, not a link, the
+   folder it names, and any shared folder that one names, standing in its place and lying outside
+   both, and, on a switch route, a vault whose `.git` is such a file leaving the step not verified;
+   a link at a folder above one of the Pi guide's names not looked for, reasoned and carried; a
+   second name for any other file under the vault's `.git`, or the folder a `.git` file names, or
+   its `.claude/` not looked for, reasoned and carried, since a clone made from the vault on the
+   same disk shares the object files under `.git` with it by hard links and in a container a pass
+   cannot give a file under the read-only mounts a second name through them (each measured; on a
+   switch route that rests on the sandbox), so what stays open is a second name made outside a pass
+   and, on a switch route, one the sandbox would let a pass make, which the check does not sample),
+   that the harness runs as a user other than the superuser (on Windows, not run elevated), and, on
+   the scratch copy, once step 1's canary and the marker in the copy's `.git/` are seen from where
+   the harness runs, and the marker absent from the vault (else not verified until they are, a
+   marker found in the vault removed, nothing of the copy removed, now or later, but a link,
+   junction, mount or drive made for it, each as the README's step 1 says, since one marker cannot
+   show which of the copy's folders are the vault's, the known files seen, a `hook-canary` looked
+   for where the marker is looked for and the vault looked at by hand, without git, for the rest of
+   what steps 1 to 4 wrote into the copy (among them a canary in place of one of the vault's hook
+   scripts, which the known files cannot show, step 4's probe, and what its passes wrote), any of
+   them found failing the check, and in either case, after step 6's remedy where it fails, the check
+   sent back to step 1 on a copy at another path), that writes into `.git` and `.claude/` are
+   refused, and, in a container, from the definition, that each run starts a new container, which
+   the runtime removes at exit, and that the definition names every mount the README's rule and the
+   guide require; from the container runtime's own listing, that every mount over or inside the
+   vault but the vault's own, every mount of a file the wrapper or a switch rests on, and every
+   mount over a hook or settings file a harness reads from the container's home, is
+   read-only, that any other writable mount is discarded at exit, never a folder or volume kept
+   between runs, and that no mount of a folder or file of the vault, the vault's own and those over
+   or inside it apart, lies at, above or inside the home folder of the harness's user (the README's
+   step 5 says which); from a shell opened in the container as that user, that its home folder lies
+   outside the vault's mount, that each hook or settings file the guide mounts in that home, and
+   each folder above it up to the home folder, that folder included, is a file or folder in the
+   container, not a link, by a link test first seen to show links made for the purpose in the
+   container's own filesystem, to a folder and to a file, and that a write to each such file is
+   refused; and from that shell's own list of mounts, once it shows the definition's read-only
+   `.git` mount with the vault's `.git` (in the check's run, the copy's) as its source, that every
+   mount at or under one that must be read-only is read-only too, and that none of them, the `.git`
+   and `.claude/` mounts apart where their sources are the vault's own (in the check's run, the
+   copy's), has a folder or file of the vault or of the copy, or a folder that holds either, as its
+   source (a source read as a file system and a path within it, those of the vault, the copy and any
+   folder of either located from the host's own list, and the step not verified where that cannot be
+   told). The Codex profile gains `hooks = false` (and the wrapper never passes
+   `--dangerously-bypass-hook-trust`); the Gemini CLI guide sets `hooksConfig.enabled` to false in a
+   settings file outside the vault, in a folder the sandbox does not let a pass write; for both,
+   whether the sandbox leaves the vault's `.git` writable to a pass, or, with the commit gate on,
+   its `.claude/`, or the folders that hold that profile or settings file and the wrapper, or the
+   home folders of the accounts the runner and the harness run as (those the schedule's environment
+   and the wrapper name as homes, and the accounts' own), or, for Gemini CLI, `~/.gemini/`, is still
+   to check: that step confirms part of it through each of the harness's own tools for creating
+   files, a new file in each folder, and where it does not confirm all of them refused, or the
+   sandbox's documentation or profile opens to a pass's writes any file or folder under those home
+   folders outside the vault and the copy, or does not say which it opens, use the README's
+   container; files of that class that lie outside the vault and those home folders, at the per-user
+   level or the system level, are not sampled, and rest on the sandbox's documentation and the
+   account's own permissions (reasoned; carried). Every container schedule mounts the vault's `.git`
+   read-only, and `.claude/` read-only from the vault's own folder, with its `settings.json`, and
+   any `settings.local.json`, mounted over it from copies without their hooks, as the README's
+   container rule says. The Copilot, Cursor, Hermes and OpenCode guides keep the hooks out of their
+   container (OpenCode mounts all of `.opencode/` and `opencode.json` read-only too), and mount an
+   empty file read-only over its `.env` (if the vault has none, create an empty one there yourself
+   first); a Cursor schedule also mounts, read-only, files holding no hooks over
+   `~/.cursor/hooks.json` and `~/.claude/settings.json` in the container's home, and a Hermes
+   schedule over its configuration where the owner mounts it, each of them, and each folder above it
+   up to the home folder, that folder included, a file or folder in the container, not a link; a Pi
+   schedule mounts `.claude/` and `.git` read-only as well, and
+   empty files read-only over its `.env` files (if the vault has no `.env`, create an empty one
+   there yourself first), and runs the check with the vault's extension as its positive control; an
+   Aider schedule moves `aider-scheduled.conf.yml` outside the vault with absolute `read:` paths,
+   takes its new `git: false`, `auto-lint: false`, `git-commit-verify: false` and
+   `auto-commits: false` lines, mounts the vault's `.claude/` and `.git` read-only and an empty file
+   read-only over its `.env` (if the vault has none, create an empty one there yourself first), and
+   runs the guide's check with its `pre-commit` canary, its git-configuration one, and the control
+   that turns git back on. For any schedule, keep the vault's `.git` and `.claude/` folders, not
+   links (apart from, on the container route, a `.git` file with a single name naming a folder
+   outside the vault and the copy). For any container schedule, keep each other name in the vault
+   that these mounts cover a folder or file, not a link, and, where a file, with a single name (the
+   README's step 5 fails one that is a link or has more than one name), start a new container for
+   each run, whose own filesystem is discarded at exit, never one kept between runs, and run the
+   harness in it as a user other than the superuser, with that user's home folder outside the
+   vault's mount, with no other mount of a folder or file of the vault at, above or inside it (the
+   README's step 5 says which; in the definition, the image, or the entrypoint or wrapper that sets
+   it): the new container closes only the next run, and within a run the container's own filesystem
+   stays writable.
+10. The shipped files this release touches: `.claude/scripts/lib/runner-common.sh`,
+   `.claude/scripts/dream-pass.sh`, `.claude/scripts/promotion-pass.sh`,
+   `.claude/scripts/vault-retention.sh`, `.claude/scripts/run-tests.sh`,
+   `.claude/skills/resume/SKILL.md`, `.agents/skills/resume/SKILL.md`, `docs/reference.md`,
+   `docs/setup.md`, `docs/agent-onboarding.md`, `docs/harnesses/claude-code.md`,
+   `docs/harnesses/README.md`, `docs/harnesses/aider.md`, `docs/harnesses/codex.md`,
+   `docs/harnesses/copilot.md`, `docs/harnesses/cursor.md`, `docs/harnesses/gemini-cli.md`,
+   `docs/harnesses/hermes.md`, `docs/harnesses/opencode.md`, `docs/harnesses/pi.md`,
+   `AGENTS.md`, `.claude/scripts/vault-check.sh` (a comment), besides `VERSION` and
+   `CHANGELOG.md`, which move on every release.
+
 ## 1.4.1 — 2026-10-13
 
 A security fix for the dream and promotion passes in claude mode. Claude Code's memory folder for

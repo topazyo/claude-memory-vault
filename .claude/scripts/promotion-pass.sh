@@ -48,10 +48,12 @@
 #                           git's hooks folder and, in claude mode,
 #                           pass-settings.json, which Claude Code reads as
 #                           settings, hooks and other commands among them. Keep
-#                           it a folder only this account can change, named with
-#                           no link, no .. and no part ending in a dot (on
-#                           Windows, or wherever a cygpath is found on PATH, a
-#                           pass refuses a .. or a part ending in a dot, in
+#                           it an absolute folder only this account can change,
+#                           named with no link, no .., no part ending in a dot
+#                           and no colon but a drive letter's (a pass refuses a
+#                           folder that is not an absolute path, and on Windows,
+#                           or wherever a cygpath is found on PATH, one with a
+#                           .., a part ending in a dot or another colon, in
 #                           every mode, before its first git call); on Windows
 #                           schedule the task as your own account, and leave it
 #                           unset unless a long path needs a shorter folder
@@ -74,7 +76,12 @@
 #        or the runner could not set itself up (temp dir, state directory, backup,
 #        prompt file, git state file, run lock, in-flight marker, git status), or
 #        git cannot read the vault's repository, or in claude mode the memory
-#        override refused the pass (memory_override in lib/runner-common.sh)
+#        override refused the pass (memory_override in lib/runner-common.sh),
+#        or, on Windows or wherever a cygpath is found, the vault's path holds
+#        a part ending in a dot, a colon that is not a drive letter's or a last
+#        part ending in a space, or the temporary folder is refused (above), or
+#        the runner could not record its folder for the pass, or its library
+#        comes from another release (no record of that folder was taken)
 #   2    VIOLATION: files outside the allowed write areas changed during the run
 #        (steering surfaces among them are contained and the tripwire is set),
 #        or the pass changed a long-tier note or promotion report that already
@@ -90,14 +97,21 @@
 #        note the pass changed was put back as it was before the pass, except
 #        any the log lists as left as it is
 #   64   VAULT_AGENT is not claude or command
-#   70   TRIPWIRE-ERROR: containment was needed but no tripwire could be written
+#   70   TRIPWIRE-ERROR: containment was needed, or the runner's folder changed
+#        while the agent ran, but no tripwire could be written
 #   75   LOCKED: another pass held the run lock, or git's index.lock stayed, for
 #        RUN_LOCK_WAIT seconds, the run lock is marked KILL_FAILED, the
 #        index.lock is more than 10 minutes old,
 #        another runner took the lock over before the pass started, a git
 #        merge, rebase, cherry-pick, revert or bisect is in progress, or HEAD is
 #        detached
-#   78   TRIPWIRE: a tripwire is set, or an earlier pass died before containment
+#   78   TRIPWIRE: a tripwire is set, or an earlier pass died before containment,
+#        or UNVERIFIED: the runner's own folder for the pass changed while the
+#        agent ran, or could not be recorded again when it returned, so nothing
+#        was moved or restored and the tripwire is set (also when the run timed
+#        out or stalled: 78, or 70 when no tripwire could be written, then takes
+#        the place of 124 or 125, and the TIMEOUT or STALLED line is logged as
+#        well)
 #   124  TIMEOUT: the watchdog killed a run that exceeded PROMOTION_PASS_TIMEOUT,
 #        and everything it started
 #   125  STALLED: the watchdog killed a run whose output stopped growing for the
@@ -135,6 +149,8 @@ RUNNER=promotion-pass
 CONTAINMENT_CHECKED=0
 INFLIGHT=0
 SNAP_DIR=""
+# 1 once the check of the runner's folder failed, so on_exit keeps it for review.
+SNAP_KEEP=0
 SESSION_RECORDED=0
 AGENT_SESSION_ID=""
 KILL_FAILED_MARKED=0
@@ -169,15 +185,15 @@ on_exit() {
     if [ "$KILL_FAILED_MARKED" -eq 0 ]; then
       rm -f "$STATE/inflight-backup.tar" 2>/dev/null
     elif [ -s "$STATE/inflight-backup.tar" ]; then
-      printf '[%s] The pre-pass backup is kept at %s for the review after KILL_FAILED.\n' "$(ts)" "$STATE/inflight-backup.tar" >> "$LOG"
+      printf '[%s] The pre-pass backup is kept at %s for the review after KILL_FAILED.\n' "$(ts)" "$(shown_name "$STATE/inflight-backup.tar")" >> "$LOG"
     else
-      printf '[%s] WARNING: there is no pre-pass backup at %s to review against after KILL_FAILED.\n' "$(ts)" "$STATE/inflight-backup.tar" >> "$LOG"
+      printf '[%s] WARNING: there is no pre-pass backup at %s to review against after KILL_FAILED.\n' "$(ts)" "$(shown_name "$STATE/inflight-backup.tar")" >> "$LOG"
     fi
   fi
   # What a tripwire or stop report left when a signal cut it short.
-  [ -n "${STATE:-}" ] && rm -f "$STATE/tripwire-body.$$" "$STATE/kill-report.$$" "$STATE/runner-tripwire.tmp.$$" "$STATE/$RUNNER.interrupted.run.tmp.$$" 2>/dev/null
-  [ -n "${ROOT:-}" ] && rm -f "$ROOT/$TRIPWIRE_REL.tmp.$$" 2>/dev/null
-  [ -n "$SNAP_DIR" ] && rm -rf "$SNAP_DIR"
+  [ -n "${STATE:-}" ] && rm -f "$STATE/tripwire-body.$$" "$STATE/kill-report.$$" "$STATE/runner-tripwire.tmp.$$" "$STATE/$RUNNER.interrupted.run.tmp.$$" "$STATE/signal-stop.$$" "$STATE/signal-stop.$$.powershell" 2>/dev/null
+  [ -n "${ROOT:-}" ] && rm -f "$ROOT/$TRIPWIRE_REL.tmp.$$" "$ROOT/$TRIPWIRE_REL.tmp.$$".* "$ROOT/$INFLIGHT_REL.tmp.$$".* 2>/dev/null
+  [ -n "$SNAP_DIR" ] && [ "$SNAP_KEEP" -eq 0 ] && rm -rf "$SNAP_DIR"
   run_lock_release
 }
 
@@ -188,28 +204,38 @@ on_signal() {
   local report=""
   # The whole tree, so a child of the agent or of a git step cannot keep writing
   # after the exit. RUN_PID is set while such a command runs, and while the
-  # watchdog finishes stopping one that has ended (RUN_REAPED=1). Then the private
-  # temporary directory exists. A stop that may have left a process marks the run
-  # lock. Before containment the tripwire below is set, so the stop's report goes
-  # into it as well.
-  if [ -n "${RUN_PID:-}" ] && [ -n "$SNAP_DIR" ] && [ -d "$SNAP_DIR" ]; then
-    stop_tree "$RUN_PID" 2 "$SNAP_DIR/signal-stop" "${AGENT_SESSION_ID:-}" 1
-    if grep -qE '^(alive|unknown)' "$SNAP_DIR/signal-stop" 2>/dev/null; then
+  # watchdog finishes stopping one that has ended (RUN_REAPED=1). It runs once the
+  # private temporary directory has been made, whether or not it is still there,
+  # and is recorded in the state directory, because a pass can remove that
+  # directory or put a link in its place. A stop that may have left a
+  # process marks the run lock. Before containment the tripwire below is set, so
+  # the stop's report goes into it as well.
+  if [ -n "${RUN_PID:-}" ] && [ -n "$SNAP_DIR" ]; then
+    stop_tree "$RUN_PID" 2 "$STATE/signal-stop.$$" "${AGENT_SESSION_ID:-}" 1
+    if grep -qE '^(alive|unknown)' "$STATE/signal-stop.$$" 2>/dev/null; then
       if [ "$INFLIGHT" -eq 1 ] && [ "$CONTAINMENT_CHECKED" -eq 0 ]; then
-        report="$(cat "$SNAP_DIR/signal-stop")"
+        report="$(cat "$STATE/signal-stop.$$")"
       else
-        mark_kill_failed "$LOG" "$(cat "$SNAP_DIR/signal-stop")"
+        mark_kill_failed "$LOG" "$(cat "$STATE/signal-stop.$$")"
       fi
     fi
   fi
+  # Before containment the pass may have put a link in place of the vault's log,
+  # so the lines below go to the state directory then (log_outside_links). The
+  # log is checked once the tree is stopped, so a pass cannot put the link there
+  # after the check.
+  if [ "$INFLIGHT" -eq 1 ] && [ "$CONTAINMENT_CHECKED" -eq 0 ]; then
+    log_outside_links "$ROOT" "$STATE" "$RUNNER"
+  fi
   record_session_once
   # Before its output reached the run log, the pass's stream would go with the
-  # temporary directory, so it is kept in the state directory.
-  if [ "$RUN_LOG_APPENDED" -eq 0 ] && [ -n "$SNAP_DIR" ] && [ -f "$SNAP_DIR/run" ]; then
+  # temporary directory, so it is kept in the state directory, unless run or the
+  # folder is a link, which the copy would follow to whatever it names.
+  if [ "$RUN_LOG_APPENDED" -eq 0 ] && [ -n "$SNAP_DIR" ] && [ -f "$SNAP_DIR/run" ] \
+     && [ ! -L "$SNAP_DIR/run" ] && [ ! -L "$SNAP_DIR" ]; then
     keep_run_output "$SNAP_DIR/run" "$STATE" "$RUNNER" "$LOG"
   fi
   if [ "$INFLIGHT" -eq 1 ] && [ "$CONTAINMENT_CHECKED" -eq 0 ]; then
-    : > "$SNAP_DIR/empty"
     # A tripwire this run already set, by containment or by a stop's report,
     # stays as it is, with a note. tripwire_check made sure neither copy existed
     # when the run started, and the pass cannot write the state directory copy.
@@ -219,12 +245,12 @@ on_signal() {
       printf '[%s] INTERRUPTED after the tripwire was set. The tripwire is kept.\n' "$(ts)" >> "$LOG"
     elif write_tripwire "$ROOT" "$STATE" "$RUNNER" \
          "the pass was interrupted by a signal before containment ran, so the vault's steering surfaces are unverified (the pre-pass backup is $STATE/inflight-backup.tar)" \
-         "(none, because containment did not run)" "$SNAP_DIR/empty"; then
+         "(none, because containment did not run)" /dev/null "" uncontained; then
       clear_inflight "$ROOT" "$STATE"
       printf '[%s] INTERRUPTED before containment. Tripwire set.\n' "$(ts)" >> "$LOG"
     else
       # With no tripwire the marker stays, so the next run still refuses.
-      printf '[%s] TRIPWIRE-ERROR: interrupted before containment and no tripwire could be written. The in-flight marker is kept.\n' "$(ts)" >> "$LOG"
+      printf '[%s] TRIPWIRE-ERROR: interrupted before containment and no tripwire could be written. Treat the vault as unverified, and run no git command in it before the steering surfaces have been checked. The in-flight marker is kept.\n' "$(ts)" >> "$LOG"
     fi
   fi
   # A stop by the watchdog that may have left a process, and that the runner had
@@ -261,6 +287,11 @@ main() {
   mkdir -p "$LOG_DIR" 2>/dev/null
   LOG="$LOG_DIR/promotion-agent.log"
   RUN_OUT="$LOG_DIR/promotion-agent.run.log"
+  git_env_warning "$LOG"
+  # On Windows git reads the vault's folder as it is spelled, so a spelling it
+  # reads as another folder is refused before the state directory, the lock or
+  # any git call.
+  vault_root_spelling_ok "$ROOT" "$LOG" || exit 1
   # Settings that reach arithmetic are checked first. A value that is not a whole
   # number would abort the runner with nothing in the log, and bash evaluates a
   # variable in arithmetic as an expression.
@@ -273,10 +304,16 @@ main() {
   STATE_REAL="$(state_dir_ready "$STATE" "$ROOT")"
   state_rc=$?
   if [ "$state_rc" -ne 0 ]; then
-    printf '[%s] ERROR: the state directory %s %s. Refusing to run.\n' "$(ts)" "$STATE" "$(state_dir_problem "$state_rc")" >> "$LOG"
+    printf '[%s] ERROR: the state directory %s %s. Refusing to run.\n' "$(ts)" "$(shown_name "$STATE")" "$(state_dir_problem "$state_rc")" >> "$LOG"
     exit 1
   fi
   STATE="$STATE_REAL"
+  # A tripwire or a marker means an earlier pass ended without containment, and a
+  # link it put in place of the vault's log may still be there. This run's lines
+  # then go to the state directory (log_outside_links).
+  if guard_exists "$ROOT" "$STATE" "$TRIPWIRE_REL" || guard_exists "$ROOT" "$STATE" "$INFLIGHT_REL"; then
+    log_outside_links "$ROOT" "$STATE" "$RUNNER"
+  fi
 
   # The agent is asked to end with this exact line. It is the positive evidence
   # that a pass reached its end: an error dump, however long, does not contain it.
@@ -291,6 +328,11 @@ main() {
   run_lock_acquire "$STATE" "$ROOT" "$RUNNER" "$LOG" "$((TIMEOUT + WATCHDOG_GRACE + 900))"
   lock_rc=$?
   [ "$lock_rc" -eq 0 ] || exit "$lock_rc"
+  # Again once the lock is held: the pass that held it while this run waited may
+  # have put the link there, and set the tripwire, after the check above.
+  if guard_exists "$ROOT" "$STATE" "$TRIPWIRE_REL" || guard_exists "$ROOT" "$STATE" "$INFLIGHT_REL"; then
+    log_outside_links "$ROOT" "$STATE" "$RUNNER"
+  fi
 
   tripwire_check "$ROOT" "$STATE" "$RUNNER" "$LOG"
   guard_rc=$?
@@ -323,8 +365,10 @@ main() {
     exit 1
   }
   # On Windows git reads this folder as TMPDIR spells it, so a spelling it reads
-  # as another folder is refused before the first git call, in every mode.
+  # as another folder is refused before the first git call, in every mode, and so
+  # is a folder that is not an absolute path.
   temp_dir_spelling_ok "$SNAP_DIR" "$LOG" || exit 1
+  runner_folder_ok "$SNAP_DIR" "$LOG" || exit 1
   mkdir -p "$SNAP_DIR/nohooks"
 
   # A git operation in progress or a detached HEAD stops the run before the agent
@@ -419,12 +463,31 @@ main() {
   if [ "$AGENT_KIND" = claude ] && ! memory_override "$ROOT" "$STATE" "$SNAP_DIR" "$LOG"; then
     exit 1
   fi
+  # The runner's folder for the pass is recorded now, before the in-flight
+  # marker, and again as soon as the agent returns (snap_manifest).
+  if ! SNAP_SEALS="$(snap_manifest "$SNAP_DIR")" || [ -z "$SNAP_SEALS" ]; then
+    SNAP_SEALS=
+    printf '[%s] ERROR: the runner could not record its folder for the pass, %s, before the agent started (the folder missing or a link, a name in it outside letters, digits, dot, underscore and hyphen, a file it could not checksum, a folder in it that could not be listed, no sha256sum, shasum or cksum found, or a record that came out empty), so it could not check the folder afterwards. Refusing to run.\n' "$(ts)" "$(shown_name "$SNAP_DIR")" >> "$LOG"
+    exit 1
+  fi
+  case "$(snap_tool)" in
+    cksum\ *) printf '[%s] WARNING: no sha256sum or shasum was found, so the runner checks its folder for the pass with cksum, a CRC that anyone able to write the folder can make a file match.\n' "$(ts)" >> "$LOG" ;;
+  esac
+  # A backup an earlier pass kept, after a 78 or a KILL_FAILED, goes first, so a
+  # copy that fails cannot leave it to be named as this pass's backup.
+  rm -f "$STATE/inflight-backup.tar" 2>/dev/null
   cp "$SNAP_DIR/steering.tar" "$STATE/inflight-backup.tar" 2>/dev/null
+  backup_rc=$?
+  if [ "$backup_rc" -ne 0 ] || [ ! -f "$STATE/inflight-backup.tar" ] || [ -L "$STATE/inflight-backup.tar" ]; then
+    rm -f "$STATE/inflight-backup.tar" 2>/dev/null
+    printf '[%s] ERROR: could not copy the pre-pass backup of the steering surfaces to the state directory as %s. Refusing to run.\n' "$(ts)" "$(shown_name "$STATE/inflight-backup.tar")" >> "$LOG"
+    exit 1
+  fi
   # Without the marker outside the vault, a pass killed mid-run would leave no
   # trace the next run can trust. Refuse rather than start the agent.
   if ! mark_inflight "$ROOT" "$STATE" "$RUNNER"; then
     clear_inflight "$ROOT" "$STATE"
-    printf '[%s] ERROR: could not write the in-flight marker in the state directory %s. Refusing to run.\n' "$(ts)" "$STATE" >> "$LOG"
+    printf '[%s] ERROR: could not write the in-flight marker in the state directory %s. Refusing to run.\n' "$(ts)" "$(shown_name "$STATE")" >> "$LOG"
     exit 1
   fi
   INFLIGHT=1
@@ -449,6 +512,40 @@ main() {
   STOP_REPORT_PENDING="${RUN_KILL_FAILED:-0}"
   AGENT_RUNNING=0
 
+  # Before anything is written to the folder again, it must be as it was when
+  # the agent started; otherwise nothing in it can be trusted, and the pass ends
+  # with the tripwire and the folder kept (snap_untrusted).
+  if ! SNAP_NOW="$(snap_manifest "$SNAP_DIR")" || [ "$SNAP_NOW" != "$SNAP_SEALS" ]; then
+    SNAP_KEEP=1
+    # Containment does not run on this path, so a link the pass put in place of
+    # the vault's log stays, and is not written through (log_outside_links).
+    log_outside_links "$ROOT" "$STATE" "$RUNNER"
+    snap_untrusted "$ROOT" "$STATE" "$RUNNER" "$SNAP_DIR" "$LOG"
+    snap_rc=$?
+    [ "$snap_rc" -eq 78 ] && INFLIGHT=0
+    if [ "$RUN_TIMED_OUT" -eq 1 ]; then
+      printf '[%s] TIMEOUT: promotion-agent exceeded %ss and was killed (status %s)\n' \
+        "$(ts)" "$TIMEOUT" "$RUN_RC" >> "$LOG"
+    elif [ "$RUN_STALLED" -eq 1 ]; then
+      printf '[%s] STALLED: promotion-agent wrote no output for %ss (%s) and was killed (status %s)\n' \
+        "$(ts)" "$AGENT_STALL_SECONDS" "$AGENT_STALL_NOTE" "$RUN_RC" >> "$LOG"
+    fi
+    if [ "$RUN_TIMED_OUT" -eq 1 ] || [ "$RUN_STALLED" -eq 1 ]; then
+      report_stop "$LOG" promotion-agent "$ROOT" "$STATE" "$RUNNER"
+    fi
+    # A signal before RUN_LOG_APPENDED is set keeps the output itself, so it is
+    # set only once the output is kept, or at once when it cannot be. Neither
+    # copy follows a link at run or at the folder.
+    if [ -f "$SNAP_DIR/run" ] && [ ! -L "$SNAP_DIR/run" ] && [ ! -L "$SNAP_DIR" ]; then
+      keep_run_output "$SNAP_DIR/run" "$STATE" "$RUNNER" "$LOG"
+      RUN_LOG_APPENDED=1
+      record_session_once
+    else
+      RUN_LOG_APPENDED=1
+      printf '[%s] WARNING: the run output, %s, is missing, is not a regular file or is in a folder that is a link, so it was not kept.\n' "$(ts)" "$(shown_name "$SNAP_DIR/run")" >> "$LOG"
+    fi
+    exit "$snap_rc"
+  fi
   snapshot_tree "$ROOT" "$SNAP_DIR/after"
   changed_paths "$SNAP_DIR/before" "$SNAP_DIR/after" > "$SNAP_DIR/changed"
 
