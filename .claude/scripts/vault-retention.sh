@@ -3245,8 +3245,9 @@ main() {
   # Checked as the folder for the pass is (runner_folder_checked) before anything
   # is written into it. A folder that fails only costs this run its copy of the
   # log, so its lines go to the log as warnings and the run goes on logging to the
-  # log alone; COPY_DIR keeps the name mktemp gave, which is the one the exit
-  # removes. The lines are read back from the check rather than written by it,
+  # log alone, and COPY_DIR keeps the name mktemp gave, which is the one the exit
+  # removes; a folder that passes is used, and removed, by the path the check
+  # passed. The lines are read back from the check rather than written by it,
   # because it writes them as errors that refuse the run.
   copy_ok=0
   if [ -n "$COPY_DIR" ]; then

@@ -3800,7 +3800,7 @@ work_dir_checks() {
 # use. On Windows (the platform, or wherever a cygpath is found) the folder is
 # also converted to a drive path, which must map back to it, and walked as one.
 # Off Windows it must also be open to no other account (mode 0700, which mktemp
-# -d gives it, measured on Linux), which the state directory's checks do not
+# -d gives it, measured on Linux and macOS), which the state directory's checks do not
 # ask, since they accept a folder its group can write. On success
 # RUNNER_FOLDER is the resolved path, which the runner uses from then on; the
 # runner keeps its own spelling until then, so a refusal removes the folder by
