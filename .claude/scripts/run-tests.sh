@@ -7383,6 +7383,34 @@ else
     fi
   done
   rm -f "$TMP/v142-dw.calls"
+  # 1.5.0: the runner's own check (runner_folder_checked) takes the same two
+  # walks on the same branch, in every mode, so the same three pairs must decide
+  # it the same way, with its own line for code 4, and leave RUNNER_FOLDER unset.
+  for dw_leg in 1:2 2:1 0:1; do
+    dw_first="${dw_leg%%:*}" dw_drive="${dw_leg#*:}"
+    rm -f "$TMP/v142-dw.log" "$TMP/v142-dw.calls"
+    dw_set="$( LC_ALL=C; export LC_ALL; PATH="$DW_SHIM:$PATH"; . "$RV/.claude/scripts/lib/runner-common.sh"
+      DW_FIRST="$dw_first" DW_DRIVE="$dw_drive"
+      path_under_by_identity() {
+        printf '%s\n' "$1" >> "$TMP/v142-dw.calls"
+        case "$1" in Z:/*) return "$DW_DRIVE" ;; *) return "$DW_FIRST" ;; esac
+      }
+      runner_folder_checked "$RV" "${CASE_STATE:-$TMP/state}" "$dw_w" "$TMP/v142-dw.log"
+      echo "rc=$? folder=${RUNNER_FOLDER-unset}" )"
+    dw_z="$(grep -c '^Z:/' "$TMP/v142-dw.calls" 2>/dev/null | tr -d ' ')"
+    case "$dw_first" in
+      0) dw_want=", resolves into the vault, $RF_WORK" dw_not='ended with status' dw_zwant=0 ;;
+      *) dw_want="ended with status 2, $MO_WALKST" dw_not=', resolves into the vault, and the' dw_zwant=0 ;;
+    esac
+    [ "$dw_first" = 1 ] && dw_zwant=1
+    if [ "$dw_set" = "rc=1 folder=unset" ] && grep -F -- "$dw_want" "$TMP/v142-dw.log" 2>/dev/null | grep -q '^\[[^]]*\] ERROR: ' \
+       && ! grep -qF -- "$dw_not" "$TMP/v142-dw.log" 2>/dev/null && [ "${dw_z:-0}" -eq "$dw_zwant" ]; then
+      ok "rf-drive-walk: a first walk that answers $dw_first, the drive walk answering $dw_drive -> runner_folder_checked refused (1) on its own line, after $dw_zwant drive-path walk(s), RUNNER_FOLDER unset"
+    else
+      bad "rf-drive-walk: a first walk that answers $dw_first, the drive walk answering $dw_drive -- expected rc=1 folder=unset on its own line after $dw_zwant drive-path walk(s); got [$dw_set], drive-path walks ${dw_z:-0}: $(tr '\n' '|' < "$TMP/v142-dw.log" 2>/dev/null | cut -c1-300)"
+    fi
+  done
+  rm -f "$TMP/v142-dw.calls"
 fi
 rm -rf "$DW_SHIM" "$TMP/v142-dw" "$TMP/v142-dw.log"
 # memory_override takes the folder above the runner's folder physically. For a
