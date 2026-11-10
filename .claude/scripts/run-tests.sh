@@ -8809,10 +8809,14 @@ else
   is_windows_host && rf15_want="$(cygpath -m "$rf15_phys")"
   rf15_under=no
   case "$rf15_arg" in "$rf15_want"/tmp.*) rf15_under=yes ;; esac
-  if [ "$rf15_rc" = 0 ] && [ "$rf15_under" = yes ]; then
-    ok "rf-above: dream-claude, the runner's folder for the pass under a link -> runs (0), and Claude Code was handed the settings file under the resolved path"
+  # memory_override already resolved the settings file's folder in 1.4.2; what
+  # 1.5.0 adds in claude mode is that git is handed the resolved path too.
+  rf15_ph="$(grep -F -- "$rf15_phys/tmp." "$MO_K4/git.log" 2>/dev/null | grep -c 'nohooks' | tr -d ' ')"
+  rf15_sp="$(mo_k4_spelled "$MO_K4/base/lnk")"
+  if [ "$rf15_rc" = 0 ] && [ "$rf15_under" = yes ] && [ "${rf15_ph:-0}" -ge 1 ] && [ "${rf15_sp:-0}" -eq 0 ]; then
+    ok "rf-above: dream-claude, the runner's folder for the pass under a link -> runs (0), Claude Code was handed the settings file and git the nohooks folder under the resolved path ($rf15_ph call(s)), never the spelling"
   else
-    bad "rf-above: dream-claude, the runner's folder for the pass under a link -- expected exit 0 and --settings under $rf15_want/tmp.*; got exit $rf15_rc, --settings ${rf15_arg:-none}"
+    bad "rf-above: dream-claude, the runner's folder for the pass under a link -- expected exit 0, --settings under $rf15_want/tmp.*, at least one git call naming nohooks under $rf15_phys/tmp.* and none under the spelling; got exit $rf15_rc, --settings ${rf15_arg:-none}, git calls under the resolved path naming nohooks ${rf15_ph:-0}, under the spelling ${rf15_sp:-0}"
   fi
   rm -f "$MO_CAP.json" "$MO_CAP.where"
   tripwire_clear
