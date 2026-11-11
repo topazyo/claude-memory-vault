@@ -138,8 +138,13 @@ lint_file() {
   # .claude/skills/, .agents/skills/, and Pi's .pi/skills/ and .pi/prompts/),
   # and the instruction files harnesses load (AGENTS.md, AGENTS.override.md,
   # CLAUDE.md, CLAUDE.local.md, GEMINI.md, .github/copilot-instructions.md,
-  # .hermes.md, .pi/SYSTEM.md, .pi/APPEND_SYSTEM.md), which docs/reference.md
-  # section 3.1 lists in full. The Rules File Backdoor targets
+  # .hermes.md, .pi/SYSTEM.md, .pi/APPEND_SYSTEM.md), plus what Oh My Pi (omp)
+  # reads as instructions: its .omp/ system, rules, skills, prompts, commands,
+  # instructions and tools files, .claude/SYSTEM.md and .claude/commands/, and
+  # the same set in .agents/ and the singular .agent/. docs/reference.md
+  # section 3.1 lists them all. Only .md files reach this test, so a tool
+  # written in TypeScript under .omp/tools/ is the runner fence's to catch,
+  # not this scan's. The Rules File Backdoor targets
   # exactly these steering files, which the tier-scoped frontmatter check above
   # never reaches. The instruction files are the ones loaded most eagerly, so leaving
   # them out would scan the lazily-loaded files and skip the always-loaded ones.
@@ -168,6 +173,14 @@ lint_file() {
     *"/.agents/skills/"*|.agents/skills/*) IS_CHAR_SCAN_SCOPE=1 ;;
     */.pi/SYSTEM.md|.pi/SYSTEM.md|*/.pi/APPEND_SYSTEM.md|.pi/APPEND_SYSTEM.md) IS_CHAR_SCAN_SCOPE=1 ;;
     *"/.pi/skills/"*|.pi/skills/*|*"/.pi/prompts/"*|.pi/prompts/*) IS_CHAR_SCAN_SCOPE=1 ;;
+    */.omp/SYSTEM.md|.omp/SYSTEM.md|*/.omp/SYSTEM_TEMPLATE.md|.omp/SYSTEM_TEMPLATE.md|*/.omp/RULES.md|.omp/RULES.md) IS_CHAR_SCAN_SCOPE=1 ;;
+    *"/.omp/skills/"*|.omp/skills/*|*"/.omp/rules/"*|.omp/rules/*|*"/.omp/prompts/"*|.omp/prompts/*) IS_CHAR_SCAN_SCOPE=1 ;;
+    *"/.omp/commands/"*|.omp/commands/*|*"/.omp/instructions/"*|.omp/instructions/*|*"/.omp/tools/"*|.omp/tools/*) IS_CHAR_SCAN_SCOPE=1 ;;
+    */.claude/SYSTEM.md|.claude/SYSTEM.md|*/.claude/SYSTEM_TEMPLATE.md|.claude/SYSTEM_TEMPLATE.md|*"/.claude/commands/"*|.claude/commands/*) IS_CHAR_SCAN_SCOPE=1 ;;
+    */.agents/SYSTEM.md|.agents/SYSTEM.md|*/.agents/SYSTEM_TEMPLATE.md|.agents/SYSTEM_TEMPLATE.md) IS_CHAR_SCAN_SCOPE=1 ;;
+    *"/.agents/rules/"*|.agents/rules/*|*"/.agents/prompts/"*|.agents/prompts/*|*"/.agents/commands/"*|.agents/commands/*) IS_CHAR_SCAN_SCOPE=1 ;;
+    */.agent/SYSTEM.md|.agent/SYSTEM.md|*/.agent/SYSTEM_TEMPLATE.md|.agent/SYSTEM_TEMPLATE.md) IS_CHAR_SCAN_SCOPE=1 ;;
+    *"/.agent/skills/"*|.agent/skills/*|*"/.agent/rules/"*|.agent/rules/*|*"/.agent/prompts/"*|.agent/prompts/*|*"/.agent/commands/"*|.agent/commands/*) IS_CHAR_SCAN_SCOPE=1 ;;
   esac
   shopt -u nocasematch
 

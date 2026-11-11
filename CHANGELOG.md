@@ -25,6 +25,66 @@ bash .claude/scripts/vault-update.sh --check --from ../template-new
 
 ---
 
+## 1.5.1 — 2026-11-11
+
+A hardening release for the scheduled runners and the lint, prompted by a report from a user of
+Oh My Pi (omp), and a fix for onboarding a repository that is worked on through worktrees. The
+runners' fence now contains a write to omp's `.omp/`, to the singular `.agent/` folder omp also
+reads instructions from, and to Hermes Agent's `.hermes.md`, at any depth. Until now a pass that
+wrote one was reported and the file was left in the vault for the next session. The lint's
+invisible-character scan now covers the files omp reads as instructions, and `/onboard-project`
+no longer writes a pointer that resolves only from the main checkout.
+
+### Security
+
+- **A pass could plant an omp extension and leave it to run.** omp runs the hooks and extensions in
+  the session folder's `.omp/` with no trust prompt, and reads skills, rules, prompts and system
+  prompts from `.omp/` and from `.agent/` as well as `.agents/`. Neither folder was a steering
+  surface, so a pass that wrote into one was reported as a stray write, exited 2 and left the file
+  where the owner's next omp session in the vault would load it. Both are now steering surfaces at
+  any depth and in any letter case, so such a write is quarantined, the pre-pass copy is restored
+  and the tripwire is set, as for Pi's `.pi/` and OpenCode's `.opencode/`. This holds whichever
+  harness runs the pass, claude mode included, because the dream agent can write files.
+- **`.hermes.md` is now a steering surface at any depth.** Hermes Agent loads it as instructions,
+  and the lint already scanned it, but the fence did not name it. `docs/harnesses/README.md` had
+  recorded it as carried to a later release.
+- **The invisible-character scan covers what omp reads as instructions.** That is `.omp/SYSTEM.md`,
+  `.omp/SYSTEM_TEMPLATE.md`, `.omp/RULES.md` and the `.omp/` folders `skills/`, `rules/`,
+  `prompts/`, `commands/`, `instructions/` and `tools/`; `.claude/SYSTEM.md`,
+  `.claude/SYSTEM_TEMPLATE.md` and `.claude/commands/`; and the system files and the `rules/`,
+  `prompts/` and `commands/` folders of `.agents/` and of `.agent/`, with `.agent/skills/`. Only
+  `.md` files are scanned, as before. `docs/reference.md` §3.1 holds the full list.
+
+### Changed
+
+- **`/onboard-project` step 7** says that a committed pointer is resolved from every checkout of
+  the repository, so a relative path that works in the main checkout points nowhere from a worktree
+  elsewhere on disk or from one Claude Code makes at `.claude/worktrees/<name>/`. It now asks
+  whether the repository is worked on through worktrees and, when it is and the vault is under the
+  home folder, writes the pointer from the home folder (`@~/…` in `CLAUDE.md`, `~/…` in
+  `AGENTS.md`). Step 8 expands `~` and checks each relative path from a worktree as well. Step 9
+  reports a home-anchored pointer, which holds only on that machine. Step 3 now says not to create
+  an empty auto-memory folder for a harness whose memory cannot be moved into the vault, and that
+  the folder must never be a link to any harness's memory folder, not only Claude Code's.
+- **`docs/reference.md`** lists `.omp/`, `.agent/` and `.hermes.md` among the steering surfaces,
+  says when an omp session itself writes into `.omp/`, and adds omp's files to the scan's list.
+  **`docs/harnesses/README.md`** no longer lists `.hermes.md` as a gap carried to a later release.
+
+### Adopting this
+
+1. **Take `.claude/scripts/lib/runner-common.sh` and `.claude/hooks/vault-lint.sh`.** Neither
+   depends on the other, and no runner script changed, so each can be taken alone.
+2. **A pass that writes into `.omp/`, `.agent/` or a `.hermes.md` now sets the tripwire, where 1.5.0
+   exited 2 and left the file.** No shipped pass writes there. If a tripwire names one of those
+   paths, read the quarantined file before you delete the tripwire, as for any other. Setting a
+   project model role in omp, which writes `.omp/config.yml`, while a pass runs is contained too.
+3. **Take `.claude/skills/onboard-project/SKILL.md` and `.agents/skills/onboard-project/SKILL.md`
+   together**, so the two copies stay byte-identical. Projects you have already onboarded keep
+   their pointers. If one of them is worked on through worktrees, resolve its pointer from a
+   worktree, and if it points nowhere, rewrite it from the home folder as step 7 now says.
+4. **Take `.claude/scripts/run-tests.sh` with the two scripts in step 1.** Its new controls fail
+   against 1.5.0's library and hook.
+
 ## 1.5.0 — 2026-11-10
 
 A hardening release for the scheduled runners. Each runner, in either mode, now resolves its own
