@@ -216,8 +216,8 @@ mount covers it, and step 5 fails a `.env` that is a link, or a file with more t
 would stay changeable for anything that loads it outside the container). OpenCode's
 `opencode.jsonc`, which OpenCode reads beside `opencode.json` from the folder it starts in and every
 folder above it, is outside the mounts, and the steering filter names both at any depth from 1.5.2
-(as it has named `.hermes.md` from 1.5.1), so one a pass writes is put back before a later run
-loads it. Run the check before you
+(as it has named `.hermes.md` from 1.5.1), so one a pass writes is removed, or put back as it was
+if it existed before the pass, before a later run loads it. Run the check before you
 set `VAULT_ALLOW_UNENFORCED_TOOLS=1`, on a scratch copy of the vault, trusted by the harness as the
 vault is, from the copy's root and in the environment the schedule uses:
 

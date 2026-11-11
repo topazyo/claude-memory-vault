@@ -409,7 +409,7 @@ a lint that does nothing and a lint that found nothing wrong print the same thin
 - **Reserved names** — the names `.claude/agents/promotion-agent.md` tells the promotion agent never
   to give a note or folder are the any-depth file names and the folder names `steering_filter`
   contains, compared both ways, above a floor for each list, after the comparison has failed on a
-  copy of each side with one name dropped or added.
+  copy of the agent with one name swapped and a copy of the fence with one name added.
 - **Pi extension** — with Node 18 or later, `.claude/adapters/pi/vault.js` is loaded with a
   stand-in for Pi's extension API and fake vaults whose hook scripts record what they get. Each of
   these is refused: `@.env`, `.ENV`, `.env.`, `.env ` and a trailing no-break space, an NTFS
@@ -1215,7 +1215,7 @@ Around that call, each runner does several things an exit code cannot:
   except `logs/`, `.agents/`, each shipped harness's configuration folder or file, OpenCode's
   `.opencode/`, Pi's `.pi/` and Oh My Pi's `.omp/` (which the template does not ship but those
   harnesses run code from, omp with no trust prompt), the singular `.agent/` that omp reads
-  instructions from, `_agents/` and `_agent/`, which Google Antigravity still reads rules, skills,
+  instructions from, `_agents/` and `_agent/` at any depth, which Google Antigravity still reads rules, skills,
   workflows, `hooks.json` and `mcp_config.json` from
   (<https://antigravity.google/docs/customization-discovery/>, read 2026-11-11), `.github/`,
   `.vscode/`, and, **at any depth**, `CLAUDE.md`, `CLAUDE.local.md`,

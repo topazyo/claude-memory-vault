@@ -5763,13 +5763,18 @@ fi
 # steering_filter and from the two bullets of promotion-agent.md, and must agree
 # both ways, so a name added to the fence and not to the agent fails here.
 # Root-only names stay out (the agent cannot write at the root), and so do the
-# nested .git names (they count only inside a .git folder). The floors are each
+# nested .git names (they count only inside a .git folder), and so does .git
+# itself, which counts at any depth but only as an embedded repository or a
+# gitlink, never as a note or a folder of notes the agent would make. The floors are each
 # line's count when this was written, so an extraction that reads the wrong
 # line, or none, cannot agree by both being empty. The comparison runs on
 # scratch copies with one name dropped and one added first, so a comparator
 # that cannot tell sets apart fails rather than passing.
 rn_from_lib() {  # rn_from_lib <lib> <base|component> - the names on the line after the marker
-  awk -v m="# reserved-names: $2" 'hit { print; exit } index($0, m) { hit = 1 }' "$1" \
+  # Only a line that closes its test with ") return 1" counts, so a test wrapped
+  # onto a second line reads as no names and fails the floor, rather than hiding
+  # the names on the line nobody reads.
+  awk -v m="# reserved-names: $2" 'hit { if ($0 ~ /\) return 1[ \t\r]*$/) print; exit } index($0, m) { hit = 1 }' "$1" \
     | grep -o '== "[^"]*"' | sed 's/^== "//; s/"$//' | LC_ALL=C tr 'A-Z' 'a-z' | LC_ALL=C sort -u
 }
 rn_from_agent() {  # rn_from_agent <agent.md> <label> - the backticked names in the bullet "- <label>:"
@@ -5794,12 +5799,13 @@ rn_check() {  # rn_check <lib> <agent.md> - prints nothing when both lists agree
   rn_diff file "$rn_bl" "$rn_ba"; rn_diff folder "$rn_cl" "$rn_ca"
 }
 RN_LIB="$ROOT/.claude/scripts/lib/runner-common.sh" RN_AGENT="$ROOT/.claude/agents/promotion-agent.md"
-sed 's/`HERMES\.md`, //' "$RN_AGENT" > "$TMP/rn-agent-dropped.md"
-sed 's/|| base == "opencode\.jsonc")/|| base == "opencode.jsonc" || base == "probe.md")/' "$RN_LIB" > "$TMP/rn-lib-added.sh"
+sed 's/`HERMES\.md`, /`HERMEZ.md`, /' "$RN_AGENT" > "$TMP/rn-agent-swapped.md"
+sed 's/if (base == "claude\.md" ||/if (base == "probe.md" || base == "claude.md" ||/' "$RN_LIB" > "$TMP/rn-lib-added.sh"
 rn_selftest=""
-cmp -s "$RN_AGENT" "$TMP/rn-agent-dropped.md" && rn_selftest="${rn_selftest}the agent copy lost no name; "
+cmp -s "$RN_AGENT" "$TMP/rn-agent-swapped.md" && rn_selftest="${rn_selftest}the agent copy changed no name; "
 cmp -s "$RN_LIB" "$TMP/rn-lib-added.sh" && rn_selftest="${rn_selftest}the fence copy gained no name; "
-[ -n "$(rn_check "$RN_LIB" "$TMP/rn-agent-dropped.md")" ] || rn_selftest="${rn_selftest}a dropped agent name was not seen; "
+# A swapped name keeps the count at its floor, so only the comparison can see it.
+[ -n "$(rn_check "$RN_LIB" "$TMP/rn-agent-swapped.md")" ] || rn_selftest="${rn_selftest}a swapped agent name was not seen; "
 [ -n "$(rn_check "$TMP/rn-lib-added.sh" "$RN_AGENT")" ] || rn_selftest="${rn_selftest}an added fence name was not seen; "
 rn_got=$(rn_check "$RN_LIB" "$RN_AGENT")
 if [ -n "$rn_selftest" ]; then

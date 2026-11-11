@@ -130,8 +130,8 @@ project `opencode.jsonc` beside `opencode.json`, from the folder it starts in an
 it (`packages/opencode/src/config/paths.ts` line 17 at the v1.19.5 tag, commit `810c0eb` of
 `github.com/anomalyco/opencode`, read 2026-11-11), and either can name plugins and MCP commands.
 This mount does not cover `opencode.jsonc`, which the vault does not ship. The runner's steering
-filter names both files at any depth, so one a pass writes is put back, and the tripwire set,
-before a later run loads it.
+filter names both files at any depth, so one a pass writes is removed, or put back as it was if it
+existed before the pass, and the tripwire set, before a later run loads it.
 
 ## Known limits
 
