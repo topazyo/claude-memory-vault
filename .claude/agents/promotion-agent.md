@@ -45,6 +45,19 @@ Before writing a new note, Glob its folder and give it a name no note there alre
 without regard to case, because on Windows and macOS a name that differs only in case writes over
 the existing note.
 
+**Some names are reserved for harness files, wherever they sit.** The runner treats a file or folder
+with one of these names as something a coding agent loads and obeys, not as a note. So a pass that
+writes one, even as `40-llm-wiki/wiki/hermes.md` about the Hermes harness, has the file quarantined
+outside the vault, exits 2 with a VIOLATION, and sets a tripwire that stops every later pass until
+the owner clears it. Never give a note or a folder one of these names, compared without regard to
+case. Name a note about such a harness something else, such as `hermes-agent.md`.
+
+- Reserved file names: `CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md`, `AGENTS.override.md`,
+  `GEMINI.md`, `.hermes.md`, `HERMES.md`, `.mcp.json`, `.gitattributes`, `.gitignore`,
+  `opencode.json`, `opencode.jsonc`.
+- Reserved folder names: `.claude`, `.agents`, `.agent`, `.codex`, `.gemini`, `.cursor`,
+  `.windsurf`, `.opencode`, `.pi`, `.omp`, `.github`, `.vscode`, `_agents`, `_agent`.
+
 ## The promotion bar
 
 Promote when the lesson is **general** — it will apply again outside the situation that produced

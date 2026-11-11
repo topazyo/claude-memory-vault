@@ -25,6 +25,69 @@ bash .claude/scripts/vault-update.sh --check --from ../template-new
 
 ---
 
+## 1.5.2 — 2026-11-11
+
+A hardening release that closes the harness gaps 1.5.1 left recorded. The runners' fence now
+contains OpenCode's `opencode.json` and `opencode.jsonc` at any depth, and Google Antigravity's
+`_agents/` and `_agent/` folders. The lint scans the workflow, agent, rule and skill files
+Antigravity reads. The promotion agent is told the names it must never give a note, so a wiki entry
+about a harness no longer stops every pass.
+
+### Security
+
+- **A pass could plant an `opencode.jsonc` and leave it to run.** OpenCode reads `opencode.jsonc`
+  beside `opencode.json` from the folder it starts in and from every folder above it, and either
+  file can name plugins and MCP commands to run. This was checked in
+  `packages/opencode/src/config/paths.ts` line 17 at the v1.19.5 tag, commit `810c0eb` of
+  `github.com/anomalyco/opencode`, on 2026-11-11. The fence named only a root `opencode.json`. It
+  now names both files at any depth and in any letter case, so such a write is quarantined, the
+  pre-pass copy restored and the tripwire set. `docs/harnesses/README.md` and
+  `docs/harnesses/opencode.md` no longer carry it as a gap for a later release.
+- **`_agents/` and `_agent/` are now steering surfaces at any depth.** Google Antigravity
+  recognises both as legacy spellings of `.agents/`, and reads rules, skills, workflows,
+  `hooks.json` and `mcp_config.json` from them
+  (<https://antigravity.google/docs/customization-discovery/>, read 2026-11-11). The template
+  supports neither spelling. It fences them because Antigravity runs what they name. `.agent/` was
+  already fenced.
+- **The invisible-character scan covers what Antigravity reads.** That is the `workflows/` and
+  `agents/` folders of `.agents/` and `.agent/`, and the `rules/`, `skills/`, `workflows/` and
+  `agents/` folders of `_agents/` and `_agent/`. `docs/reference.md` §3.1 holds the full list.
+
+### Changed
+
+- **The promotion agent reserves the fence's names.** `.claude/agents/promotion-agent.md` lists
+  every file name and folder name the fence contains at any depth. A pass that names a note
+  `hermes.md`, for example, writes a harness instruction file rather than a note, and is
+  contained. A new control fails when the two lists disagree. `steering_filter` marks the two lines
+  it reads with `# reserved-names:` comments.
+- **`docs/harnesses/README.md`** says that a harness folder the template does not ship, such as
+  Pi's `.pi/`, is left out of the container mounts and handled by that harness's guide.
+- **`docs/reference.md`** names the new steering surfaces and their sources, adds Antigravity's
+  folders to the scan's list, and describes the new controls.
+
+### Adopting this
+
+1. **Take `.claude/scripts/lib/runner-common.sh`, `.claude/hooks/vault-lint.sh` and
+   `.claude/agents/promotion-agent.md` together with `.claude/scripts/run-tests.sh`.** The
+   reserved-names control in the suite reads the library and the agent definition, and fails when
+   one of them comes from another release. No runner script changed since 1.5.1.
+2. **A pass that writes an `opencode.json` or `opencode.jsonc` anywhere, or anything under an
+   `_agents/` or `_agent/` folder, still exits 2. The file is now quarantined, the pre-pass copy
+   restored and the tripwire set, where 1.5.1 left the file in the vault.** No shipped pass writes
+   there. If your vault keeps a folder named `_agents` or `_agent`, or a note named
+   `opencode.json(c)`, for your own purposes, rename it. Otherwise a pass that touches it stops
+   every later pass until you clear the tripwire. The root `opencode.json` the template ships was
+   already fenced.
+3. **If you customised the promotion agent's definition**, merge the new paragraph and its two
+   `Reserved` bullets by hand, and keep the bullets matching the two marked lines in
+   `runner-common.sh`.
+4. The shipped files this release touches are `.claude/scripts/lib/runner-common.sh`,
+   `.claude/hooks/vault-lint.sh`, `.claude/agents/promotion-agent.md`,
+   `.claude/scripts/run-tests.sh`, `docs/reference.md`, `docs/harnesses/README.md` and
+   `docs/harnesses/opencode.md`, plus `VERSION`, this file and `.claude/template-manifest`.
+   `CONTRIBUTING.md` (a new *Adding a harness* section) and `.github/workflows/ci.yml` (a guard
+   that nothing ships under `.omp/`) changed as well. A vault is not offered either.
+
 ## 1.5.1 — 2026-11-11
 
 A hardening release for the scheduled runners and the lint, prompted by a report from a user of

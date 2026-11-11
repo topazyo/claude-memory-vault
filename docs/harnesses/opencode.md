@@ -125,10 +125,13 @@ your home configuration (its global plugins included), start a new container for
 filesystem is discarded at exit, as the README's container rule says, so that a global plugin a pass
 wrote in the container's home cannot load at the next run (reasoned), and run the check in
 `docs/harnesses/README.md`, "No vault hook in a scheduled pass", which shows that the vault's hook
-scripts do not run and that writes into `.git` and `.claude/` are refused. OpenCode also "supports
-both JSON and JSONC", and its config page does not say whether a project `opencode.jsonc` is read;
-if it is, a pass could add one beside `opencode.json` that neither this mount nor the runner's
-steering filter names (reasoned; carried to a later release).
+scripts do not run and that writes into `.git` and `.claude/` are refused. OpenCode also reads a
+project `opencode.jsonc` beside `opencode.json`, from the folder it starts in and every folder above
+it (`packages/opencode/src/config/paths.ts` line 17 at the v1.19.5 tag, commit `810c0eb` of
+`github.com/anomalyco/opencode`, read 2026-11-11), and either can name plugins and MCP commands.
+This mount does not cover `opencode.jsonc`, which the vault does not ship. The runner's steering
+filter names both files at any depth, so one a pass writes is put back, and the tripwire set,
+before a later run loads it.
 
 ## Known limits
 
