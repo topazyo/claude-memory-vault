@@ -1205,12 +1205,14 @@ Around that call, each runner does several things an exit code cannot:
   `AGENTS.md`, `AGENTS.override.md`, `GEMINI.md`, Hermes Agent's `.hermes.md` and `HERMES.md`,
   `.mcp.json`, `.gitattributes`, `.gitignore` and any `.claude/` or other harness folder, including
   one that is the last part of the path, such as a symlink named `.claude`. Matching ignores case,
-  so a note named `hermes.md` is a steering surface too. omp's own documentation
-  (`docs/config-usage.md` at commit `f2ee6ba`, read 2026-11-11) names two writes an omp session
-  makes into the vault's `.omp/`: setting a project model role (`.omp/config.yml`), and setting aside a
-  project settings file it cannot parse. Either, made while a pass runs, is contained and sets the
-  tripwire like any other steering change, and so would any write omp makes there that its
-  documentation does not name (not measured). A nested file counts because Claude Code loads
+  so a note named `hermes.md` is a steering surface too, and so is this template's own
+  `docs/harnesses/hermes.md`: on a file system that ignores case, Hermes started in that folder
+  would load it as `HERMES.md`. omp's own documentation (`docs/config-usage.md` at commit
+  `f2ee6ba`, read 2026-11-11) names two writes an omp session makes into the vault's `.omp/`:
+  setting a project model role (`.omp/config.yml`), and setting aside a project settings file it
+  cannot parse. Either, made while a pass runs, is contained and sets the tripwire like any other
+  steering change, and so would any write omp makes there that its documentation does not name
+  (not measured). A nested file counts because Claude Code loads
   `31-standards/CLAUDE.md` for work in that folder and registers skills from a nested
   `.claude/skills/`, so the promotion pass's permission to write `31-standards/` does not cover
   them. A `.git` file or folder below the vault root, such as a submodule's gitlink, is a steering
