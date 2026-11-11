@@ -104,7 +104,7 @@ scripts do not run and that writes into `.git` and `.claude/` are refused. Only 
 
 ## Sources (checked 2026-09-13)
 
-- Context files (`AGENTS.md`, `.hermes.md`, `CLAUDE.md`): <https://github.com/NousResearch/hermes-agent/blob/main/website/docs/user-guide/features/context-files.md>
+- Context files (`AGENTS.md`, `.hermes.md` or `HERMES.md`, `CLAUDE.md`; `HERMES.md` re-read 2026-11-11): <https://github.com/NousResearch/hermes-agent/blob/main/website/docs/user-guide/features/context-files.md>
 - Skills (project skills, `hermes skills trust`): <https://github.com/NousResearch/hermes-agent/blob/main/website/docs/user-guide/features/skills.md>
 - Event hooks (shell hooks in `config.yaml`, events, JSON wire protocol, consent): <https://github.com/NousResearch/hermes-agent/blob/main/website/docs/user-guide/features/hooks.md>
 - Configuration (`agent.disabled_toolsets`, approvals): <https://github.com/NousResearch/hermes-agent/blob/main/website/docs/user-guide/configuration.md>

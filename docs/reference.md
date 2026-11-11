@@ -165,9 +165,17 @@ What it does, in order:
 4. **Invisible-character scan** (content tiers **plus** `.claude/rules/`, `.claude/agents/`,
    `.claude/skills/`, `.agents/skills/`, Pi's `.pi/skills/` and `.pi/prompts/`, and any
    `AGENTS.md`, `AGENTS.override.md`, `CLAUDE.md`, `CLAUDE.local.md`, `GEMINI.md`,
-   `.github/copilot-instructions.md`, `.hermes.md`, `.pi/SYSTEM.md` or `.pi/APPEND_SYSTEM.md`, in
-   any letter case; this is the one
-   complete list, which the other documents point to): flags zero-width `U+200B`–`U+200D`,
+   `.github/copilot-instructions.md`, `.hermes.md`, `HERMES.md`, `.pi/SYSTEM.md` or
+   `.pi/APPEND_SYSTEM.md`, and what Oh My Pi (omp) reads as instructions: `.omp/SYSTEM.md`,
+   `.omp/SYSTEM_TEMPLATE.md`, `.omp/RULES.md`, the `.omp/` folders `skills/`, `rules/`,
+   `prompts/`, `commands/`, `instructions/` and `tools/`, `.claude/SYSTEM.md`,
+   `.claude/SYSTEM_TEMPLATE.md`, `.claude/commands/`, `SYSTEM.md`, `SYSTEM_TEMPLATE.md`, `rules/`,
+   `prompts/` and `commands/` in `.agents/`, and the same set plus `skills/` in the singular
+   `.agent/` (read from omp's discovery code, `packages/coding-agent/src/discovery/` at commit
+   `f2ee6ba` of `github.com/can1357/oh-my-pi`, on 2026-11-11), in any letter case and at any depth;
+   only `.md` files are scanned, so a tool omp loads from a script under `.omp/tools/` is the
+   runner fence's to catch; this is the one complete list, which the other documents point to):
+   flags zero-width `U+200B`–`U+200D`,
    `U+FEFF`, and bidi controls `U+202A`–`U+202E`, `U+2066`–`U+2069`. This is the "Rules File
    Backdoor" class (steering files carrying instructions no reviewer can see), which is why the
    scan reaches the files that steer the agent, including the always-loaded ones the frontmatter
@@ -381,6 +389,13 @@ a lint that does nothing and a lint that found nothing wrong print the same thin
   `.pi/APPEND_SYSTEM.md`, `.pi/skills/`, `.pi/prompts/`, `AGENTS.override.md` and
   `CLAUDE.local.md`, each by a relative name from the vault root and by an absolute path, and
   leaves `.pi/other.md` and `pi/SYSTEM.md` alone by either.
+- **omp's steering files and Hermes's `HERMES.md`** — the invisible-character scan covers every
+  name §3.1 lists for Oh My Pi in `.omp/`, `.claude/`, `.agents/` and `.agent/`, nested and in
+  another letter case, and `HERMES.md`, by a relative name and by an absolute path, and leaves the
+  look-alikes `.omp/other.md`, `omp/SYSTEM.md`, `.claude/other.md`, `.agents/other.md`,
+  `.agent/other.md`, `.agentx/SYSTEM.md` and `HERMES-notes.md` alone. A stand-in pass that plants
+  `.omp/extensions/evil.js` or a root `.hermes.md` is contained: the file leaves the vault, the
+  quarantine holds it and the tripwire names it.
 - **Pi extension** — with Node 18 or later, `.claude/adapters/pi/vault.js` is loaded with a
   stand-in for Pi's extension API and fake vaults whose hook scripts record what they get. Each of
   these is refused: `@.env`, `.ENV`, `.env.`, `.env ` and a trailing no-break space, an NTFS
@@ -1184,11 +1199,20 @@ Around that call, each runner does several things an exit code cannot:
   surface*, the runner contains it before anything else, including before it looks at the agent's
   exit code. Steering surfaces are the fenced Obsidian and git files above, memory, `.claude/`
   except `logs/`, `.agents/`, each shipped harness's configuration folder or file, OpenCode's
-  `.opencode/` and Pi's `.pi/` (which the template does not ship but both harnesses run code from),
-  `.github/`, `.vscode/`, and, **at any depth**, `CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md`,
-  `AGENTS.override.md`, `GEMINI.md`, `.mcp.json`, `.gitattributes`, `.gitignore` and any `.claude/`
-  or other harness folder, including one that is the last part of the path, such as a symlink named
-  `.claude`. Matching ignores case. A nested file counts because Claude Code loads
+  `.opencode/`, Pi's `.pi/` and Oh My Pi's `.omp/` (which the template does not ship but those
+  harnesses run code from, omp with no trust prompt), the singular `.agent/` that omp reads
+  instructions from, `.github/`, `.vscode/`, and, **at any depth**, `CLAUDE.md`, `CLAUDE.local.md`,
+  `AGENTS.md`, `AGENTS.override.md`, `GEMINI.md`, Hermes Agent's `.hermes.md` and `HERMES.md`,
+  `.mcp.json`, `.gitattributes`, `.gitignore` and any `.claude/` or other harness folder, including
+  one that is the last part of the path, such as a symlink named `.claude`. Matching ignores case,
+  so a note named `hermes.md` is a steering surface too, and so is this template's own
+  `docs/harnesses/hermes.md`: on a file system that ignores case, Hermes started in that folder
+  would load it as `HERMES.md`. omp's own documentation (`docs/config-usage.md` at commit
+  `f2ee6ba`, read 2026-11-11) names two writes an omp session makes into the vault's `.omp/`:
+  setting a project model role (`.omp/config.yml`), and setting aside a project settings file it
+  cannot parse. Either, made while a pass runs, is contained and sets the tripwire like any other
+  steering change, and so would any write omp makes there that its documentation does not name
+  (not measured). A nested file counts because Claude Code loads
   `31-standards/CLAUDE.md` for work in that folder and registers skills from a nested
   `.claude/skills/`, so the promotion pass's permission to write `31-standards/` does not cover
   them. A `.git` file or folder below the vault root, such as a submodule's gitlink, is a steering

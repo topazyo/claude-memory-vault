@@ -210,11 +210,11 @@ definition and every file they name lying outside what the pass can write, and o
 the runner's fence restoring a harness config a pass leaves changed before a later run loads it
 (`docs/setup.md`, the `contained` troubleshooting row), except a root `.env` (in the container, its
 mount covers it, and step 5 fails a `.env` that is a link, or a file with more than one name, which
-would stay changeable for anything that loads it outside the container), `.hermes.md` and, should
-OpenCode read one, a project `opencode.jsonc`, which its steering filter does not name (reasoned;
-carried to a later release). Run the check before you set `VAULT_ALLOW_UNENFORCED_TOOLS=1`, on a
-scratch copy of the vault, trusted by the harness as the vault is, from the copy's root and in the
-environment the schedule uses:
+would stay changeable for anything that loads it outside the container) and, should OpenCode read
+one, a project `opencode.jsonc`, which its steering filter does not name (reasoned; carried to a
+later release; `.hermes.md`, carried here until 1.5.1, is now named). Run the check before you
+set `VAULT_ALLOW_UNENFORCED_TOOLS=1`, on a scratch copy of the vault, trusted by the harness as the
+vault is, from the copy's root and in the environment the schedule uses:
 
 1. Make the copy a clone with its own `.git`, so no hook reaches the vault's, and its own `.claude/`
    folder. Before any other write into the copy, read the host's own list of mounts for mounts below

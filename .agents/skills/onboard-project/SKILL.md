@@ -20,13 +20,16 @@ order — later steps reference the slug and paths the earlier ones fix.
 
 3. **Create the auto-memory directory.** `90-auto-memory/<slug>/`, for a harness that keeps its
    own machine-managed memory there (Claude Code's auto-memory does, once pointed at it). If no
-   harness writes one for this project, skip the step and say so in the report. The folder is
-   deliberately out of scope for `vault-check.sh` and for the frontmatter contract, so do not add
-   tiered frontmatter to anything you put there. Durable knowledge belongs in the long tier, never
-   here. Make it a plain folder inside `90-auto-memory/`, never a link to Claude Code's own memory
-   folder: a pass does not refuse a link there, and a write through it would leave the vault where
-   the fence sees only the link. Leave `90-auto-memory` a plain folder too: a claude-mode dream or
-   promotion pass refuses to start while `90-auto-memory` is a symlink or junction.
+   harness writes one for this project, skip the step and say so in the report. That includes a
+   harness that keeps its memory in its own folder and has no setting to move it into the vault.
+   Do not create an empty folder in its place: an empty folder reads as a harness writing there.
+   The folder is deliberately out of scope for `vault-check.sh` and for the frontmatter contract,
+   so do not add tiered frontmatter to anything you put there. Durable knowledge belongs in the
+   long tier, never here. Make it a plain folder inside `90-auto-memory/`, never a link to any
+   harness's own memory folder: a pass does not refuse a link there, and a write through it would
+   leave the vault where the fence sees only the link. Leave `90-auto-memory` a plain folder too: a
+   claude-mode dream or promotion pass refuses to start while `90-auto-memory` is a symlink or
+   junction.
 
 4. **Write the first medium-term log.** Copy
    `20-projects/_logs/templates/medium-term-project-log.md` to
@@ -54,14 +57,29 @@ order — later steps reference the slug and paths the earlier ones fix.
    list short: every listed file is read in every session in that repo. If the vault does not sit
    beside the repo on disk, say so and ask rather than guessing the relative depth.
 
+   A committed pointer is resolved from every checkout of the repo, not only this one. A git
+   worktree elsewhere on disk, or one Claude Code makes at `.claude/worktrees/<name>/`, three
+   folders below the repo root, resolves the same relative path to a folder that is not there, and
+   the pointer fails silently. So run `git worktree list` in the repo and ask the owner whether
+   they work in it through worktrees. If they do, or the list shows more than one checkout, and the
+   vault sits under the home folder, anchor the path there instead, spelling out the whole path from
+   the home folder to the vault, not only the vault's own folder name: for a vault at
+   `~/code/claude-memory-vault`, write `@~/code/claude-memory-vault/30-knowledge/moc/ARCH-INDEX.md`
+   in `CLAUDE.md`, which Claude Code resolves from the home folder, and the same path in
+   `AGENTS.md`, with a line saying that `~` is the home folder, because a file-read tool may not
+   expand it. Otherwise keep the relative path. If the vault is not under the home folder, say so
+   and ask: never write an absolute path that holds a username.
+
 8. **Verify by re-reading, not by remembering.** Do not trust the writes; re-open each file:
    - Re-read the new log and confirm the first line is a bare `---`, and that `tier:`, `type:`,
      `project:`, and both dates are present and correctly spelled.
    - Re-read `PROJECT-INDEX.md` and confirm the row renders as a table row (pipes intact) and
      the slug matches the log's `project:` value character for character.
    - Re-read each instruction file you changed and confirm every path in it (each `@`-import in
-     `CLAUDE.md`, each listed path in `AGENTS.md`) resolves to a file that exists. A path that
-     points nowhere fails silently.
+     `CLAUDE.md`, each listed path in `AGENTS.md`) resolves to a file that exists. Expand a
+     leading `~` to the home folder first. When `git worktree list` shows more than one checkout,
+     resolve each relative path from one of the worktrees as well, because that is where it
+     breaks. A path that points nowhere fails silently.
    - Run `bash .claude/scripts/vault-check.sh` from the vault root. It reports and never
      repairs. `0 violations across 0 files` means it scanned nothing — that is a broken
      invocation, not a pass.
@@ -71,4 +89,7 @@ order — later steps reference the slug and paths the earlier ones fix.
    execute, an `@`-import you could not resolve. `none` is a valid answer; silence is not. If any
    step is unverified, leave the onboarded checkbox unticked and say why in the row's Notes
    column. A row claiming a project is onboarded when only half the wiring exists is worse than
-   no row, because the next pass trusts it and stops looking.
+   no row, because the next pass trusts it and stops looking. Report a home-anchored pointer from
+   step 7 too, as a trade-off rather than a gap: it holds only on this machine and shows the
+   vault's path from the home folder to anyone who can read the repo. A pointer that step 8
+   resolved does not, by itself, leave the checkbox unticked.

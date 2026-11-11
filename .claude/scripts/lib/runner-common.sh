@@ -892,7 +892,9 @@ steering_filter() {
       if (lp == "opencode.json" || lp == ".aider.conf.yml" || lp == ".geminiignore" || lp == ".cursorignore" || lp == ".cursorrules" || lp == ".windsurfrules") return 1
       n = split(lp, part, "/")
       base = part[n]
-      if (base == "claude.md" || base == "claude.local.md" || base == "agents.md" || base == "agents.override.md" || base == "gemini.md" || base == ".mcp.json" || base == ".gitattributes" || base == ".gitignore") return 1
+      # .hermes.md, or HERMES.md, is the project context file of Hermes Agent,
+      # which loads it as instructions the way other harnesses load AGENTS.md.
+      if (base == "claude.md" || base == "claude.local.md" || base == "agents.md" || base == "agents.override.md" || base == "gemini.md" || base == ".hermes.md" || base == "hermes.md" || base == ".mcp.json" || base == ".gitattributes" || base == ".gitignore") return 1
       # A .git entry below the vault root is a submodule gitlink or an embedded
       # repository, and rewriting it points git at another config and hooks.
       # Inside a nested git directory only the files that run code or redirect
@@ -916,9 +918,11 @@ steering_filter() {
         break
       }
       # Every component, the last included: a symlink named .claude is a harness
-      # folder too, wherever it points.
+      # folder too, wherever it points. .omp belongs to Oh My Pi, which runs the
+      # hooks and extensions in it with no trust prompt, and .agent is the
+      # singular folder it reads skills, rules and system prompts from too.
       for (i = 1; i <= n; i++) {
-        if (part[i] == ".claude" || part[i] == ".agents" || part[i] == ".codex" || part[i] == ".gemini" || part[i] == ".cursor" || part[i] == ".windsurf" || part[i] == ".opencode" || part[i] == ".pi" || part[i] == ".github" || part[i] == ".vscode") return 1
+        if (part[i] == ".claude" || part[i] == ".agents" || part[i] == ".agent" || part[i] == ".codex" || part[i] == ".gemini" || part[i] == ".cursor" || part[i] == ".windsurf" || part[i] == ".opencode" || part[i] == ".pi" || part[i] == ".omp" || part[i] == ".github" || part[i] == ".vscode") return 1
       }
       return 0
     }
