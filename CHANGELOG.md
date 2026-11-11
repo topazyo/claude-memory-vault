@@ -25,6 +25,177 @@ bash .claude/scripts/vault-update.sh --check --from ../template-new
 
 ---
 
+## 1.5.0 — 2026-11-10
+
+A hardening release for the scheduled runners. Each runner, in either mode, now resolves its own
+temporary folder once, before its first git call, and checks the resolved folder with the checks
+claude mode's memory override ran on it, and, off Windows, that no other account can open it; from
+then on git's hooks folder, the snapshots, the steering backup and the settings file use the
+resolved path. The retention runner checks the folder for its own copy of the log the same way, and
+a folder that fails there costs the run only that copy. In claude mode, one value written into the
+record of past passes' silences by something other than the watchdog can no longer turn stall
+detection off.
+
+### Security
+
+- **Only claude mode checked the runner's folder, and only after the runner's first git calls.** On
+  1.4.2 a runner refused a temporary folder that was not an absolute path, and, on Windows or
+  wherever a `cygpath` is found on `PATH`, one spelled with a `..`, a part ending in a dot or a
+  colon that is not a drive letter's. Those checks read the spelling only. Only claude mode
+  resolved the folder and checked its owner, its permissions and that it lies outside the vault,
+  inside the memory override, after the runner's first git calls; and in every mode the snapshots,
+  the steering backup and git's hooks folder used the folder as `mktemp -d` spelled it. Every
+  runner, the retention runner included, in either mode, now resolves the folder once, right after
+  the 1.4.2 checks and before its first git call (the folder above it resolved physically, with
+  `cd -P` and `pwd -P`, its own name kept), and checks the result with the checks the memory
+  override runs: that it is the folder `mktemp` made, compared by identity; the state directory's
+  checks of its owner and that it is not writable by every account; and that it does not lie inside
+  the vault, by file identity and, on Windows or wherever a `cygpath` is found, walked as a drive
+  path too. There it must also convert to a drive path that maps back to it. Off Windows it must
+  also be open to no other account, with no permission bit for its group or for others, which the
+  state directory's checks do not ask because they allow a group-writable folder; `mktemp -d` makes
+  the folder 0700 (measured on Linux, and on macOS in CI's bash 3.2 job, where a pass ran through
+  this check). From then on the snapshots, the backup, git's hooks folder, the settings
+  file and the record of the folder use the resolved path. A folder reached through a link above
+  it, as a `TMPDIR` spelled through a link gives, still runs, now with git and Claude Code handed
+  the resolved path rather than the spelling.
+- **A folder that fails refuses the run with exit 1**, the existing setup refusal, so there is no
+  new exit code. The line is logged before any git call, and no agent starts. Where the memory
+  override's line names its settings file, the runner's ends `…, and the runner keeps the pass's
+  snapshots, its backup and git's hooks folder there. Point TMPDIR …`, as in `ERROR: the runner's
+  folder for the pass, …, resolves into the vault, and the runner keeps …`, `… is not the path it
+  resolves to: it is a link …` and `… is writable by every account, and the runner keeps …`. A
+  folder that is not there, one above it that cannot be reached, and a resolution that led to
+  another folder each have a line of their own naming the runner too. The new lines are
+  `ERROR: the runner's folder for the pass, …, is open to other accounts (its mode is not 0700), and
+  the runner keeps the pass's snapshots, its backup and git's hooks folder there. mktemp -d makes it
+  0700, so something changed it. …` and `ERROR: the check of the runner's folder for the pass, …,
+  for permissions open to other accounts could not run (find failed) …`, both off Windows, and, on
+  Windows or wherever a `cygpath` is found, `ERROR: cygpath could not convert the runner's temporary
+  folder, …, to a drive path …`, `ERROR: cygpath gave … for the runner's temporary folder, which is
+  not a Windows drive path …` and `ERROR: cygpath turned the runner's temporary folder, …, into …,
+  which is not the same folder …`.
+- **The retention runner's folder for its own copy of the log is checked the same way.** It makes
+  that folder before its run lock, and now checks it before anything is written into it. The check
+  hands back the path it passed, and the copy goes into exactly that folder, never one resolved
+  again. A folder that fails costs the run only its copy of the log: each of the check's lines goes
+  to the log as `WARNING: (the folder for this run's copy of its log) …`, ending `So this run keeps
+  no copy of its log, which goes to the log alone.`, and the run goes on, its exit unchanged. A
+  check that prints nothing gives one line, `WARNING: the folder for this run's copy of its log
+  could not be checked, so this run keeps no copy of its log, which goes to the log alone.`
+- **One forged silence turned stall detection off for later claude-mode passes.** The record of
+  each pass's longest silence (`<runner>.stream-gaps` in the state directory) is not sealed, so one
+  value written by something other than the watchdog, such as 999999999, set the stall threshold
+  (1.5 times the p99 of each pass's longest silence) to about 1.5e9 seconds, which is stall
+  detection off, for every later pass while the record held fewer than 100 passes; beyond that a
+  few such values did the same (reasoned from the p99). A recorded silence of up to nine digits that
+  is larger than the pass's timeout is now read as the timeout, and is written as the timeout in
+  the first place; one of more than nine digits is ignored, as before. A threshold measured from
+  the record (1.5 times the p99, when that is at or above the floor) that is above three quarters
+  of the pass's timeout (at least 1 second), or above the floor where that is higher, becomes that
+  value. The run's starting line then says so: with a 100s timeout, a floor of 1s and a forged
+  999999999, read as 100, the measured 150s becomes `stall 75s, 1.5 times the p99 of each pass's
+  longest silence, 100s over 3 recorded passes, capped at three quarters of the pass's timeout, or
+  the floor where that is higher, since a forged record could raise it to where it would not fire
+  before the timeout`. The threshold is never below the floor. The floor (`RUNNER_STALL_FLOOR`,
+  default 600) is a setting, not a measurement, and is never changed: one at or above the timeout
+  leaves stall detection off, as in 1.4.2. `RUNNER_STALL_SECONDS` and command mode are unchanged
+  too. A pass whose measured threshold was above three quarters of its timeout, or above the floor
+  where that is higher, now stops as stalled (exit 125) once it has been silent that long, where it
+  could run on to the timeout (124). The watchdog checks the timeout before the stall, in steps of
+  its poll interval, so a threshold less than one poll below the timeout still loses to it.
+
+### Changed
+
+- **`memory_override` keeps all its own checks for any other caller.** They were moved,
+  unchanged apart from a programming guard no caller reaches, into two shared functions,
+  `work_dir_resolve` and `work_dir_checks`, which the runner's own check (`runner_folder_checked`)
+  calls too, and the override's log lines are byte for byte 1.4.2's, apart from that guard's. In
+  claude mode the folder is therefore checked by the runner before its first git call and again by
+  the override.
+- **`docs/reference.md`** says that every runner, in every mode, resolves and checks its folder
+  before its first git call; lists the new refusals under exit 1 for all three runners, and the
+  retention runner's `WARNING:` for its copy of the log; and says how the stall threshold is held to
+  the pass's timeout. `docs/setup.md`, Troubleshooting, has a row for each new line, and its rows
+  for a folder that cannot be reached or whose resolution led to another folder now name every
+  runner.
+- The control suite holds each of these. New control ids: `rf-link`, `rf-vault`, `rf-mode`,
+  `rf-world`, `rf-owner`, `rf-gone`, `rf-above`, `rf-findfail`, `rf-copy`, `rf-drive-walk`,
+  `rf-cygpath` and `stall-cap`. `rf-mode`, `rf-world`, `rf-owner` and `rf-findfail` run off
+  Windows only, because Git Bash mode bits are not Windows permissions, and so does `rf-gone`,
+  because on Windows the drive path's map-back refuses a folder that is not there first, on its
+  own line; all five are required on the ubuntu, macOS and bash 3.2 jobs; `rf-owner` also needs
+  `sudo -n`, and skips without it. `rf-link`, `rf-vault`, `rf-mode` and `rf-world` take the dream
+  and promotion runners in claude and command mode and the retention runner: a link at the folder,
+  the folder inside the vault reached through a link above it, and,
+  off Windows, the folder at mode 0750 and at 0777 each refuse (1) on the `ERROR:` line giving the
+  cause, with no git call naming a hooks folder and no agent started. `rf-owner` refuses a dream
+  pass in command mode whose folder another account owns; `rf-findfail` refuses one whose `find`
+  fails for the 0700 check alone, after the same stand-in, not failing, let a pass run (0).
+  `rf-gone` takes every runner and mode: a folder handed over as the one `mktemp` made that is not
+  there, and one whose folder above is not there, each refuse (1) on the runner's own line,
+  `… is not there as a folder, though the runner made it a moment ago …` and `… cannot be
+  reached: … Give this account back its access …`. `rf-above` runs a pass whose folder lies under
+  a link (0), git handed the hooks folder under the resolved path and never the spelling, and in
+  claude mode Claude Code handed the settings file there. `rf-copy` has the retention runner, with
+  a link at the folder for the copy of its log, or
+  that folder inside the vault, run (0) with the check's line as a `WARNING:` that it keeps no copy,
+  no `ERROR:` line and nothing written there. `rf-drive-walk` and `rf-cygpath` call
+  `runner_folder_checked` directly: the identity walk and the drive-path walk decide it as they
+  decide the override, and a `cygpath` that cannot convert the folder, or gives a network path for
+  it, refuses before any walk. `stall-cap` holds a forged silence to the timeout when written and
+  when read; holds a measured 5400s to 2700s, three quarters of a 3600s timeout, a measured 2s to
+  1s with a 1s timeout and a 1s floor, and, with a 700s timeout and a 600s floor, a measured 1050s
+  to the floor, 600s, not to 525s; leaves a measured 818s under a 3600s timeout and a 600s floor
+  (cap 2700s), and a measured 750s under a 1000s timeout and a 600s floor, equal to its cap of
+  750s, as they are, with no note; logs `stall 75s` on the starting line of a claude-mode dream and
+  promotion pass with a 100s timeout, a floor of 1s and a forged record; and, in its floor legs,
+  keeps a floor of 600s above a 300s timeout as it is, with no record and when it beats a measured
+  threshold. Each was seen failing against 1.4.2's library and runners on its own assertion (the
+  `rf-gone` legs and the 1s and 700s `stall-cap` legs were added later: `rf-gone` was run against
+  1.4.2 the same way, and the two `stall-cap` legs' call against 1.4.2's library gives 1499999999
+  for both), except `rf-drive-walk` and `rf-cygpath`, which call the new function directly;
+  `stall-cap`'s floor legs and its two legs for a threshold the cap leaves as it is, which hold
+  behaviour this release leaves as it was; and `rf-owner`, which skipped in that run because
+  `sudo -n` was not available (it passes on CI's ubuntu and macOS jobs, which have it).
+
+### Adopting this
+
+1. **Take `.claude/scripts/lib/runner-common.sh`, `dream-pass.sh`, `promotion-pass.sh` and
+   `vault-retention.sh` together.** With 1.5.0's runners and 1.4.2's library every runner exits 1
+   before its first git call, with `runner_folder_checked: command not found` on its stderr, not in
+   its log. With 1.4.2's runners and 1.5.0's library each runs as 1.4.2 did, without the new checks.
+   (Both reasoned from the code, not measured.)
+2. **Nothing to configure for most vaults.** A `TMPDIR` that is unset, or that names an absolute
+   folder outside the vault which only your account can change, passes as before.
+3. **A runner may now refuse with exit 1, before any git call and with no agent started, where
+   1.4.2 ran.** The log's `ERROR:` line names the runner's folder for the pass and the cause. Point
+   `TMPDIR` at a folder outside the vault that only your account can change, or leave it unset (on
+   Windows, leave it unset and schedule the task as your own account). Off Windows, the line
+   `is open to other accounts (its mode is not 0700)` means something changed the folder's mode
+   after `mktemp -d` made it; find what did. The line `could not run (find failed)` needs a working
+   `find` on the task's `PATH`. For the `cygpath` lines, see their rows in `docs/setup.md`,
+   Troubleshooting.
+4. **The retention runner may log `WARNING:` lines ending `So this run keeps no copy of its log,
+   which goes to the log alone.`** The run goes on, and its lines are in the log only. After the
+   tag `(the folder for this run's copy of its log)` each line is the check's own, worded for the
+   runner's folder for the pass and what it keeps there; here the folder was to hold only the copy
+   of the log. Fix its temporary folder as step 3 says. The single line `WARNING: the folder for
+   this run's copy of its log could not be checked, so this run keeps no copy …` means the check
+   printed nothing, which 1.5.0's library never does when it refuses: take the four scripts again,
+   together, as step 1 says.
+5. **A claude-mode pass may now stop as stalled (exit 125) once it has been silent for three
+   quarters of its timeout, or for the floor where that is higher, where it could run on to the
+   timeout (124).** It happens only when the threshold measured from the record was above that
+   value; the run's starting line then says `capped at three quarters of the pass's timeout, or the
+   floor where that is higher`. If a pass of yours is silent for that long and is still working,
+   set `RUNNER_STALL_SECONDS`, or raise `DREAM_PASS_TIMEOUT` or `PROMOTION_PASS_TIMEOUT`.
+6. The shipped files this release touches: `.claude/scripts/lib/runner-common.sh`,
+   `.claude/scripts/dream-pass.sh`, `.claude/scripts/promotion-pass.sh`,
+   `.claude/scripts/vault-retention.sh`, `.claude/scripts/run-tests.sh`, `docs/reference.md`,
+   `docs/setup.md` (its Troubleshooting rows for the new lines), besides `VERSION` and
+   `CHANGELOG.md`, which move on every release.
+
 ## 1.4.2 — 2026-11-10
 
 A hardening release for the scheduled runners, and a fix for `/resume`. Each runner now clears

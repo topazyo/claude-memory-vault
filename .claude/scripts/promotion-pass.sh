@@ -54,7 +54,11 @@
 #                           folder that is not an absolute path, and on Windows,
 #                           or wherever a cygpath is found on PATH, one with a
 #                           .., a part ending in a dot or another colon, in
-#                           every mode, before its first git call); on Windows
+#                           every mode, before its first git call, and so is
+#                           one that is a link, lies inside the vault, or, off
+#                           Windows, is not this account's alone at mode 0700:
+#                           the runner resolves it once and uses that path for
+#                           everything it keeps there); on Windows
 #                           schedule the task as your own account, and leave it
 #                           unset unless a long path needs a shorter folder
 #                           (docs/reference.md, Known limits)
@@ -369,6 +373,13 @@ main() {
   # is a folder that is not an absolute path.
   temp_dir_spelling_ok "$SNAP_DIR" "$LOG" || exit 1
   runner_folder_ok "$SNAP_DIR" "$LOG" || exit 1
+  # Resolved once and checked (its owner, its permissions, that it is the folder
+  # mktemp made, that it lies outside the vault), in every mode; from here on the
+  # snapshots, the backup, git's hooks folder and the settings file use the
+  # resolved path. Until then the folder keeps the name mktemp gave, which is the
+  # one a refusal removes.
+  runner_folder_checked "$ROOT" "$STATE" "$SNAP_DIR" "$LOG" || exit 1
+  SNAP_DIR="$RUNNER_FOLDER"
   mkdir -p "$SNAP_DIR/nohooks"
 
   # A git operation in progress or a detached HEAD stops the run before the agent
@@ -493,7 +504,7 @@ main() {
   INFLIGHT=1
   # The stall threshold, the session id, and where the watchdog notes the
   # silent stretches this pass has.
-  stall_plan "$STATE" "$RUNNER" "$LOG"
+  stall_plan "$STATE" "$RUNNER" "$LOG" "$TIMEOUT"
   AGENT_SESSION_ID="$(new_uuid)"
   AGENT_GAPS_FILE="$SNAP_DIR/gaps"
   printf '[%s] starting promotion-agent weekly pass via %s (timeout %ss, stall %ss, %s, session %s)\n' \
@@ -736,7 +747,7 @@ main() {
   esac
 
   # Only a pass that ended OK teaches the stall threshold.
-  [ "$AGENT_KIND" = claude ] && record_stream_gaps "$STATE" "$RUNNER" "$AGENT_GAPS_FILE"
+  [ "$AGENT_KIND" = claude ] && record_stream_gaps "$STATE" "$RUNNER" "$AGENT_GAPS_FILE" "$TIMEOUT"
   printf '[%s] OK: %s long-tier file(s) changed; %s\n' \
     "$(ts)" "${long_changes:-0}" "${summary:-no summary line}" >> "$LOG"
   exit 0

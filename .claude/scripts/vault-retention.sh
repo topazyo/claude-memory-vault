@@ -74,7 +74,12 @@
 #        PATH, the vault or the temporary folder whose path git is given
 #        spelled with .., a part ending in a dot or a colon that is not a drive
 #        letter's, or a vault whose last part ends in a space (git there can
-#        read it as another folder). Also this script failing in itself, such
+#        read it as another folder), or a temporary folder whose path git is
+#        given that is a link, lies inside the vault, or, off Windows, is not
+#        this account's alone at mode 0700 (the run resolves it once and uses
+#        that path from then on; the folder for its copy of the log gets the
+#        same check, and one that fails it costs the run only that copy, with a
+#        WARNING:). Also this script failing in itself, such
 #        as on an unset variable, which bash ends with 1
 #   2    REPORT-REFUSED: the report was not written by this runner, or changed
 #   3    PARTIAL: the move failed and the vault was put back to HEAD, or an
@@ -3160,7 +3165,7 @@ tmp_dir() {
 }
 
 main() {
-  local rc=0 lock_rc=0 state_rc=0 folder_rc=0 fd=""
+  local rc=0 lock_rc=0 state_rc=0 folder_rc=0 fd="" copy_ok=0 copy_rc=0 copy_reason="" copy_line="" copy_tag=""
   # The run lock's own variables, and the pid of a watched git, emptied before
   # any trap is set. Inherited from the caller's environment, the first would
   # have on_exit remove a lock this run never took, and RUN_PID would have
@@ -3237,7 +3242,36 @@ main() {
   # while it waits a pass that holds the lock is running, and a folder of this
   # run's that exists then is one that pass could find and write a hook into.
   COPY_DIR="$(tmp_dir)" || COPY_DIR=""
-  if [ -n "$COPY_DIR" ] && { : > "$COPY_DIR/run.log" && : > "$COPY_DIR/lib.log"; } 2>/dev/null; then
+  # Checked as the folder for the pass is (runner_folder_checked) before anything
+  # is written into it. A folder that fails only costs this run its copy of the
+  # log, so its lines go to the log as warnings and the run goes on logging to the
+  # log alone, and COPY_DIR keeps the name mktemp gave, which is the one the exit
+  # removes; a folder that passes is used, and removed, by the path the check
+  # passed. The lines are read back from the check rather than written by it,
+  # because it writes them as errors that refuse the run.
+  copy_ok=0
+  if [ -n "$COPY_DIR" ]; then
+    # The path the check passed comes back out of the subshell, after its lines,
+    # so the copy goes into the folder that was checked, never one resolved again.
+    copy_reason="$(runner_folder_checked "$ROOT" "" "$COPY_DIR" /dev/stdout && printf 'CHECKED:%s\n' "$RUNNER_FOLDER")"
+    copy_rc=$?
+    case "$copy_rc:$copy_reason" in
+      0:CHECKED:/*) COPY_DIR="${copy_reason#CHECKED:}"; copy_ok=1 ;;
+      *)
+        if [ -z "$copy_reason" ] || [ "$copy_rc" -eq 0 ]; then
+          printf '[%s] WARNING: the folder for this run'"'"'s copy of its log could not be checked, so this run keeps no copy of its log, which goes to the log alone.\n' "$(ts)" >> "$LOG"
+        else
+          copy_tag="WARNING: (the folder for this run's copy of its log)"
+          while IFS= read -r copy_line; do
+            copy_line="${copy_line/ ERROR: / $copy_tag }"
+            printf '%s\n' "${copy_line% Refusing to run.} So this run keeps no copy of its log, which goes to the log alone." >> "$LOG"
+          done <<COPYEOF
+$copy_reason
+COPYEOF
+        fi ;;
+    esac
+  fi
+  if [ "$copy_ok" = 1 ] && { : > "$COPY_DIR/run.log" && : > "$COPY_DIR/lib.log"; } 2>/dev/null; then
     RUN_LOG="$COPY_DIR/run.log"
     LIB_LOG="$COPY_DIR/lib.log"
   else
@@ -3313,6 +3347,15 @@ main() {
   rc=$?
   lib_logged
   [ "$rc" -eq 0 ] || return 1
+  # Resolved once and checked (its owner, its permissions, that it is the folder
+  # mktemp made, that it lies outside the vault); from here on git's hooks folder
+  # and this run's work files use the resolved path. Until then the folder keeps
+  # the name mktemp gave, which is the one a refusal removes.
+  runner_folder_checked "$ROOT" "$STATE" "$SNAP_DIR" "$LIB_LOG"
+  rc=$?
+  lib_logged
+  [ "$rc" -eq 0 ] || return 1
+  SNAP_DIR="$RUNNER_FOLDER"
   mkdir -p "$SNAP_DIR/nohooks"
   HOOKS="$SNAP_DIR/nohooks"
 
