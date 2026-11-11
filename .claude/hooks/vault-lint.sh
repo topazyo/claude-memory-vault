@@ -138,7 +138,7 @@ lint_file() {
   # .claude/skills/, .agents/skills/, and Pi's .pi/skills/ and .pi/prompts/),
   # and the instruction files harnesses load (AGENTS.md, AGENTS.override.md,
   # CLAUDE.md, CLAUDE.local.md, GEMINI.md, .github/copilot-instructions.md,
-  # .hermes.md, .pi/SYSTEM.md, .pi/APPEND_SYSTEM.md), plus what Oh My Pi (omp)
+  # .hermes.md, HERMES.md, .pi/SYSTEM.md, .pi/APPEND_SYSTEM.md), plus what Oh My Pi (omp)
   # reads as instructions: its .omp/ system, rules, skills, prompts, commands,
   # instructions and tools files, .claude/SYSTEM.md and .claude/commands/, and
   # the same set in .agents/ and the singular .agent/. docs/reference.md
@@ -169,7 +169,7 @@ lint_file() {
     */CLAUDE.md|CLAUDE.md|*/AGENTS.md|AGENTS.md|*/GEMINI.md|GEMINI.md) IS_CHAR_SCAN_SCOPE=1 ;;
     */AGENTS.override.md|AGENTS.override.md|*/CLAUDE.local.md|CLAUDE.local.md) IS_CHAR_SCAN_SCOPE=1 ;;
     */.github/copilot-instructions.md|.github/copilot-instructions.md) IS_CHAR_SCAN_SCOPE=1 ;;
-    */.hermes.md|.hermes.md) IS_CHAR_SCAN_SCOPE=1 ;;
+    */.hermes.md|.hermes.md|*/HERMES.md|HERMES.md) IS_CHAR_SCAN_SCOPE=1 ;;
     *"/.agents/skills/"*|.agents/skills/*) IS_CHAR_SCAN_SCOPE=1 ;;
     */.pi/SYSTEM.md|.pi/SYSTEM.md|*/.pi/APPEND_SYSTEM.md|.pi/APPEND_SYSTEM.md) IS_CHAR_SCAN_SCOPE=1 ;;
     *"/.pi/skills/"*|.pi/skills/*|*"/.pi/prompts/"*|.pi/prompts/*) IS_CHAR_SCAN_SCOPE=1 ;;

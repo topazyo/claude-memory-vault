@@ -580,10 +580,11 @@ rm -rf "$WORK/.pi" "$WORK/sub" "$WORK/pi" "$WORK/AGENTS.override.md" "$WORK/CLAU
 # and system files of both .agents/ and the singular .agent/. The same two path
 # forms as above, a nested copy and a different letter case, and look-alikes in
 # the same folders as the negative control against a scan widened to whole
-# folders. Only the paths made here are removed: .claude/ and .agents/ may
-# already hold files an earlier section made.
-omp_made_claude=0; [ -e "$WORK/.claude" ] || omp_made_claude=1
-omp_made_agents=0; [ -e "$WORK/.agents" ] || omp_made_agents=1
+# folders. Hermes Agent's HERMES.md, the other spelling of .hermes.md, rides
+# along. On a case-insensitive file system .OMP/Rules is .omp/rules, so the
+# letter-case leg tests the patterns only where the hook keeps the case typed,
+# which Linux CI does. Only the paths made here are removed: .claude/ and
+# .agents/ already hold files earlier sections made.
 mkdir -p "$WORK/.omp/skills/probe" "$WORK/.omp/rules" "$WORK/.omp/prompts" "$WORK/.omp/commands" \
   "$WORK/.omp/instructions" "$WORK/.omp/tools" "$WORK/.OMP/Rules" "$WORK/sub/.omp" "$WORK/sub/.agent/rules" "$WORK/omp" \
   "$WORK/.claude/commands" "$WORK/.agents/rules" "$WORK/.agents/prompts" "$WORK/.agents/commands" \
@@ -595,14 +596,16 @@ for omp_f in .omp/SYSTEM.md .omp/SYSTEM_TEMPLATE.md .omp/RULES.md .omp/skills/pr
              .claude/SYSTEM.md .claude/SYSTEM_TEMPLATE.md .claude/commands/probe.md \
              .agents/SYSTEM.md .agents/SYSTEM_TEMPLATE.md .agents/rules/probe.md .agents/prompts/probe.md \
              .agents/commands/probe.md .agent/SYSTEM.md .agent/SYSTEM_TEMPLATE.md .agent/skills/probe/SKILL.md \
-             .agent/rules/probe.md .agent/prompts/probe.md .agent/commands/probe.md sub/.agent/rules/probe.md; do
+             .agent/rules/probe.md .agent/prompts/probe.md .agent/commands/probe.md sub/.agent/rules/probe.md \
+             HERMES.md sub/HERMES.md; do
   printf 'steering file with a hidden character:\342\200\213\n' > "$WORK/$omp_f"
   omp_rel=$(cd "$WORK" && CLAUDE_PROJECT_DIR="$WORK" bash "$HOOK" -- "$omp_f" 2>&1 | strip_notices)
   omp_abs=$(lint "$WORK/$omp_f" | strip_notices)
   printf '%s' "$omp_rel" | grep -q "U+200B" || omp_steer_missed="$omp_steer_missed relative:$omp_f"
   printf '%s' "$omp_abs" | grep -q "U+200B" || omp_steer_missed="$omp_steer_missed absolute:$omp_f"
 done
-for omp_f in .omp/other.md omp/SYSTEM.md .claude/other.md .agents/other.md .agent/other.md .agentx/SYSTEM.md; do
+for omp_f in .omp/other.md omp/SYSTEM.md .claude/other.md .agents/other.md .agent/other.md .agentx/SYSTEM.md \
+             HERMES-notes.md; do
   printf 'not a steering file:\342\200\213\n' > "$WORK/$omp_f"
   omp_rel=$(cd "$WORK" && CLAUDE_PROJECT_DIR="$WORK" bash "$HOOK" -- "$omp_f" 2>&1 | strip_notices)
   omp_abs=$(lint "$WORK/$omp_f" | strip_notices)
@@ -610,16 +613,15 @@ for omp_f in .omp/other.md omp/SYSTEM.md .claude/other.md .agents/other.md .agen
   printf '%s' "$omp_abs" | grep -q "U+200B" && omp_steer_missed="$omp_steer_missed widened-to:absolute:$omp_f"
 done
 if [ -z "$omp_steer_missed" ]; then
-  ok "invisible-char scan covers what omp reads: .omp/ system, rules, skills, prompts, commands, instructions and tools files, .claude/SYSTEM.md and .claude/commands/, and the same set in .agents/ and .agent/, by relative and absolute path, and not their look-alikes by either"
+  ok "invisible-char scan covers what omp reads: .omp/ system, rules, skills, prompts, commands, instructions and tools files, .claude/SYSTEM.md and .claude/commands/, and the same set in .agents/ and .agent/, and Hermes's HERMES.md, by relative and absolute path, and not their look-alikes by either"
 else
-  bad "omp steering files scan --$omp_steer_missed"
+  bad "omp and HERMES.md steering files scan --$omp_steer_missed"
 fi
 rm -rf "$WORK/.omp" "$WORK/.OMP" "$WORK/.agent" "$WORK/.agentx" "$WORK/omp" "$WORK/sub" \
   "$WORK/.claude/commands" "$WORK/.claude/SYSTEM.md" "$WORK/.claude/SYSTEM_TEMPLATE.md" "$WORK/.claude/other.md" \
   "$WORK/.agents/rules" "$WORK/.agents/prompts" "$WORK/.agents/commands" \
-  "$WORK/.agents/SYSTEM.md" "$WORK/.agents/SYSTEM_TEMPLATE.md" "$WORK/.agents/other.md"
-[ "$omp_made_claude" = 1 ] && rmdir "$WORK/.claude" 2>/dev/null
-[ "$omp_made_agents" = 1 ] && rmdir "$WORK/.agents" 2>/dev/null
+  "$WORK/.agents/SYSTEM.md" "$WORK/.agents/SYSTEM_TEMPLATE.md" "$WORK/.agents/other.md" \
+  "$WORK/HERMES.md" "$WORK/HERMES-notes.md"
 
 # The invisible-character scan is the security control in this hook, and the
 # no-jq branch is a realistic default rather than an edge case, because Git for
@@ -5691,7 +5693,8 @@ sf_got="$( . "$ROOT/.claude/scripts/lib/runner-common.sh" && printf '%s\n' \
   '.omp/hooks/post/x.ts' '.OMP/extensions/y.js' '.omp/settings.json' '31-standards/.omp' \
   '.claude/worktrees/w/.omp/x' '.ompx/notes.md' '31-standards/omp.md' \
   '.agent/rules/r.md' '.Agent/x' '31-standards/.agent' '.agentx/a.md' \
-  '.hermes.md' 'notes/.HERMES.md' '31-standards/.hermes.md' 'hermes.md' 'notes/hermes.md.bak' \
+  '.hermes.md' 'notes/.HERMES.md' '31-standards/.hermes.md' 'HERMES.md' '31-standards/sub/hermes.md' \
+  'notes/hermes.md.bak' '31-standards/hermes-agent.md' \
   '.obsidian/app.json' '40-llm-wiki/wiki/ext/.git' '31-standards/ext/.git/config' \
   '31-standards/ext/.git/hooks/post-checkout' '31-standards/ext/.git/index' \
   '31-standards/ext/.git/refs/heads/config' '31-standards/ext/.git/objects/ab/cdef' \
@@ -5701,8 +5704,8 @@ sf_got="$( . "$ROOT/.claude/scripts/lib/runner-common.sh" && printf '%s\n' \
   '31-standards/ext/.git/refs/tags/hooks/x' '31-standards/ext/.git/refs/remotes/origin/config' \
   '31-standards/ext/.git/refs/prefetch/remotes/origin/config' '31-standards/ext/.git/refs/notes/config' \
   '31-standards/ext/.git/refs/rewritten/hooks/x' | steering_filter | tr '\n' '|')"
-if [ "$sf_got" = '31-standards/.claude|40-llm-wiki/wiki/sub/.agents|notes/AGENTS.override.md|.GitHub|.claude/logs/CLAUDE.md|.pi/extensions/x.js|.PI/settings.json|31-standards/.pi|.omp/hooks/post/x.ts|.OMP/extensions/y.js|.omp/settings.json|31-standards/.omp|.claude/worktrees/w/.omp/x|.agent/rules/r.md|.Agent/x|31-standards/.agent|.hermes.md|notes/.HERMES.md|31-standards/.hermes.md|40-llm-wiki/wiki/ext/.git|31-standards/ext/.git/config|31-standards/ext/.git/hooks/post-checkout|31-standards/ext/.git/modules/refs/config|31-standards/ext/.git/modules/refs/hooks/post-checkout|31-standards/ext/.git/worktrees/logs/commondir|31-standards/ext/.git/info/attributes|31-standards/ext/.git/objects/info/alternates|' ]; then
-  ok "steering_filter matches harness folders, Pi's .pi and omp's .omp and .agent among them, as the last component and inside a Claude Code worktree too, Hermes's .hermes.md at any depth, AGENTS.override.md, a planted file in .claude/logs, nested .git entries and their code files (in a submodule or worktree named refs or logs too), and ignores notes, runner logs, branches, tags and objects"
+if [ "$sf_got" = '31-standards/.claude|40-llm-wiki/wiki/sub/.agents|notes/AGENTS.override.md|.GitHub|.claude/logs/CLAUDE.md|.pi/extensions/x.js|.PI/settings.json|31-standards/.pi|.omp/hooks/post/x.ts|.OMP/extensions/y.js|.omp/settings.json|31-standards/.omp|.claude/worktrees/w/.omp/x|.agent/rules/r.md|.Agent/x|31-standards/.agent|.hermes.md|notes/.HERMES.md|31-standards/.hermes.md|HERMES.md|31-standards/sub/hermes.md|40-llm-wiki/wiki/ext/.git|31-standards/ext/.git/config|31-standards/ext/.git/hooks/post-checkout|31-standards/ext/.git/modules/refs/config|31-standards/ext/.git/modules/refs/hooks/post-checkout|31-standards/ext/.git/worktrees/logs/commondir|31-standards/ext/.git/info/attributes|31-standards/ext/.git/objects/info/alternates|' ]; then
+  ok "steering_filter matches harness folders, Pi's .pi and omp's .omp and .agent among them, as the last component and inside a Claude Code worktree too, Hermes's .hermes.md and HERMES.md at any depth, AGENTS.override.md, a planted file in .claude/logs, nested .git entries and their code files (in a submodule or worktree named refs or logs too), and ignores notes, runner logs, branches, tags and objects"
 else
   bad "steering_filter classification -- got: $sf_got"
 fi

@@ -58,12 +58,14 @@ order — later steps reference the slug and paths the earlier ones fix.
    beside the repo on disk, say so and ask rather than guessing the relative depth.
 
    A committed pointer is resolved from every checkout of the repo, not only this one. A git
-   worktree elsewhere on disk, or one Claude Code makes at `.claude/worktrees/<name>/` two levels
-   deeper, resolves the same relative path to a folder that is not there, and the pointer fails
-   silently. So run `git worktree list` in the repo and ask the owner whether they work in it
-   through worktrees. If they do, or the list shows more than one checkout, and the vault sits
-   under the home folder, anchor the path there instead: `@~/<vault>/30-knowledge/moc/ARCH-INDEX.md`
-   in `CLAUDE.md`, which Claude Code resolves from the home folder, and `~/<vault>/…` in
+   worktree elsewhere on disk, or one Claude Code makes at `.claude/worktrees/<name>/`, three
+   folders below the repo root, resolves the same relative path to a folder that is not there, and
+   the pointer fails silently. So run `git worktree list` in the repo and ask the owner whether
+   they work in it through worktrees. If they do, or the list shows more than one checkout, and the
+   vault sits under the home folder, anchor the path there instead, spelling out the whole path from
+   the home folder to the vault, not only the vault's own folder name: for a vault at
+   `~/code/claude-memory-vault`, write `@~/code/claude-memory-vault/30-knowledge/moc/ARCH-INDEX.md`
+   in `CLAUDE.md`, which Claude Code resolves from the home folder, and the same path in
    `AGENTS.md`, with a line saying that `~` is the home folder, because a file-read tool may not
    expand it. Otherwise keep the relative path. If the vault is not under the home folder, say so
    and ask: never write an absolute path that holds a username.
@@ -84,8 +86,10 @@ order — later steps reference the slug and paths the earlier ones fix.
 
 9. **Report what you could not verify.** Name every step you skipped, guessed, or could not
    confirm — a repo path you were told rather than checked, a `vault-check.sh` run that would not
-   execute, an `@`-import you could not resolve, a home-anchored pointer from step 7, which holds
-   only on this machine and shows the vault's folder name to anyone who can read the repo. `none`
-   is a valid answer; silence is not. If any step is unverified, leave the onboarded checkbox
-   unticked and say why in the row's Notes column. A row claiming a project is onboarded when only
-   half the wiring exists is worse than no row, because the next pass trusts it and stops looking.
+   execute, an `@`-import you could not resolve. `none` is a valid answer; silence is not. If any
+   step is unverified, leave the onboarded checkbox unticked and say why in the row's Notes
+   column. A row claiming a project is onboarded when only half the wiring exists is worse than
+   no row, because the next pass trusts it and stops looking. Report a home-anchored pointer from
+   step 7 too, as a trade-off rather than a gap: it holds only on this machine and shows the
+   vault's path from the home folder to anyone who can read the repo. A pointer that step 8
+   resolved does not, by itself, leave the checkbox unticked.

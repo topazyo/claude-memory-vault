@@ -30,10 +30,11 @@ bash .claude/scripts/vault-update.sh --check --from ../template-new
 A hardening release for the scheduled runners and the lint, prompted by a report from a user of
 Oh My Pi (omp), and a fix for onboarding a repository that is worked on through worktrees. The
 runners' fence now contains a write to omp's `.omp/`, to the singular `.agent/` folder omp also
-reads instructions from, and to Hermes Agent's `.hermes.md`, at any depth. Until now a pass that
-wrote one was reported and the file was left in the vault for the next session. The lint's
-invisible-character scan now covers the files omp reads as instructions, and `/onboard-project`
-no longer writes a pointer that resolves only from the main checkout.
+reads instructions from, and to Hermes Agent's `.hermes.md` or `HERMES.md`, at any depth. Until
+now a pass that wrote one was reported and the file was left in the vault for the next session.
+The lint's invisible-character scan now covers the files omp reads as instructions and
+`HERMES.md`, and `/onboard-project` no longer writes a pointer that resolves only from the main
+checkout.
 
 ### Security
 
@@ -45,10 +46,13 @@ no longer writes a pointer that resolves only from the main checkout.
   any depth and in any letter case, so such a write is quarantined, the pre-pass copy is restored
   and the tripwire is set, as for Pi's `.pi/` and OpenCode's `.opencode/`. This holds whichever
   harness runs the pass, claude mode included, because the dream agent can write files.
-- **`.hermes.md` is now a steering surface at any depth.** Hermes Agent loads it as instructions,
-  and the lint already scanned it, but the fence did not name it. `docs/harnesses/README.md` had
-  recorded it as carried to a later release.
-- **The invisible-character scan covers what omp reads as instructions.** That is `.omp/SYSTEM.md`,
+- **`.hermes.md` and `HERMES.md` are now steering surfaces at any depth.** Hermes Agent loads
+  either as its project instructions, ahead of `AGENTS.md`. The lint already scanned `.hermes.md`
+  but the fence did not name it, and `docs/harnesses/README.md` had recorded it as carried to a
+  later release. `HERMES.md`, which Hermes's documentation names as the other spelling, was in
+  neither, and the lint now scans it too.
+- **The invisible-character scan covers what omp reads as instructions**, as read from omp's
+  discovery code at commit `f2ee6ba` on 2026-11-11. That is `.omp/SYSTEM.md`,
   `.omp/SYSTEM_TEMPLATE.md`, `.omp/RULES.md` and the `.omp/` folders `skills/`, `rules/`,
   `prompts/`, `commands/`, `instructions/` and `tools/`; `.claude/SYSTEM.md`,
   `.claude/SYSTEM_TEMPLATE.md` and `.claude/commands/`; and the system files and the `rules/`,
@@ -61,23 +65,28 @@ no longer writes a pointer that resolves only from the main checkout.
   the repository, so a relative path that works in the main checkout points nowhere from a worktree
   elsewhere on disk or from one Claude Code makes at `.claude/worktrees/<name>/`. It now asks
   whether the repository is worked on through worktrees and, when it is and the vault is under the
-  home folder, writes the pointer from the home folder (`@~/…` in `CLAUDE.md`, `~/…` in
-  `AGENTS.md`). Step 8 expands `~` and checks each relative path from a worktree as well. Step 9
-  reports a home-anchored pointer, which holds only on that machine. Step 3 now says not to create
+  home folder, writes the pointer from the home folder, the whole path spelled out (`@~/…` in
+  `CLAUDE.md`, `~/…` in `AGENTS.md`). Step 8 expands `~` and checks each relative path from a
+  worktree as well. Step 9 reports a home-anchored pointer as a trade-off, which holds only on that
+  machine, without leaving the onboarded checkbox unticked for it. Step 3 now says not to create
   an empty auto-memory folder for a harness whose memory cannot be moved into the vault, and that
   the folder must never be a link to any harness's memory folder, not only Claude Code's.
-- **`docs/reference.md`** lists `.omp/`, `.agent/` and `.hermes.md` among the steering surfaces,
-  says when an omp session itself writes into `.omp/`, and adds omp's files to the scan's list.
+- **`docs/reference.md`** lists `.omp/`, `.agent/`, `.hermes.md` and `HERMES.md` among the
+  steering surfaces, says which writes omp's documentation names an omp session making into
+  `.omp/`, adds omp's files and `HERMES.md` to the scan's list, and describes the new controls.
   **`docs/harnesses/README.md`** no longer lists `.hermes.md` as a gap carried to a later release.
 
 ### Adopting this
 
 1. **Take `.claude/scripts/lib/runner-common.sh` and `.claude/hooks/vault-lint.sh`.** Neither
    depends on the other, and no runner script changed, so each can be taken alone.
-2. **A pass that writes into `.omp/`, `.agent/` or a `.hermes.md` now sets the tripwire, where 1.5.0
-   exited 2 and left the file.** No shipped pass writes there. If a tripwire names one of those
-   paths, read the quarantined file before you delete the tripwire, as for any other. Setting a
-   project model role in omp, which writes `.omp/config.yml`, while a pass runs is contained too.
+2. **A pass that writes into `.omp/` or `.agent/`, or writes a `.hermes.md` or `HERMES.md`, now
+   sets the tripwire, where 1.5.0 exited 2 and left the file.** No shipped pass writes there. The
+   match ignores case, so a note named `hermes.md` anywhere in the vault now counts too: if you
+   keep one, rename it, or a promotion pass that writes it will be contained. If a tripwire names
+   one of these paths, read the quarantined file before you delete the tripwire, as for any other.
+   Setting a project model role in omp, which writes `.omp/config.yml`, while a pass runs is
+   contained too.
 3. **Take `.claude/skills/onboard-project/SKILL.md` and `.agents/skills/onboard-project/SKILL.md`
    together**, so the two copies stay byte-identical. Projects you have already onboarded keep
    their pointers. If one of them is worked on through worktrees, resolve its pointer from a
