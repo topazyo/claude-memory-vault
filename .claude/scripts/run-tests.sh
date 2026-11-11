@@ -3527,6 +3527,17 @@ else
     # 1.5.0: the stand-in maps every folder to C:/stray, the runner's own folder
     # first, so the runner refuses on its own check before memory_override runs.
     mo_refused "claude mode off Windows with a stray cygpath on PATH" "$RF_SAME" dream-pass.sh journal "$MO_LOG" PATH="$MO_SC:$PATH"
+    # 1.5.0: so memory_override's own check of the vault's path is reached off
+    # Windows by a stand-in that maps every other path back (-m adds C:, -u strips
+    # it) and gives C:/stray for the vault alone.
+    printf '#!/usr/bin/env bash\nif [ "$1" = -m ]; then case "$2" in */runnervault) echo C:/stray ;; *) echo "C:$2" ;; esac; else case "$2" in C:/*) echo "${2#C:}" ;; *) echo "$2" ;; esac; fi\n' > "$MO_SC/cygpath"
+    if [ "$(PATH="$MO_SC:$PATH" cygpath -m "$RV" 2>/dev/null)" = C:/stray ] \
+       && [ "$(PATH="$MO_SC:$PATH" cygpath -m "$TMP/x" 2>/dev/null)" = "C:$TMP/x" ] \
+       && [ "$(PATH="$MO_SC:$PATH" cygpath -u "C:$TMP/x" 2>/dev/null)" = "$TMP/x" ]; then
+      mo_refused "claude mode off Windows with a stray cygpath giving another folder for the vault alone" "$MO_SAME" dream-pass.sh journal "$MO_LOG" PATH="$MO_SC:$PATH"
+    else
+      bad "mem-override-stray-cygpath: the stand-in giving another folder for the vault alone does not answer as it should"
+    fi
   else
     bad "mem-override-stray-cygpath: the cygpath stand-in does not answer as it should"
   fi
