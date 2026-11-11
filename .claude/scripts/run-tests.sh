@@ -613,7 +613,7 @@ for omp_f in .omp/other.md omp/SYSTEM.md .claude/other.md .agents/other.md .agen
   printf '%s' "$omp_abs" | grep -q "U+200B" && omp_steer_missed="$omp_steer_missed widened-to:absolute:$omp_f"
 done
 if [ -z "$omp_steer_missed" ]; then
-  ok "invisible-char scan covers what omp reads: .omp/ system, rules, skills, prompts, commands, instructions and tools files, .claude/SYSTEM.md and .claude/commands/, and the same set in .agents/ and .agent/, and Hermes's HERMES.md, by relative and absolute path, and not their look-alikes by either"
+  ok "invisible-char scan covers what omp reads: .omp/ system, rules, skills, prompts, commands, instructions and tools files, .claude/SYSTEM.md and .claude/commands/, the system files and rules, prompts and commands folders of .agents/ and .agent/, .agent/skills/, and Hermes's HERMES.md, by relative and absolute path, and not their look-alikes by either"
 else
   bad "omp and HERMES.md steering files scan --$omp_steer_missed"
 fi

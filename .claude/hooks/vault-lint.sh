@@ -141,7 +141,8 @@ lint_file() {
   # .hermes.md, HERMES.md, .pi/SYSTEM.md, .pi/APPEND_SYSTEM.md), plus what Oh My Pi (omp)
   # reads as instructions: its .omp/ system, rules, skills, prompts, commands,
   # instructions and tools files, .claude/SYSTEM.md and .claude/commands/, and
-  # the same set in .agents/ and the singular .agent/. docs/reference.md
+  # the system files and rules, prompts and commands folders of .agents/ and of
+  # the singular .agent/, with .agent/skills/. docs/reference.md
   # section 3.1 lists them all. Only .md files reach this test, so a tool
   # written in TypeScript under .omp/tools/ is the runner fence's to catch,
   # not this scan's. The Rules File Backdoor targets

@@ -79,20 +79,27 @@ checkout.
 ### Adopting this
 
 1. **Take `.claude/scripts/lib/runner-common.sh` and `.claude/hooks/vault-lint.sh`.** Neither
-   depends on the other, and no runner script changed, so each can be taken alone.
-2. **A pass that writes into `.omp/` or `.agent/`, or writes a `.hermes.md` or `HERMES.md`, now
-   sets the tripwire, where 1.5.0 exited 2 and left the file.** No shipped pass writes there. The
-   match ignores case, so a note named `hermes.md` anywhere in the vault now counts too: if you
-   keep one, rename it, or a promotion pass that writes it will be contained. If a tripwire names
-   one of these paths, read the quarantined file before you delete the tripwire, as for any other.
-   Setting a project model role in omp, which writes `.omp/config.yml`, while a pass runs is
-   contained too.
+   depends on the other, and no runner script changed since 1.5.0, so from 1.5.0 each can be
+   taken alone. From an older release, take 1.5.0's runners with them, as its own note says.
+2. **A pass that writes into `.omp/` or `.agent/`, or writes a `.hermes.md` or `HERMES.md`, still
+   exits 2, but the file is now quarantined, the pre-pass copy restored and the tripwire set,
+   where 1.5.0 left the file in the vault.** No shipped pass writes there. The match ignores case,
+   so a note named `hermes.md` anywhere in the vault now counts too: rename one you keep, and
+   expect a promotion pass that creates one, such as a wiki entity about Hermes, to be contained
+   and to stop the passes until you clear the tripwire. If a tripwire names one of these paths,
+   read the quarantined file before you delete the tripwire, as for any other. Setting a project
+   model role in omp, which writes `.omp/config.yml`, while a pass runs is contained too.
 3. **Take `.claude/skills/onboard-project/SKILL.md` and `.agents/skills/onboard-project/SKILL.md`
    together**, so the two copies stay byte-identical. Projects you have already onboarded keep
    their pointers. If one of them is worked on through worktrees, resolve its pointer from a
    worktree, and if it points nowhere, rewrite it from the home folder as step 7 now says.
 4. **Take `.claude/scripts/run-tests.sh` with the two scripts in step 1.** Its new controls fail
    against 1.5.0's library and hook.
+5. The shipped files this release touches: `.claude/scripts/lib/runner-common.sh`,
+   `.claude/hooks/vault-lint.sh`, `.claude/scripts/run-tests.sh`,
+   `.claude/skills/onboard-project/SKILL.md`, `.agents/skills/onboard-project/SKILL.md`,
+   `docs/reference.md`, `docs/harnesses/README.md` and `docs/harnesses/hermes.md` (wording only,
+   nothing to configure), besides `VERSION` and `CHANGELOG.md`, which move on every release.
 
 ## 1.5.0 — 2026-11-10
 
