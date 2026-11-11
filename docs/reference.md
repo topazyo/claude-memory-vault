@@ -404,8 +404,9 @@ a lint that does nothing and a lint that found nothing wrong print the same thin
   Antigravity in `.agents/`, `.agent/`, `_agents/` and `_agent/`, nested and in another letter case,
   by a relative name and by an absolute path, and leaves the look-alikes `.agents/workflow/`,
   `_agentsx/rules/`, `agents/rules/`, `_agents/other.md` and `_agent/other.md` alone. A stand-in
-  pass that plants `31-standards/sub/opencode.jsonc` or `_agents/hooks.json` is contained the same
-  way.
+  pass that plants `_agents/hooks.json` is contained the same way.
+- **OpenCode's `opencode.jsonc`** — a stand-in pass that plants `31-standards/sub/opencode.jsonc`,
+  below the vault root, is contained the same way.
 - **Reserved names** — the names `.claude/agents/promotion-agent.md` tells the promotion agent never
   to give a note or folder are the any-depth file names and the folder names `steering_filter`
   contains, compared both ways, above a floor for each list, after the comparison has failed on a
@@ -1215,7 +1216,7 @@ Around that call, each runner does several things an exit code cannot:
   except `logs/`, `.agents/`, each shipped harness's configuration folder or file, OpenCode's
   `.opencode/`, Pi's `.pi/` and Oh My Pi's `.omp/` (which the template does not ship but those
   harnesses run code from, omp with no trust prompt), the singular `.agent/` that omp reads
-  instructions from, `_agents/` and `_agent/` at any depth, which Google Antigravity still reads rules, skills,
+  instructions from, `_agents/` and `_agent/`, which Google Antigravity still reads rules, skills,
   workflows, `hooks.json` and `mcp_config.json` from
   (<https://antigravity.google/docs/customization-discovery/>, read 2026-11-11), `.github/`,
   `.vscode/`, and, **at any depth**, `CLAUDE.md`, `CLAUDE.local.md`,
@@ -1224,7 +1225,8 @@ Around that call, each runner does several things an exit code cannot:
   and every folder above it, `packages/opencode/src/config/paths.ts` line 17 at the v1.19.5 tag,
   commit `810c0eb` of `github.com/anomalyco/opencode`, read 2026-11-11),
   `.mcp.json`, `.gitattributes`, `.gitignore` and any `.claude/` or other harness folder, including
-  one that is the last part of the path, such as a symlink named `.claude`. Matching ignores case,
+  one that is the last part of the path, such as a symlink named `.claude`. Every harness folder
+  named earlier in this list counts at any depth too, not only at the vault root. Matching ignores case,
   so a note named `hermes.md` is a steering surface too, and so is this template's own
   `docs/harnesses/hermes.md`: on a file system that ignores case, Hermes started in that folder
   would load it as `HERMES.md`. omp's own documentation (`docs/config-usage.md` at commit

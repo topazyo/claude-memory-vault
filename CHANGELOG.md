@@ -72,12 +72,17 @@ about a harness no longer stops every pass.
    reserved-names control in the suite reads the library and the agent definition, and fails when
    one of them comes from another release. No runner script changed since 1.5.1.
 2. **A pass that writes an `opencode.json` or `opencode.jsonc` anywhere, or anything under an
-   `_agents/` or `_agent/` folder, still exits 2. The file is now quarantined, the pre-pass copy
-   restored and the tripwire set, where 1.5.1 left the file in the vault.** No shipped pass writes
-   there. If your vault keeps a folder named `_agents` or `_agent`, or a note named
-   `opencode.json(c)`, for your own purposes, rename it. Otherwise a pass that touches it stops
-   every later pass until you clear the tripwire. The root `opencode.json` the template ships was
-   already fenced.
+   `_agents/` or `_agent/` folder, now has the file quarantined, the pre-pass copy restored and
+   the tripwire set.** Outside a pass's own write areas it exited 2 before as well, but 1.5.1 left
+   the file in the vault. Inside them it changes more. A promotion pass may write anything under
+   `31-standards/` and `40-llm-wiki/wiki/`, so a `40-llm-wiki/wiki/opencode.json` or a
+   `31-standards/_agents/` folder it created was accepted and committed under 1.5.1. It now exits
+   2 and stops every later pass until you clear the tripwire. The promotion agent is now told not
+   to use these names. Search your long tier for them, any letter case, and rename any you keep. Do
+   the same for a folder named `_agents` or `_agent`, or a file named `opencode.json(c)`, that you
+   keep anywhere else for your own purposes. The root `opencode.json` the template ships was
+   already fenced. If you run scheduled passes under OpenCode and keep an `opencode.jsonc` in the
+   vault, `docs/harnesses/opencode.md` now asks you to move its settings into `opencode.json`.
 3. **If you customised the promotion agent's definition**, merge the new paragraph and its two
    `Reserved` bullets by hand, and keep the bullets matching the two marked lines in
    `runner-common.sh`.

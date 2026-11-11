@@ -137,9 +137,12 @@ because its extension API answers that every project is trusted. CI fails a trac
 **A harness touches several closed lists, and nothing finds the ones you forget.** Each list below
 names files the way that harness does. A harness missing from one is a gap that looks exactly like
 safety: the fence reports a planted file and leaves it in place, or the lint never reads a steering
-file. That is how `.omp/` and `.hermes.md` stayed unfenced until 1.5.1. Go through all of them,
-including for a harness the template does not support, as long as it reads files or runs code from
-a vault:
+file. That is how `.omp/` and `.hermes.md` stayed unfenced until 1.5.1. For a harness the template
+supports, go through all of them. For one it does not support but that reads files or runs code
+from a vault, as Antigravity's `_agents/` was in 1.5.2, the fence, the reserved names, the lint,
+`docs/reference.md` and the tests still apply. The guide index, the support table, `AGENTS.md` §8
+and the CI guard wait until the template ships something for the harness. The guard came before the
+adapter for omp only because the adapter was already planned.
 
 - `steering_filter` in `.claude/scripts/lib/runner-common.sh` has three lists. Root-only file names
   go on the `lp ==` line. File names that count at any depth go on the line under
