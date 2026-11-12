@@ -511,7 +511,7 @@ function runHook(bash, vault, script, args, input) {
     // First, before anything touches its pipes: Node reports some start
     // failures, such as running out of file handles, as a later error event on
     // a child that has no pipes at all. The listener stays for good, because an
-    // error event nobody listens for would be thrown inside Pi.
+    // error event nobody listens for would be thrown inside the harness.
     child.on("error", (error) => settle(`could not start ${bash} (${error.code ?? error.message})`))
     if (!child.stdin || !child.stderr) {
       settle(`could not start ${bash} (no pipes to it)`)

@@ -6,7 +6,8 @@ up once, and gives a prompt you paste into the harness so its agent onboards the
 the wiring works.
 
 The facts in these guides were checked against each harness's official documentation on
-2026-09-13, and the Pi guide against Pi's documentation and source on 2026-09-25. Every guide lists
+2026-09-13, the Pi guide against Pi's documentation and source on 2026-09-25, and the Oh My Pi guide
+against omp's source on 2026-11-12. Every guide lists
 its sources. Harnesses change quickly. The onboarding checks
 exist so you prove the wiring on your own machine instead of trusting a page written on a
 different date.
@@ -23,29 +24,50 @@ different date.
 | Aider | [`aider.md`](aider.md) |
 | Hermes Agent | [`hermes.md`](hermes.md) |
 | Pi | [`pi.md`](pi.md) |
+| Oh My Pi (omp) | [`omp.md`](omp.md) |
 
 ## Support at a glance
 
 "Guidance" means nothing mechanical stops the agent: the rule in `.claude/rules/` is the control,
 and the agent must follow it.
 
-| Harness | Instructions | Rules | Lint after a write | Compaction stub | `.env` / `secrets/` reads | Skills | Scheduled passes |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| Claude Code | `CLAUDE.md` imports `AGENTS.md` | Loaded automatically | Hook | Hook | Denied (`settings.json`) | `.claude/skills/` | Default mode, allowlists enforced |
-| Codex CLI | `AGENTS.md` natively | Via `AGENTS.md` | Hook (trusted project) | Hook | Guidance | `.agents/skills/` | Command mode |
-| Gemini CLI | `.gemini/settings.json` | Via `AGENTS.md` | Hook | Hook | Hidden from search only | `.agents/skills/` | Command mode |
-| Cursor | `AGENTS.md` natively | Via `AGENTS.md` | Hook | Hook | Blocked except terminal and MCP | Both skill folders | Command mode |
-| GitHub Copilot | `AGENTS.md` natively | VS Code loads them; elsewhere via `AGENTS.md` | Hook | None | Guidance | Both skill folders | Command mode |
-| OpenCode | `AGENTS.md` natively | `opencode.json` loads them | Plugin (opt-in) | Plugin (opt-in) | `*.env` denied by default; the rest by the opt-in plugin | Both skill folders | Command mode |
-| Windsurf / Devin Desktop | `AGENTS.md` natively | Via `AGENTS.md` | Hook | None | Denied (read hook) | Follow `SKILL.md` | Not covered |
-| Aider | `.aider.conf.yml` | `.aider.conf.yml` | Commit gate only | None | Guidance | Follow `SKILL.md` | Not recommended |
-| Hermes Agent | `AGENTS.md` natively | Via `AGENTS.md` | Hook (user config) | None | Guidance | `.agents/skills/` (after trust) | Command mode, in a container |
-| Pi | `AGENTS.md` natively | Via `AGENTS.md` | Extension (opt-in) | Extension (opt-in) | Denied by the opt-in extension when a file tool names them | `.agents/skills/` (after trust) | Command mode, in a container |
+| Harness | Instructions | Rules | Lint after a write | Compaction stub | `.env` / `secrets/` reads | Skills | Scheduled passes | Auto memory into the vault |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Claude Code | `CLAUDE.md` imports `AGENTS.md` | Loaded automatically | Hook | Hook | Denied (`settings.json`) | `.claude/skills/` | Default mode, allowlists enforced | Yes (`autoMemoryDirectory`) |
+| Codex CLI | `AGENTS.md` natively | Via `AGENTS.md` | Hook (trusted project) | Hook | Guidance | `.agents/skills/` | Command mode | No: moves only with `CODEX_HOME` |
+| Gemini CLI | `.gemini/settings.json` | Via `AGENTS.md` | Hook | Hook | Hidden from search only | `.agents/skills/` | Command mode | No: moves only with `GEMINI_CLI_HOME` |
+| Cursor | `AGENTS.md` natively | Via `AGENTS.md` | Hook | Hook | Blocked except terminal and MCP | Both skill folders | Command mode | Unverified |
+| GitHub Copilot | `AGENTS.md` natively | VS Code loads them; elsewhere via `AGENTS.md` | Hook | None | Guidance | Both skill folders | Command mode | No: kept by GitHub |
+| OpenCode | `AGENTS.md` natively | `opencode.json` loads them | Plugin (opt-in) | Plugin (opt-in) | `*.env` denied by default; the rest by the opt-in plugin | Both skill folders | Command mode | None |
+| Windsurf / Devin Desktop | `AGENTS.md` natively | Via `AGENTS.md` | Hook | None | Denied (read hook) | Follow `SKILL.md` | Not covered | No setting found |
+| Aider | `.aider.conf.yml` | `.aider.conf.yml` | Commit gate only | None | Guidance | Follow `SKILL.md` | Not recommended | None |
+| Hermes Agent | `AGENTS.md` natively | Via `AGENTS.md` | Hook (user config) | None | Guidance | `.agents/skills/` (after trust) | Command mode, in a container | No: moves only with `HERMES_HOME` |
+| Pi | `AGENTS.md` natively | Via `AGENTS.md` | Extension (opt-in) | Extension (opt-in) | Denied by the opt-in extension when a file tool names them | `.agents/skills/` (after trust) | Command mode, in a container | None |
+| Oh My Pi (omp) | `AGENTS.md` natively | Via `AGENTS.md` | Extension (opt-in) | Extension (opt-in) | Denied by the opt-in extension when a file tool names them | Both skill folders (one copy kept) | Command mode, in a container | No: off by default, moves only with omp's agent folder |
 
 "Both skill folders" means the harness reads `.claude/skills/` and `.agents/skills/`. The two
-copies are byte-identical (the control suite fails if they drift). How each of those harnesses
-handles a skill name found in both folders was not documented: expect a skill to be listed twice,
-and report anything worse.
+copies are byte-identical (the control suite fails if they drift). omp keeps one copy of a skill
+whose two copies are identical. How the other harnesses handle a skill name found in both folders
+was not documented: expect a skill to be listed twice, and report anything worse.
+
+"Auto memory into the vault" asks whether facts the harness saves on its own can be written into
+`90-auto-memory/<project>/` by a setting that moves only the memory, as Claude Code's
+`autoMemoryDirectory` does. "Moves only with" names a variable that moves the harness's whole home
+or configuration folder, which is not a way to point its memory into the vault. "None" means the
+harness keeps no automatic memory. Where it is not a "Yes", `/onboard-project` skips that step.
+Checked 2026-11-11 and 2026-11-12:
+Claude Code, <https://code.claude.com/docs/en/memory>; Codex CLI, whose memories are off by
+default, <https://developers.openai.com/codex/memories> and `codex-rs/memories/write/src/lib.rs` at
+commit `392ced7` of `openai/codex`; Gemini CLI, whose `save_memory` appends to `GEMINI.md`,
+`docs/tools/memory.md` and `packages/core/src/utils/paths.ts` at commit `cde401a` of
+`google-gemini/gemini-cli`; Cursor, whose documentation no longer describes its Memories, so
+neither their place nor a setting could be confirmed, <https://cursor.com/docs/context/rules>;
+GitHub Copilot,
+<https://docs.github.com/en/copilot/concepts/agents/copilot-memory>; OpenCode, Aider and Pi, from
+their documentation and source, where no memory feature appears (an absence, not a proof); Windsurf,
+<https://docs.devin.ai/windsurf/plugins/cascade/memories>, whose memories belong to a workspace and
+whose storage path the documentation does not state; Hermes Agent, `tools/memory_tool.py` at
+commit `b5f15a6` of `NousResearch/hermes-agent`; Oh My Pi, `docs/memory.md` at commit `50da2d3`.
 
 The read denies in this table cover the harness's file-read tool only. A shell command such as
 `cat` reads anything, in every harness, including Claude Code.
@@ -122,8 +144,8 @@ The hooks this template ships for interactive sessions run scripts inside the va
 `.claude/settings.json` (Claude Code's, which Copilot CLI also reads, and Cursor can load Claude
 Code hooks), `.codex/hooks.json`, `.cursor/hooks.json`, `.github/hooks/vault.json`,
 `.gemini/settings.json` and `.windsurf/hooks.json` after a write or at a compaction, Hermes's
-snippet from its user configuration, OpenCode's plugin and Pi's extension once you enable them,
-and the commit gate's `.claude/githooks/pre-commit` at a commit. A pass whose tools can write the
+snippet from its user configuration, OpenCode's plugin, Pi's extension and Oh My Pi's extension
+once you enable them, and the commit gate's `.claude/githooks/pre-commit` at a commit. A pass whose tools can write the
 vault could change one of those scripts, or add a hook of its own, and the next hook would then run
 what it wrote with a shell, whatever the harness's shell tool is set to. If the pass puts the file
 back before it returns, the runner's fence sees nothing (measured on Linux on 1.4.2, with a

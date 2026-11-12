@@ -254,19 +254,19 @@ mechanically and which parts rest on you following this file. Know which case yo
 control you believe is enforced, but is not, is worse than one you know you must apply yourself.
 
 **`docs/harnesses/` has one guide per harness** (Claude Code, Codex CLI, Gemini CLI, Cursor, GitHub
-Copilot, OpenCode, Windsurf / Devin Desktop, Aider, Hermes Agent, Pi): the config this template ships
+Copilot, OpenCode, Windsurf / Devin Desktop, Aider, Hermes Agent, Pi, Oh My Pi): the config this template ships
 for it, what that config enforces, and an onboarding prompt that proves the wiring works. Start
 there. The table below is the summary.
 
 | Mechanism | Claude Code | Other harnesses |
 | --- | --- | --- |
-| These instructions | `CLAUDE.md` imports this file | Read natively by Codex, Cursor, Copilot, OpenCode, Windsurf, Hermes and Pi; Gemini CLI via `.gemini/settings.json`, Aider via `.aider.conf.yml` |
+| These instructions | `CLAUDE.md` imports this file | Read natively by Codex, Cursor, Copilot, OpenCode, Windsurf, Hermes, Pi and Oh My Pi; Gemini CLI via `.gemini/settings.json`, Aider via `.aider.conf.yml` |
 | Rules in `.claude/rules/` | Loaded automatically, path-scoped | Loaded by OpenCode (`opencode.json`), Aider and Copilot in VS Code. Everywhere else, read them yourself before the first write (§2) |
-| Lint after each write | PostToolUse hook in `.claude/settings.json` | Shipped hooks for Codex, Gemini CLI, Cursor, Copilot and Windsurf; an opt-in plugin for OpenCode and an opt-in extension for Pi; a user-config snippet for Hermes. Anything else: `bash .claude/hooks/vault-lint.sh <file>`, or the commit gate |
+| Lint after each write | PostToolUse hook in `.claude/settings.json` | Shipped hooks for Codex, Gemini CLI, Cursor, Copilot and Windsurf; an opt-in plugin for OpenCode and an opt-in extension for Pi and for Oh My Pi; a user-config snippet for Hermes. Anything else: `bash .claude/hooks/vault-lint.sh <file>`, or the commit gate |
 | Commit gate | Opt-in: `git config core.hooksPath .claude/githooks` | The same, and the only mechanical check for Aider |
-| Compaction stub | PostCompact hook | Shipped for Codex, Gemini CLI and Cursor; OpenCode's opt-in plugin and Pi's opt-in extension |
-| Read deny for `.env`, `.env.*`, `secrets/` | Enforced by `.claude/settings.json` for its file-read tool | Blocked by Windsurf's read hook, OpenCode's opt-in plugin and, for the paths its file tools name, Pi's opt-in extension; hidden from Cursor's agent and Gemini CLI's search by ignore files; **guidance only** everywhere else. No harness stops a shell command from reading them |
-| Skills | Slash commands | Read natively from `.agents/skills/` by Codex, Gemini CLI, Cursor, Copilot and OpenCode, and by Hermes and Pi once the project is trusted; elsewhere follow `SKILL.md` as a checklist |
+| Compaction stub | PostCompact hook | Shipped for Codex, Gemini CLI and Cursor; OpenCode's opt-in plugin and the opt-in extensions for Pi and Oh My Pi |
+| Read deny for `.env`, `.env.*`, `secrets/` | Enforced by `.claude/settings.json` for its file-read tool | Blocked by Windsurf's read hook, OpenCode's opt-in plugin and, for the paths their file tools name, the opt-in extensions for Pi and Oh My Pi; hidden from Cursor's agent and Gemini CLI's search by ignore files; **guidance only** everywhere else. No harness stops a shell command from reading them |
+| Skills | Slash commands | Read natively from `.agents/skills/` by Codex, Gemini CLI, Cursor, Copilot, OpenCode and Oh My Pi, and by Hermes and Pi once the project is trusted; elsewhere follow `SKILL.md` as a checklist |
 | Scheduled passes | `VAULT_AGENT=claude` (default); the agents' `tools:` allowlists are enforced | `VAULT_AGENT=command` with your own wrapper. **Refused** (exit 3) until `VAULT_ALLOW_UNENFORCED_TOOLS=1`, which you set only after sandboxing the wrapper so that neither pass has a shell or network access, each pass's tools can write only inside the vault, and no hook runs in a pass, nor can a pass write anything that turns one on, nor, where the harness itself can run git (assume any can), the vault's `.git` or, with the commit gate on, its `.claude/` (`docs/harnesses/README.md` gives a check that the vault's hook scripts do not run and that those folders refuse a pass's writes, and says what the rest rests on). The runner does the git work itself |
 | Retention pass | No agent and no `VAULT_AGENT`, so nothing to select or sandbox. Plain git and shell | The same in every harness |
 | Template updates | No agent, no harness wiring and no schedule. A person runs `vault-update.sh` | The same in every harness. It reads and reports, writes only the manifest, reaches no network, and runs nothing out of the folder it is given |

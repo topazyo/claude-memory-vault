@@ -74,5 +74,7 @@ passes with Claude Code or another harness whose guide gives a wrapper.
 ## Sources (checked 2026-09-13)
 
 - AGENTS.md: <https://docs.windsurf.com/windsurf/cascade/agents-md>
-- Rules and memories: <https://docs.windsurf.com/windsurf/cascade/memories>
+- Rules and memories: <https://docs.devin.ai/windsurf/plugins/cascade/memories> (the address this
+  guide cited until 1.6.0, `docs.windsurf.com/windsurf/cascade/memories`, now redirects to a page
+  that no longer describes them; checked 2026-11-12)
 - Cascade hooks (file locations, events, `pre_read_code` exit 2, `post_write_code` input, `command`/`powershell`, working directory, Restricted Mode): <https://docs.devin.ai/desktop/cascade/hooks>

@@ -14,6 +14,10 @@ shell: bash
 3. Propose long-term notes:
    - Standards → `31-standards/` (`tier: long`, `type: standard`)
    - Conceptual pages → `40-llm-wiki/wiki/` (`type: wiki-entity`)
+   - Give no note or folder a name on the two `Reserved` lists in
+     `.claude/agents/promotion-agent.md`, in any letter case: write `hermes-agent.md`, not
+     `hermes.md`. A harness loads a file with such a name as its instructions, and the scheduled
+     passes contain it as one and stop until the owner clears the tripwire.
 4. Include backlinks to the medium-term logs and wiki entities the note came from, and to
    [[ARCH-INDEX]].
 

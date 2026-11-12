@@ -1123,7 +1123,8 @@ else
 fi
 
 for cfg in .codex/hooks.json .gemini/settings.json .cursor/hooks.json .github/hooks/vault.json \
-           .windsurf/hooks.json .claude/adapters/opencode/vault.js .claude/adapters/pi/vault.js; do
+           .windsurf/hooks.json .claude/adapters/opencode/vault.js .claude/adapters/pi/vault.js \
+           .claude/adapters/omp/vault.js; do
   if [ ! -f "$ROOT/$cfg" ]; then
     bad "$cfg is missing"
     continue
@@ -1161,6 +1162,14 @@ if plugin_copy_ok "$ROOT/.claude/adapters/pi/vault.js" "$ROOT/.pi/extensions/vau
 else
   bad ".pi/extensions/vault.js differs from .claude/adapters/pi/vault.js"
 fi
+# Oh My Pi runs .omp/extensions/ with no trust gate at all, so its extension
+# ships opt-in too, and a copy there must be the reviewed one.
+if plugin_copy_ok "$ROOT/.claude/adapters/omp/vault.js" "$ROOT/.omp/extensions/vault.js"; then
+  if [ -e "$ROOT/.omp/extensions/vault.js" ]; then ok "the enabled omp extension matches the reviewed adapter"
+  else ok "the omp extension is not copied into .omp/extensions/ on this clone (opt-in)"; fi
+else
+  bad ".omp/extensions/vault.js differs from .claude/adapters/omp/vault.js"
+fi
 
 # No shipped config may switch a harness's approvals off. Those settings belong
 # to a user who chose them, never to a template someone cloned.
@@ -1175,7 +1184,7 @@ else
 fi
 hits=$(cd "$ROOT" && bypass_hits .codex/config.toml .codex/hooks.json .gemini/settings.json .cursor/hooks.json \
   .github/hooks/vault.json .windsurf/hooks.json opencode.json .aider.conf.yml .claude/adapters/opencode/vault.js \
-  .claude/adapters/pi/vault.js)
+  .claude/adapters/pi/vault.js .claude/adapters/omp/vault.js)
 if [ -z "$hits" ]; then ok "no shipped harness config turns approvals off"
 else bad "approval bypass in a shipped config -- $(printf '%s' "$hits" | tr '\n' ';')"; fi
 
@@ -1194,6 +1203,29 @@ fi
 hits=$(pi_trust_hits "$ROOT/.claude/adapters/pi/vault.js")
 if [ -z "$hits" ]; then ok "the Pi extension never answers Pi's project trust"
 else bad "the Pi extension touches Pi's project trust -- $(printf '%s' "$hits" | tr '\n' ';')"; fi
+
+# omp lets an extension answer tool approvals (ctx.ui.approve and confirm, the
+# tool_approval_* events) and rewrite a call's input from its tool_call
+# handler. The omp adapter may only refuse a call: an approval answered or an
+# input rewritten would make loading it widen what omp does. Every object its
+# tool_call handler returns must carry block: true, which the second check
+# reads from the handler's own lines.
+omp_approval_hits() {  # omp_approval_hits <file>... - prints lines that touch omp's approvals or trust
+  grep -nE 'ui\.(approve|confirm)|tool_approval_|isProjectTrusted|project_trust|approvalPolicy|input:[[:space:]]' "$@" 2>/dev/null
+}
+omp_unblocked_returns() {  # omp_unblocked_returns <file> - prints returns of an object without block: true inside the tool_call handler
+  awk '/pi\.on\("tool_call"/ { on = 1 } on && /return[[:space:]]*\{/ && !/block:[[:space:]]*true/ { print NR ": " $0 } on && /^  \}\)/ { on = 0 }' "$1"
+}
+printf 'pi.on("tool_call", () => {\n  return { input: { path: "x" } }\n  })\nctx.ui.approve("x")\n' > "$TMP/fake-omp-approve.js"
+if [ -n "$(omp_approval_hits "$TMP/fake-omp-approve.js")" ] && [ -n "$(omp_unblocked_returns "$TMP/fake-omp-approve.js")" ]; then
+  ok "positive control: an extension answering omp's approvals or rewriting a call's input is caught"
+else
+  bad "positive control: an omp approval answer or input rewrite went unnoticed"
+fi
+hits="$(omp_approval_hits "$ROOT/.claude/adapters/omp/vault.js")$(omp_unblocked_returns "$ROOT/.claude/adapters/omp/vault.js")"
+omp_tc_returns=$(awk '/pi\.on\("tool_call"/ { on = 1 } on && /return[[:space:]]*\{/ { n++ } on && /^  \}\)/ { on = 0 } END { print n + 0 }' "$ROOT/.claude/adapters/omp/vault.js")
+if [ -z "$hits" ] && [ "$omp_tc_returns" -ge 2 ]; then ok "the omp extension only ever refuses a call: it answers no approval and rewrites no input ($omp_tc_returns refusals read)"
+else bad "the omp extension touches omp's approvals or returns something other than a refusal (refusals read: $omp_tc_returns) -- $(printf '%s' "$hits" | tr '\n' ';')"; fi
 
 # The Pi adapter finds its vault by a hook and a script. A renamed script would
 # leave it saying no vault holds it, and linting nothing.
@@ -1216,6 +1248,12 @@ if [ -z "$pi_missing" ]; then
   ok ".claude/adapters/pi/vault.js names only scripts that exist"
 else
   bad ".claude/adapters/pi/vault.js names scripts that do not exist -- $(printf '%s' "$pi_missing" | tr '\n' ' ')"
+fi
+omp_missing=$(missing_script_refs "$ROOT/.claude/adapters/omp/vault.js" "$ROOT")
+if [ -z "$omp_missing" ]; then
+  ok ".claude/adapters/omp/vault.js names only scripts that exist"
+else
+  bad ".claude/adapters/omp/vault.js names scripts that do not exist -- $(printf '%s' "$omp_missing" | tr '\n' ' ')"
 fi
 
 # Gemini CLI hook timeouts are in milliseconds. A value copied from a config
@@ -1693,6 +1731,270 @@ $pi_out
 PI_OUT_EOF
   if [ "$pi_rc" -ne 0 ] || [ "$pi_reached_end" -ne 1 ]; then
     bad "the Pi extension driver stopped early (exit $pi_rc) -- $(tail -n 5 "$TMP/pi/driver.err" 2>/dev/null | tr '\n' ' ' | cut -c1-600)"
+  fi
+fi
+
+# ------------------------------------------------ the omp extension --------
+#
+# The omp adapter keeps the Pi adapter's path, glob and hook-running code, so a
+# fix to one has to reach the other. Each shared function is read out of both
+# files and compared, with a floor on how many were found, so a renamed or
+# moved function cannot make the comparison pass by finding nothing.
+
+printf '\n=== omp extension (.claude/adapters/omp/vault.js) ===\n'
+
+OMP_SHARED="realPath isInside below rootsFor findRoots namesSecret braceAlternatives classAt sameLetter globMatches slashSets globParts partsMaySeeSecret globMaySeeSecret isWslLauncher runHook"
+omp_fn() {  # omp_fn <file> <name> - the function's lines, from its header to the first closing brace at column 0
+  awk -v want="function $2(" 'index($0, want) == 1 { on = 1 } on { print } on && /^}/ { exit }' "$1"
+}
+omp_shared_bad="" omp_shared_found=0
+for omp_name in $OMP_SHARED; do
+  omp_a=$(omp_fn "$ROOT/.claude/adapters/pi/vault.js" "$omp_name")
+  omp_b=$(omp_fn "$ROOT/.claude/adapters/omp/vault.js" "$omp_name")
+  if [ -z "$omp_a" ] || [ -z "$omp_b" ]; then omp_shared_bad="$omp_shared_bad missing:$omp_name"; continue; fi
+  omp_shared_found=$((omp_shared_found + 1))
+  [ "$omp_a" = "$omp_b" ] || omp_shared_bad="$omp_shared_bad differs:$omp_name"
+done
+printf 'function namesSecret(path) {\n  return false\n}\n' > "$TMP/omp-fake-shared.js"
+if [ "$(omp_fn "$TMP/omp-fake-shared.js" namesSecret)" != "$(omp_fn "$ROOT/.claude/adapters/pi/vault.js" namesSecret)" ] \
+   && [ -n "$(omp_fn "$TMP/omp-fake-shared.js" namesSecret)" ]; then
+  if [ -z "$omp_shared_bad" ] && [ "$omp_shared_found" -eq 16 ]; then
+    ok "the omp adapter's path, glob and hook-running code is the Pi adapter's, function for function ($omp_shared_found shared)"
+  else
+    bad "the omp and Pi adapters' shared code has drifted --$omp_shared_bad (found $omp_shared_found of 16)"
+  fi
+else
+  bad "positive control: a changed copy of namesSecret was not told apart from the Pi adapter's"
+fi
+
+if [ "$pi_node_major" -lt 18 ]; then
+  skip omp-extension-behaviour "omp extension: needs node 18 or later, and found ${pi_node_version:-no node}"
+else
+  # A fake vault with a secrets/ folder holding api.key, an inner vault whose
+  # lint fails, a copy of the adapter in no vault, and a vault whose lint hangs.
+  OMV="$TMP/omp/my vault"
+  OMV2="$TMP/omp/inner vault"
+  OML="$TMP/omp/loose"
+  OMS="$TMP/omp/slow vault"
+  for omp_v in "$OMV" "$OMV2" "$OMS"; do
+    mkdir -p "$omp_v/.claude/adapters/omp" "$omp_v/.claude/hooks" "$omp_v/.claude/rules" "$omp_v/.claude/scripts" "$omp_v/31-standards" "$omp_v/secrets"
+    cp "$ROOT/.claude/adapters/omp/vault.js" "$omp_v/.claude/adapters/omp/vault.mjs"
+    : > "$omp_v/.claude/scripts/vault-check.sh"
+    cat > "$omp_v/.claude/hooks/postcompact-wrap-up.sh" <<'OMP_STUB_EOF'
+#!/usr/bin/env bash
+printf '%s\n' "${CLAUDE_PROJECT_DIR:-}" > stub-project-dir
+cat > stub-input
+OMP_STUB_EOF
+  done
+  printf 'key\n' > "$OMV/secrets/api.key"
+  printf -- '---\ntier: long\ntype: standard\n---\nline\n' > "$OMV/31-standards/real.md"
+  mkdir -p "$OML"
+  cp "$ROOT/.claude/adapters/omp/vault.js" "$OML/vault.mjs"
+  cat > "$OMV/.claude/hooks/vault-lint.sh" <<'OMP_LINT_EOF'
+#!/usr/bin/env bash
+printf '%s\n' "${CLAUDE_PROJECT_DIR:-}" > lint-project-dir
+printf '%s\n' "$@" > lint-args
+printf 'probe finding for %s\n' "${2:-}" >&2
+OMP_LINT_EOF
+  printf '#!/usr/bin/env bash\nexit 3\n' > "$OMV2/.claude/hooks/vault-lint.sh"
+  printf '#!/usr/bin/env bash\nsleep 6\n' > "$OMS/.claude/hooks/vault-lint.sh"
+  sed 's/^const HOOK_TIMEOUT_MS = 15000$/const HOOK_TIMEOUT_MS = 1500/' "$ROOT/.claude/adapters/omp/vault.js" \
+    > "$OMS/.claude/adapters/omp/vault.mjs"
+  if ! grep -q '^const HOOK_TIMEOUT_MS = 1500$' "$OMS/.claude/adapters/omp/vault.mjs"; then
+    bad "the omp extension's HOOK_TIMEOUT_MS line was not found, so the slow-hook control cannot be built"
+  fi
+  cat > "$TMP/omp/driver.mjs" <<'OMP_DRIVER_EOF'
+// Loads the adapter the way omp does (its default export, called with the
+// extension API) and calls its handlers with the event shapes omp 18.18.9
+// declares. One line per verdict: "ok <text>", "bad <text>" or "ran <id>".
+import { existsSync, readFileSync, realpathSync, rmSync } from "node:fs"
+import { join, resolve } from "node:path"
+import { pathToFileURL } from "node:url"
+
+const [vault, innerVault, loose, slowVault] = process.argv.slice(2)
+const say = (line) => process.stdout.write(`${line}\n`)
+const verdict = (good, text, got) => say(`${good ? "ok" : "bad"} ${text}${good || got === undefined ? "" : ` -- got ${got}`}`)
+const win = process.platform === "win32"
+const sameDir = (a, b) => {
+  const norm = (p) => (win ? resolve(p.trim()).toLowerCase() : resolve(p.trim()))
+  return norm(a) === norm(b)
+}
+
+async function load(file, cwd) {
+  const handlers = {}
+  const mod = await import(`${pathToFileURL(file).href}?mtime=1`)
+  mod.default({ on: (name, handler) => { handlers[name] = handler } })
+  const notes = []
+  const at = (dir) => ({
+    cwd: dir,
+    hasUI: true,
+    ui: { notify: (message) => notes.push(message) },
+    sessionManager: { getSessionId: () => "probe-session", getSessionFile: () => join(dir, "probe-session.jsonl") },
+  })
+  return { handlers, ctx: at(cwd), at, notes }
+}
+const adapterIn = (root) => join(root, ".claude", "adapters", "omp", "vault.mjs")
+
+const FAILED = "vault: the secrets guard failed on this call ("
+function classify(result) {
+  if (result === undefined || result === null) return "allowed"
+  if (result.block !== true || typeof result.reason !== "string") return `returned ${JSON.stringify(result)}`
+  const reason = result.reason
+  if (reason === "vault: .env, .env.* and secrets/ are off limits (.claude/rules/security.md)") return "refused"
+  if (reason.startsWith("vault: the secrets guard found no path in this call")) return "no-path"
+  if (reason.startsWith("vault: the secrets guard cannot read a path in this call")) return "not-text"
+  if (reason.startsWith("vault: a grep that ignores .gitignore")) return "no-gitignore"
+  if (reason.startsWith(FAILED)) return `failed (${reason.slice(FAILED.length)}`
+  return `refused for another reason (${reason})`
+}
+async function expect(p, toolName, input, want, label, ctx = p.ctx) {
+  let got
+  try {
+    got = classify(await p.handlers.tool_call({ type: "tool_call", toolCallId: "c1", toolName, input }, ctx))
+  } catch (error) {
+    got = `threw ${error.message}`
+  }
+  verdict(got === want, `omp guard: ${label} is ${want}`, got)
+}
+
+const omp = await load(adapterIn(vault), vault)
+const patch = (...lines) => ["*** Begin Patch", ...lines, "*** End Patch"].join("\n")
+const cases = [
+  ["read", { path: "secrets/x.txt" }, "refused", "a read under secrets/"],
+  ["read", { path: ":.env" }, "refused", ":.env, which omp reads as .env"],
+  ["read", { path: "@.env" }, "refused", "@.env"],
+  ["read", { path: "31-standards/real.md;secrets/api.key" }, "refused", "a ; list naming a secret second"],
+  ["read", { path: "secrets/api.key:1-5" }, "refused", "a secret with a line selector"],
+  ["read", { path: "api.key" }, "refused", "api.key, which omp's search for a missing path would open in secrets/"],
+  ["read", { path: "nothing-here.md" }, "allowed", "a missing note no secret ends in"],
+  ["read", { path: "31-standards/real.md:1-3" }, "allowed", "an existing note with a line selector"],
+  ["read", { path: "31-standards/real.md" }, "allowed", "an existing note"],
+  ["read", { path: "local://.env" }, "refused", "an omp URL whose text names .env"],
+  ["read", { path: "skill://onboard-project" }, "allowed", "a skill URL"],
+  ["read", { path: "https://example.com/page" }, "allowed", "a web URL"],
+  ["read", { path: `${pathToFileURL(vault).href}/.env` }, "refused", "a file:// URL to .env"],
+  ["read", {}, "no-path", "a read with no path"],
+  ["read", { path: 42 }, "not-text", "a read whose path is not text"],
+  ["write", { path: "[.env#ABCD]", content: "x" }, "refused", "a write to a hashline header naming .env"],
+  ["write", { path: "31-standards/n.md", content: "x" }, "allowed", "a write of a note"],
+  ["edit", { input: patch("*** Update File: 31-standards/a.md", "*** Move to: secrets/a.md") }, "refused", "an apply_patch that moves a note into secrets/"],
+  ["edit", { input: patch("*** Add File: .env.local", "+X=1") }, "refused", "an apply_patch that adds .env.local"],
+  ["edit", { input: patch("[31-standards/a.md#1A2B]", "MV .env") }, "refused", "a hashline MV to .env"],
+  ["edit", { input: patch("[31-standards/a.md#1A2B]", "PUT 1.=1:", "+x") }, "allowed", "a hashline edit of a note"],
+  ["edit", { input: patch("¶secrets/a.md", "+x") }, "refused", "a legacy ¶ header under secrets/"],
+  ["edit", { path: "31-standards/a.md", edits: [{ rename: "secrets/a.md" }] }, "refused", "a patch-mode rename into secrets/"],
+  ["edit", { path: "31-standards/a.md", old_string: "a", new_string: "b" }, "allowed", "a replace-mode edit of a note"],
+  ["edit", { input: "no file named here" }, "no-path", "an edit whose text names no file"],
+  ["grep", { pattern: "KEY" }, "allowed", "a grep of the folder omp started in"],
+  ["grep", { pattern: "KEY", path: "**/*.md" }, "allowed", "a grep over **/*.md"],
+  ["grep", { pattern: "KEY", path: "*" }, "refused", "a grep over *, which matches .env"],
+  ["grep", { pattern: "KEY", path: "**/.e*" }, "refused", "a grep over **/.e*"],
+  ["grep", { pattern: "KEY", path: "secrets" }, "refused", "a grep of secrets/"],
+  ["grep", { pattern: "KEY", gitignore: false }, "no-gitignore", "a grep that ignores .gitignore"],
+  ["search", { pattern: "KEY", path: "secrets" }, "refused", "a search, grep's other name, of secrets/"],
+  ["glob", { path: "**/*" }, "allowed", "a glob of **/*, which lists names only"],
+  ["glob", { path: "**/.env*" }, "refused", "a glob naming .env"],
+  ["glob", { path: "secrets/**" }, "refused", "a glob below secrets/"],
+  ["find", { query: "x", grep_keywords: [], path: "secrets" }, "refused", "a find in secrets/"],
+  ["ast_grep", { pat: "x", path: "31-standards;secrets" }, "refused", "an ast_grep ; list naming secrets"],
+  ["ast_grep", { pat: "x", path: "**/*.md" }, "allowed", "an ast_grep over **/*.md"],
+  ["ast_edit", { ops: [], paths: ["31-standards/**/*.md", "secrets/*"] }, "refused", "an ast_edit whose paths reach secrets/"],
+  ["ast_edit", { ops: [], paths: ["31-standards/a.md"] }, "allowed", "an ast_edit of a note"],
+  ["lsp", { action: "hover", file: ".env" }, "refused", "an lsp call on .env"],
+  ["debug", { program: "secrets/run.sh" }, "refused", "a debug of a program under secrets/"],
+  ["security_scan", { include_paths: ["secrets"] }, "refused", "a security_scan of secrets/"],
+  ["bash", { command: "cat .env" }, "allowed", "a bash call, which the guard does not cover"],
+]
+for (const [tool, input, want, label] of cases) await expect(omp, tool, input, want, label)
+
+const lintArgs = join(vault, "lint-args")
+const lintRecord = () => (existsSync(lintArgs) ? readFileSync(lintArgs, "utf8").split(/\r?\n/).filter(Boolean) : null)
+const result = (p, toolName, input, isError, details = {}, ctx = p.ctx) =>
+  p.handlers.tool_result({ type: "tool_result", toolCallId: "c2", toolName, input, content: [{ type: "text", text: "done" }], isError, details }, ctx)
+const same = (got, want) => JSON.stringify(got) === JSON.stringify(want)
+const lintCase = async (label, want, ...args) => {
+  rmSync(lintArgs, { force: true })
+  const answer = await result(omp, ...args)
+  verdict(same(lintRecord(), want), `omp lint: ${label}`, JSON.stringify(lintRecord()))
+  return answer
+}
+const answer = await lintCase("a write runs vault-lint.sh -- 31-standards/p.md from the vault root", ["--", "31-standards/p.md"], "write", { path: "31-standards/p.md", content: "x" }, false)
+verdict(answer?.content?.[0]?.text === "done" && (answer?.content?.at(-1)?.text ?? "").includes("probe finding for 31-standards/p.md"),
+  "omp lint: what the lint reports is added to the tool's result, after what the tool said", JSON.stringify(answer))
+const lintDir = existsSync(join(vault, "lint-project-dir")) ? readFileSync(join(vault, "lint-project-dir"), "utf8") : ""
+verdict(sameDir(lintDir, realpathSync(vault)), "omp lint: the lint runs with CLAUDE_PROJECT_DIR naming the vault", lintDir.trim())
+await lintCase("a steering file reaches the lint, which picks its own scope", ["--", ".claude/rules/x.md"], "write", { path: ".claude/rules/x.md", content: "x" }, false)
+await lintCase("a failed write is not linted", null, "write", { path: "31-standards/p.md", content: "x" }, true)
+await lintCase("an edit lints every file its per-file results name", ["--", "31-standards/a.md", "31-standards/b.md"], "edit", { input: "x" }, false,
+  { perFileResults: [{ path: join(vault, "31-standards", "a.md") }, { path: join(vault, "31-standards", "b.md") }] })
+await lintCase("an edit that moved a note lints where it went", ["--", "31-standards/moved.md"], "edit", { path: "31-standards/c.md", edits: [] }, false,
+  { path: join(vault, "31-standards", "c.md"), move: join(vault, "31-standards", "moved.md") })
+await lintCase("an edit with no details lints the path omp derived", ["--", "31-standards/d.md"], "edit", { input: "x", path: "31-standards/d.md" }, false)
+await lintCase("an applied ast_edit lints each file it changed", ["--", "31-standards/x.md"], "ast_edit", { ops: [], paths: ["31-standards"] }, false,
+  { applied: true, searchPath: join(vault, "31-standards"), fileReplacements: [{ path: "x.md", count: 1 }] })
+await lintCase("an ast_edit preview is not linted", null, "ast_edit", { ops: [], paths: ["31-standards"] }, false,
+  { applied: false, searchPath: join(vault, "31-standards"), fileReplacements: [{ path: "x.md", count: 1 }] })
+await lintCase("a read is not linted", null, "read", { path: "31-standards/real.md" }, false)
+
+const stubInput = join(vault, "stub-input")
+const stubRecord = () => (existsSync(stubInput) ? JSON.parse(readFileSync(stubInput, "utf8")) : null)
+const fire = (name, event = {}) => omp.handlers[name]?.({ type: name, ...event }, omp.ctx)
+const compacted = async (label, want, ...steps) => {
+  rmSync(stubInput, { force: true })
+  for (const step of steps) await fire(step, step === "session_compact" ? { compactionEntry: {}, fromExtension: false } : { reason: "threshold", action: "context-full" })
+  const stub = stubRecord()
+  verdict(stub?.trigger === want && stub?.session_id === "probe-session" && stub?.transcript_path === join(vault, "probe-session.jsonl"),
+    `omp stub: ${label} sends trigger ${want}, the session id and the session file`, JSON.stringify(stub))
+}
+await compacted("/compact, with no automatic compaction around it,", "manual", "session_compact")
+await compacted("a compaction between auto_compaction_start and auto_compaction_end", "auto", "auto_compaction_start", "session_compact", "auto_compaction_end")
+await compacted("a /compact after an automatic one that ended without compacting", "manual", "auto_compaction_start", "auto_compaction_end", "session_compact")
+const stubDir = existsSync(join(vault, "stub-project-dir")) ? readFileSync(join(vault, "stub-project-dir"), "utf8") : ""
+verdict(sameDir(stubDir, realpathSync(vault)), "omp stub: the stub runs with CLAUDE_PROJECT_DIR naming the vault", stubDir.trim())
+verdict(omp.notes.length === 0, "omp extension: no warning while both scripts worked", omp.notes.join(" | "))
+
+const inner = await load(adapterIn(innerVault), innerVault)
+await result(inner, "write", { path: "31-standards/n.md", content: "x" }, false)
+await result(inner, "write", { path: "31-standards/n.md", content: "x" }, false)
+verdict(inner.notes.filter((note) => note.includes("vault-lint.sh") && note.includes("exited 3")).length === 1,
+  "omp extension: a lint that exits 3 is reported, once", JSON.stringify(inner.notes))
+
+const stray = await load(join(loose, "vault.mjs"), vault)
+rmSync(lintArgs, { force: true })
+await result(stray, "write", { path: "31-standards/p.md", content: "x" }, false)
+await result(stray, "write", { path: "31-standards/p.md", content: "x" }, false)
+verdict(stray.notes.filter((note) => note.includes("no vault holds")).length === 1 && lintRecord() === null,
+  "omp extension: a copy kept outside any vault runs no vault's lint, and says so once", JSON.stringify(stray.notes))
+await expect(stray, "read", { path: "secrets/x.txt" }, "refused", "a copy outside any vault still refusing secrets/ in the vault omp started in")
+
+const slow = await load(adapterIn(slowVault), slowVault)
+const slowStart = performance.now()
+await result(slow, "write", { path: "31-standards/s.md", content: "x" }, false)
+const slowTook = performance.now() - slowStart
+verdict(slowTook < 5000 && slow.notes.some((note) => /stopped|did not finish/.test(note)),
+  "omp extension: a lint that hangs is stopped at the time limit and reported", `${Math.round(slowTook)} ms, ${JSON.stringify(slow.notes)}`)
+
+say("ran omp-extension-behaviour")
+OMP_DRIVER_EOF
+  omp_out=$(CLAUDE_PROJECT_DIR="$(pi_native "$TMP/omp/decoy")" \
+    node "$(pi_native "$TMP/omp/driver.mjs")" "$(pi_native "$OMV")" "$(pi_native "$OMV2")" "$(pi_native "$OML")" "$(pi_native "$OMS")" \
+    2>"$TMP/omp/driver.err")
+  omp_rc=$?
+  omp_reached_end=0
+  while IFS= read -r omp_line; do
+    case "$omp_line" in
+      "ok "*)  ok "${omp_line#ok }" ;;
+      "bad "*) bad "${omp_line#bad }" ;;
+      "ran "*) ran "${omp_line#ran }"
+               [ "${omp_line#ran }" = omp-extension-behaviour ] && omp_reached_end=1 ;;
+      "")      ;;
+      *)       bad "the omp extension driver printed a line it should not: $omp_line" ;;
+    esac
+  done <<OMP_OUT_EOF
+$omp_out
+OMP_OUT_EOF
+  if [ "$omp_rc" -ne 0 ] || [ "$omp_reached_end" -ne 1 ]; then
+    bad "the omp extension driver stopped early (exit $omp_rc) -- $(tail -n 5 "$TMP/omp/driver.err" 2>/dev/null | tr '\n' ' ' | cut -c1-600)"
   fi
 fi
 
