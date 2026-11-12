@@ -404,7 +404,7 @@ jobs:
             { s = $0
               while (match(s, /(^[ \t]*|[;&|(){][ \t]*|(then|else|do)[ \t]+)ran[ \t]+[^ \t;)|&]+/)) {
                 a = substr(s, RSTART, RLENGTH); sub(/^.*ran[ \t]+/, "", a); gsub(/"/, "", a)
-                if (a ~ /^[a-z0-9][a-z0-9-]*$/) print a; else if (a != "${pi_line#ran") print "?" FNR ": " a
+                if (a ~ /^[a-z0-9][a-z0-9-]*$/) print a; else if (a != "${pi_line#ran" && a != "${omp_line#ran") print "?" FNR ": " a
                 s = substr(s, RSTART + RLENGTH) }
               s = $0
               while (match(s, /say\("ran [a-z0-9][a-z0-9-]*"\)/)) {
