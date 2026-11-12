@@ -43,7 +43,7 @@ and the agent must follow it.
 | Aider | `.aider.conf.yml` | `.aider.conf.yml` | Commit gate only | None | Guidance | Follow `SKILL.md` | Not recommended | None |
 | Hermes Agent | `AGENTS.md` natively | Via `AGENTS.md` | Hook (user config) | None | Guidance | `.agents/skills/` (after trust) | Command mode, in a container | No: moves only with `HERMES_HOME` |
 | Pi | `AGENTS.md` natively | Via `AGENTS.md` | Extension (opt-in) | Extension (opt-in) | Denied by the opt-in extension when a file tool names them | `.agents/skills/` (after trust) | Command mode, in a container | None |
-| Oh My Pi (omp) | `AGENTS.md` natively | Via `AGENTS.md` | Extension (opt-in) | Extension (opt-in) | Denied by the opt-in extension when a file tool names them | Both skill folders (one copy kept) | Command mode, in a container | No: off by default, moves only with omp's agent folder |
+| Oh My Pi (omp) | `AGENTS.md` natively | Via `AGENTS.md` | Extension (opt-in) | Extension (opt-in) | Denied by the opt-in extension when a file tool names them | Both skill folders (one copy kept) | Command mode, in a container | Partly: off by default; the `mnemopi` backend's database moves on its own (`mnemopi.dbPath`), the default backend only with omp's agent folder |
 
 "Both skill folders" means the harness reads `.claude/skills/` and `.agents/skills/`. The two
 copies are byte-identical (the control suite fails if they drift). omp keeps one copy of a skill

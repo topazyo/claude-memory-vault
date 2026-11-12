@@ -50,11 +50,14 @@ from reading one by accident, as Claude Code's own read deny does.
     or passes through or ends at a part named `secrets` at any depth, in any letter case. The
     tools and fields it reads are `read` and `write` (`path`), `edit` (`path`, and the file names
     in its patch text: apply_patch's `*** Add`, `Update`, `Delete File:` and `*** Move to:` lines,
-    the hashline `[PATH#TAG]` headers and `MV` targets, the legacy `¶` headers, and patch-mode
-    renames), `grep` and its other name `search`, `glob`, `find`, `ast_grep` and `ast_edit`
-    (`path` or `paths`), `lsp` (`file`), `debug` (`program`, `file`, `cwd`) and `security_scan`
-    (`include_paths`, `knowledge_base_paths`, `output_root`). Each part of a `;` list is tested,
-    and so is a line selector's path (`secrets/api.key:1-5`).
+    sloppy mode's `*** Edit File:` lines, the hashline `[PATH#TAG]` headers and `MV` targets, the
+    legacy `¶` headers, and patch-mode renames), `grep` and its other name `search`, `glob`,
+    `find`, `ast_grep` and `ast_edit` (`path` or `paths`), `lsp` (`file`), `debug` (`program`,
+    `file`, `cwd`) and `security_scan` (`include_paths`, `knowledge_base_paths`, `output_root`).
+    omp reads a path it cannot open as a list split at `;`, `,` or white space, with double quotes
+    around a part, or as a JSON array, so each part of each of those splits is tested, and so is
+    a line selector's path (`secrets/api.key:1-5`). A name that holds a space is tested whole and
+    in parts, so one with a part named `secrets` is refused.
   - Paths are read as omp reads them: a leading `:` or `@`, a hashline header around the path,
     `~`, `file://` URLs, the `\\?\` prefix, Windows drive and Git Bash forms, trailing dots and
     spaces, NTFS stream names and symbolic links, with the same code as the Pi extension, which
@@ -66,7 +69,9 @@ from reading one by accident, as Claude Code's own read deny does.
     the same search, and refuses the read when a secret is among the matches, or when the folder
     holds more than 20000 entries.
   - A `grep`, `search`, `ast_grep` or `ast_edit` whose path is a glob is tested as the Pi
-    extension tests a grep glob, so `*` and `**/.e*` are refused and `**/*.md` is let through. A
+    extension tests a grep glob, so `*` and `**/.e*` are refused and `**/*.md` is let through.
+    So is a glob that ends in `**`, such as `31-standards/**`, because `**` matches `.env`:
+    name the folder itself instead, or end the glob in a pattern such as `**/*.md`. A
     `glob`, which lists names and reads no file, is refused only when its text names `.env` or
     `secret` or it starts inside `secrets/`, so `**/*` is let through. A `grep` with
     `gitignore: false` is refused, because the `.gitignore` the template ships is what keeps
@@ -75,7 +80,8 @@ from reading one by accident, as Claude Code's own read deny does.
     through unchecked, and so is a call the guard could not decide.
   - After each successful `write`, `edit` and applied `ast_edit` the lint runs on every file the
     result names, including where an edit moved one, and what it reports is added to the end of the
-    tool's result, cut at 4000 characters. Every written path goes to the lint, which decides its
+    tool's result, cut at 4000 characters. An `ast_edit` only previews its change; omp applies it
+    with a `write` to `xd://resolve`, and that result names the files it changed. Every written path goes to the lint, which decides its
     own scope, so a steering file's hidden characters are reported too. Compactions are recorded,
     as `auto` when omp compacted on its own and `manual` after `/compact`. Both scripts run with
     `CLAUDE_PROJECT_DIR` naming the vault; each is sent SIGTERM at 15 s, then SIGKILL.
@@ -84,7 +90,10 @@ from reading one by accident, as Claude Code's own read deny does.
     `eval` off in omp's settings if you do not use it.
   - A file you mention with `@` in your own prompt is read into the session with no tool call.
   - A `grep` with no path searches what `.gitignore` does not exclude. The template's `.gitignore`
-    lists `.env`, `.env.*` and `secrets/`, so keep those lines.
+    lists `.env`, `.env.*` and `secrets/`, so keep those lines. Whether omp's grep honours
+    `.gitignore` in a vault that is not a git repository was not checked, so keep the vault one.
+  - omp's `browser` tool (its `code` and file access) and `ida` tool are off by default and not
+    covered when you turn them on.
   - omp's subagents keep the extension when omp restricts them, but an isolated subagent may run
     without it.
   - The other paths in `.claude/rules/security.md`, such as `**/credentials*` and `~/.ssh/`, are
@@ -215,7 +224,10 @@ cannot be moved into the vault. (`docs/memory.md` in omp's repository at `50da2d
   it. A refusal from this one cannot be overridden, because omp stops at the first.
 - The guard refuses a call it cannot decide, saying `the secrets guard failed on this call` with
   the reason, as the Pi extension does, and also a missing `read` path in a folder of more than
-  20000 entries.
+  20000 entries, counting those in folders `.gitignore` lists, other than `.git` and
+  `node_modules`. In a large vault, give `read` paths that exist.
+- A hashline edit line that looks like a header, such as a TOML section `[secrets]`, is taken for
+  one, as omp itself does, so such an edit is refused.
 - Loaded from outside a vault, the extension still guards the secret paths, measured from the vault
   omp was started in, but it lints nothing, and says so at the first write or compaction.
 

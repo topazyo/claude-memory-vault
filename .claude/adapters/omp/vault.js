@@ -15,13 +15,15 @@
 //   - Refuses a file-tool call whose path names .env or .env.*, or passes
 //     through or ends at a part named secrets, the three paths
 //     .claude/rules/security.md has Claude Code deny. It reads every path field
-//     of omp's file tools, each part of a ";" list, the file names inside an
-//     edit's patch text, and a grep or glob pattern, and it refuses a read of a
+//     of omp's file tools, each part of a list split at ";", "," or white
+//     space or written as JSON, the file names inside an edit's patch text,
+//     and a grep or glob pattern, and it refuses a read of a
 //     path that does not exist when omp's search for it below the folder would
 //     open a secret. omp's bash and eval tools can still read them, so this
 //     keeps the file tools from doing it by accident.
 //   - Runs .claude/hooks/vault-lint.sh on every file a write, edit or applied
-//     ast_edit changed, and adds what it reports to the tool's result.
+//     ast_edit changed (omp applies an ast_edit with a write to xd://resolve),
+//     and adds what it reports to the tool's result.
 //   - Records each compaction with .claude/hooks/postcompact-wrap-up.sh, as
 //     manual or auto.
 //
@@ -86,8 +88,9 @@ function candidatesLikeOmp(raw, cwd) {
     if (form.startsWith(":")) forms.add(form.slice(1))
   }
   for (const form of [...forms]) {
-    // write unwraps a hashline header, [PATH#TAG], and edits name files as ¶PATH.
-    const header = form.match(/^\[(.+?)(?:#[0-9A-Fa-f]{4})?\]$/)
+    // write unwraps a hashline header, [PATH#TAG], after trimming the end, and
+    // edits name files as ¶PATH.
+    const header = form.trimEnd().match(/^\[(.+?)(?:#[0-9A-Fa-f]{4})?\]$/)
     if (header !== null) forms.add(header[1])
     if (form.startsWith("¶")) forms.add(form.slice(1).trim())
   }
@@ -216,18 +219,53 @@ function namesSecret(path) {
 // text may still name a secret in an omp scheme that reads files.
 function isSecret(raw, cwd, vault) {
   const scheme = raw.match(URL_SCHEME)
-  if (scheme !== null && scheme[1].toLowerCase() !== "file") return namesSecret(raw)
+  if (scheme !== null && scheme[1].toLowerCase() !== "file") {
+    // omp decodes a URL's path before it opens a file, as its vault:// does.
+    let decoded = raw
+    try {
+      decoded = decodeURIComponent(raw)
+    } catch {
+      // tested as written
+    }
+    return namesSecret(raw) || namesSecret(decoded)
+  }
   return candidatesLikeOmp(raw, cwd).some((path) => {
     if (vault === null) return namesSecret(path) || namesSecret(realPath(path))
     return namesSecret(below(rootsFor(vault, cwd), path)) || namesSecret(below([realPath(vault)], realPath(path)))
   })
 }
 
-// omp's read, ast_grep and ast_edit take ";" lists of paths. The whole string
-// is tested as well as each part, so a name holding a ";" is tested either way.
+// omp splits a path string it cannot open as it stands at ";", then at ",",
+// then at white space, takes off one pair of double quotes around each part
+// (splitDelimitedPathEntry and normalizePathLikeInput in its path-utils.ts),
+// and reads a JSON array of strings as a list. The guard tests the whole string
+// and every part of every split, whether or not omp would use that split,
+// because testing a part omp never opens costs nothing.
+function unquote(part) {
+  const trimmed = part.trim()
+  return trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"') ? trimmed.slice(1, -1).trim() : trimmed
+}
+
 function listParts(raw) {
-  const parts = raw.split(";").map((part) => part.trim()).filter((part) => part !== "")
-  return parts.includes(raw) ? parts : [raw, ...parts]
+  const parts = new Set([raw])
+  const trimmed = raw.trim()
+  if (trimmed.startsWith("[")) {
+    try {
+      const list = JSON.parse(trimmed)
+      if (Array.isArray(list)) for (const item of list) if (typeof item === "string") parts.add(item)
+    } catch {
+      // not JSON: a glob set or a hashline header, tested as written
+    }
+  }
+  for (const piece of raw.split(/[;,\s]+/)) {
+    const part = unquote(piece)
+    if (part !== "") parts.add(part)
+  }
+  for (const piece of raw.split(/[;,]+/)) {
+    const part = unquote(piece)
+    if (part !== "") parts.add(part)
+  }
+  return [...parts]
 }
 
 // --------------------------------------------------------- read fallback --
@@ -289,15 +327,18 @@ function textOf(value) {
 }
 
 // The files an edit's text names: apply_patch's *** Add/Update/Delete File:
-// and *** Move to: lines, the hashline [PATH#TAG] and legacy ¶PATH headers, and
-// a hashline MV destination. omp derives a path only from the hashline headers.
+// and *** Move to: lines and sloppy mode's *** Edit File:, read in any letter
+// case and spacing, the hashline [PATH#TAG] and legacy ¶PATH headers, and a
+// hashline MV destination, each with one pair of double quotes taken off. omp
+// derives a path only from the hashline headers.
 function patchPaths(text) {
   const out = []
   for (const line of text.split(/\r?\n/)) {
-    let match = line.match(/^\*\*\* (?:Add|Update|Delete) File:\s*(.+?)\s*$/) ?? line.match(/^\*\*\* Move to:\s*(.+?)\s*$/)
+    let match = line.match(/^[ \t]*\*{3}[ \t]*(?:add|update|delete|edit)[ \t]+file[ \t]*:[ \t]*(.+?)\s*$/i) ??
+      line.match(/^[ \t]*\*{3}[ \t]*move[ \t]+to[ \t]*:[ \t]*(.+?)\s*$/i)
     if (match === null) match = line.match(/^\[(.+)#[0-9A-Fa-f]{4}\]\s*$/) ?? line.match(/^\[(.+)\]\s*$/)
     if (match === null) match = line.match(/^¶\s*(.+?)\s*$/) ?? line.match(/^MV\s+(.+?)\s*$/)
-    if (match !== null) out.push(match[1])
+    if (match !== null) out.push(unquote(match[1]))
   }
   return out
 }
@@ -346,7 +387,7 @@ function targetsOf(toolName, input) {
 // is a path. A glob is tested by its text and by the folder it starts in, and
 // a pattern glob that searches contents also by what its parts can match.
 function targetMaySeeSecret(kind, text, cwd, vault, toolName) {
-  for (const part of kind === "path" && toolName !== "read" && toolName !== "ast_grep" ? [text] : listParts(text)) {
+  for (const part of listParts(text)) {
     if (kind === "path" || !IS_GLOB.test(part)) {
       if (isSecret(part, cwd, vault)) return true
       if (toolName === "read" && missingLocally(part, cwd) && fallbackOpensSecret(part, cwd)) return true
@@ -718,7 +759,16 @@ function changedFiles(event, cwd) {
   const add = (value, base = cwd) => {
     if (typeof value === "string" && value !== "") out.push(candidatesLikeOmp(value, base)[0])
   }
-  if (event.toolName === "write") {
+  const applied = details.applied === true && Array.isArray(details.fileReplacements)
+  if (event.toolName === "write" && typeof input.path === "string" && /^xd:/i.test(input.path.trim())) {
+    // omp's ast_edit only previews; its change is applied by a write to
+    // xd://resolve, whose result carries the ast_edit's details. The xd: path
+    // itself is never a file.
+    if (applied) {
+      const base = typeof details.searchPath === "string" && details.searchPath !== "" ? details.searchPath : cwd
+      for (const replacement of details.fileReplacements) add(replacement?.path, base)
+    }
+  } else if (event.toolName === "write") {
     add(input.path)
   } else if (event.toolName === "edit") {
     if (Array.isArray(details.perFileResults) && details.perFileResults.length > 0) {
@@ -729,7 +779,7 @@ function changedFiles(event, cwd) {
       add(input.path)
       if (Array.isArray(input.paths)) for (const path of input.paths) add(path)
     }
-  } else if (event.toolName === "ast_edit" && details.applied === true && Array.isArray(details.fileReplacements)) {
+  } else if (event.toolName === "ast_edit" && applied) {
     const base = typeof details.searchPath === "string" && details.searchPath !== "" ? details.searchPath : cwd
     for (const replacement of details.fileReplacements) add(replacement?.path, base)
   }
@@ -811,7 +861,8 @@ export default function vaultExtension(pi) {
       const cwd = typeof ctx?.cwd === "string" && ctx.cwd !== "" ? ctx.cwd : process.cwd()
       const files = changedFiles(event, cwd)
       if (files.length === 0) {
-        if (event.toolName !== "ast_edit") warn(ctx, "no-path", `vault: a ${event.toolName} result carried no path, so the note was not linted`)
+        const internal = typeof event.input?.path === "string" && /^xd:/i.test(event.input.path.trim())
+        if (event.toolName !== "ast_edit" && !internal) warn(ctx, "no-path", `vault: a ${event.toolName} result carried no path, so the note was not linted`)
         return undefined
       }
       const report = await runScript(

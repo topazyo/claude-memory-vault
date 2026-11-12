@@ -1210,20 +1210,22 @@ else bad "the Pi extension touches Pi's project trust -- $(printf '%s' "$hits" |
 # input rewritten would make loading it widen what omp does. Every object its
 # tool_call handler returns must carry block: true, which the second check
 # reads from the handler's own lines.
-omp_approval_hits() {  # omp_approval_hits <file>... - prints lines that touch omp's approvals or trust
-  grep -nE 'ui\.(approve|confirm)|tool_approval_|isProjectTrusted|project_trust|approvalPolicy|input:[[:space:]]' "$@" 2>/dev/null
+omp_approval_hits() {  # omp_approval_hits <file>... - prints lines that touch omp's approvals or trust, or change a call's input in place
+  grep -nE 'ui\.(approve|confirm)|tool_approval_|isProjectTrusted|project_trust|approvalPolicy|input:[[:space:]]|input(\.[A-Za-z_$]+|\[[^]]*\])[[:space:]]*=[^=]' "$@" 2>/dev/null
 }
-omp_unblocked_returns() {  # omp_unblocked_returns <file> - prints returns of an object without block: true inside the tool_call handler
-  awk '/pi\.on\("tool_call"/ { on = 1 } on && /return[[:space:]]*\{/ && !/block:[[:space:]]*true/ { print NR ": " $0 } on && /^  \}\)/ { on = 0 }' "$1"
+omp_unblocked_returns() {  # omp_unblocked_returns <file> - prints each return in the tool_call handler that is neither undefined nor a refusal
+  awk '/pi\.on\("tool_call"/ { on = 1 } on && /(^|[^A-Za-z_])return([^A-Za-z_]|$)/ && !/return undefined/ && !/block:[[:space:]]*true/ { print NR ": " $0 } on && /^  \}\)/ { on = 0 }' "$1"
 }
-printf 'pi.on("tool_call", () => {\n  return { input: { path: "x" } }\n  })\nctx.ui.approve("x")\n' > "$TMP/fake-omp-approve.js"
-if [ -n "$(omp_approval_hits "$TMP/fake-omp-approve.js")" ] && [ -n "$(omp_unblocked_returns "$TMP/fake-omp-approve.js")" ]; then
-  ok "positive control: an extension answering omp's approvals or rewriting a call's input is caught"
+printf 'pi.on("tool_call", () => {\n  return answer\n  })\nctx.ui.approve("x")\n' > "$TMP/fake-omp-approve.js"
+printf 'pi.on("tool_call", (event) => {\n  event.input.path = "x"\n  })\n' > "$TMP/fake-omp-inplace.js"
+if [ -n "$(omp_approval_hits "$TMP/fake-omp-approve.js")" ] && [ -n "$(omp_unblocked_returns "$TMP/fake-omp-approve.js")" ] \
+   && [ -n "$(omp_approval_hits "$TMP/fake-omp-inplace.js")" ]; then
+  ok "positive control: an extension answering omp's approvals, returning anything but a refusal, or changing a call's input in place is caught"
 else
-  bad "positive control: an omp approval answer or input rewrite went unnoticed"
+  bad "positive control: an omp approval answer, a non-refusal return or an in-place input change went unnoticed"
 fi
 hits="$(omp_approval_hits "$ROOT/.claude/adapters/omp/vault.js")$(omp_unblocked_returns "$ROOT/.claude/adapters/omp/vault.js")"
-omp_tc_returns=$(awk '/pi\.on\("tool_call"/ { on = 1 } on && /return[[:space:]]*\{/ { n++ } on && /^  \}\)/ { on = 0 } END { print n + 0 }' "$ROOT/.claude/adapters/omp/vault.js")
+omp_tc_returns=$(awk '/pi\.on\("tool_call"/ { on = 1 } on && /return[[:space:]]*\{[[:space:]]*block:[[:space:]]*true/ { n++ } on && /^  \}\)/ { on = 0 } END { print n + 0 }' "$ROOT/.claude/adapters/omp/vault.js")
 if [ -z "$hits" ] && [ "$omp_tc_returns" -ge 2 ]; then ok "the omp extension only ever refuses a call: it answers no approval and rewrites no input ($omp_tc_returns refusals read)"
 else bad "the omp extension touches omp's approvals or returns something other than a refusal (refusals read: $omp_tc_returns) -- $(printf '%s' "$hits" | tr '\n' ';')"; fi
 
@@ -1755,11 +1757,21 @@ for omp_name in $OMP_SHARED; do
   omp_shared_found=$((omp_shared_found + 1))
   [ "$omp_a" = "$omp_b" ] || omp_shared_bad="$omp_shared_bad differs:$omp_name"
 done
+# The constants those functions read, each a one-line const at column 0.
+omp_const_found=0
+for omp_name in SECRET_NAMES MAX_GLOB MAX_ALTERNATIVES MAX_SLASH_SETS HOOK_TIMEOUT_MS REPORT_LIMIT WINDOWS UNICODE_SPACES LINT STUB CHECK DENIED; do
+  omp_a=$(grep "^const $omp_name = " "$ROOT/.claude/adapters/pi/vault.js")
+  omp_b=$(grep "^const $omp_name = " "$ROOT/.claude/adapters/omp/vault.js")
+  if [ -z "$omp_a" ] || [ -z "$omp_b" ]; then omp_shared_bad="$omp_shared_bad missing-const:$omp_name"; continue; fi
+  omp_const_found=$((omp_const_found + 1))
+  [ "$omp_a" = "$omp_b" ] || omp_shared_bad="$omp_shared_bad differs-const:$omp_name"
+done
+[ "$omp_const_found" -eq 12 ] || omp_shared_bad="$omp_shared_bad (found $omp_const_found of 12 constants)"
 printf 'function namesSecret(path) {\n  return false\n}\n' > "$TMP/omp-fake-shared.js"
 if [ "$(omp_fn "$TMP/omp-fake-shared.js" namesSecret)" != "$(omp_fn "$ROOT/.claude/adapters/pi/vault.js" namesSecret)" ] \
    && [ -n "$(omp_fn "$TMP/omp-fake-shared.js" namesSecret)" ]; then
   if [ -z "$omp_shared_bad" ] && [ "$omp_shared_found" -eq 16 ]; then
-    ok "the omp adapter's path, glob and hook-running code is the Pi adapter's, function for function ($omp_shared_found shared)"
+    ok "the omp adapter's path, glob and hook-running code is the Pi adapter's, function for function and constant for constant ($omp_shared_found functions, $omp_const_found constants)"
   else
     bad "the omp and Pi adapters' shared code has drifted --$omp_shared_bad (found $omp_shared_found of 16)"
   fi
@@ -1905,6 +1917,16 @@ const cases = [
   ["debug", { program: "secrets/run.sh" }, "refused", "a debug of a program under secrets/"],
   ["security_scan", { include_paths: ["secrets"] }, "refused", "a security_scan of secrets/"],
   ["bash", { command: "cat .env" }, "allowed", "a bash call, which the guard does not cover"],
+  ["read", { path: "31-standards/real.md,.env" }, "refused", "a , list naming .env second"],
+  ["read", { path: '31-standards/real.md;".env"' }, "refused", "a ; list naming .env in double quotes"],
+  ["grep", { pattern: "KEY", path: "31-standards .env" }, "refused", "a grep of a space-separated list naming .env"],
+  ["read", { path: "31-standards/my note.md" }, "allowed", "a note whose name holds a space"],
+  ["write", { path: "[.env] ", content: "x" }, "refused", "a write to a hashline header naming .env, with a trailing space"],
+  ["write", { path: "[secrets/k]\n", content: "x" }, "refused", "a write to a hashline header under secrets/, with a trailing newline"],
+  ["edit", { input: patch("*** Edit File: secrets/a.md", "x") }, "refused", "a sloppy-mode edit of a file under secrets/"],
+  ["edit", { input: "  ***  EDIT FILE:  31-standards/a.md\nx" }, "allowed", "a sloppy-mode edit of a note, spelled loosely"],
+  ["edit", { input: patch('["secrets/x"#1A2B]', "PUT 1.=1:", "+x") }, "refused", "a hashline header naming secrets/ in double quotes"],
+  ["read", { path: "vault://MyVault/secr%65ts/k" }, "refused", "a vault:// URL spelling secrets with a percent escape"],
 ]
 for (const [tool, input, want, label] of cases) await expect(omp, tool, input, want, label)
 // A glob that starts in a folder linked to secrets/ names no secret in its text,
@@ -1914,6 +1936,7 @@ try {
   symlinkSync(join(vault, "secrets"), join(vault, "lnk"), win ? "junction" : "dir")
   await expect(omp, "glob", { path: "lnk/**" }, "refused", "a glob that starts in a folder linked to secrets/")
   await expect(omp, "grep", { pattern: "KEY", path: "lnk/*.txt" }, "refused", "a grep glob that starts in a folder linked to secrets/")
+  await expect(omp, "grep", { pattern: "KEY", path: '["lnk"]' }, "refused", "a grep path given as a JSON list naming a folder linked to secrets/")
 } catch (error) {
   verdict(false, "omp guard: a folder link to secrets/ could be made for the link cases", error.code ?? error.message)
 }
@@ -1948,6 +1971,11 @@ await lintCase("an applied ast_edit lints each file it changed", ["--", "31-stan
   { applied: true, searchPath: join(vault, "31-standards"), fileReplacements: [{ path: "x.md", count: 1 }] })
 await lintCase("an ast_edit preview is not linted", null, "ast_edit", { ops: [], paths: ["31-standards"] }, false,
   { applied: false, searchPath: join(vault, "31-standards"), fileReplacements: [{ path: "x.md", count: 1 }] })
+await lintCase("the write to xd://resolve that applies an ast_edit lints each file it changed", ["--", "31-standards/y.md"], "write",
+  { path: "xd://resolve", content: "" }, false, { applied: true, fileReplacements: [{ path: "31-standards/y.md", count: 1 }] })
+const xdNotes = omp.notes.length
+await lintCase("a write to xd://resolve that applied nothing lints nothing", null, "write", { path: "xd://resolve", content: "" }, false, {})
+verdict(omp.notes.length === xdNotes, "omp lint: a write to xd://resolve is not reported as a write without a path", omp.notes.join(" | "))
 await lintCase("a read is not linted", null, "read", { path: "31-standards/real.md" }, false)
 
 const stubInput = join(vault, "stub-input")

@@ -38,9 +38,10 @@ the vault.
   finds in `.omp/` with no trust gate at all, so the template ships nothing there, as
   `CONTRIBUTING.md` now requires for every harness without one. Once loaded, the extension:
   - refuses a file-tool call whose path names `.env`, `.env.*` or a `secrets` folder. It reads
-    every path field of omp's file tools, each part of a `;` list, the file names in an edit's
-    patch text, and grep and glob patterns. It also covers omp opening a file it was not asked
-    for when a `read` names a missing path. `bash` and omp's `eval` tool are not covered;
+    every path field of omp's file tools, each part of a path list (split at `;`, `,` or white
+    space, or written as JSON), the file names in an edit's patch text in every edit mode, and grep
+    and glob patterns. It also covers omp opening a file it was not asked for when a `read` names a
+    missing path. `bash` and omp's `eval` tool are not covered;
   - lints every file a successful `write`, `edit` or applied `ast_edit` changed, and adds what the
     lint reports to the tool's result;
   - records each compaction as `manual` or `auto`.
@@ -49,8 +50,9 @@ the vault.
 - **`docs/harnesses/omp.md`**, the guide, with setup, an onboarding prompt, harness checks, a
   scheduled-pass wrapper for a container, and its limits.
 - **An "Auto memory into the vault" column** in `docs/harnesses/README.md`, with dated sources.
-  Only Claude Code can point its own memory into `90-auto-memory/`. The others either cannot, keep
-  no memory, or are unverified.
+  Only Claude Code can point its Markdown memory into `90-auto-memory/`. omp can move one of its
+  memory backends' database on its own. The others either cannot, keep no memory, or are
+  unverified.
 
 ### Changed
 
