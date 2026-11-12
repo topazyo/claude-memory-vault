@@ -270,7 +270,7 @@ and `Read(./secrets/**)`. They apply immediately, without a trust prompt.
 
 **Start with your harness's guide in [`docs/harnesses/`](harnesses/README.md).** The template ships
 config for Codex CLI, Gemini CLI, Cursor, GitHub Copilot, OpenCode, Windsurf / Devin Desktop and
-Aider, plus an opt-in extension for Pi and a snippet for Hermes Agent. Each guide gives the
+Aider, plus opt-in extensions for Pi and Oh My Pi and a snippet for Hermes Agent. Each guide gives the
 one-time setup and an onboarding prompt whose checks prove the hooks fire. The steps below are the
 harness-independent version, for a harness without a guide.
 

@@ -132,7 +132,8 @@ guides take care that no vault hook runs. The OpenCode plugin and the Pi extensi
 this rule. OpenCode runs `.opencode/plugins/` without asking, and Pi runs `.pi/extensions/` once a
 folder is trusted, but its trust covers every folder below it. Oh My Pi (omp) follows the same rule,
 because its extension API answers that every project is trusted. CI fails a tracked file under
-`.opencode/plugins/`, `.pi/` or `.omp/` for this reason.
+`.opencode/plugin/`, `.opencode/plugins/`, `.opencode/tool/`, `.opencode/tools/`, `.pi/` or
+`.omp/`, at any depth, for this reason.
 
 **A harness touches several closed lists, and nothing finds the ones you forget.** Each list below
 names files the way that harness does. A harness missing from one is a gap that looks exactly like

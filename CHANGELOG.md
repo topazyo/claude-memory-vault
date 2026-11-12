@@ -25,6 +25,76 @@ bash .claude/scripts/vault-update.sh --check --from ../template-new
 
 ---
 
+## 1.6.0 — 2026-11-12
+
+Oh My Pi (omp) becomes a supported harness, with an opt-in extension and a guide. The harness
+guides gain a column that says, for each harness, whether its automatic memory can be pointed into
+the vault.
+
+### Added
+
+- **`.claude/adapters/omp/vault.js`**, an extension for Oh My Pi, **off until you load it**
+  (`omp -e .claude/adapters/omp/vault.js`, or a copy in `.omp/extensions/`). omp runs what it
+  finds in `.omp/` with no trust gate at all, so the template ships nothing there, as
+  `CONTRIBUTING.md` now requires for every harness without one. Once loaded, the extension:
+  - refuses a file-tool call whose path names `.env`, `.env.*` or a `secrets` folder. It reads
+    every path field of omp's file tools, each part of a path list (split at `;`, `,` or white
+    space, or written as JSON), the file names in an edit's patch text in every edit mode, and grep
+    and glob patterns. It also covers omp opening a file it was not asked for when a `read` names a
+    missing path. `bash` and omp's `eval` tool are not covered;
+  - lints every file a successful `write`, `edit` or applied `ast_edit` changed, and adds what the
+    lint reports to the tool's result;
+  - records each compaction as `manual` or `auto`.
+  It shares the Pi extension's path, glob and script-running code, and the suite keeps the two
+  copies identical. It was written against omp 18.18.9, commit `50da2d3`.
+- **`docs/harnesses/omp.md`**, the guide, with setup, an onboarding prompt, harness checks, a
+  scheduled-pass wrapper for a container, and its limits.
+- **The runners' fence contains `mcp.json` at any depth**, beside `.mcp.json`. omp starts the
+  MCP servers a project `mcp.json` names without asking, so a pass that wrote one would have
+  started a server in the next omp session. The promotion agent's reserved names include it.
+- **An "Auto memory into the vault" column** in `docs/harnesses/README.md`, with dated sources.
+  Only Claude Code can point its Markdown memory into `90-auto-memory/`. omp can move one of its
+  memory backends' database on its own. The others either cannot, keep no memory, or are
+  unverified.
+
+### Changed
+
+- **`/preserve`** (both copies) tells the agent not to give a note a reserved harness file name,
+  as the promotion agent already is.
+- **`docs/harnesses/windsurf.md`** cites the current address of Windsurf's rules and memories page.
+  The old one redirects to a page without them.
+- **`AGENTS.md` §8, `README.md`, `docs/setup.md` and `docs/reference.md`** name Oh My Pi beside
+  Pi. `docs/reference.md` describes the new controls.
+- **`.claude/adapters/pi/vault.js`**: one comment inside the code it shares with the omp
+  extension now names "the harness" rather than Pi. Its behaviour is unchanged.
+
+### Adopting this
+
+1. **Take `.claude/adapters/omp/vault.js`, `.claude/adapters/pi/vault.js`,
+   `.claude/scripts/lib/runner-common.sh`, `.claude/agents/promotion-agent.md` and
+   `.claude/scripts/run-tests.sh` together.** The suite checks that the two extensions share their
+   code and that the promotion agent's reserved names match the fence, so taking one alone fails
+   it. If you customised the promotion agent, merge its one new name by hand. If you do not use
+   omp, taking the new extension still costs nothing, because nothing loads it until you do.
+   A pass that writes an `mcp.json` anywhere, or a note of that name, is now contained and stops
+   the passes until you clear the tripwire; rename any you keep.
+2. **To use omp, read `docs/harnesses/omp.md` first.** omp runs, without asking, what it finds in
+   `.omp/` and in the vault's `.claude/hooks/pre/`, `.claude/hooks/post/` and `.claude/tools/`.
+   The guide says where to look before you start it.
+3. **Take `.claude/skills/preserve/SKILL.md` and `.agents/skills/preserve/SKILL.md` together**, so
+   the two copies stay byte-identical.
+4. **`README.md` is a seed file.** Merge its two Oh My Pi lines by hand if you kept your own.
+5. The shipped files this release touches are `.claude/adapters/omp/vault.js` (new),
+   `.claude/adapters/pi/vault.js`, `.claude/scripts/lib/runner-common.sh`,
+   `.claude/agents/promotion-agent.md`, `.claude/scripts/run-tests.sh`,
+   `.claude/skills/preserve/SKILL.md`, `.agents/skills/preserve/SKILL.md`, `docs/harnesses/omp.md`
+   (new), `docs/harnesses/README.md`, `docs/harnesses/windsurf.md`, `docs/reference.md`,
+   `docs/setup.md`, `AGENTS.md` and `README.md`, plus `VERSION`, this file and
+   `.claude/template-manifest`. `CONTRIBUTING.md` (the opt-in rule now names omp's extension and
+   the wider OpenCode guard) and `.github/workflows/ci.yml` changed as well; a vault is offered
+   neither. The CI changes are a wider `.opencode/` plugin and tool guard and the omp control in
+   the required lists.
+
 ## 1.5.2 — 2026-11-12
 
 A hardening release that closes the harness gaps 1.5.1 left recorded. The runners' fence now

@@ -896,11 +896,13 @@ steering_filter() {
       # which loads it as instructions the way other harnesses load AGENTS.md.
       # OpenCode reads opencode.json and opencode.jsonc from the folder it is
       # started in and from every folder above it, and either can name plugins
-      # and MCP commands to run, so both count at any depth. The two reserved
+      # and MCP commands to run, so both count at any depth. Oh My Pi starts the
+      # MCP servers a project mcp.json names, beside .mcp.json, without asking,
+      # so that name counts too. The two reserved
       # names markers let run-tests.sh check that the promotion agent is told
       # every name on the line below each of them.
       # reserved-names: base
-      if (base == "claude.md" || base == "claude.local.md" || base == "agents.md" || base == "agents.override.md" || base == "gemini.md" || base == ".hermes.md" || base == "hermes.md" || base == ".mcp.json" || base == ".gitattributes" || base == ".gitignore" || base == "opencode.json" || base == "opencode.jsonc") return 1
+      if (base == "claude.md" || base == "claude.local.md" || base == "agents.md" || base == "agents.override.md" || base == "gemini.md" || base == ".hermes.md" || base == "hermes.md" || base == ".mcp.json" || base == "mcp.json" || base == ".gitattributes" || base == ".gitignore" || base == "opencode.json" || base == "opencode.jsonc") return 1
       # A .git entry below the vault root is a submodule gitlink or an embedded
       # repository, and rewriting it points git at another config and hooks.
       # Inside a nested git directory only the files that run code or redirect

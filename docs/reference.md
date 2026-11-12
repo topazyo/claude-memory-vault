@@ -458,6 +458,44 @@ a lint that does nothing and a lint that found nothing wrong print the same thin
   The ids are `pi-extension-behaviour`, `pi-extension-dirlink` and `pi-extension-symlink`. A copy
   in `.pi/extensions/` must match the adapter, the adapter must never answer Pi's `project_trust`
   event (with a positive control), and every script it names must exist.
+- **omp extension** — `.claude/adapters/omp/vault.js` keeps the Pi extension's path, glob and
+  hook-running code, and the suite compares the 16 functions and 12 constants they share, one by
+  one, with a floor on how many it found and a changed copy as the positive control, so the Pi
+  cases above cover that code in both. With Node 18 or later the omp extension is then loaded with a stand-in for
+  omp's extension API, with the event shapes omp 18.18.9 declares. Refused: `secrets/x.txt`,
+  `:.env` and `@.env`, a `;` list naming a secret second, a secret with a line selector,
+  `api.key` while `secrets/api.key` exists (omp's search for a missing path would open it), an
+  omp URL whose text names `.env`, a `file://` URL to `.env`, a write to `[.env#ABCD]`, edits
+  whose patch text moves a note into `secrets/`, adds `.env.local`, moves one to `.env` with
+  `MV` or names `¶secrets/a.md`, a patch-mode rename into `secrets/`, a `grep` over `*`,
+  `**/.e*` or `secrets`, `search` of `secrets`, a `glob` naming `.env` or below `secrets/`, a
+  `find`, `ast_grep` `;` list, `ast_edit`, `lsp`, `debug` and `security_scan` reaching a
+  secret, a `grep` with `gitignore: false`, lists naming `.env` after a `,`, in double quotes
+  after a `;`, or after a space, hashline headers with a trailing space or newline or in double
+  quotes, a sloppy-mode `*** Edit File:` under `secrets/`, a `vault://` URL with `secr%65ts`, a
+  `¶.env` write, a `glob`, a grep glob and a JSON-list grep path starting in a folder linked to
+  `secrets/`, a `;` list whose second part, holding a space, is such a link, a quoted list part
+  or a JSON list item that omp splits again into `.env` or `secrets/`, an apply_patch file name
+  written as a JSON string spelling `.env`, and a `grep` whose legacy `paths` names `secrets/`,
+  each for its own reason; a `read` with no path or one that is not text, and an edit
+  whose text names no file, as changed inputs. Let through: an existing note, with or without a
+  line selector, a missing note no secret ends in, a note whose name holds a space, `skill://` and
+  web URLs, a note write, a `write` and an `edit` of notes whose titles hold `secrets` or `.env`
+  as a word, which omp does not split, a hashline, a replace-mode and a loosely spelled sloppy-mode edit of a
+  note, a `grep` of the folder or over `**/*.md`, a `glob` of `**/*`, `ast_grep` and `ast_edit`
+  of notes, and a `bash` call, which the extension does not cover. A successful `write` lints the
+  vault-relative path, with `CLAUDE_PROJECT_DIR` naming the vault, and a steering file reaches the
+  lint; an `edit` lints each file in its per-file results and where a moved note went, or the path
+  omp derived; an applied `ast_edit`, and the `write` to `xd://resolve` that applies one, lint each
+  file it changed, while a preview and an `xd://resolve` write that applied nothing lint nothing
+  and warn of nothing; a failed write and a `read` are not linted. `/compact` sends trigger `manual`, a compaction between
+  `auto_compaction_start` and `auto_compaction_end` sends `auto`, and a `/compact` after an
+  automatic one that ended without compacting sends `manual`. A failing lint is reported once, a
+  hung one is stopped at the time limit, and a copy in no vault lints nothing and says so once,
+  while still refusing `secrets/`. The id is `omp-extension-behaviour`. A copy in
+  `.omp/extensions/` must match the adapter, every script it names must exist, and the adapter
+  must answer no approval, rewrite no input and return nothing from its `tool_call` handler but a
+  refusal (with a positive control).
 - **postcompact-wrap-up.sh** — two compactions of one session append to one stub, with and without
   `jq`; a `../` session id stays inside `20-projects/_logs/`; the 50-entry cap writes
   `CAP REACHED` exactly once.
@@ -1223,7 +1261,8 @@ Around that call, each runner does several things an exit code cannot:
   `AGENTS.md`, `AGENTS.override.md`, `GEMINI.md`, Hermes Agent's `.hermes.md` and `HERMES.md`,
   OpenCode's `opencode.json` and `opencode.jsonc` (OpenCode reads both from the folder it starts in
   and every folder above it, `packages/opencode/src/config/paths.ts` line 17 at the v1.19.5 tag,
-  commit `810c0eb` of `github.com/anomalyco/opencode`, read 2026-11-11),
+  commit `810c0eb` of `github.com/anomalyco/opencode`, read 2026-11-11), Oh My Pi's `mcp.json`,
+  whose MCP servers omp starts without asking (`src/discovery/mcp-json.ts` in omp 18.18.9),
   `.mcp.json`, `.gitattributes`, `.gitignore` and any `.claude/` or other harness folder, including
   one that is the last part of the path, such as a symlink named `.claude`. Every harness folder
   named earlier in this list counts at any depth too, not only at the vault root. Matching ignores case,
@@ -2427,7 +2466,7 @@ while a note under `40-llm-wiki/wiki/` is covered by the six-tier rules only.
 | `grep -P` | fallback for the same scan | A GNU extension — **absent on macOS BSD grep**, which is why `perl` is preferred rather than the other way round. |
 | `cmp` | a claude-mode dream or promotion pass, which reads its memory override file back with it | The pass refuses to start (exit 1, "or cmp could not compare it"). Part of diffutils on Linux; present on macOS and in Git for Windows. |
 | `iconv` | a claude-mode pass whose vault or settings-file path holds a byte outside printable ASCII, which it checks comes back unchanged from UTF-8 to UTF-16LE and back | That pass refuses to start (exit 1, "or iconv could not check it"). A path in printable ASCII never needs it. Present on macOS and in Git for Windows. |
-| `node` 18 or later | the control suite's Pi extension checks | The suite skips those checks with a reason, as `pi-extension-behaviour`, `pi-extension-dirlink` and `pi-extension-symlink`, and nothing else changes. |
+| `node` 18 or later | the control suite's Pi and omp extension checks | The suite skips those checks with a reason, as `pi-extension-behaviour`, `pi-extension-dirlink`, `pi-extension-symlink` and `omp-extension-behaviour`, and nothing else changes. The check that the omp extension shares the Pi extension's code runs without `node`. |
 | Obsidian + Dataview | the 13 dashboard queries | `VAULT-INDEX.md` renders as inert code fences. |
 
 ---
