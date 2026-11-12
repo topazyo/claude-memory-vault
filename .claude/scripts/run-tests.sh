@@ -1933,6 +1933,7 @@ const cases = [
   ["ast_grep", { pat: "x", path: '["31-standards;secrets/k"]' }, "refused", "an ast_grep JSON list item naming secrets/ after a ;"],
   ["grep", { pattern: "KEY", paths: ["secrets"] }, "refused", "a grep whose legacy paths field names secrets/"],
   ["edit", { input: patch('*** Update File: "\\u002eenv"', "x") }, "refused", "an apply_patch whose file name is a JSON string spelling .env"],
+  ["write", { path: '"secrets/k"', content: "x" }, "refused", "a write to a path in double quotes under secrets/"],
   ["write", { path: "31-standards/the secrets plan.md", content: "x" }, "allowed", "a write of a note whose title holds the word secrets, which omp's write never splits"],
   ["edit", { path: "31-standards/notes on .env files.md", old_string: "a", new_string: "b" }, "allowed", "an edit of a note whose title holds .env as a word"],
 ]
@@ -1945,6 +1946,11 @@ try {
   await expect(omp, "glob", { path: "lnk/**" }, "refused", "a glob that starts in a folder linked to secrets/")
   await expect(omp, "grep", { pattern: "KEY", path: "lnk/*.txt" }, "refused", "a grep glob that starts in a folder linked to secrets/")
   await expect(omp, "grep", { pattern: "KEY", path: '["lnk"]' }, "refused", "a grep path given as a JSON list naming a folder linked to secrets/")
+  // Only a second level of splitting reaches lnk here: the raw text splits into
+  // ["31-standards and lnk"], and only the JSON item, split again at its ;,
+  // gives lnk. The text names no secret and holds no backslash, so the same
+  // answer is expected on every platform.
+  await expect(omp, "grep", { pattern: "KEY", path: '["31-standards;lnk"]' }, "refused", "a JSON list item that, split again at its ;, names a folder linked to secrets/")
   // A part holding a space is tested whole as well as split at the space. No
   // word of this link's name is itself a link, so only the whole part refuses.
   symlinkSync(join(vault, "secrets"), join(vault, "my folder"), win ? "junction" : "dir")
