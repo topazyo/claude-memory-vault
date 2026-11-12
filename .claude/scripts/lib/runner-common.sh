@@ -889,12 +889,18 @@ steering_filter() {
       if (lp ~ /^\.obsidian\//) return 0
       if (lp == ".git" || lp ~ /^\.git\// || lp == ".git-common" || lp ~ /^\.git-common\//) return 1
       if (lp == "90-auto-memory" || lp ~ /^90-auto-memory\//) return 1
-      if (lp == "opencode.json" || lp == ".aider.conf.yml" || lp == ".geminiignore" || lp == ".cursorignore" || lp == ".cursorrules" || lp == ".windsurfrules") return 1
+      if (lp == ".aider.conf.yml" || lp == ".geminiignore" || lp == ".cursorignore" || lp == ".cursorrules" || lp == ".windsurfrules") return 1
       n = split(lp, part, "/")
       base = part[n]
       # .hermes.md, or HERMES.md, is the project context file of Hermes Agent,
       # which loads it as instructions the way other harnesses load AGENTS.md.
-      if (base == "claude.md" || base == "claude.local.md" || base == "agents.md" || base == "agents.override.md" || base == "gemini.md" || base == ".hermes.md" || base == "hermes.md" || base == ".mcp.json" || base == ".gitattributes" || base == ".gitignore") return 1
+      # OpenCode reads opencode.json and opencode.jsonc from the folder it is
+      # started in and from every folder above it, and either can name plugins
+      # and MCP commands to run, so both count at any depth. The two reserved
+      # names markers let run-tests.sh check that the promotion agent is told
+      # every name on the line below each of them.
+      # reserved-names: base
+      if (base == "claude.md" || base == "claude.local.md" || base == "agents.md" || base == "agents.override.md" || base == "gemini.md" || base == ".hermes.md" || base == "hermes.md" || base == ".mcp.json" || base == ".gitattributes" || base == ".gitignore" || base == "opencode.json" || base == "opencode.jsonc") return 1
       # A .git entry below the vault root is a submodule gitlink or an embedded
       # repository, and rewriting it points git at another config and hooks.
       # Inside a nested git directory only the files that run code or redirect
@@ -921,8 +927,11 @@ steering_filter() {
       # folder too, wherever it points. .omp belongs to Oh My Pi, which runs the
       # hooks and extensions in it with no trust prompt, and .agent is the
       # singular folder it reads skills, rules and system prompts from too.
+      # Google Antigravity reads rules, skills, workflows, hooks.json and
+      # mcp_config.json from .agents and also from .agent, _agents and _agent.
       for (i = 1; i <= n; i++) {
-        if (part[i] == ".claude" || part[i] == ".agents" || part[i] == ".agent" || part[i] == ".codex" || part[i] == ".gemini" || part[i] == ".cursor" || part[i] == ".windsurf" || part[i] == ".opencode" || part[i] == ".pi" || part[i] == ".omp" || part[i] == ".github" || part[i] == ".vscode") return 1
+        # reserved-names: component
+        if (part[i] == ".claude" || part[i] == ".agents" || part[i] == ".agent" || part[i] == ".codex" || part[i] == ".gemini" || part[i] == ".cursor" || part[i] == ".windsurf" || part[i] == ".opencode" || part[i] == ".pi" || part[i] == ".omp" || part[i] == ".github" || part[i] == ".vscode" || part[i] == "_agents" || part[i] == "_agent") return 1
       }
       return 0
     }

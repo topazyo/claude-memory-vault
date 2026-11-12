@@ -121,6 +121,54 @@ copies the whole workflow into somebody's vault where their tree and the manifes
 first note. So it runs on your **pull request**, where the base repository is this one, and it does
 **not** run on pushes to your own fork. Watching it skip there does not mean it is unenforced.
 
+## Adding a harness
+
+**Never ship a file that a harness discovers and runs by itself when that harness has no project
+trust gate.** Ship it opt-in instead, under `.claude/adapters/<harness>/`, for a user to load
+deliberately or copy into place, and say in the harness's guide what loading it does. A harness
+with no trust gate runs whatever it finds in its project folder as soon as it starts there, so a
+shipped hook would run on every clone of every vault and inside every scheduled pass, where the
+guides take care that no vault hook runs. The OpenCode plugin and the Pi extension already follow
+this rule. OpenCode runs `.opencode/plugins/` without asking, and Pi runs `.pi/extensions/` once a
+folder is trusted, but its trust covers every folder below it. Oh My Pi (omp) follows the same rule,
+because its extension API answers that every project is trusted. CI fails a tracked file under
+`.opencode/plugins/`, `.pi/` or `.omp/` for this reason.
+
+**A harness touches several closed lists, and nothing finds the ones you forget.** Each list below
+names files the way that harness does. A harness missing from one is a gap that looks exactly like
+safety: the fence reports a planted file and leaves it in place, or the lint never reads a steering
+file. That is how `.omp/` and `.hermes.md` stayed unfenced until 1.5.1. For a harness the template
+supports, go through all of them. For one it does not support but that reads files or runs code
+from a vault, as Antigravity's `_agents/` was in 1.5.2, the fence, the reserved names, the lint,
+`docs/reference.md` and the tests still apply. The guide index, the support table, `AGENTS.md` §8
+and the CI guard wait until the template ships something for the harness. The guard came before the
+adapter for omp only because the adapter was already planned.
+
+- `steering_filter` in `.claude/scripts/lib/runner-common.sh` has three lists. Root-only file names
+  go on the line that begins `if (lp == ".aider.conf.yml"`. File names that count at any depth go on the line under
+  `# reserved-names: base`. Folder names go on the line under `# reserved-names: component`. Use a
+  folder name for any folder a harness reads instructions from or runs code from.
+- The two `Reserved` bullets in `.claude/agents/promotion-agent.md` must match the two marked lines
+  above. The `reserved-names` control in `run-tests.sh` fails until they do.
+- The character-scan `case` in `.claude/hooks/vault-lint.sh` covers every Markdown file the harness
+  loads as instructions, rules, skills, prompts, commands or workflows. Update its comment too.
+- In `docs/reference.md`, §3.1 is the one complete list of what the scan covers. The *Containment*
+  paragraph names what the fence contains, and the controls section describes the new tests.
+- `docs/harnesses/README.md` needs a row in the guide index and the support table. Update the
+  hook-surface list, the container mount list and the scheduled-pass section wherever the harness
+  reads or runs something there.
+- `AGENTS.md` §8 needs the harness's row values in its mechanism table.
+- `.github/workflows/ci.yml` needs a guard that the template ships nothing in a folder the harness
+  runs by itself, modelled on the `.pi` and `.omp` steps.
+- `run-tests.sh` needs a positive control for each new name or pattern, a negative look-alike for
+  each, and an end-to-end containment case for one of each kind. Mutate each new literal and check
+  that its own control is what fails.
+- In `.claude/scripts/vault-update.sh`, add to `MACHINERY_ROOTS` or `MACHINERY_FILES` when the
+  template starts shipping into a folder or file it did not ship before.
+
+Pin every claim about the harness to its source, either a URL or a repository path, line and commit,
+with the date you read it. Harnesses change their file names between releases.
+
 ## Cutting a release
 
 **Every merge that changes a file this template ships is a release.** That is a policy rather than

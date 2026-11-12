@@ -539,6 +539,32 @@ jobs:
             exit 1
           fi
 
+      # Oh My Pi (omp) runs .omp/hooks/ and .omp/extensions/ from the folder it is
+      # started in with no project trust gate at all (isProjectTrusted() always
+      # returns true in its extension API), so a file shipped there would run on
+      # every clone and inside every omp pass. The template ships nothing under
+      # .omp/ (CONTRIBUTING.md, "Adding a harness"). The same pathspec shapes and
+      # the same probe as the Pi step above, for the same reasons.
+      - name: Nothing ships under .omp/
+        if: github.repository == 'topazyo/claude-memory-vault'
+        run: |
+          specs=(':(icase,glob).omp' ':(icase,glob).omp/**' ':(icase,glob)**/.omp' ':(icase,glob)**/.omp/**')
+          scratch="${RUNNER_TEMP:?}/omp-pathspec-probe"
+          rm -rf "$scratch"
+          mkdir -p "$scratch/.OMP" "$scratch/a/.Omp/extensions" "$scratch/b" "$scratch/a/omp" "$scratch/.ompx" "$scratch/c"
+          for f in .OMP/x a/.Omp/extensions/x.js b/.omp a/omp/x.js .ompx/x c/x.omp omp.md; do printf 'x\n' > "$scratch/$f"; done
+          { git -C "$scratch" init -q && git -C "$scratch" add -A; } || { echo "::error::could not build the pathspec probe repository"; exit 1; }
+          probe=$(git -C "$scratch" ls-files -- "${specs[@]}") || { echo "::error::git ls-files failed"; exit 1; }
+          if [ "$(printf '%s\n' "$probe" | sort)" != "$(printf '%s\n' .OMP/x a/.Omp/extensions/x.js b/.omp | sort)" ]; then
+            echo "::error::in a probe repository holding .OMP/x, a/.Omp/extensions/x.js and b/.omp among decoys the .omp pathspecs listed [$(printf '%s' "$probe" | tr '\n' ' ')], so an answer below could not be trusted"
+            exit 1
+          fi
+          found=$(git ls-files -- "${specs[@]}") || { echo "::error::git ls-files failed"; exit 1; }
+          if [ -n "$found" ]; then
+            echo "::error::a .omp folder or file is tracked ($(printf '%s' "$found" | tr '\n' ' ')); the template must ship nothing under .omp/ (omp runs it with no trust gate)"
+            exit 1
+          fi
+
       # The shipped harness configs are only useful if their harness can parse
       # them, and a syntax error in each fails silently: the harness skips the
       # file and runs with no hooks at all.

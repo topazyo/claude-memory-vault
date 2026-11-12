@@ -142,7 +142,9 @@ lint_file() {
   # reads as instructions: its .omp/ system, rules, skills, prompts, commands,
   # instructions and tools files, .claude/SYSTEM.md and .claude/commands/, and
   # the system files and rules, prompts and commands folders of .agents/ and of
-  # the singular .agent/, with .agent/skills/. docs/reference.md
+  # the singular .agent/, with .agent/skills/, plus what Google Antigravity
+  # reads: the workflows and agents folders of .agents/ and .agent/, and the rules, skills,
+  # workflows and agents folders of _agents/ and _agent/. docs/reference.md
   # section 3.1 lists them all. Only .md files reach this test, so a tool
   # written in TypeScript under .omp/tools/ is the runner fence's to catch,
   # not this scan's. The Rules File Backdoor targets
@@ -182,6 +184,10 @@ lint_file() {
     *"/.agents/rules/"*|.agents/rules/*|*"/.agents/prompts/"*|.agents/prompts/*|*"/.agents/commands/"*|.agents/commands/*) IS_CHAR_SCAN_SCOPE=1 ;;
     */.agent/SYSTEM.md|.agent/SYSTEM.md|*/.agent/SYSTEM_TEMPLATE.md|.agent/SYSTEM_TEMPLATE.md) IS_CHAR_SCAN_SCOPE=1 ;;
     *"/.agent/skills/"*|.agent/skills/*|*"/.agent/rules/"*|.agent/rules/*|*"/.agent/prompts/"*|.agent/prompts/*|*"/.agent/commands/"*|.agent/commands/*) IS_CHAR_SCAN_SCOPE=1 ;;
+    *"/.agents/workflows/"*|.agents/workflows/*|*"/.agents/agents/"*|.agents/agents/*) IS_CHAR_SCAN_SCOPE=1 ;;
+    *"/.agent/workflows/"*|.agent/workflows/*|*"/.agent/agents/"*|.agent/agents/*) IS_CHAR_SCAN_SCOPE=1 ;;
+    *"/_agents/rules/"*|_agents/rules/*|*"/_agents/skills/"*|_agents/skills/*|*"/_agents/workflows/"*|_agents/workflows/*|*"/_agents/agents/"*|_agents/agents/*) IS_CHAR_SCAN_SCOPE=1 ;;
+    *"/_agent/rules/"*|_agent/rules/*|*"/_agent/skills/"*|_agent/skills/*|*"/_agent/workflows/"*|_agent/workflows/*|*"/_agent/agents/"*|_agent/agents/*) IS_CHAR_SCAN_SCOPE=1 ;;
   esac
   shopt -u nocasematch
 
