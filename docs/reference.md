@@ -1261,7 +1261,8 @@ Around that call, each runner does several things an exit code cannot:
   `AGENTS.md`, `AGENTS.override.md`, `GEMINI.md`, Hermes Agent's `.hermes.md` and `HERMES.md`,
   OpenCode's `opencode.json` and `opencode.jsonc` (OpenCode reads both from the folder it starts in
   and every folder above it, `packages/opencode/src/config/paths.ts` line 17 at the v1.19.5 tag,
-  commit `810c0eb` of `github.com/anomalyco/opencode`, read 2026-11-11),
+  commit `810c0eb` of `github.com/anomalyco/opencode`, read 2026-11-11), Oh My Pi's `mcp.json`,
+  whose MCP servers omp starts without asking (`src/discovery/mcp-json.ts` in omp 18.18.9),
   `.mcp.json`, `.gitattributes`, `.gitignore` and any `.claude/` or other harness folder, including
   one that is the last part of the path, such as a symlink named `.claude`. Every harness folder
   named earlier in this list counts at any depth too, not only at the vault root. Matching ignores case,

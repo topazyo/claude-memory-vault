@@ -49,6 +49,9 @@ the vault.
   copies identical. It was written against omp 18.18.9, commit `50da2d3`.
 - **`docs/harnesses/omp.md`**, the guide, with setup, an onboarding prompt, harness checks, a
   scheduled-pass wrapper for a container, and its limits.
+- **The runners' fence contains `mcp.json` at any depth**, beside `.mcp.json`. omp starts the
+  MCP servers a project `mcp.json` names without asking, so a pass that wrote one would have
+  started a server in the next omp session. The promotion agent's reserved names include it.
 - **An "Auto memory into the vault" column** in `docs/harnesses/README.md`, with dated sources.
   Only Claude Code can point its Markdown memory into `90-auto-memory/`. omp can move one of its
   memory backends' database on its own. The others either cannot, keep no memory, or are
@@ -67,10 +70,14 @@ the vault.
 
 ### Adopting this
 
-1. **Take `.claude/adapters/omp/vault.js`, `.claude/adapters/pi/vault.js` and
+1. **Take `.claude/adapters/omp/vault.js`, `.claude/adapters/pi/vault.js`,
+   `.claude/scripts/lib/runner-common.sh`, `.claude/agents/promotion-agent.md` and
    `.claude/scripts/run-tests.sh` together.** The suite checks that the two extensions share their
-   code, so taking one of them alone fails it. If you do not use omp, taking the new extension
-   still costs nothing, because nothing loads it until you do.
+   code and that the promotion agent's reserved names match the fence, so taking one alone fails
+   it. If you customised the promotion agent, merge its one new name by hand. If you do not use
+   omp, taking the new extension still costs nothing, because nothing loads it until you do.
+   A pass that writes an `mcp.json` anywhere, or a note of that name, is now contained and stops
+   the passes until you clear the tripwire; rename any you keep.
 2. **To use omp, read `docs/harnesses/omp.md` first.** omp runs, without asking, what it finds in
    `.omp/` and in the vault's `.claude/hooks/pre/`, `.claude/hooks/post/` and `.claude/tools/`.
    The guide says where to look before you start it.
@@ -78,7 +85,8 @@ the vault.
    the two copies stay byte-identical.
 4. **`README.md` is a seed file.** Merge its two Oh My Pi lines by hand if you kept your own.
 5. The shipped files this release touches are `.claude/adapters/omp/vault.js` (new),
-   `.claude/adapters/pi/vault.js`, `.claude/scripts/run-tests.sh`,
+   `.claude/adapters/pi/vault.js`, `.claude/scripts/lib/runner-common.sh`,
+   `.claude/agents/promotion-agent.md`, `.claude/scripts/run-tests.sh`,
    `.claude/skills/preserve/SKILL.md`, `.agents/skills/preserve/SKILL.md`, `docs/harnesses/omp.md`
    (new), `docs/harnesses/README.md`, `docs/harnesses/windsurf.md`, `docs/reference.md`,
    `docs/setup.md`, `AGENTS.md` and `README.md`, plus `VERSION`, this file and

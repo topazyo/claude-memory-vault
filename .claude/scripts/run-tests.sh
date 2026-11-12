@@ -6104,6 +6104,7 @@ sf_got="$( . "$ROOT/.claude/scripts/lib/runner-common.sh" && printf '%s\n' \
   '.hermes.md' 'notes/.HERMES.md' '31-standards/.hermes.md' 'HERMES.md' '31-standards/sub/hermes.md' \
   'notes/hermes.md.bak' '31-standards/hermes-agent.md' \
   'opencode.json' 'opencode.jsonc' 'OpenCode.JSONC' '31-standards/opencode.json' 'sub/opencode.jsonc' \
+  'mcp.json' 'MCP.JSON' '31-standards/mcp.json' 'mcp.json.md' '31-standards/my-mcp.json' \
   'opencode.jsonc.md' '31-standards/opencode-notes.md' 'opencode.json5' \
   '_agents/hooks.json' '_AGENT/rules/x.md' 'sub/_agents/mcp_config.json' '31-standards/_agent' \
   '_agentsx/a.md' '20-projects/_logs/x.md' 'agents/x.md' '31-standards/my_agents/x.md' \
@@ -6116,8 +6117,8 @@ sf_got="$( . "$ROOT/.claude/scripts/lib/runner-common.sh" && printf '%s\n' \
   '31-standards/ext/.git/refs/tags/hooks/x' '31-standards/ext/.git/refs/remotes/origin/config' \
   '31-standards/ext/.git/refs/prefetch/remotes/origin/config' '31-standards/ext/.git/refs/notes/config' \
   '31-standards/ext/.git/refs/rewritten/hooks/x' | steering_filter | tr '\n' '|')"
-if [ "$sf_got" = '31-standards/.claude|40-llm-wiki/wiki/sub/.agents|notes/AGENTS.override.md|.GitHub|.claude/logs/CLAUDE.md|.pi/extensions/x.js|.PI/settings.json|31-standards/.pi|.omp/hooks/post/x.ts|.OMP/extensions/y.js|.omp/settings.json|31-standards/.omp|.claude/worktrees/w/.omp/x|.agent/rules/r.md|.Agent/x|31-standards/.agent|.hermes.md|notes/.HERMES.md|31-standards/.hermes.md|HERMES.md|31-standards/sub/hermes.md|opencode.json|opencode.jsonc|OpenCode.JSONC|31-standards/opencode.json|sub/opencode.jsonc|_agents/hooks.json|_AGENT/rules/x.md|sub/_agents/mcp_config.json|31-standards/_agent|40-llm-wiki/wiki/ext/.git|31-standards/ext/.git/config|31-standards/ext/.git/hooks/post-checkout|31-standards/ext/.git/modules/refs/config|31-standards/ext/.git/modules/refs/hooks/post-checkout|31-standards/ext/.git/worktrees/logs/commondir|31-standards/ext/.git/info/attributes|31-standards/ext/.git/objects/info/alternates|' ]; then
-  ok "steering_filter matches harness folders, Pi's .pi and omp's .omp and .agent among them, as the last component and inside a Claude Code worktree too, Hermes's .hermes.md and HERMES.md at any depth, OpenCode's opencode.json and opencode.jsonc at any depth, Antigravity's _agents and _agent, AGENTS.override.md, a planted file in .claude/logs, nested .git entries and their code files (in a submodule or worktree named refs or logs too), and ignores notes, runner logs, branches, tags and objects"
+if [ "$sf_got" = '31-standards/.claude|40-llm-wiki/wiki/sub/.agents|notes/AGENTS.override.md|.GitHub|.claude/logs/CLAUDE.md|.pi/extensions/x.js|.PI/settings.json|31-standards/.pi|.omp/hooks/post/x.ts|.OMP/extensions/y.js|.omp/settings.json|31-standards/.omp|.claude/worktrees/w/.omp/x|.agent/rules/r.md|.Agent/x|31-standards/.agent|.hermes.md|notes/.HERMES.md|31-standards/.hermes.md|HERMES.md|31-standards/sub/hermes.md|opencode.json|opencode.jsonc|OpenCode.JSONC|31-standards/opencode.json|sub/opencode.jsonc|mcp.json|MCP.JSON|31-standards/mcp.json|_agents/hooks.json|_AGENT/rules/x.md|sub/_agents/mcp_config.json|31-standards/_agent|40-llm-wiki/wiki/ext/.git|31-standards/ext/.git/config|31-standards/ext/.git/hooks/post-checkout|31-standards/ext/.git/modules/refs/config|31-standards/ext/.git/modules/refs/hooks/post-checkout|31-standards/ext/.git/worktrees/logs/commondir|31-standards/ext/.git/info/attributes|31-standards/ext/.git/objects/info/alternates|' ]; then
+  ok "steering_filter matches harness folders, Pi's .pi and omp's .omp and .agent among them, as the last component and inside a Claude Code worktree too, Hermes's .hermes.md and HERMES.md at any depth, OpenCode's opencode.json and opencode.jsonc and Oh My Pi's mcp.json at any depth, Antigravity's _agents and _agent, AGENTS.override.md, a planted file in .claude/logs, nested .git entries and their code files (in a submodule or worktree named refs or logs too), and ignores notes, runner logs, branches, tags and objects"
 else
   bad "steering_filter classification -- got: $sf_got"
 fi
@@ -6159,8 +6160,8 @@ rn_diff() {  # rn_diff <label> <fence names> <agent names> - prints a complaint 
 rn_check() {  # rn_check <lib> <agent.md> - prints nothing when both lists agree above their floors
   rn_bl=$(rn_from_lib "$1" base); rn_cl=$(rn_from_lib "$1" component)
   rn_ba=$(rn_from_agent "$2" "Reserved file names"); rn_ca=$(rn_from_agent "$2" "Reserved folder names")
-  rn_floor "fence base" "$rn_bl" 12; rn_floor "fence component" "$rn_cl" 14
-  rn_floor "agent file" "$rn_ba" 12; rn_floor "agent folder" "$rn_ca" 14
+  rn_floor "fence base" "$rn_bl" 13; rn_floor "fence component" "$rn_cl" 14
+  rn_floor "agent file" "$rn_ba" 13; rn_floor "agent folder" "$rn_ca" 14
   rn_diff file "$rn_bl" "$rn_ba"; rn_diff folder "$rn_cl" "$rn_ca"
 }
 RN_LIB="$ROOT/.claude/scripts/lib/runner-common.sh" RN_AGENT="$ROOT/.claude/agents/promotion-agent.md"

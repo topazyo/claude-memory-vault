@@ -53,7 +53,7 @@ the owner clears it. Never give a note or a folder one of these names, compared 
 case. Name a note about such a harness something else, such as `hermes-agent.md`.
 
 - Reserved file names: `CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md`, `AGENTS.override.md`,
-  `GEMINI.md`, `.hermes.md`, `HERMES.md`, `.mcp.json`, `.gitattributes`, `.gitignore`,
+  `GEMINI.md`, `.hermes.md`, `HERMES.md`, `.mcp.json`, `mcp.json`, `.gitattributes`, `.gitignore`,
   `opencode.json`, `opencode.jsonc`.
 - Reserved folder names: `.claude`, `.agents`, `.agent`, `.codex`, `.gemini`, `.cursor`,
   `.windsurf`, `.opencode`, `.pi`, `.omp`, `.github`, `.vscode`, `_agents`, `_agent`.

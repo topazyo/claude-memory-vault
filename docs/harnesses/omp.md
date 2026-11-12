@@ -42,8 +42,9 @@ where omp does not look, for you to load once you have read it. `CONTRIBUTING.md
 harness*, makes that the rule for every harness without a trust gate.
 
 **Before you start omp in a vault you did not make**, look in `.omp/`, `.claude/hooks/pre/`,
-`.claude/hooks/post/`, `.claude/tools/` and `.claude/extensions/`, and in any `AGENTS.md` above it.
-In a vault made from this template none of those folders exist.
+`.claude/hooks/post/`, `.claude/tools/` and `.claude/extensions/`, in an `mcp.json` or `.mcp.json`
+at its root, whose servers omp starts without asking even where Claude Code would ask first, and in
+any `AGENTS.md` above it. In a vault made from this template none of those exist.
 
 ## Enforced, and guidance
 
@@ -67,8 +68,8 @@ from reading one by accident, as Claude Code's own read deny does.
     and split each part again, so for those tools each part of each of those splits is tested,
     a few levels deep, and so is a line selector's path (`secrets/api.key:1-5`). A name that
     holds a space is tested whole and in parts, so `read` of `the secrets plan.md` is refused,
-    while a `write` or `edit` of it, which omp never splits, is not. A path that splits into
-    more than 2000 parts is refused.
+    while a `write` or `edit` of it, which omp never splits, is not. A path that gives more than
+    2000 distinct strings to test, counting each part with and without its quotes, is refused.
   - Paths are read as omp reads them: a leading `:` or `@`, a hashline header around the path,
     `~`, `file://` URLs, the `\\?\` prefix, Windows drive and Git Bash forms, trailing dots and
     spaces, NTFS stream names and symbolic links, with the same code as the Pi extension, which
@@ -185,12 +186,24 @@ case "${1:-}" in
   *) echo "omp-vault-agent: expected a dream-pass or promotion-pass prompt file, got '${1:-}'" >&2; exit 64 ;;
 esac
 prompt=$(cat -- "$1") || exit 66
+# No command-line switch keeps these from running code in the pass, so their absence is the control.
+for p in .omp/tools .claude/tools mcp.json .mcp.json .omp/mcp.json .omp/.mcp.json; do
+  [ -e "$p" ] || [ -L "$p" ] || continue
+  echo "omp-vault-agent: $p would run code in this pass; remove it from the vault first" >&2; exit 1
+done
 exec omp --print --no-session --no-extensions --no-skills --no-rules --no-lsp --tools "$tools" "$prompt"
 ```
 
-- `--tools` is omp's allowlist. Leaving `bash` and `eval` out of it takes the shell and the code
-  runner away, and it is also what keeps the custom tools omp finds in `.omp/tools/` and
-  `.claude/tools/` from loading: omp scans for them only when no allowlist is given.
+- `--tools` names the built-in tools the model is offered. Leaving `bash` and `eval` out of it
+  takes the shell and the code runner away. It is a floor rather than a ceiling, though: omp's
+  settings can add tools to it (`ast_grep` with `grep`, `ast_edit` with `edit`, and memory and
+  learning tools when those are on), and **it does not stop the custom tools omp finds in
+  `.omp/tools/` and `.claude/tools/`, nor the MCP servers a project `mcp.json` or `.mcp.json`
+  names**, at the vault root or in `.omp/`. omp's command line never sets the switch that would
+  (`restrictToolNames` in its `src/sdk.ts`; `src/main.ts` sets only the tool names). Their code
+  runs, with a shell and network of its own, whatever the allowlist says. So the wrapper above
+  refuses to start while any of them exists. The vault this template makes holds none, and the
+  runner's fence contains one a pass writes, so a pass cannot plant one for the next.
 - `--no-extensions` keeps every discovered extension and hook from loading, `.omp/hooks/`,
   `.omp/extensions/` and `.claude/hooks/pre/` and `post/` included. `--no-skills` and `--no-rules`
   keep skills and rules out; the prompt file already carries the agent's instructions.
@@ -200,7 +213,8 @@ exec omp --print --no-session --no-extensions --no-skills --no-rules --no-lsp --
   read-only over every `.env` and `.env.*`, and an empty folder over every `secrets/`.
 - omp has no switch for MCP servers or for its own network requests. Run it in a container whose
   only network route is your model provider, with none of your home configuration, so no MCP
-  server and no personal extension or setting comes with it.
+  server and no personal extension or setting comes with it; the project's own MCP files are the
+  wrapper's check above.
 - **Keep omp's project settings out of the vault.** omp writes `.omp/config.yml` when you set a
   project model role, and renames a project `.omp/` settings file it cannot parse when it starts.
   Either, during a pass, is contained by the runner and sets the tripwire. A copy of the extension
