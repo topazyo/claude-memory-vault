@@ -131,8 +131,9 @@ it (`packages/opencode/src/config/paths.ts` line 17 at the v1.19.5 tag, commit `
 `github.com/anomalyco/opencode`, read 2026-11-11), and either can name plugins and MCP commands.
 This mount does not cover `opencode.jsonc`, which the vault does not ship, so keep none in the vault:
 one you made yourself would load into every pass beside the plugin-free `opencode.json` copy, with
-whatever plugins it names, and nothing in a pass looks for it. Move its settings into
-`opencode.json` and delete it. The runner's steering filter names both files at any depth, so one a
+whatever plugins it names, and no runner refuses to start because of it. Move its settings into
+`opencode.json` and delete it. `vault-update.sh --status` then reports `opencode.json` as changed
+here, and a later template change to it is yours to merge by hand. The runner's steering filter names both files at any depth, so one a
 pass writes is removed, or put back as it was if it existed before the pass, and the tripwire set,
 before a later run loads it.
 

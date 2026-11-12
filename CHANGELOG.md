@@ -25,13 +25,14 @@ bash .claude/scripts/vault-update.sh --check --from ../template-new
 
 ---
 
-## 1.5.2 — 2026-11-11
+## 1.5.2 — 2026-11-12
 
 A hardening release that closes the harness gaps 1.5.1 left recorded. The runners' fence now
 contains OpenCode's `opencode.json` and `opencode.jsonc` at any depth, and Google Antigravity's
 `_agents/` and `_agent/` folders. The lint scans the workflow, agent, rule and skill files
 Antigravity reads. The promotion agent is told the names it must never give a note, so a wiki entry
-about a harness no longer stops every pass.
+about a harness should no longer stop every pass. If the agent uses one anyway, the pass is
+contained as before.
 
 ### Security
 

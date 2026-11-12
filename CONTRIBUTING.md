@@ -145,7 +145,7 @@ and the CI guard wait until the template ships something for the harness. The gu
 adapter for omp only because the adapter was already planned.
 
 - `steering_filter` in `.claude/scripts/lib/runner-common.sh` has three lists. Root-only file names
-  go on the `lp ==` line. File names that count at any depth go on the line under
+  go on the line that begins `if (lp == ".aider.conf.yml"`. File names that count at any depth go on the line under
   `# reserved-names: base`. Folder names go on the line under `# reserved-names: component`. Use a
   folder name for any folder a harness reads instructions from or runs code from.
 - The two `Reserved` bullets in `.claude/agents/promotion-agent.md` must match the two marked lines
