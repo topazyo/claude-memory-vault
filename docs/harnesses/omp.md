@@ -10,6 +10,14 @@ Everything here was checked against omp 18.18.9, in its source at commit `50da2d
 <https://github.com/can1357/oh-my-pi>, read on 2026-11-12. omp changes quickly. The onboarding
 checks exist so you prove the wiring on your own machine.
 
+**Measured under omp 18.18.9 on Windows, 2026-11-12**, with the extension loaded by `-e` in a
+scratch vault: a `write` of a note without frontmatter was linted and the lint's report reached
+the model in the tool's result; a `read` of `secrets/probe.txt` and a hashline `MV` of a note into
+`secrets/` were refused with the extension's reason; a `/compact` through omp's RPC mode wrote a
+stub entry with trigger `manual`; and omp wrote nothing into the vault. An automatic compaction
+could not be brought about in a short session, so the `auto` trigger rests on omp's source and on
+the control suite.
+
 ## What ships
 
 | File | What it does |
@@ -68,9 +76,12 @@ from reading one by accident, as Claude Code's own read deny does.
     tested. An omp URL such as `local://` is tested by its text.
   - **omp opens a file it was not asked for** when a `read` names a path that does not exist: it
     searches the folder it was started in for any file whose path ends that way, and opens the one
-    match. So `read api.key` could open `secrets/api.key`. For a missing path the extension makes
-    the same search, and refuses the read when a secret is among the matches, or when the folder
-    holds more than 20000 entries.
+    match. Its search skips what `.gitignore` lists, so in a vault whose `.gitignore` lists
+    `secrets/`, as the template's does, `read probe.txt` answered "not found" rather than opening
+    `secrets/probe.txt` (measured, omp 18.18.9, 2026-11-12). Where `.gitignore` does not list it,
+    `read api.key` could open `secrets/api.key`. For a missing path the extension searches
+    without regard to `.gitignore`, and refuses the read when a secret is among the matches, or
+    when the folder holds more than 20000 entries.
   - A `grep`, `search`, `ast_grep` or `ast_edit` whose path is a glob is tested as the Pi
     extension tests a grep glob, so `*` and `**/.e*` are refused and `**/*.md` is let through.
     So is a glob that ends in `**`, such as `31-standards/**`, because `**` matches `.env`:
