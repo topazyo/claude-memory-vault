@@ -1937,6 +1937,9 @@ try {
   await expect(omp, "glob", { path: "lnk/**" }, "refused", "a glob that starts in a folder linked to secrets/")
   await expect(omp, "grep", { pattern: "KEY", path: "lnk/*.txt" }, "refused", "a grep glob that starts in a folder linked to secrets/")
   await expect(omp, "grep", { pattern: "KEY", path: '["lnk"]' }, "refused", "a grep path given as a JSON list naming a folder linked to secrets/")
+  // A part holding a space is tested whole as well as split at the space.
+  symlinkSync(join(vault, "secrets"), join(vault, "my lnk"), win ? "junction" : "dir")
+  await expect(omp, "grep", { pattern: "KEY", path: "31-standards;my lnk" }, "refused", "a ; list whose second part, holding a space, is a folder linked to secrets/")
 } catch (error) {
   verdict(false, "omp guard: a folder link to secrets/ could be made for the link cases", error.code ?? error.message)
 }

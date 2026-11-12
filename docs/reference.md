@@ -473,8 +473,9 @@ a lint that does nothing and a lint that found nothing wrong print the same thin
   secret, a `grep` with `gitignore: false`, lists naming `.env` after a `,`, in double quotes
   after a `;`, or after a space, hashline headers with a trailing space or newline or in double
   quotes, a sloppy-mode `*** Edit File:` under `secrets/`, a `vault://` URL with `secr%65ts`, a
-  `¶.env` write, and a `glob`, a grep glob and a JSON-list grep path starting in a folder linked to
-  `secrets/`, each for its own reason; a `read` with no path or one that is not text, and an edit
+  `¶.env` write, a `glob`, a grep glob and a JSON-list grep path starting in a folder linked to
+  `secrets/`, and a `;` list whose second part, holding a space, is such a link, each for its own
+  reason; a `read` with no path or one that is not text, and an edit
   whose text names no file, as changed inputs. Let through: an existing note, with or without a
   line selector, a missing note no secret ends in, a note whose name holds a space, `skill://` and
   web URLs, a note write, a hashline, a replace-mode and a loosely spelled sloppy-mode edit of a
