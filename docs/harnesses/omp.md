@@ -26,9 +26,9 @@ vault steers every omp session in it, so keep none there, or read it first.
 **Why the extension is opt-in.** omp runs every extension in `.omp/extensions/` and every hook in
 `.omp/hooks/pre/` and `.omp/hooks/post/` of the folder it starts in, and it reads the vault's
 `.claude/` as a source of its own: `.claude/hooks/pre/` and `post/`, `.claude/tools/`,
-`.claude/SYSTEM.md`, commands and skills. It asks nothing first. Its extension API answers that every
-project is trusted (`isProjectTrusted()` "always returns true", `src/extensibility/extensions/types.ts`).
-A file the template shipped in any of those places would run on every clone of every vault. So the
+`.claude/SYSTEM.md`, commands and skills. It asks nothing first. Its extension API answers that
+every project is trusted (`isProjectTrusted()` "always returns true",
+`src/extensibility/extensions/types.ts`). A file the template shipped in any of those places would run on every clone of every vault. So the
 template ships nothing there (CI fails a tracked file under `.omp/`), and this extension ships
 where omp does not look, for you to load once you have read it. `CONTRIBUTING.md`, *Adding a
 harness*, makes that the rule for every harness without a trust gate.
@@ -54,10 +54,13 @@ from reading one by accident, as Claude Code's own read deny does.
     legacy `¶` headers, and patch-mode renames), `grep` and its other name `search`, `glob`,
     `find`, `ast_grep` and `ast_edit` (`path` or `paths`), `lsp` (`file`), `debug` (`program`,
     `file`, `cwd`) and `security_scan` (`include_paths`, `knowledge_base_paths`, `output_root`).
-    omp reads a path it cannot open as a list split at `;`, `,` or white space, with double quotes
-    around a part, or as a JSON array, so each part of each of those splits is tested, and so is
-    a line selector's path (`secrets/api.key:1-5`). A name that holds a space is tested whole and
-    in parts, so one with a part named `secrets` is refused.
+    `read`, `grep`, `search`, `glob`, `ast_grep` and `ast_edit` read a path they cannot open as a
+    list split at `;`, `,` or white space, with double quotes around a part, or as a JSON array,
+    and split each part again, so for those tools each part of each of those splits is tested,
+    a few levels deep, and so is a line selector's path (`secrets/api.key:1-5`). A name that
+    holds a space is tested whole and in parts, so `read` of `the secrets plan.md` is refused,
+    while a `write` or `edit` of it, which omp never splits, is not. A path that splits into
+    more than 2000 parts is refused.
   - Paths are read as omp reads them: a leading `:` or `@`, a hashline header around the path,
     `~`, `file://` URLs, the `\\?\` prefix, Windows drive and Git Bash forms, trailing dots and
     spaces, NTFS stream names and symbolic links, with the same code as the Pi extension, which
@@ -81,8 +84,8 @@ from reading one by accident, as Claude Code's own read deny does.
   - After each successful `write`, `edit` and applied `ast_edit` the lint runs on every file the
     result names, including where an edit moved one, and what it reports is added to the end of the
     tool's result, cut at 4000 characters. An `ast_edit` only previews its change; omp applies it
-    with a `write` to `xd://resolve`, and that result names the files it changed. Every written path goes to the lint, which decides its
-    own scope, so a steering file's hidden characters are reported too. Compactions are recorded,
+    with a `write` to `xd://resolve`, and that result names the files it changed. Every written
+    path goes to the lint, which decides its own scope, so a steering file's hidden characters are reported too. Compactions are recorded,
     as `auto` when omp compacted on its own and `manual` after `/compact`. Both scripts run with
     `CLAUDE_PROJECT_DIR` naming the vault; each is sent SIGTERM at 15 s, then SIGKILL.
 - **Not covered:**

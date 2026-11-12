@@ -235,37 +235,62 @@ function isSecret(raw, cwd, vault) {
   })
 }
 
-// omp splits a path string it cannot open as it stands at ";", then at ",",
-// then at white space, takes off one pair of double quotes around each part
-// (splitDelimitedPathEntry and normalizePathLikeInput in its path-utils.ts),
-// and reads a JSON array of strings as a list. The guard tests the whole string
-// and every part of every split, whether or not omp would use that split,
-// because testing a part omp never opens costs nothing.
+// omp's read, grep, glob, ast_grep and ast_edit split a path string they cannot
+// open as it stands at ";", then at ",", then at white space, take one pair of
+// double quotes off each part (splitDelimitedPathEntry and
+// normalizePathLikeInput in its path-utils.ts), read a JSON array of strings as
+// a list, and split each part again when they open it. For those tools the
+// guard tests the whole string and every part of every split, again on each
+// part, a few levels deep, whether or not omp would use that split, because
+// testing a part omp never opens costs nothing. Other tools take the path whole.
+const SPLIT_TOOLS = new Set(["read", "grep", "search", "glob", "ast_grep", "ast_edit"])
+const MAX_LIST_DEPTH = 4
+const MAX_LIST_PARTS = 2000
+
 function unquote(part) {
   const trimmed = part.trim()
   return trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"') ? trimmed.slice(1, -1).trim() : trimmed
 }
 
+// A part with a double quote at either end, or at both, taken off.
+function unquoteEnds(part) {
+  return part.trim().replace(/^"/, "").replace(/"$/, "").trim()
+}
+
 function listParts(raw) {
   const parts = new Set([raw])
-  const trimmed = raw.trim()
-  if (trimmed.startsWith("[")) {
-    try {
-      const list = JSON.parse(trimmed)
-      if (Array.isArray(list)) for (const item of list) if (typeof item === "string") parts.add(item)
-    } catch {
-      // not JSON: a glob set or a hashline header, tested as written
+  let frontier = [raw]
+  const consider = (piece, next) => {
+    for (const form of [piece.trim(), unquote(piece), unquoteEnds(piece)]) {
+      if (form === "" || parts.has(form)) continue
+      if (parts.size >= MAX_LIST_PARTS) throw new Error(`the path names more than ${MAX_LIST_PARTS} parts`)
+      parts.add(form)
+      next.push(form)
     }
   }
-  for (const piece of raw.split(/[;,\s]+/)) {
-    const part = unquote(piece)
-    if (part !== "") parts.add(part)
-  }
-  for (const piece of raw.split(/[;,]+/)) {
-    const part = unquote(piece)
-    if (part !== "") parts.add(part)
+  for (let depth = 0; depth < MAX_LIST_DEPTH && frontier.length > 0; depth++) {
+    const next = []
+    for (const text of frontier) {
+      const trimmed = text.trim()
+      if (trimmed.startsWith("[")) {
+        try {
+          const list = JSON.parse(trimmed)
+          if (Array.isArray(list)) for (const item of list) if (typeof item === "string") consider(item, next)
+        } catch {
+          // not JSON: a glob set or a hashline header, tested as written
+        }
+      }
+      for (const piece of text.split(/[;,\s]+/)) consider(piece, next)
+      for (const piece of text.split(/[;,]+/)) consider(piece, next)
+    }
+    frontier = next
   }
   return [...parts]
+}
+
+// What one path field is tested as, for the tool that reads it.
+function partsFor(toolName, text) {
+  return SPLIT_TOOLS.has(toolName) ? listParts(text) : [...new Set([text, unquote(text)])]
 }
 
 // --------------------------------------------------------- read fallback --
@@ -273,8 +298,9 @@ function listParts(raw) {
 // started in for **/<path>, hidden files included, and opens the match when
 // there is one, so `read api.key` can open secrets/api.key. For such a path
 // the guard looks for a secret whose path ends in it, by walking the folder the
-// way that search would, and refuses the read when one does or when the walk
-// is cut short. A path that exists, or that is a URL, never reaches this.
+// way that search would, once per call however many parts it tests, and
+// refuses the read when one does or when the walk is cut short. A path that
+// exists, or that is a URL, never reaches this.
 const WALK_LIMIT = 20000
 const WALK_SKIP = new Set([".git", "node_modules"])
 
@@ -287,29 +313,38 @@ function missingLocally(raw, cwd) {
   })
 }
 
-function fallbackOpensSecret(raw, cwd) {
-  const want = raw.replace(UNICODE_SPACES, " ").replace(/^[:@]+/, "").replace(/\\/g, "/").replace(/^\.\//, "").replace(/:[^/:]*$/, "")
-  if (want === "" || isAbsolute(want) || want.startsWith("~") || want.split("/").includes("..")) return false
-  const fold = (text) => (CASE_BLIND ? text.toUpperCase() : text)
-  const tail = fold(`/${want}`)
+const fold = (text) => (CASE_BLIND ? text.toUpperCase() : text)
+
+// Every path below cwd that names a secret, as "/<path>" folded for comparison.
+function secretsBelow(cwd) {
+  const found = []
   let seen = 0
   const walk = (dir, rel) => {
     let entries
     try {
       entries = readdirSync(dir, { withFileTypes: true })
     } catch {
-      return false
+      return
     }
     for (const entry of entries) {
       if (++seen > WALK_LIMIT) throw new Error(`the folder holds more than ${WALK_LIMIT} entries`)
       if (WALK_SKIP.has(entry.name)) continue
       const path = rel === "" ? entry.name : `${rel}/${entry.name}`
-      if (namesSecret(path) && fold(`/${path}`).endsWith(tail)) return true
-      if (entry.isDirectory() && walk(join(dir, entry.name), path)) return true
+      if (namesSecret(path)) found.push(fold(`/${path}`))
+      if (entry.isDirectory()) walk(join(dir, entry.name), path)
     }
-    return false
   }
-  return walk(resolve(cwd), "")
+  walk(resolve(cwd), "")
+  return found
+}
+
+// call is one call's cache, so the folder is walked at most once per call.
+function fallbackOpensSecret(raw, cwd, call) {
+  const want = raw.replace(UNICODE_SPACES, " ").replace(/^[:@]+/, "").replace(/\\/g, "/").replace(/^\.\//, "").replace(/:[^/:]*$/, "")
+  if (want === "" || isAbsolute(want) || want.startsWith("~") || want.split("/").includes("..")) return false
+  if (call.secrets === undefined) call.secrets = secretsBelow(cwd)
+  const tail = fold(`/${want}`)
+  return call.secrets.some((path) => path.endsWith(tail))
 }
 
 // ----------------------------------------------------------- tool inputs --
@@ -329,8 +364,9 @@ function textOf(value) {
 // The files an edit's text names: apply_patch's *** Add/Update/Delete File:
 // and *** Move to: lines and sloppy mode's *** Edit File:, read in any letter
 // case and spacing, the hashline [PATH#TAG] and legacy ¶PATH headers, and a
-// hashline MV destination, each with one pair of double quotes taken off. omp
-// derives a path only from the hashline headers.
+// hashline MV destination, each with one pair of double quotes taken off, and,
+// when it is a JSON string, decoded as one too. omp derives a path only from
+// the hashline headers.
 function patchPaths(text) {
   const out = []
   for (const line of text.split(/\r?\n/)) {
@@ -338,7 +374,14 @@ function patchPaths(text) {
       line.match(/^[ \t]*\*{3}[ \t]*move[ \t]+to[ \t]*:[ \t]*(.+?)\s*$/i)
     if (match === null) match = line.match(/^\[(.+)#[0-9A-Fa-f]{4}\]\s*$/) ?? line.match(/^\[(.+)\]\s*$/)
     if (match === null) match = line.match(/^¶\s*(.+?)\s*$/) ?? line.match(/^MV\s+(.+?)\s*$/)
-    if (match !== null) out.push(unquote(match[1]))
+    if (match === null) continue
+    out.push(unquote(match[1]))
+    try {
+      const decoded = JSON.parse(match[1].trim())
+      if (typeof decoded === "string") out.push(decoded)
+    } catch {
+      // not a JSON string
+    }
   }
   return out
 }
@@ -364,8 +407,12 @@ function targetsOf(toolName, input) {
     }
     case "grep":
     case "search":
-    case "ast_grep":
-      return input.path === undefined || input.path === null ? [["path", "."]] : pairs("pattern", input.path)
+    case "ast_grep": {
+      // grep's legacy paths field is read as well, in case omp ever folds it
+      // into path.
+      const out = [...pairs("pattern", input.path), ...pairs("pattern", input.paths)]
+      return out.length === 0 ? [["path", "."]] : out
+    }
     case "ast_edit":
       return input.paths === undefined || input.paths === null ? [["path", "."]] : pairs("pattern", input.paths)
     case "glob":
@@ -386,11 +433,11 @@ function targetsOf(toolName, input) {
 // Whether one target may reach a secret. A pattern holding no glob character
 // is a path. A glob is tested by its text and by the folder it starts in, and
 // a pattern glob that searches contents also by what its parts can match.
-function targetMaySeeSecret(kind, text, cwd, vault, toolName) {
-  for (const part of listParts(text)) {
+function targetMaySeeSecret(kind, text, cwd, vault, toolName, call) {
+  for (const part of partsFor(toolName, text)) {
     if (kind === "path" || !IS_GLOB.test(part)) {
       if (isSecret(part, cwd, vault)) return true
-      if (toolName === "read" && missingLocally(part, cwd) && fallbackOpensSecret(part, cwd)) return true
+      if (toolName === "read" && missingLocally(part, cwd) && fallbackOpensSecret(part, cwd, call)) return true
       continue
     }
     const folded = part.toUpperCase()
@@ -759,15 +806,18 @@ function changedFiles(event, cwd) {
   const add = (value, base = cwd) => {
     if (typeof value === "string" && value !== "") out.push(candidatesLikeOmp(value, base)[0])
   }
-  const applied = details.applied === true && Array.isArray(details.fileReplacements)
+  // An applied ast_edit names the files it changed relative to the folder omp
+  // runs in (formatPathRelativeToCwd in omp's file-recorder.ts).
+  const addApplied = (source) => {
+    if (source?.applied !== true || !Array.isArray(source.fileReplacements)) return
+    for (const replacement of source.fileReplacements) add(replacement?.path)
+  }
   if (event.toolName === "write" && typeof input.path === "string" && /^xd:/i.test(input.path.trim())) {
     // omp's ast_edit only previews; its change is applied by a write to
-    // xd://resolve, whose result carries the ast_edit's details. The xd: path
-    // itself is never a file.
-    if (applied) {
-      const base = typeof details.searchPath === "string" && details.searchPath !== "" ? details.searchPath : cwd
-      for (const replacement of details.fileReplacements) add(replacement?.path, base)
-    }
+    // xd://resolve, whose result nests the ast_edit's details at
+    // details.xdev.inner.sourceResultDetails (omp's xd-protocol.ts and
+    // tools/resolve.ts). The xd: path itself is never a file.
+    addApplied(details.xdev?.inner?.sourceResultDetails)
   } else if (event.toolName === "write") {
     add(input.path)
   } else if (event.toolName === "edit") {
@@ -779,9 +829,8 @@ function changedFiles(event, cwd) {
       add(input.path)
       if (Array.isArray(input.paths)) for (const path of input.paths) add(path)
     }
-  } else if (event.toolName === "ast_edit" && applied) {
-    const base = typeof details.searchPath === "string" && details.searchPath !== "" ? details.searchPath : cwd
-    for (const replacement of details.fileReplacements) add(replacement?.path, base)
+  } else if (event.toolName === "ast_edit") {
+    addApplied(details)
   }
   return [...new Set(out)]
 }
@@ -845,8 +894,9 @@ export default function vaultExtension(pi) {
       if ((event.toolName === "grep" || event.toolName === "search") && input.gitignore === false) {
         return { block: true, reason: NO_GITIGNORE }
       }
+      const call = {}
       for (const [kind, text] of targets) {
-        if (targetMaySeeSecret(kind, text, cwd, vault, event.toolName)) return { block: true, reason: DENIED }
+        if (targetMaySeeSecret(kind, text, cwd, vault, event.toolName, call)) return { block: true, reason: DENIED }
       }
       return undefined
     } catch (error) {

@@ -474,11 +474,14 @@ a lint that does nothing and a lint that found nothing wrong print the same thin
   after a `;`, or after a space, hashline headers with a trailing space or newline or in double
   quotes, a sloppy-mode `*** Edit File:` under `secrets/`, a `vault://` URL with `secr%65ts`, a
   `¶.env` write, a `glob`, a grep glob and a JSON-list grep path starting in a folder linked to
-  `secrets/`, and a `;` list whose second part, holding a space, is such a link, each for its own
-  reason; a `read` with no path or one that is not text, and an edit
+  `secrets/`, a `;` list whose second part, holding a space, is such a link, a quoted list part
+  or a JSON list item that omp splits again into `.env` or `secrets/`, an apply_patch file name
+  written as a JSON string spelling `.env`, and a `grep` whose legacy `paths` names `secrets/`,
+  each for its own reason; a `read` with no path or one that is not text, and an edit
   whose text names no file, as changed inputs. Let through: an existing note, with or without a
   line selector, a missing note no secret ends in, a note whose name holds a space, `skill://` and
-  web URLs, a note write, a hashline, a replace-mode and a loosely spelled sloppy-mode edit of a
+  web URLs, a note write, a `write` and an `edit` of notes whose titles hold `secrets` or `.env`
+  as a word, which omp does not split, a hashline, a replace-mode and a loosely spelled sloppy-mode edit of a
   note, a `grep` of the folder or over `**/*.md`, a `glob` of `**/*`, `ast_grep` and `ast_edit`
   of notes, and a `bash` call, which the extension does not cover. A successful `write` lints the
   vault-relative path, with `CLAUDE_PROJECT_DIR` naming the vault, and a steering file reaches the

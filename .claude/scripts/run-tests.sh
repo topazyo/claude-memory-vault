@@ -1927,6 +1927,14 @@ const cases = [
   ["edit", { input: "  ***  EDIT FILE:  31-standards/a.md\nx" }, "allowed", "a sloppy-mode edit of a note, spelled loosely"],
   ["edit", { input: patch('["secrets/x"#1A2B]', "PUT 1.=1:", "+x") }, "refused", "a hashline header naming secrets/ in double quotes"],
   ["read", { path: "vault://MyVault/secr%65ts/k" }, "refused", "a vault:// URL spelling secrets with a percent escape"],
+  ["read", { path: 'x;".env,y"' }, "refused", "a quoted ; list part that omp splits again at its ,"],
+  ["read", { path: 'x;"secrets/api.key,y"' }, "refused", "a quoted ; list part naming a secret before a ,"],
+  ["grep", { pattern: "KEY", path: '["31-standards;.env"]' }, "refused", "a JSON list item that omp splits again at its ;"],
+  ["ast_grep", { pat: "x", path: '["31-standards;secrets/k"]' }, "refused", "an ast_grep JSON list item naming secrets/ after a ;"],
+  ["grep", { pattern: "KEY", paths: ["secrets"] }, "refused", "a grep whose legacy paths field names secrets/"],
+  ["edit", { input: patch('*** Update File: "\\u002eenv"', "x") }, "refused", "an apply_patch whose file name is a JSON string spelling .env"],
+  ["write", { path: "31-standards/the secrets plan.md", content: "x" }, "allowed", "a write of a note whose title holds the word secrets, which omp's write never splits"],
+  ["edit", { path: "31-standards/notes on .env files.md", old_string: "a", new_string: "b" }, "allowed", "an edit of a note whose title holds .env as a word"],
 ]
 for (const [tool, input, want, label] of cases) await expect(omp, tool, input, want, label)
 // A glob that starts in a folder linked to secrets/ names no secret in its text,
@@ -1971,12 +1979,15 @@ await lintCase("an edit lints every file its per-file results name", ["--", "31-
 await lintCase("an edit that moved a note lints where it went", ["--", "31-standards/moved.md"], "edit", { path: "31-standards/c.md", edits: [] }, false,
   { path: join(vault, "31-standards", "c.md"), move: join(vault, "31-standards", "moved.md") })
 await lintCase("an edit with no details lints the path omp derived", ["--", "31-standards/d.md"], "edit", { input: "x", path: "31-standards/d.md" }, false)
+// An applied ast_edit names its files relative to the folder omp runs in, and
+// omp applies one with a write to xd://resolve whose result nests the details.
 await lintCase("an applied ast_edit lints each file it changed", ["--", "31-standards/x.md"], "ast_edit", { ops: [], paths: ["31-standards"] }, false,
-  { applied: true, searchPath: join(vault, "31-standards"), fileReplacements: [{ path: "x.md", count: 1 }] })
+  { applied: true, searchPath: join(vault, "31-standards"), fileReplacements: [{ path: "31-standards/x.md", count: 1 }] })
 await lintCase("an ast_edit preview is not linted", null, "ast_edit", { ops: [], paths: ["31-standards"] }, false,
-  { applied: false, searchPath: join(vault, "31-standards"), fileReplacements: [{ path: "x.md", count: 1 }] })
+  { applied: false, searchPath: join(vault, "31-standards"), fileReplacements: [{ path: "31-standards/x.md", count: 1 }] })
 await lintCase("the write to xd://resolve that applies an ast_edit lints each file it changed", ["--", "31-standards/y.md"], "write",
-  { path: "xd://resolve", content: "" }, false, { applied: true, fileReplacements: [{ path: "31-standards/y.md", count: 1 }] })
+  { path: "xd://resolve", content: "" }, false,
+  { xdev: { tool: "resolve", inner: { action: "apply", sourceResultDetails: { applied: true, fileReplacements: [{ path: "31-standards/y.md", count: 1 }] } } } })
 const xdNotes = omp.notes.length
 await lintCase("a write to xd://resolve that applied nothing lints nothing", null, "write", { path: "xd://resolve", content: "" }, false, {})
 verdict(omp.notes.length === xdNotes, "omp lint: a write to xd://resolve is not reported as a write without a path", omp.notes.join(" | "))
