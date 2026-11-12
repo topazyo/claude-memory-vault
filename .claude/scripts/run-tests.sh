@@ -1807,7 +1807,7 @@ OMP_LINT_EOF
 // Loads the adapter the way omp does (its default export, called with the
 // extension API) and calls its handlers with the event shapes omp 18.18.9
 // declares. One line per verdict: "ok <text>", "bad <text>" or "ran <id>".
-import { existsSync, readFileSync, realpathSync, rmSync } from "node:fs"
+import { existsSync, readFileSync, realpathSync, rmSync, symlinkSync } from "node:fs"
 import { join, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 
@@ -1876,6 +1876,7 @@ const cases = [
   ["read", {}, "no-path", "a read with no path"],
   ["read", { path: 42 }, "not-text", "a read whose path is not text"],
   ["write", { path: "[.env#ABCD]", content: "x" }, "refused", "a write to a hashline header naming .env"],
+  ["write", { path: "¶.env", content: "x" }, "refused", "a write to a legacy ¶ header naming .env"],
   ["write", { path: "31-standards/n.md", content: "x" }, "allowed", "a write of a note"],
   ["edit", { input: patch("*** Update File: 31-standards/a.md", "*** Move to: secrets/a.md") }, "refused", "an apply_patch that moves a note into secrets/"],
   ["edit", { input: patch("*** Add File: .env.local", "+X=1") }, "refused", "an apply_patch that adds .env.local"],
@@ -1906,6 +1907,19 @@ const cases = [
   ["bash", { command: "cat .env" }, "allowed", "a bash call, which the guard does not cover"],
 ]
 for (const [tool, input, want, label] of cases) await expect(omp, tool, input, want, label)
+// A glob that starts in a folder linked to secrets/ names no secret in its text,
+// so only the test of the folder it starts in can refuse it. Folder links are
+// junctions on Windows, which need no privilege.
+try {
+  symlinkSync(join(vault, "secrets"), join(vault, "lnk"), win ? "junction" : "dir")
+  await expect(omp, "glob", { path: "lnk/**" }, "refused", "a glob that starts in a folder linked to secrets/")
+  await expect(omp, "grep", { pattern: "KEY", path: "lnk/*.txt" }, "refused", "a grep glob that starts in a folder linked to secrets/")
+} catch (error) {
+  verdict(false, "omp guard: a folder link to secrets/ could be made for the link cases", error.code ?? error.message)
+}
+// The link stays: removing a folder link can empty its target on some hosts,
+// the suite's temporary folder is removed as a whole, and the missing-path
+// search does not follow links.
 
 const lintArgs = join(vault, "lint-args")
 const lintRecord = () => (existsSync(lintArgs) ? readFileSync(lintArgs, "utf8").split(/\r?\n/).filter(Boolean) : null)
