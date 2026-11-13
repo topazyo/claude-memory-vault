@@ -159,6 +159,11 @@ adapter for omp only because the adapter was already planned.
   hook-surface list, the container mount list and the scheduled-pass section wherever the harness
   reads or runs something there.
 - `AGENTS.md` §8 needs the harness's row values in its mechanism table.
+- `README.md` names every supported harness twice: the sentence under the opening heading that
+  lists what the template ships config for, and the repository layout block, which has a line for
+  each adapter and harness config folder. `README.md` is classed `seed`, so say in the changelog's
+  *Adopting this* that vaults merge it by hand.
+- `docs/setup.md` §6a, "Wiring any other harness", opens with the same list of shipped harnesses.
 - `.github/workflows/ci.yml` needs a guard that the template ships nothing in a folder the harness
   runs by itself, modelled on the `.pi` and `.omp` steps.
 - `run-tests.sh` needs a positive control for each new name or pattern, a negative look-alike for

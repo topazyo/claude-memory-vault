@@ -393,7 +393,13 @@ jobs:
       # from its say("ran <id>") calls instead. The bash 3.2 job and the
       # macos-latest job run on the same image, so their lists must hold the
       # same ids, or one drifts from the other unseen.
+      #
+      # Guarded by repository. In a vault made from this template, run-tests.sh
+      # is owned and moves with every update while this workflow is excluded
+      # and never does, so the first update that adds a control would turn
+      # this step red for ever on a vault that is working perfectly.
       - name: Every recorded control is required somewhere
+        if: github.repository == 'topazyo/claude-memory-vault'
         env:
           NOT_REQUIRED: >-
             runlog-hardlink runlog-mode runlog-unreadable stopping win-survivor win-late win-reaped
@@ -503,7 +509,11 @@ jobs:
       # and a user copies it in deliberately (docs/harnesses/opencode.md). The
       # pathspecs match in any letter case, and the step first runs them in a
       # scratch repository whose answer is known, as the .pi step below does.
+      # Guarded to this repository, as the .pi step is and for the same reason:
+      # docs/harnesses/opencode.md has a vault's owner copy the plugin into
+      # .opencode/plugins/, and committing it there is the guide working.
       - name: The OpenCode plugin ships opt-in
+        if: github.repository == 'topazyo/claude-memory-vault'
         run: |
           specs=()
           for d in plugin plugins tool tools; do
@@ -643,7 +653,13 @@ jobs:
       # assertion, and a stale number in a README is the kind of small wrongness
       # that costs a reader's trust in everything around it. Derive both numbers
       # from reality and compare.
+      #
+      # Guarded by repository. The counts are this template's: in a vault made
+      # from it, the owner's first note changes what vault-check scans while
+      # the docs keep the template's number, and the step would go red for ever
+      # on a vault that is working perfectly.
       - name: Documented counts match reality
+        if: github.repository == 'topazyo/claude-memory-vault'
         run: |
           rc=0
 
@@ -711,7 +727,14 @@ jobs:
 
       # This repo is a framework. A pull request should never carry someone's
       # real notes, an absolute path containing a username, or a secret.
+      #
+      # Guarded by repository, and only this half. In a vault made from the
+      # template, notes naming the owner's own folders are the vault working,
+      # and this step would go red for ever on them. The credential scan below
+      # is a separate step and is not guarded: a secret in a vault's notes is
+      # worth a red build there too.
       - name: No personal content or absolute user paths
+        if: github.repository == 'topazyo/claude-memory-vault'
         run: |
           rc=0
           # Scan every file. The one deliberate example path, "C:/Users/Some One/",
@@ -721,6 +744,11 @@ jobs:
             echo "::error::absolute user path committed"
             rc=1
           fi
+          exit $rc
+
+      - name: No credentials committed
+        run: |
+          rc=0
           # Quotes optional: in a markdown note a pasted secret is usually bare.
           # Plus the prefixes of common real credentials, which need no key name.
           if git grep -nIE '(api[_-]?key|secret|password|passwd|token)[[:space:]]*[:=][[:space:]]*["'"'"']?[A-Za-z0-9/+_-]{20,}|gh[pousr]_[A-Za-z0-9]{36}|sk-ant-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----' ; then
