@@ -25,7 +25,7 @@ bash .claude/scripts/vault-update.sh --check --from ../template-new
 
 ---
 
-## 1.6.1 — 2026-11-13
+## 1.6.1 — 2026-11-14
 
 A patch release for what an owner meets first: the Quickstart's check, a tripwire, and the first
 update check. It closes the gaps a review of 1.6.0 found and reproduced on that path.
@@ -80,18 +80,26 @@ update check. It closes the gaps a review of 1.6.0 found and reproduced on that 
    template's copy now runs four of its checks only in the template's own repository: the
    documented counts, the recorded-control cross-check, the OpenCode opt-in check and the
    user-path scan. Each goes red in a vault that is working, on your first note, your first update,
-   an enabled OpenCode plugin or a note naming your own folders. Copy those `if:` guards by hand,
-   or delete the workflow if you do not want CI on your vault.
-5. The shipped files this release touches are `.claude/scripts/dream-pass.sh`,
+   an enabled OpenCode plugin or a note naming your own folders. Both control-suite steps also
+   drop their `RUN_TESTS_REQUIRED` lists outside the template's repository (the `TEMPLATE_REPO`
+   lines), because those lists stay as you first got them while the suite moves with every update,
+   and the credential scan prints only where a hit is. Copy those changes by hand, or delete the
+   workflow if you do not want CI on your vault.
+5. **If you kept the template's `.github/release-check.sh`**, which no vault is ever offered either,
+   the suite you take in 1 checks it for the new `--tag` refusal, and the copy you have does not
+   make it, so `tmpl-release-uncommitted` fails. Copy the 1.6.1 file by hand, or delete it: with it
+   gone the suite skips the release controls by name, which is right for a vault, since a vault has
+   no releases to cut.
+6. The shipped files this release touches are `.claude/scripts/dream-pass.sh`,
    `.claude/scripts/promotion-pass.sh`, `.claude/scripts/vault-update.sh`,
    `.claude/scripts/run-tests.sh`, `.claude/skills/resume/SKILL.md`,
    `.agents/skills/resume/SKILL.md`, `docs/setup.md`, `docs/reference.md`, `docs/updating.md`,
    `docs/customizing.md`, `AGENTS.md` and `README.md`, plus `VERSION`, this file and
    `.claude/template-manifest`. `.github/release-check.sh` (`--tag` now refuses, as
    `UNCOMMITTED-RELEASE`, to tag a commit that does not hold the bump), `.github/workflows/ci.yml`
-   (the guards in 4, and the new controls in the required lists) and `CONTRIBUTING.md` (the
-   harness checklist names `README.md` and `docs/setup.md` §6a) changed as well; a vault is
-   offered none of them.
+   (the changes in 4, and the new controls in the required lists) and `CONTRIBUTING.md` (the
+   harness checklist names `README.md` and `docs/setup.md` §6a, and says which CI steps run only
+   on pull requests here) changed as well; a vault is offered none of them.
 
 ## 1.6.0 — 2026-11-12
 

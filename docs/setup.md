@@ -4,9 +4,9 @@ This guide takes you from a fresh clone to a working vault: Obsidian open, your 
 harness wired in (Claude Code in § 6, any other harness in § 6a), and (the part that matters) a
 verified install, where you have proof the checkers ran rather than a reassuring silence.
 
-The whole thing takes about fifteen minutes, plus the control suite in § 7a, which runs for about
-10 minutes on Linux, 12 to 17 on macOS and about an hour on Windows. Steps 1–3 and 6–7 are
-required. Steps 4, 5 and 8 are optional and can be skipped without breaking anything.
+The whole thing takes about fifteen minutes. Steps 1–3, 6 and 7b are required. Steps 4, 5 and 8
+are optional and can be skipped without breaking anything, and so is the control suite in § 7a,
+which runs for about 10 minutes on Linux, 12 to 17 on macOS and about an hour on Windows.
 
 ---
 
@@ -333,7 +333,8 @@ Scheduling the dream and promotion passes under another harness is covered in §
 
 ## 7. Verify the install
 
-This section is the point of the whole guide. Run both commands and read the output carefully.
+This section is the point of the whole guide. Run § 7b, and § 7a when you have the time it takes,
+and read the output carefully.
 
 ### 7a. The control suite
 
@@ -889,9 +890,9 @@ not a tripwire; follow "When a move goes wrong" in [`reference.md` §4.3.1](refe
    If you set `VAULT_STATE_DIR` for the runners, the copy is `runner-tripwire` in that folder
    instead. Two cases use `claude-memory-vault-state-<id>` in `$TMPDIR` or `/tmp`: a refused
    `VAULT_STATE_DIR` (the log has a `WARNING: VAULT_STATE_DIR ... Using ... instead.` line naming
-   the folder), and a task with no home folder set, which is not logged. With several vaults there is one folder per vault, named by a
-   checksum of the vault's path, and the runner log in step 4 names the one that belongs to this
-   vault.
+   the folder), and a task with no home folder set, which is not logged. With several vaults there
+   is one folder per vault, named by a checksum of the vault's path, and the runner log in step 4
+   names the one that belongs to this vault.
 
 3. **Decide which copy to read, and read only that one.** Trust the **state directory's** copy when
    `ls -ld` shows it as a regular file (the line starts with `-`) with a link count of 1, because a
@@ -913,9 +914,9 @@ not a tripwire; follow "When a move goes wrong" in [`reference.md` §4.3.1](refe
    step 3, because a link in its place is one of the things a pass can leave. The lines of the run
    that set the tripwire, above any later `TRIPWIRE: refusing to run` lines that each run since has
    added, give the same reason: `VIOLATION` with the paths that were contained,
-   `INTERRUPTED before containment. Tripwire set.`, `UNVERIFIED:`, or `KILL_FAILED`. A log in the vault is evidence only alongside a state-directory
-   copy, because a pass can write it: where the state directory's copy and a log in the vault
-   disagree, the state directory's copy wins.
+   `INTERRUPTED before containment. Tripwire set.`, `UNVERIFIED:`, or `KILL_FAILED`. A log in the
+   vault is evidence only alongside a state-directory copy, because a pass can write it: where the
+   state directory's copy and a log in the vault disagree, the state directory's copy wins.
 
 5. **If it says a process may still be running** (a `KILL_FAILED` stop), find the process the log
    lists and end it before anything else. On Windows it is a `claude` or `bash` whose command line
@@ -956,13 +957,14 @@ not a tripwire; follow "When a move goes wrong" in [`reference.md` §4.3.1](refe
      command; there is no history to check.
 
 7. **Delete exactly these, and nothing else:** both copies of `runner-tripwire`, the one in
-   `.claude/logs/` and the one in the state directory. After a `KILL_FAILED` stop that marked the run
-   lock, also delete the `run.lock` folder the log names in the state directory, or every later run
-   exits 75. If the tripwire says the lock could not be marked, delete no lock folder: it may belong
-   to a pass that is running. Keep the
-   quarantine folder, the copy of `inflight-backup.tar` you made in step 6 (the next pass replaces
-   the original) and the logs: they are the record of what happened, and no runner needs them gone. Leave `runner-inflight` alone if you find one; a runner turns it into
-   a new tripwire, which means the review is not finished.
+   `.claude/logs/` and the one in the state directory. After a `KILL_FAILED` stop that marked the
+   run lock, also delete the `run.lock` folder the log names in the state directory, or every
+   later run exits 75. If the tripwire says the lock could not be marked, delete no lock folder: it
+   may belong to a pass that is running. Keep the quarantine folder, the copy of
+   `inflight-backup.tar` you made in step 6 (the next pass replaces the original) and the logs:
+   they are the record of what happened, and no runner needs them gone. Leave `runner-inflight`
+   alone if you find one; a runner turns it into a new tripwire, which means the review is not
+   finished.
 
 8. **Confirm it is cleared.** Now that the vault has been reviewed, run
    `bash .claude/scripts/vault-check.sh` with the scheduler's `VAULT_STATE_DIR`, if it sets one,

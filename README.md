@@ -568,8 +568,8 @@ never reaches the network, never runs anything out of that folder, and never ove
 you — it names what is safe to take and prints the copy commands for you to read first.
 
 ```bash
-# <tag> is the newest release on this repository's Releases page, such as 1.6.1. Clone the tag,
-# not the default branch, which is routinely ahead of the last release (docs/updating.md §3).
+# <tag> is the newest release on this repository's Releases page. Clone the tag, not the
+# default branch, which is routinely ahead of the last release (docs/updating.md §3).
 git clone --depth 1 --branch <tag> https://github.com/<owner>/claude-memory-vault.git ../template-new
 bash .claude/scripts/vault-update.sh --check --from ../template-new
 ```
