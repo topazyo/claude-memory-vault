@@ -915,7 +915,9 @@ if [ "$MODE" = tag ]; then
   fi
   if [ -s "$SCRATCH/uncommitted" ]; then
     warn "UNCOMMITTED-RELEASE - VERSION says $V, but HEAD, the commit the tag would be written on, does not hold these as they are in this tree, so the tag would publish a commit that is not the $V release:"
-    visible '  ' < "$SCRATCH/uncommitted" >&2
+    # sed, not visible: visible is defined only on the path where VERSION names
+    # a tag, and these three names come from git, spelled as its index holds them.
+    LC_ALL=C sed 's/^/  /' "$SCRATCH/uncommitted" >&2
     warn "Commit them, then cut the tag."
     exit 1
   fi
