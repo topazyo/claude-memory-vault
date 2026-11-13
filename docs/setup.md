@@ -859,11 +859,15 @@ promotion and retention runners and `vault-check.sh` all exit **78** and do noth
 you have done the steps below. Nothing clears it on its own. The background is in
 [`reference.md` §4.3](reference.md).
 
+Not this section: a retention run whose 78 comes with a log line that says `TRIPWIRE:` and names
+`retention-inflight` in the state directory. That is the retention runner's own recovery record,
+not a tripwire; follow "When a move goes wrong" in [`reference.md` §4.3.1](reference.md).
+
 1. **Leave the vault alone until step 6.** Do not open it in Obsidian or in an agent session, and
    run no `git` command and no script from it, `vault-check.sh` included. When the pass was not
    contained, `.git/config`, `.git/hooks`, `.obsidian/` and the vault's own scripts may still hold
    what it wrote. Read files with `ls` and `cat` only, from a shell that does not start git in its
-   prompt.
+   prompt, and keep the folder out of any editor with git integration.
 
 2. **Find both copies of the tripwire.** One is in the vault, the other in the runners' state
    directory outside it. From the vault root:
@@ -874,71 +878,100 @@ you have done the steps below. Nothing clears it on its own. The background is i
    ls -ld "${XDG_STATE_HOME:-$HOME/.local/state}"/claude-memory-vault/*/runner-tripwire
    # Windows, in Git Bash:
    ls -ld "$LOCALAPPDATA"/claude-memory-vault/*/runner-tripwire
+   # the fallback under the temp folder (both cases below):
+   ls -ld "${TMPDIR:-/tmp}"/claude-memory-vault-state-*/runner-tripwire
    ```
 
+   These expand in your shell. If the scheduler gives the runners a different `XDG_STATE_HOME`,
+   `VAULT_STATE_DIR`, `TMPDIR` or home folder, use the scheduler's values, or you will look in the
+   wrong place and step 7 will leave the copy the runners read.
+
    If you set `VAULT_STATE_DIR` for the runners, the copy is `runner-tripwire` in that folder
-   instead. With several vaults there is one folder per vault, named by a checksum of the vault's
-   path, and the runner log in step 4 names the one that belongs to this vault.
+   instead. Two cases use `claude-memory-vault-state-<id>` in `$TMPDIR` or `/tmp`: a refused
+   `VAULT_STATE_DIR` (the log has a `WARNING: VAULT_STATE_DIR ... Using ... instead.` line naming
+   the folder), and a task with no home folder set, which is not logged. With several vaults there is one folder per vault, named by a
+   checksum of the vault's path, and the runner log in step 4 names the one that belongs to this
+   vault.
 
 3. **Decide which copy to read, and read only that one.** Trust the **state directory's** copy when
    `ls -ld` shows it as a regular file (the line starts with `-`) with a link count of 1, because a
-   pass cannot write there. Read it with `cat`. When only the vault's copy is there, a pass may have
-   written it, so read it but follow nothing in it until step 4 agrees. A copy that `ls` shows as
-   anything but a regular file (a link `l`, a folder `d`) holds no tripwire text: do not `cat` it,
-   because a link can point at a file you would not want printed. If `.claude` or `.claude/logs`
+   pass cannot write there. Read it with `cat`. When the state directory holds no such copy, a pass
+   may have written the vault's copy, and the vault's logs too, because the fence lets a pass write
+   both. Read the vault's copy only under the same rule (a regular file with a link count of 1),
+   but follow nothing in it: treat the tripwire as the "Nothing was moved or restored" shape in
+   step 6, whatever the vault's copy and the vault's log say. A `runner-inflight` in the state
+   directory means the same thing. A copy that `ls` shows as anything but a regular file (a link
+   `l`, a folder `d`) holds no tripwire text: do not `cat` it, because a link can point at a file
+   you would not want printed. If `.claude` or `.claude/logs`
    is listed as anything but a folder (`d`), the runners wrote no vault copy, and only the state
    directory's copy and the state directory's logs count.
 
 4. **Check the tripwire against the runner log.** The log is `.claude/logs/dream-agent.log`,
    `promotion-agent.log` or `vault-retention.log`, or, when the tripwire or the log says the vault's
    log could not be used, `dream-pass.uncontained.log`, `promotion-pass.uncontained.log` or
-   `vault-retention.uncontained.log` in the state directory. Its last lines give the same reason:
-   `VIOLATION` with the paths that were contained, `INTERRUPTED before containment. Tripwire set.`,
-   `UNVERIFIED:`, or `KILL_FAILED`. If the tripwire and the log disagree, believe the log and the
-   state directory's copy.
+   `vault-retention.uncontained.log` in the state directory. `ls -ld` it before you read it, as in
+   step 3, because a link in its place is one of the things a pass can leave. The lines of the run
+   that set the tripwire, above any later `TRIPWIRE: refusing to run` lines that each run since has
+   added, give the same reason: `VIOLATION` with the paths that were contained,
+   `INTERRUPTED before containment. Tripwire set.`, `UNVERIFIED:`, or `KILL_FAILED`. A log in the vault is evidence only alongside a state-directory
+   copy, because a pass can write it: where the state directory's copy and a log in the vault
+   disagree, the state directory's copy wins.
 
 5. **If it says a process may still be running** (a `KILL_FAILED` stop), find the process the log
    lists and end it before anything else. On Windows it is a `claude` or `bash` whose command line
    holds the session id the log names. Until it has ended, anything you review can still change.
 
-6. **Review the vault in the way the tripwire's shape asks.**
+6. **Review the vault in the way the tripwire's shape asks.** Shapes can combine, so do every
+   bullet that applies.
    - **It lists paths and a quarantine** (a contained pass). The runner moved what the pass wrote to
      those paths into the quarantine folder the tripwire names, in the state directory, and put the
      pre-pass files back. Read what is in the quarantine to see what the pass tried, and keep the
-     folder. Where the vault is a git repository, check HEAD with `git reflog`, because the runner
-     never rewrites a commit back.
+     folder. Two things were not put back: any path under `.git-common/` (a linked worktree's shared
+     git folder, outside the vault) and anything in a `CONTAINMENT-ERROR` block. If the tripwire has
+     either, check those by hand, as the next bullet does, before any git command. Then, where the
+     vault is a git repository, check HEAD with `git --no-pager reflog`, because the runner never
+     rewrites a commit back.
    - **It says "Nothing was moved or restored, because containment did not run"**, or the log has
      an `UNVERIFIED:` line. Nothing was put back, so check the steering surfaces before any git
      command: copy `inflight-backup.tar` out of the state directory first, because the next pass
      replaces it, unpack the copy into an empty folder with `tar -xf`, compare that folder with the
      vault using `diff -r` (add `--no-dereference` where your `diff` has it) and put back what
      differs. The backup holds only the steering surfaces, so `diff -r` also lists every note and
-     other file as `Only in` the vault; those lines are expected. When the tripwire says no backup was made, check `.git/config`, `.git/hooks`,
-     `.obsidian/` and `.claude/` by hand. Where `.git` is a file (a linked worktree), the git folder
-     it names is outside the vault and the backup, so check its config and hooks by hand too.
-     List every `.git` with `find . -name .git` and every link under `.claude` with
-     `find .claude -type l`, and remove what you did not make. Then, in a git vault,
+     other file as `Only in` the vault; those lines are expected. When the tripwire says no backup
+     was made, check `.git/config`, `.git/hooks`, `.obsidian/` and `.claude/` by hand. Where `.git`
+     is a file (a linked worktree), the git folder it names is outside the vault and the backup, so
+     check its config and hooks by hand too. List every `.git` with `find . -name .git` and check
+     the config and hooks of any you did not make. List every link under `.claude` with
+     `find .claude -type l`, and remove any you did not make once you have checked what it names.
+     Then, in a git vault,
      `git -c core.fsmonitor=false --no-pager status --ignore-submodules=all` shows the rest. The
      `78` row of the dream and promotion runners' exit table in
      [`reference.md` §4.3](reference.md) gives each of these in full.
-   - **It says a process of the stopped pass may still be running** (`KILL_FAILED`). Containment
-     ran, but that process could have written after it. Once step 5 has ended it, compare the
-     vault with the pre-pass backup the log names, `inflight-backup.tar`, kept in the state
-     directory for this review, as in the bullet above, then check `git status` the same way.
+   - **It says a process of the stopped pass may still be running** (`KILL_FAILED`). If it says
+     "what it writes after containment is unchecked", containment ran and that process could have
+     written after it; if it says only "what it writes is unchecked", containment did not run. In
+     both cases, once step 5 has ended it, do the bullet above in full against the pre-pass backup,
+     `inflight-backup.tar`, kept in the state directory for this review.
    - **The vault is not a git repository.** Do the comparison with the backup and skip every git
      command; there is no history to check.
 
 7. **Delete exactly these, and nothing else:** both copies of `runner-tripwire`, the one in
-   `.claude/logs/` and the one in the state directory. After a `KILL_FAILED` stop, also delete the
-   `run.lock` folder the log names in the state directory, or every later run exits 75. Keep the
-   quarantine folder, `inflight-backup.tar` and the logs: they are the record of what happened, and
-   no runner needs them gone. Leave `runner-inflight` alone if you find one; a runner turns it into
+   `.claude/logs/` and the one in the state directory. After a `KILL_FAILED` stop that marked the run
+   lock, also delete the `run.lock` folder the log names in the state directory, or every later run
+   exits 75. If the tripwire says the lock could not be marked, delete no lock folder: it may belong
+   to a pass that is running. Keep the
+   quarantine folder, the copy of `inflight-backup.tar` you made in step 6 (the next pass replaces
+   the original) and the logs: they are the record of what happened, and no runner needs them gone. Leave `runner-inflight` alone if you find one; a runner turns it into
    a new tripwire, which means the review is not finished.
 
 8. **Confirm it is cleared.** Now that the vault has been reviewed, run
-   `bash .claude/scripts/vault-check.sh`. It must not exit 78; it exits 0, or 1 with the notes it
-   names. The next scheduled pass then runs as usual, or start one by hand to see it before the
-   schedule does.
+   `bash .claude/scripts/vault-check.sh` with the scheduler's `VAULT_STATE_DIR`, if it sets one,
+   since that is where it looks for the state directory's copy. It must not exit 78; it exits 0,
+   1 with the notes it names, or 2 when it could not run. Then start a pass by hand rather than
+   waiting for the schedule. Two leftovers can still stop it: a claude-mode pass exits 1 while
+   `90-auto-memory/.pass-agent/` holds anything but `.DS_Store` (read what is there as data, then
+   empty it), and a pass exits 75 on a git `index.lock` the stopped pass left (remove it once no
+   git process is running, as the log's `WARNING:` line says).
 
 ---
 
