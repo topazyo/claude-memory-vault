@@ -904,10 +904,12 @@ if [ "$MODE" = tag ]; then
   # the new changelog entry, and the tag then went onto a commit whose VERSION
   # was the old one: a published release that is not what its own notes say.
   # So the three files this script reads a release out of have to be in HEAD as
-  # they are here before anything is cut. A comparison git could not make
-  # leaves on 2, as DIFF-FAILED does above, because it says nothing about the
-  # release.
-  if ! git -C "$ROOT" -c core.quotePath=false diff --no-renames --name-only HEAD -- \
+  # they are here before anything is cut. git status rather than git diff HEAD,
+  # because diff never lists a file git does not track, and a changelog or a
+  # manifest that was never added is just as absent from the tagged commit. A
+  # comparison git could not make leaves on 2, as DIFF-FAILED does above,
+  # because it says nothing about the release.
+  if ! git -C "$ROOT" -c core.quotePath=false status --porcelain --untracked-files=all -- \
        VERSION "$CHANGELOG_REL" "$MANIFEST_REL" > "$SCRATCH/uncommitted" 2> "$SCRATCH/uncommittederr"; then
     warn "DIFF-FAILED - git could not compare VERSION, $CHANGELOG_REL and $MANIFEST_REL against HEAD, so whether HEAD holds the $V release is unknown and nothing was cut."
     LC_ALL=C sed 's/^/  /' "$SCRATCH/uncommittederr" >&2
@@ -916,8 +918,9 @@ if [ "$MODE" = tag ]; then
   if [ -s "$SCRATCH/uncommitted" ]; then
     warn "UNCOMMITTED-RELEASE - VERSION says $V, but HEAD, the commit the tag would be written on, does not hold these as they are in this tree, so the tag would publish a commit that is not the $V release:"
     # sed, not visible: visible is defined only on the path where VERSION names
-    # a tag, and these three names come from git, spelled as its index holds them.
-    LC_ALL=C sed 's/^/  /' "$SCRATCH/uncommitted" >&2
+    # a tag, and these three names come from git, spelled as its index holds
+    # them. The two status letters and their space are replaced by the indent.
+    LC_ALL=C sed 's/^.../  /' "$SCRATCH/uncommitted" >&2
     warn "Commit them, then cut the tag."
     exit 1
   fi

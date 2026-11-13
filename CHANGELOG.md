@@ -43,7 +43,9 @@ update check. It closes the gaps a review of 1.6.0 found and reproduced on that 
 - **A hangup stops a pass as TERM does.** The dream and promotion runners trapped INT and TERM but
   not HUP, so a closed terminal or an ended SSH session ended the runner at once: exit 129, the
   agent still running, the run lock released and no tripwire. They now trap HUP, stop the agent's
-  tree, set the tripwire before containment and exit 129, as the retention runner already did.
+  tree, set the tripwire before containment and exit 129, as the retention runner already did. A
+  second signal that lands while the first one's handler runs, which a hangup makes routine, no
+  longer starts the handler again from inside itself; the pass ends on the first signal's code.
 - **`vault-update.sh --check` no longer calls a vault's own edits a disagreement.** At the same
   version it decided "two copies disagree" from every verdict, local edits included, so a vault
   with one changed file, checked against a pristine copy of its own release, was refused with

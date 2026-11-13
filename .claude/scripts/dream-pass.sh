@@ -140,6 +140,8 @@ export LC_ALL
 
 RUNNER=dream-pass
 CONTAINMENT_CHECKED=0
+# Set here, so a value in the environment cannot switch the signal handler off.
+IN_ON_SIGNAL=0
 INFLIGHT=0
 SNAP_DIR=""
 # 1 once the check of the runner's folder failed, so on_exit keeps it for review.
@@ -194,6 +196,15 @@ on_exit() {
 # trusted to have run, so set the tripwire now rather than leave the vault to the
 # next pass's baseline.
 on_signal() {
+  # Bash runs a trap again when a second signal lands while the first one's
+  # handler is running (measured), and the nested call would exit from inside
+  # this one, part way through its tripwire. A hangup makes that routine: the
+  # terminal and the shell that owned it can each send one. So a nested call
+  # returns, and the first handler finishes with its own code. A flag rather
+  # than trap '', because an ignored signal is inherited by every child started
+  # after it.
+  [ "${IN_ON_SIGNAL:-0}" -eq 1 ] && return 0
+  IN_ON_SIGNAL=1
   local report=""
   # The whole tree, so a child of the agent or of a git step cannot keep writing
   # after the exit. RUN_PID is set while such a command runs, and while the
