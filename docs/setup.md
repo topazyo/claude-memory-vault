@@ -912,7 +912,8 @@ you have done the steps below. Nothing clears it on its own. The background is i
      command: copy `inflight-backup.tar` out of the state directory first, because the next pass
      replaces it, unpack the copy into an empty folder with `tar -xf`, compare that folder with the
      vault using `diff -r` (add `--no-dereference` where your `diff` has it) and put back what
-     differs. When the tripwire says no backup was made, check `.git/config`, `.git/hooks`,
+     differs. The backup holds only the steering surfaces, so `diff -r` also lists every note and
+     other file as `Only in` the vault; those lines are expected. When the tripwire says no backup was made, check `.git/config`, `.git/hooks`,
      `.obsidian/` and `.claude/` by hand. Where `.git` is a file (a linked worktree), the git folder
      it names is outside the vault and the backup, so check its config and hooks by hand too.
      List every `.git` with `find . -name .git` and every link under `.claude` with
@@ -920,6 +921,10 @@ you have done the steps below. Nothing clears it on its own. The background is i
      `git -c core.fsmonitor=false --no-pager status --ignore-submodules=all` shows the rest. The
      `78` row of the dream and promotion runners' exit table in
      [`reference.md` §4.3](reference.md) gives each of these in full.
+   - **It says a process of the stopped pass may still be running** (`KILL_FAILED`). Containment
+     ran, but that process could have written after it. Once step 5 has ended it, compare the
+     vault with the pre-pass backup the log names, `inflight-backup.tar`, kept in the state
+     directory for this review, as in the bullet above, then check `git status` the same way.
    - **The vault is not a git repository.** Do the comparison with the backup and skip every git
      command; there is no history to check.
 
