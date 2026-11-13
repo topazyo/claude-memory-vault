@@ -71,8 +71,10 @@
 #
 # Exit:
 #    0  the release keeps up with what this tree ships
-#    1  a release is owed, the tree claims a version it is not, or the
-#       repository holds a tag spelled a way this cannot reconcile
+#    1  a release is owed, the tree claims a version it is not, the
+#       repository holds a tag spelled a way this cannot reconcile, or under
+#       --tag HEAD does not hold VERSION, CHANGELOG.md and the manifest as
+#       this tree does, so the tag would go on a commit that is not the release
 #    2  this check could NOT run, so it is saying nothing about the release.
 #       No git, no readable VERSION, a VERSION spelled a way nothing here can
 #       read, no readable manifest, no tags in this checkout, a tag whose tree
@@ -91,7 +93,7 @@
 #   NO-SCRATCH · NO-MANIFEST · TAG-WITHOUT-MANIFEST · VACUOUS ·
 #   SHIPPED-UNKNOWN · DIFF-FAILED · UNRELEASED-CHANGES ·
 #   SHIPPED-RECLASSIFIED · VERSION-GOES-BACKWARD · UNTAGGED-VERSION ·
-#   ALREADY-TAGGED · NO-NOTES · TAG-FAILED
+#   ALREADY-TAGGED · UNCOMMITTED-RELEASE · NO-NOTES · TAG-FAILED
 #
 # Four of those names also exist in `vault-update.sh` and do not mean the same
 # thing there, which is worth knowing before grepping both at once. NO-GIT,
@@ -897,6 +899,26 @@ if [ "$(version_cmp "$V" "$NEWEST")" != 1 ]; then
 fi
 
 if [ "$MODE" = tag ]; then
+  # THE TAG IS WRITTEN ON HEAD, and everything above read the WORKING TREE. With
+  # the bump still uncommitted, every check here passed on the new VERSION and
+  # the new changelog entry, and the tag then went onto a commit whose VERSION
+  # was the old one: a published release that is not what its own notes say.
+  # So the three files this script reads a release out of have to be in HEAD as
+  # they are here before anything is cut. A comparison git could not make
+  # leaves on 2, as DIFF-FAILED does above, because it says nothing about the
+  # release.
+  if ! git -C "$ROOT" -c core.quotePath=false diff --no-renames --name-only HEAD -- \
+       VERSION "$CHANGELOG_REL" "$MANIFEST_REL" > "$SCRATCH/uncommitted" 2> "$SCRATCH/uncommittederr"; then
+    warn "DIFF-FAILED - git could not compare VERSION, $CHANGELOG_REL and $MANIFEST_REL against HEAD, so whether HEAD holds the $V release is unknown and nothing was cut."
+    LC_ALL=C sed 's/^/  /' "$SCRATCH/uncommittederr" >&2
+    exit 2
+  fi
+  if [ -s "$SCRATCH/uncommitted" ]; then
+    warn "UNCOMMITTED-RELEASE - VERSION says $V, but HEAD, the commit the tag would be written on, does not hold these as they are in this tree, so the tag would publish a commit that is not the $V release:"
+    visible '  ' < "$SCRATCH/uncommitted" >&2
+    warn "Commit them, then cut the tag."
+    exit 1
+  fi
   # Read only under --tag, and deliberately not under plain verification. That
   # VERSION and the newest changelog heading agree is `tmpl-version-agrees`'s
   # rule and it lives there. What this needs the entry for is the tag message,

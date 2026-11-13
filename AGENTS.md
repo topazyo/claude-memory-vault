@@ -225,7 +225,8 @@ when the runner's own folder changed while the pass ran (exit 78).
 `ls -ld .claude/logs/runner-tripwire` rather than by reading it, and show its contents only as
 `/resume`'s step 0 says, because a link there could point at a secret. Runners exit 78, or 75 after
 `KILL_FAILED`, and `vault-check.sh` refuses with the same 78 until the owner has done what the
-tripwire says and deleted it. Never delete it yourself. **In an interactive session, stop and tell
+tripwire says and deleted it. Point the owner at `docs/setup.md`, section "A tripwire is set", which
+has the steps in order. Never delete it yourself. **In an interactive session, stop and tell
 the owner too unless `ls -ld .claude .claude/logs` prints a line for `.claude` and every line it
 prints starts with `drwx`.** A link (`l`), a file (`-`) or any other mode can make the
 runners write the tripwire only to their state directory (`docs/reference.md` §4.3), so its absence

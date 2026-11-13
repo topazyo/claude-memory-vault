@@ -337,14 +337,17 @@ timer precisely what the runners' snapshot fence exists to catch.
 | `6` | A manifest entry named a path outside the vault (`PATH-BLOCKED`). |
 | `64` | The command line was wrong, or `--generate` was run without `VAULT_TEMPLATE_MAINTAINER=1` (`NOT-THE-TEMPLATE`). |
 | `75` | A scheduled pass is in flight, so nothing was done (`PASS-IN-FLIGHT`). |
-| `78` | A runner tripwire is set, so nothing was done (`TRIPWIRE`). |
+| `78` | A runner tripwire is set, so nothing was done (`TRIPWIRE`). [`setup.md`, A tripwire is set](setup.md#a-tripwire-is-set) says what to do. |
 | `130` / `143` | Interrupted or terminated. The temporary directory is removed either way. |
 
 **`SAME-VERSION-DISAGREES` is the one to expect.** GitHub's "Use this template" button copies the
 default branch at that moment rather than the last release, so a vault made that way carries a
 version number whose content is ahead of it. Two copies that both say `1.0.0` and differ cannot be
 ordered by their version numbers, and being told that is better than being given a confident wrong
-answer.
+answer. "Differ" means the two **manifests** differ: a path one lists and the other does not, or
+lists with another class or hash. Your own edits are not a disagreement. Checked against a pristine
+copy of the release it records, a vault you have edited is compared as usual, and `--status` is
+the mode that lists your edits (until 1.6.1 such a check was refused with this tag).
 
 Every refusal prints a tag as the first word after `vault-update:`. The table above names the ones
 a vault owner meets, which is not all of them — the generation-time and diff-time tags are not

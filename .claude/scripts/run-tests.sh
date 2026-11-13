@@ -26,7 +26,7 @@ set -u
 # Every assertion starts fresh bash processes, and process start-up is far
 # slower on Windows than on macOS or Linux. Output streams as each check lands.
 printf 'run-tests: control suite for the hooks, the checker and the scheduled runners.\n'
-printf 'run-tests: about a minute on macOS/Linux; several minutes on Windows. Results print as they complete.\n'
+printf 'run-tests: about 10 minutes on Linux, 12 to 17 on macOS, about an hour on Windows (GitHub runners). Results print as they complete.\n'
 
 ROOT="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "$0")/../.." && pwd)}"
 HOOK="$ROOT/.claude/hooks/vault-lint.sh"

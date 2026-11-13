@@ -24,8 +24,8 @@ shell: bash
    alone, since a link or a second name could point at a secret and a FIFO would hang the read. If
    `ls` reports anything but `No such file or directory`, stop too. Say that nothing else in this
    skill ran, and that the owner follows the copy in the state directory, or, when there is none,
-   checks this copy's reason against the runner log, and then deletes both. Do not delete either
-   yourself.
+   checks this copy's reason against the runner log, and then deletes both, following the section
+   "A tripwire is set" in `docs/setup.md`. Do not delete either yourself.
 1. Read the most recent 3 log files from `20-projects/_logs/`, ignoring `templates/`, any
    `compaction-*.md` stubs, and the `dream-*.md` journals and `promotion-*.md` reports the scheduled
    passes write. Those hold a pass's proposals and results, not a record of work, and a dream

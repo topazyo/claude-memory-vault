@@ -106,7 +106,14 @@
 #        log means a process may still be running. The run lock is kept, so later
 #        runs exit 75, and the tripwire is set
 #   127  the claude binary or the VAULT_AGENT_CMD wrapper was not found
-#   *    any other non-zero status is the agent's own
+#   129  stopped by HUP, 130 by INT, 143 by TERM. The agent's tree is stopped,
+#        and a pass stopped before containment sets the tripwire
+#   130  see 129
+#   143  see 129
+#   *    any other non-zero status is the agent's own. It is passed through as
+#        it is, so an agent that itself leaves on one of the codes above cannot
+#        be told from the runner by the code alone; the log's "dream-agent
+#        exited with code" line says which
 
 set -u
 
@@ -183,7 +190,7 @@ on_exit() {
   run_lock_release
 }
 
-# On INT or TERM: stop the agent, and if it had started, containment cannot be
+# On INT, TERM or HUP: stop the agent, and if it had started, containment cannot be
 # trusted to have run, so set the tripwire now rather than leave the vault to the
 # next pass's baseline.
 on_signal() {
@@ -307,6 +314,10 @@ main() {
   trap on_exit EXIT
   trap 'on_signal 130' INT
   trap 'on_signal 143' TERM
+  # A closed terminal or an ended SSH session sends HUP. Left untrapped it ended
+  # the runner at once, with the agent still running, the lock released and no
+  # tripwire, so it is handled exactly as TERM is.
+  trap 'on_signal 129' HUP
   run_lock_acquire "$STATE" "$ROOT" "$RUNNER" "$LOG" "$((TIMEOUT + WATCHDOG_GRACE + 900))"
   lock_rc=$?
   [ "$lock_rc" -eq 0 ] || exit "$lock_rc"

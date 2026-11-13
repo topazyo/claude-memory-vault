@@ -144,8 +144,11 @@ That leaves two probes that do see your vault:
 > match. Creating the file in Obsidian alone proves nothing, because nothing lints it.
 
 The shipped CI (`.github/workflows/ci.yml`) runs both checkers, but only against this template's
-own example notes and fixtures, and no pre-commit hook ships. If you want a rename in your vault to
-be caught automatically, that wiring is yours to add.
+own example notes and fixtures. An opt-in pre-commit gate ships in `.claude/githooks/pre-commit`
+and runs `vault-check.sh` before every commit once you turn it on with
+`git config core.hooksPath .claude/githooks`. It does not catch a rename either, because
+`vault-check.sh` skips a tier folder it cannot find, as probe 1 says, so the two probes above are
+still yours to run.
 
 ---
 

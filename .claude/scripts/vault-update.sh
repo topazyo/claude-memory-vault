@@ -1672,16 +1672,29 @@ do_check() {  # do_check <dir>
   # them past and the run printed a copy plan for a pair it could not order.
   if [ "$LOCAL_VERSION" != unknown ] && [ "$SOURCE_VERSION" != unknown ] \
      && versions_equal "$LOCAL_VERSION" "$SOURCE_VERSION"; then
-    # Collisions are counted here too. They are new files under another name,
-    # and leaving them out would let two copies that disagree only about files
-    # the user already occupies be compared by their version numbers anyway.
-    # deleted counts here too. It is a manifest disagreement like any other, and
-    # leaving it out let two copies that both claim one version and differ only
-    # about files the owner had deleted walk past this guard and be compared by
-    # their version numbers anyway.
-    differing="$(LC_ALL=C awk '$1 != "same" { n++ } END { print n + 0 }' "$TMPD/ck.state")"
-    if [ "$differing" -gt 0 ]; then
-      warn "SAME-VERSION-DISAGREES - this vault and $dir both say they are $SOURCE_VERSION and their manifests differ in $differing file(s), so their version numbers cannot be compared."
+    # THE TWO MANIFESTS ARE COMPARED, and nothing else. A path one lists and the
+    # other does not, or that the two list with another class or hash, is a
+    # disagreement. What the owner has since done to their own files is not:
+    # until 1.6.1 this counted every verdict but same, so one local edit,
+    # checked against a pristine copy of the very release the vault records,
+    # was reported as two copies of one version disagreeing, which reads as
+    # tampering. Both cases the old count was widened for stay counted, because
+    # both are manifest differences: a collision is a path only the source
+    # lists, and a file the owner deleted counts when the source records it
+    # differently.
+    differing="$(LC_ALL=C awk '
+      FNR == NR { l[$4] = $2 " " $3; next }
+      { s[$4] = $2 " " $3 }
+      END {
+        n = 0
+        for (p in l) if (!(p in s) || s[p] != l[p]) n++
+        for (p in s) if (!(p in l)) n++
+        print n + 0
+      }' "$TMPD/local.entries" "$TMPD/src.entries")"
+    # Anything but a measured 0 refuses, so a count that could not be taken is
+    # never read as agreement.
+    if [ "$differing" != 0 ]; then
+      warn "SAME-VERSION-DISAGREES - this vault and $dir both say they are $SOURCE_VERSION and their manifests differ in ${differing:-an unknown number of} file(s), so their version numbers cannot be compared."
       warn "One of them is most likely a copy of the default branch taken between releases. Nothing was concluded about which is newer."
       exit 2
     fi
