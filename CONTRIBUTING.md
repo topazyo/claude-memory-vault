@@ -141,8 +141,9 @@ safety: the fence reports a planted file and leaves it in place, or the lint nev
 file. That is how `.omp/` and `.hermes.md` stayed unfenced until 1.5.1. For a harness the template
 supports, go through all of them. For one it does not support but that reads files or runs code
 from a vault, as Antigravity's `_agents/` was in 1.5.2, the fence, the reserved names, the lint,
-`docs/reference.md` and the tests still apply. The guide index, the support table, `AGENTS.md` §8
-and the CI guard wait until the template ships something for the harness. The guard came before the
+`docs/reference.md` and the tests still apply. The guide index, the support table, `AGENTS.md` §8,
+the harness lists in `README.md` and `docs/setup.md` §6a, and the CI guard wait until the template
+ships something for the harness. The guard came before the
 adapter for omp only because the adapter was already planned.
 
 - `steering_filter` in `.claude/scripts/lib/runner-common.sh` has three lists. Root-only file names
