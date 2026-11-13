@@ -19728,13 +19728,11 @@ else
     vu_says '  CHANGELOG.md' || vu_bad="$vu_bad changelog-edit-did-not-name-CHANGELOG"
     [ "$(vu_uc_tagged)" = 0 ] || { vu_bad="$vu_bad changelog-edit-was-tagged"; git -C "$vu_uc" tag -d 1.1.0 >/dev/null 2>&1; }
     vu_git "$vu_uc"
-    # Only the manifest: a shipped file committed, the manifest regenerated after
-    # it and not committed.
-    printf 'doc c\n' > "$vu_uc/docs/c.md"
-    git -C "$vu_uc" add docs/c.md >/dev/null 2>&1
-    git -C "$vu_uc" -c user.name=suite -c user.email=suite@example.invalid -c commit.gpgsign=false \
-      commit -q -m 'add c' >/dev/null 2>&1
-    vu_gen "$vu_uc"
+    # Only the manifest differs from HEAD, as after a regeneration nobody
+    # committed. A comment line rather than --generate, which refuses this
+    # fixture (its rules leave CHANGELOG.md unclassified, measured) and so
+    # changed nothing, which the check below caught.
+    printf '# regenerated and not committed\n' >> "$vu_uc/.claude/template-manifest"
     [ -n "$(git -C "$vu_uc" status --porcelain -- .claude/template-manifest)" ] \
       || vu_bad="$vu_bad manifest-leg-fixture-left-no-change"
     vu_rc_uc="$(vu_uc_cut)"
