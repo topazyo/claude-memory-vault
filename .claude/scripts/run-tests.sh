@@ -12452,17 +12452,20 @@ expect_rc "the next run, once a tripwire can be written -> TRIPWIRE" 78 "$(runne
 tripwire_clear
 
 # A signal during the pass stops containment from running, so the handler sets
-# the tripwire itself before the runner exits. term_hung_pass [extra env...] starts
-# a pass whose agent hangs, waits until the agent has started, sends TERM, and
-# sets sig_rc.
-term_hung_pass() {
-  local sig_wait=0
+# the tripwire itself before the runner exits. sig_hung_pass <signal> <runner>
+# [extra env...] starts a pass of that runner whose agent hangs, waits until the
+# agent has started, sends the signal, and sets sig_rc. term_hung_pass
+# [extra env...] is the TERM case for the dream runner.
+sig_hung_pass() {
+  local sig_wait=0 sig_name="$1" sig_script="$2"
+  shift 2
   rm -f "$TMP/sig-rec.argv"
   env CLAUDE_BIN="$FAKE" FAKE_MODE=hang WATCHDOG_POLL=1 WATCHDOG_GRACE=2 \
     VAULT_AGENT=claude VAULT_AGENT_CMD= VAULT_ALLOW_UNENFORCED_TOOLS= FAKE_RECORD="$TMP/sig-rec" \
     VAULT_STATE_DIR="$CASE_STATE" CLAUDE_CODE_DISABLE_AUTO_MEMORY= DREAM_PASS_TIMEOUT=60 \
+    PROMOTION_PASS_TIMEOUT=60 \
     RUNNER_STALL_SECONDS= RUNNER_STALL_FLOOR= RUNNER_RUN_LOG_MAX_BYTES= "$@" \
-    bash "$RV/.claude/scripts/dream-pass.sh" >/dev/null 2>&1 &
+    bash "$RV/.claude/scripts/$sig_script" >/dev/null 2>&1 &
   sig_pid=$!
   # Setting a pass up can take half a minute on a slow Git Bash host. A signal
   # sent before the agent starts tests a different case, so that is a failure
@@ -12473,10 +12476,11 @@ term_hung_pass() {
   done
   [ -f "${SIG_WAIT_FILE:-$TMP/sig-rec.argv}" ] \
     || bad "the hung pass did not start its agent within 180s, so the signal came before it"
-  kill -TERM "$sig_pid" 2>/dev/null
+  kill -"$sig_name" "$sig_pid" 2>/dev/null
   wait "$sig_pid"
   sig_rc=$?
 }
+term_hung_pass() { sig_hung_pass TERM dream-pass.sh "$@"; }
 new_case_state signal
 term_hung_pass
 expect_rc "TERM while the agent runs -> exit 143" 143 "$sig_rc"
@@ -12533,6 +12537,83 @@ fi
 [ -n "$hb_pid" ] && kill -KILL "$hb_pid" 2>/dev/null
 rm -f "$HB" "$HB.pid"
 tripwire_clear
+
+# A hangup stops a pass as TERM does. Until 1.6.1 the runners trapped only INT
+# and TERM, so a HUP, from a closed terminal or an ended SSH session, ended the
+# runner at once: exit 129 all the same, but with the agent still running, the
+# run lock released and no tripwire. The exit code therefore proves nothing
+# here, and each control asserts what only the trap does: the pass's grandchild
+# stopped, the tripwire set and the marker gone. Bash cannot trap a signal that
+# was ignored when it started, which is what nohup does, so a probe first asks
+# a child bash whether it can trap HUP at all, and the controls are skipped by
+# name when it cannot.
+hup_probe="$(bash -c 'trap "echo caught" HUP; kill -HUP $$; sleep 1' 2>/dev/null)"
+for hup_script in dream-pass.sh promotion-pass.sh; do
+  hup_id="hup-${hup_script%.sh}"
+  if [ "$hup_probe" != caught ]; then
+    skip "$hup_id" "HUP during a $hup_script pass: HUP was ignored when this suite started (nohup?), so no bash below it can trap it"
+    continue
+  fi
+  case "$hup_script" in
+    dream-pass.sh) ran hup-dream-pass ;;
+    promotion-pass.sh) ran hup-promotion-pass ;;
+  esac
+  rm -f "$HB" "$HB.pid"
+  new_case_state "$hup_id"
+  SIG_WAIT_FILE="$HB"
+  sig_hung_pass HUP "$hup_script" FAKE_MODE=silent-grandchild FAKE_HEARTBEAT="$HB"
+  SIG_WAIT_FILE=""
+  expect_rc "HUP while a $hup_script pass runs -> exit 129" 129 "$sig_rc"
+  hb_pid="$(cat "$HB.pid" 2>/dev/null)"
+  sleep 1
+  if [ -n "$hb_pid" ] && ! kill -0 "$hb_pid" 2>/dev/null; then
+    ok "a hangup stops the grandchild of a $hup_script pass"
+  else
+    bad "a hangup left the grandchild of a $hup_script pass running (pid ${hb_pid:-none})"
+  fi
+  if [ -f "$CASE_STATE/runner-tripwire" ] && grep -q 'interrupted by a signal' "$CASE_STATE/runner-tripwire" \
+     && [ ! -f "$CASE_STATE/runner-inflight" ]; then
+    ok "a hangup during a $hup_script pass sets the tripwire and replaces its marker with it"
+  else
+    bad "a hangup during a $hup_script pass left no tripwire, or left the marker -- tripwire: $([ -f "$CASE_STATE/runner-tripwire" ] && echo yes || echo no), marker: $([ -f "$CASE_STATE/runner-inflight" ] && echo yes || echo no)"
+  fi
+  [ -n "$hb_pid" ] && kill -KILL "$hb_pid" 2>/dev/null
+  rm -f "$HB" "$HB.pid"
+  tripwire_clear
+done
+
+# The exit codes each runner documents, in its header and in its docs/reference.md
+# row, are one list, and it holds every code the runner's own signal traps leave
+# with. Until 1.6.1 both left out 130 and 143, which the runners have always
+# returned, so a scheduler reading either table met a code it was never told
+# about. The trapped codes are read out of the runner itself, so a new trap with
+# no row fails here rather than waiting for a reader to notice.
+for ec_script in dream-pass.sh promotion-pass.sh; do
+  ec_src="$ROOT/.claude/scripts/$ec_script"
+  ec_head="$(LC_ALL=C awk '/^# Exit codes:/ { on = 1; next } on && /^#   \*/ { exit }
+    on && match($0, /^#   [0-9]+ /) { print $2 }' "$ec_src" 2>/dev/null | LC_ALL=C sort -n | tr '\n' ' ')"
+  ec_ref="$(LC_ALL=C awk -F '|' -v r="\`.claude/scripts/$ec_script\`" 'index($2, r) == 2 {
+      s = $3; while (match(s, /`[0-9]+`/)) { print substr(s, RSTART + 1, RLENGTH - 2); s = substr(s, RSTART + RLENGTH) } }' \
+    "$ROOT/docs/reference.md" 2>/dev/null | LC_ALL=C sort -n | tr '\n' ' ')"
+  ec_trap="$(LC_ALL=C awk 'match($0, /trap .on_signal [0-9]+/) { s = substr($0, RSTART, RLENGTH); sub(/.* /, "", s); print s }' \
+    "$ec_src" 2>/dev/null | LC_ALL=C sort -n | tr '\n' ' ')"
+  ec_bad=''
+  [ -n "$ec_head" ] || ec_bad="$ec_bad no-header-codes-read"
+  [ -n "$ec_trap" ] || ec_bad="$ec_bad no-traps-read"
+  [ "$ec_head" = "$ec_ref" ] || ec_bad="$ec_bad header[$ec_head]-reference[$ec_ref]"
+  for ec_code in $ec_trap; do
+    case " $ec_head" in *" $ec_code "*) : ;; *) ec_bad="$ec_bad trapped-$ec_code-not-documented" ;; esac
+  done
+  case "$ec_script" in
+    dream-pass.sh) ran exit-codes-dream-pass ;;
+    promotion-pass.sh) ran exit-codes-promotion-pass ;;
+  esac
+  if [ -z "$ec_bad" ]; then
+    ok "$ec_script documents one list of exit codes in its header and in docs/reference.md, and it holds every code its signal traps leave with"
+  else
+    bad "$ec_script's exit codes are not one documented list --$ec_bad"
+  fi
+done
 
 # A signal inside the runner's own reporting. Two hooks, each on only when its
 # variable is set, are added to the vault's copy of the library for these cases
@@ -16261,6 +16342,7 @@ if ! command -v git >/dev/null 2>&1; then
   skip tmpl-vacuous "the template update controls build git fixtures, and git is not installed"
   skip tmpl-source-older "the template update controls build git fixtures, and git is not installed"
   skip tmpl-same-version-disagrees "the template update controls build git fixtures, and git is not installed"
+  skip tmpl-same-version-local-drift "the template update controls build git fixtures, and git is not installed"
   skip tmpl-tripwire-refused "the template update controls build git fixtures, and git is not installed"
   skip tmpl-pass-in-flight "the template update controls build git fixtures, and git is not installed"
   skip tmpl-no-hash-tool "the template update controls build git fixtures, and git is not installed"
@@ -17204,6 +17286,30 @@ else
     ok "two copies claiming one version and disagreeing is refused, and no copy plan is offered"
   else
     bad "two disagreeing copies at one version were compared anyway --$vu_bad [$(vu_excerpt)]"
+  fi
+
+  # The disagreement is between the two manifests, never between a manifest and
+  # the files the owner has since edited. Until 1.6.1 a vault with one local
+  # edit, checked against a pristine copy of the very release it records, was
+  # told the two copies disagree, which reads as tampering. Once for an owned
+  # file and once for a seed file, because both reached the old count.
+  vu_bad=''
+  for vu_drift in docs/a.md README.md; do
+    vu_d="$VU/samever-drift"
+    vu_make "$vu_d" 1.0.0
+    vu_src="$VU/samever-drift-src"
+    vu_make "$vu_src" 1.0.0
+    printf 'a line the owner added\n' >> "$vu_d/$vu_drift"
+    vu_rc_dr="$(vu_rc "$vu_d" --check --from "$vu_src")"
+    [ "$vu_rc_dr" = 0 ] || vu_bad="$vu_bad $vu_drift-rc:$vu_rc_dr"
+    vu_says 'SAME-VERSION-DISAGREES' && vu_bad="$vu_bad $vu_drift-refused"
+    vu_says 'nothing has moved upstream' || vu_bad="$vu_bad $vu_drift-did-not-compare"
+  done
+  ran tmpl-same-version-local-drift
+  if [ -z "$vu_bad" ]; then
+    ok "a vault's own edits, against a pristine copy of its own version, are compared and not called a disagreement"
+  else
+    bad "a vault's own edits were taken for two copies of one version disagreeing --$vu_bad [$(vu_excerpt)]"
   fi
 
   # A source manifest with a header and no entries. Every local path then looks
@@ -19459,6 +19565,51 @@ else
       ok "cutting a release writes the annotated tag the tree is owed with its changelog entry as the message, prints the two commands that publish it and pushes nothing to a remote that was standing there ready to receive it, refuses a second cut of the same version without also calling it clean, and refuses to tag a version whose changelog entry is a heading with nothing under it"
     else
       bad "cutting a release did not do what the failing check tells a reader to do --$vu_bad [$(vu_excerpt)]"
+    fi
+
+    # -- the bump not committed yet ----------------------------------------
+
+    # The tag is written on HEAD and every check before it reads the working
+    # tree. Until 1.6.1 a bump still uncommitted passed them all and the tag
+    # went onto a commit whose VERSION was the old one. Twice: the whole bump
+    # uncommitted, and a committed bump whose changelog entry was edited after.
+    # Then the same tree committed, which has to cut, and onto a commit that
+    # holds the new VERSION, or a refusal of everything would pass this.
+    vu_bad=''
+    vu_uc="$VU/release-uncommitted"
+    vu_make "$vu_uc" 1.0.0
+    printf '# Changelog\n\n## 1.0.0 - 2026-01-01\n\nThe first one.\n\n### Adopting this\n\nNothing to do.\n' > "$vu_uc/CHANGELOG.md"
+    vu_git "$vu_uc"
+    vu_tag "$vu_uc" 1.0.0
+    printf '1.1.0\n' > "$vu_uc/VERSION"
+    printf '# Changelog\n\n## 1.1.0 - 2026-02-01\n\nThe second one.\n\n### Adopting this\n\nNothing to do.\n\n## 1.0.0 - 2026-01-01\n\nThe first one.\n\n### Adopting this\n\nNothing to do.\n' > "$vu_uc/CHANGELOG.md"
+    vu_uc_cut() {
+      ( cd "$vu_uc" && CLAUDE_PROJECT_DIR="$vu_uc" \
+        GIT_COMMITTER_NAME=suite GIT_COMMITTER_EMAIL=suite@example.invalid \
+        GIT_AUTHOR_NAME=suite GIT_AUTHOR_EMAIL=suite@example.invalid \
+        "$VU_BASH" "$VU_REL" --tag > "$VU_OUT" 2>&1; printf '%s' "$?" )
+    }
+    vu_uc_tagged() { git -C "$vu_uc" tag -l 2>/dev/null | LC_ALL=C awk '$0 == "1.1.0" { n++ } END { print n + 0 }'; }
+    vu_rc_uc="$(vu_uc_cut)"
+    [ "$vu_rc_uc" = 1 ] || vu_bad="$vu_bad whole-bump-rc:$vu_rc_uc"
+    vu_says 'UNCOMMITTED-RELEASE' || vu_bad="$vu_bad whole-bump-gave-no-reason"
+    vu_says '  VERSION' || vu_bad="$vu_bad whole-bump-did-not-name-VERSION"
+    [ "$(vu_uc_tagged)" = 0 ] || { vu_bad="$vu_bad whole-bump-was-tagged"; git -C "$vu_uc" tag -d 1.1.0 >/dev/null 2>&1; }
+    vu_git "$vu_uc"
+    printf '\nOne more line.\n' >> "$vu_uc/CHANGELOG.md"
+    vu_rc_uc="$(vu_uc_cut)"
+    [ "$vu_rc_uc" = 1 ] || vu_bad="$vu_bad changelog-edit-rc:$vu_rc_uc"
+    vu_says '  CHANGELOG.md' || vu_bad="$vu_bad changelog-edit-did-not-name-CHANGELOG"
+    [ "$(vu_uc_tagged)" = 0 ] || { vu_bad="$vu_bad changelog-edit-was-tagged"; git -C "$vu_uc" tag -d 1.1.0 >/dev/null 2>&1; }
+    vu_git "$vu_uc"
+    vu_rc_uc="$(vu_uc_cut)"
+    [ "$vu_rc_uc" = 0 ] || vu_bad="$vu_bad committed-rc:$vu_rc_uc"
+    [ "$(git -C "$vu_uc" show 1.1.0:VERSION 2>/dev/null)" = 1.1.0 ] || vu_bad="$vu_bad committed-tag-does-not-hold-1.1.0"
+    ran tmpl-release-uncommitted
+    if [ -z "$vu_bad" ]; then
+      ok "a release whose bump is not committed yet is refused by name and not tagged, and the same tree once committed is cut onto a commit holding the new VERSION"
+    else
+      bad "the release check tagged a commit that is not the release, or refused a committed one --$vu_bad [$(vu_excerpt)]"
     fi
 
     # -- a tag git would not write -----------------------------------------
