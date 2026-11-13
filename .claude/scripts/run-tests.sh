@@ -6294,7 +6294,14 @@ if [ -n "$bss_real" ] && printf 'x\n' > "$BSS-vault/back\\bslash.md" 2>/dev/null
 #!/usr/bin/env bash
 # A cksum that escapes a backslash in a name the way uutils coreutils does:
 # the line gains a leading backslash and the backslash in the name is doubled.
+# A line the real cksum already escaped, as uutils itself does (GitHub's
+# ubuntu-latest image was Ubuntu 26.04 on 2026-11-13, measured, and 24.04 the
+# day before), passes through as it is. Escaping it again made a line no cksum prints, which the fence's
+# one-level decoder rightly does not read, and this control failed there.
 "$bss_real" "\$@" | while IFS= read -r line; do
+  case "\$line" in
+    \\\\*) printf '%s\n' "\$line"; continue ;;
+  esac
   name="\${line#* }"; name="\${name#* }"
   head="\${line%"\$name"}"
   case "\$name" in
