@@ -740,12 +740,15 @@ jobs:
       # real notes, an absolute path containing a username, or a secret.
       #
       # Two steps, the credential scan first, so a hit in the user-path step,
-      # which ends the job, cannot hide one here. The credential scan is not
-      # guarded: a secret in a vault's notes is worth a red build there too. It
-      # matches by shape, so ordinary prose such as "token: " followed by a long
-      # identifier can trip it, and a vault clears that by editing its own copy
-      # of this workflow, which the template never updates. The matching line is
-      # printed into the job log, which is only as private as the repository.
+      # which ends the job, cannot hide one here. The converse is the price: a
+      # credential hit ends the job before the user-path scan and the release
+      # step run, so after fixing it, read the next run for those. The credential
+      # scan is not guarded: a secret in a vault's notes is worth a red build
+      # there too. It matches by shape, so ordinary prose such as "token: "
+      # followed by a long identifier can trip it. Reword the line first; failing
+      # that, a vault edits its own copy of this workflow, which the template
+      # never updates. The matching line is printed into the job log, which is
+      # only as private as the repository.
       - name: No credentials committed
         run: |
           rc=0
