@@ -1354,12 +1354,12 @@ Around that call, each runner does several things an exit code cannot:
   (its config, `commondir`, hooks, `info/attributes` and the like) and any symlink in it, such as
   a `hooks` folder replaced by a link, but not its index, objects, branches, tags or logs. Inside
   `.claude/worktrees/<name>/` the same rules apply to the rest of the path, apart from the
-  line-break marker, which belongs to that worktree's session. Since 1.7.0 three more things
-  there are steering: a file of a reserved name placed directly in `.claude/worktrees/` (a
-  `CLAUDE.md` or `.mcp.json` there is read by a session in any worktree below it); a worktree, or
-  `.claude/worktrees` itself, that is a link, since a link can put a worktree anywhere; and
-  everything under a child whose own name is a harness folder, such as `.claude/worktrees/.claude/`,
-  which is no worktree.
+  line-break marker, which belongs to that worktree's session. Since 1.7.0 two more things there
+  are steering: a file of a reserved name placed directly in `.claude/worktrees/` (a `CLAUDE.md`
+  or `.mcp.json` there is read by a session in any worktree below it), and everything under a
+  child whose own name is a harness folder, such as `.claude/worktrees/.claude/`, which is no
+  worktree. A worktree, or `.claude/worktrees` itself, that is a link is steering as any link the
+  pass makes or changes is (below).
 
   For each changed steering path the runner moves the file or link as the pass left it into a
   quarantine outside the vault (it never deletes it), then restores the pre-pass copy from a backup

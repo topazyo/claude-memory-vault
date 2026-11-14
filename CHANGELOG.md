@@ -81,9 +81,11 @@ its own. Two changes can newly stop a vault that 1.6.1 passed; item 2 of the Ado
 - **Containment covers reserved names directly in `.claude/worktrees/`.** A `CLAUDE.md`,
   `AGENTS.md` or `.mcp.json` a pass planted there was reported by the fence and left in place, to
   be read by a session started in any worktree below it. It is now restored, quarantined and named
-  by the tripwire like any other steering file, and so is a link placed there, `.claude/worktrees`
-  itself swapped for a link, and anything under a child named like a harness folder (`.claude`,
-  `.git`), which is no worktree. A worktree's own `.runner-line-break-names` is no longer counted.
+  by the tripwire like any other steering file, and so is anything under a child named like a
+  harness folder (`.claude`, `.git`), which is no worktree. A worktree's own
+  `.runner-line-break-names` is no longer counted. A link there, a worktree or `.claude/worktrees`
+  itself, was already contained, as every link a pass makes or changes is; the steering list now
+  names it too, which changes no outcome a test could find.
 - **The tripwire refusals point at the procedure.** `vault-check.sh`'s exit 78 and the pre-commit
   gate's now name `docs/setup.md`, section "A tripwire is set".
 
