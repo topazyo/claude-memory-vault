@@ -204,7 +204,9 @@ The dream and promotion passes run the `dream-agent` and `promotion-agent` defin
 mutates no existing note. Keep it that way. The promotion agent adds notes to the long tier and
 never changes one already there, proposing such changes in its report instead, and in a vault that
 is its own git repository its runner refuses a pass that does (exit 2). Those two runners also fail a pass that writes outside
-its allowed folders (exit 2) and kill one that hangs (exit 124) or stops streaming (exit 125). In
+its allowed folders (exit 2) and kill one that hangs (exit 124) or stops streaming (exit 125). An
+agent that itself leaves with one of the runners' own codes makes them exit 79, with its status in
+the log. In
 claude mode they refuse to start (exit 1) when they cannot point Claude Code's memory inside the
 vault; the log's `ERROR:` line says why (the run log's, when the runner and its library come
 from different releases), and the dream and promotion runners' exit-code table in
