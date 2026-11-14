@@ -235,8 +235,11 @@ printf 'malformed stub\n'     > "$WORK/20-projects/_logs/compaction-abc.md"
 # A note whose own FILENAME contains spaces must still be scanned.
 printf -- '---\ntitle: "y"\n---\n\nbody\n' > "$WORK/10-daily/a note with spaces.md"
 
-# ------------------------------------------------------ vault-lint.sh tests --
-if suite_section lint; then
+# ------------------------------------- helpers more than one section uses --
+# Defined before every section, not inside the one that uses them first, so
+# RUN_TESTS_ONLY can run any section alone: the no-jq section lints through
+# lint and strip_notices, and the omp section drives Node as the Pi section
+# does, with pi_native and the node probe.
 
 lint() {
   # Backslashes are doubled because the value is interpolated into JSON, where a
@@ -254,6 +257,19 @@ lint() {
 strip_notices() {
   grep -v 'jq not found' || true
 }
+
+pi_native() {  # pi_native <path> - the path in a form Node on Windows can open
+  if command -v cygpath >/dev/null 2>&1; then cygpath -m "$1"; else printf '%s' "$1"; fi
+}
+pi_node_version=""
+command -v node >/dev/null 2>&1 && pi_node_version=$(node --version 2>/dev/null)
+pi_node_major=${pi_node_version#v}
+pi_node_major=${pi_node_major%%.*}
+case "$pi_node_major" in ''|*[!0-9]*) pi_node_major=0 ;; esac
+
+# ------------------------------------------------------ vault-lint.sh tests --
+if suite_section lint; then
+
 
 expect_match() {
   local out; out=$(lint "$2" | strip_notices)
@@ -1599,14 +1615,6 @@ if suite_section pi; then
 
 printf '\n=== Pi extension (.claude/adapters/pi/vault.js) ===\n'
 
-pi_native() {  # pi_native <path> - the path in a form Node on Windows can open
-  if command -v cygpath >/dev/null 2>&1; then cygpath -m "$1"; else printf '%s' "$1"; fi
-}
-pi_node_version=""
-command -v node >/dev/null 2>&1 && pi_node_version=$(node --version 2>/dev/null)
-pi_node_major=${pi_node_version#v}
-pi_node_major=${pi_node_major%%.*}
-case "$pi_node_major" in ''|*[!0-9]*) pi_node_major=0 ;; esac
 if [ "$pi_node_major" -lt 18 ]; then
   skip pi-extension-behaviour "Pi extension: needs node 18 or later, and found ${pi_node_version:-no node}"
   skip pi-extension-dirlink "Pi extension: needs node 18 or later, and found ${pi_node_version:-no node}"
