@@ -361,18 +361,25 @@ link_target_ok() {
 # named_tier_rel <absolute path> - true when the path lies in one of this
 # vault's content-tier folders, by identity rather than by spelling, so
 # ./31-standards/x.md, a doubled slash or the other Windows spelling of the
-# root count as well. Sets NAMED_REL to the path from the vault root.
+# root count as well. Sets NAMED_REL to the path from the vault root, and
+# NAMED_VIA_LINK to 1 when the note or a folder on the way to its tier folder,
+# that folder included, is a link. Only then does the link rule apply: a note
+# named plainly is checked whatever its name, as named mode always did.
 named_tier_rel() {
   local f="${1//\\//}" d sub="" t prev=""
   d="${f%/*}"
   NAMED_REL=""
+  NAMED_VIA_LINK=0
+  [ -L "$f" ] && NAMED_VIA_LINK=1
   while [ -n "$d" ] && [ "$d" != "$prev" ]; do
     for t in $TIERS; do
       if [ -e "$ROOT/$t" ] && [ "$d" -ef "$ROOT/$t" ]; then
+        { [ -L "$d" ] || [ -L "$ROOT/$t" ]; } && NAMED_VIA_LINK=1
         NAMED_REL="$t/$sub${f##*/}"
         return 0
       fi
     done
+    [ -L "$d" ] && NAMED_VIA_LINK=1
     [ "$d" -ef "$ROOT" ] && return 1
     prev="$d"
     sub="${d##*/}/$sub"
@@ -498,7 +505,7 @@ if [ "${#NAMED[@]}" -gt 0 ]; then
     # what the advisory checks read. A note named anywhere else is checked as
     # it always was.
     if named_tier_rel "$file"; then
-      if ! link_target_ok "$file"; then
+      if [ "$NAMED_VIA_LINK" -eq 1 ] && ! link_target_ok "$file"; then
         printf 'vault-check: %s %s, so it was not checked.\n' "$file" "$LINK_WHY" >&2
         refused=$((refused + 1))
         continue
