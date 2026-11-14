@@ -977,9 +977,17 @@ steering_filter() {
         print $0
         next
       }
+      # A direct child of .claude/worktrees/ is a worktree folder, which is not
+      # steering, unless its own name is: a CLAUDE.md or .mcp.json placed there
+      # is read by a session started in any worktree below it.
       if (lp ~ /^\.claude\/worktrees\/[^\/]+\//) {
         sub(/^\.claude\/worktrees\/[^\/]+\//, "", lp)
-      } else if (lp == ".claude/worktrees" || lp ~ /^\.claude\/worktrees\/[^\/]*$/) {
+      } else if (lp == ".claude/worktrees") {
+        next
+      } else if (lp ~ /^\.claude\/worktrees\/[^\/]*$/) {
+        sub(/^\.claude\/worktrees\//, "", lp)
+        if (lp == "" || !steer(lp, islink)) next
+        print $0
         next
       }
       if (steer(lp, islink)) print $0
