@@ -80,7 +80,10 @@ entity. Something reaches `31-standards/` only after it has survived a real proj
 
 Every note opens with a YAML frontmatter block. `tier:` and `type:` are **mandatory and
 machine-checked**; the rest are conventional but keep the Dataview dashboards working. Dates are
-ISO `YYYY-MM-DD`.
+ISO `YYYY-MM-DD`. Their values are checked too: `tier` is the tier of the folder the note is in
+(§3) and `type` one of the values there, and `vault-check.sh` prints a `WARNING` line for one that
+is not, for a long-tier note with no wikilink, and for a key written as `"tier":` or `tier :` or
+written twice. The warnings become violations in a later release.
 
 ```yaml
 ---
@@ -146,7 +149,7 @@ they were told apart a caller reading only the code could not choose.
 | --- | --- |
 | `0` | At least one note was scanned and none violates an invariant |
 | `1` | **The vault has a problem.** A note violates an invariant |
-| `2` | **This checker could not run**, so it says nothing about the vault. No notes were scanned, or there are no content-tier folders under the root, or a named note is not a readable file |
+| `2` | **This checker could not run**, so it says nothing about the vault. No notes were scanned, or there are no content-tier folders under the root, or a named note is not a readable file, or a link in a tier, or a note named through one, dangles or resolves to something the scan does not read where it is (outside the content-tier folders, a template, a stub) |
 | `64` | The command line was wrong |
 | `78` | A scheduled pass set the tripwire, so nothing was checked and a human has to look first ([`docs/setup.md`, A tripwire is set](docs/setup.md#a-tripwire-is-set)). The three runners use `78` for the same thing |
 
@@ -163,8 +166,13 @@ The three lines after the count report rather than judge, and none of them chang
 exit code. The first says how many notes the retention pass has taken out of the live tiers. The
 second names the last retention pass and how many notes it moved once one has run, and says the last
 pass is unknown when git cannot answer. The third names the template version this vault was created
-from, and says `No template provenance marker` when the vault has none. A scan narrowed with `--`
-prints only the count.
+from, and says `No template provenance marker` when the vault has none. In both modes, two kinds
+of line can come between the count line and those three. First a `vault-check: N link(s) refused`
+line, when a link was refused: what it holds was not read, and the exit code is 2 unless a note
+violates an invariant, so `0 violation(s) across N` with exit 2 means some notes went unchecked.
+Then, for a vault with notes to warn about (§4), `vault-check: WARNING:` lines and a
+`N warning(s)` line, which change neither the count nor the exit code. A scan narrowed with `--`
+prints those and nothing after them.
 
 `0 violations across 0 files` is not a pass, and the script exits **2** with a `VACUOUS` message
 when it happens. It means the scan matched nothing — wrong working directory, a wrong
@@ -204,7 +212,9 @@ The dream and promotion passes run the `dream-agent` and `promotion-agent` defin
 mutates no existing note. Keep it that way. The promotion agent adds notes to the long tier and
 never changes one already there, proposing such changes in its report instead, and in a vault that
 is its own git repository its runner refuses a pass that does (exit 2). Those two runners also fail a pass that writes outside
-its allowed folders (exit 2) and kill one that hangs (exit 124) or stops streaming (exit 125). In
+its allowed folders (exit 2) and kill one that hangs (exit 124) or stops streaming (exit 125). An
+agent that itself leaves with one of the runners' own codes makes them exit 79, with its status in
+the log. In
 claude mode they refuse to start (exit 1) when they cannot point Claude Code's memory inside the
 vault; the log's `ERROR:` line says why (the run log's, when the runner and its library come
 from different releases), and the dream and promotion runners' exit-code table in

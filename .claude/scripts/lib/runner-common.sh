@@ -977,9 +977,31 @@ steering_filter() {
         print $0
         next
       }
+      # A direct child of .claude/worktrees/ is a worktree folder, which is not
+      # steering, unless its own name is: a CLAUDE.md or .mcp.json placed there
+      # is read by a session started in any worktree below it. A link there is
+      # steering too, since a worktree is a folder and a link can put one
+      # anywhere, and so is everything under a child whose own name is a
+      # harness folder (.claude, .git): that is no worktree. The line-break
+      # marker means something only at the vault root, so the one in a
+      # worktree belongs to its session. .claude/worktrees itself is a folder
+      # like the others, unless it is a link, which puts every worktree, and
+      # the instruction files a session there reads, wherever it points.
       if (lp ~ /^\.claude\/worktrees\/[^\/]+\//) {
+        wt = lp
+        sub(/^\.claude\/worktrees\//, "", wt)
+        sub(/\/.*$/, "", wt)
+        if (wt != ".runner-line-break-names" && steer(wt, 0)) { print $0; next }
         sub(/^\.claude\/worktrees\/[^\/]+\//, "", lp)
-      } else if (lp == ".claude/worktrees" || lp ~ /^\.claude\/worktrees\/[^\/]*$/) {
+        if (lp == ".runner-line-break-names") next
+      } else if (lp == ".claude/worktrees") {
+        if (islink) print $0
+        next
+      } else if (lp ~ /^\.claude\/worktrees\/[^\/]*$/) {
+        sub(/^\.claude\/worktrees\//, "", lp)
+        if (lp == "" || lp == ".runner-line-break-names") next
+        if (!islink && !steer(lp, islink)) next
+        print $0
         next
       }
       if (steer(lp, islink)) print $0
@@ -4110,6 +4132,10 @@ memory_override() {
 run_agent() {
   local timeout="$1" out="$2" agent="$3" task="$4" prompt_rel="$5"
   local stall="${AGENT_STALL_SECONDS:-0}" gaps="${AGENT_GAPS_FILE:-}" nonce="${AGENT_SESSION_ID:-}"
+  # Set to 1 only once the agent was started, so RUN_RC is the agent's own
+  # status. The refusals below set RUN_RC themselves, and agent_status_exit
+  # must never remap a code the library chose.
+  AGENT_RAN=0
   [ -n "$nonce" ] || nonce="$(new_uuid)"
   AGENT_SESSION_ID="$nonce"
   # Only a runner sets SNAP_SEALS, from snap_manifest, and one from an earlier
@@ -4169,12 +4195,14 @@ run_agent() {
         "$AGENT_BIN" -p "$task" --agent "$agent" --permission-mode acceptEdits \
         --output-format stream-json --verbose --include-partial-messages --session-id "$nonce" \
         --settings "$AGENT_SETTINGS_FILE" --disallowedTools Bash PowerShell Monitor
+      AGENT_RAN=1
       ;;
     command)
       # The wrapper gets the nonce in its environment. Only a process that puts
       # it on its own command line can be found by the Windows sweep.
       VAULT_RUN_NONCE="$nonce" RUN_STALL_SECONDS="$stall" RUN_GAPS_FILE="$gaps" RUN_NONCE="$nonce" \
         run_with_watchdog "$timeout" "$out" "$AGENT_BIN" "$prompt_rel"
+      AGENT_RAN=1
       ;;
     *)
       # agent_preflight rejects any other kind first. Set the globals anyway,
@@ -4186,4 +4214,39 @@ run_agent() {
       RUN_KILL_REPORT=""
       ;;
   esac
+}
+
+# The codes the dream and promotion runners return for themselves, from the
+# exit-code table in each one's header. An agent or wrapper that left with one
+# of them would read as the runner saying that thing (78 a tripwire nobody set,
+# 75 a lock nobody held), so agent_status_exit sends it out as 79. 1 is left out
+# on purpose: claude -p and most wrappers leave with 1 for any failure, so
+# mapping it would change the code of the commonest failed pass, and the log's
+# "exited with code" line already says the status was the agent's. 79 itself is
+# in the list, so an agent that leaves with 79 gets the same AGENT-STATUS line
+# and cannot pass for a remapped code.
+AGENT_RESERVED_STATUSES="2 3 4 5 64 70 75 78 79 124 125 127 129 130 143"
+
+# agent_status_exit <agent-name> <log>
+# Returns the code a runner leaves with when the agent returned RUN_RC, which
+# is not 0: 79, with an AGENT-STATUS line in <log>, when RUN_RC is a reserved
+# code and the agent really ran (AGENT_RAN, set by run_agent), and RUN_RC
+# otherwise. A status run_agent set itself, before any agent started, is never
+# remapped.
+agent_status_exit() {
+  local agent="$1" log="$2" c
+  # 127 from a binary that was gone when the watchdog came to start it is the
+  # shell's, not the agent's, and keeps its own meaning: not found.
+  if [ "$RUN_RC" = 127 ] && ! command -v -- "${AGENT_BIN:-}" >/dev/null 2>&1; then
+    return 127
+  fi
+  if [ "${AGENT_RAN:-0}" = 1 ]; then
+    for c in $AGENT_RESERVED_STATUSES; do
+      if [ "$RUN_RC" = "$c" ]; then
+        printf '[%s] AGENT-STATUS: %s left with %s, a code this runner uses for itself, so the pass exits 79 instead. The line above with its own status is the one to read.\n' "$(ts)" "$agent" "$RUN_RC" >> "$log"
+        return 79
+      fi
+    done
+  fi
+  return "$RUN_RC"
 }

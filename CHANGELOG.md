@@ -25,6 +25,126 @@ bash .claude/scripts/vault-update.sh --check --from ../template-new
 
 ---
 
+## 1.7.0 — 2026-11-14
+
+A minor release for checks that reported clean over files they did not read. It closes the gaps a
+review of 1.6.0 found and reproduced in `vault-check.sh`, the lint hook and the runners' containment,
+adds advisory checks of what a note's keys say, and gives an agent's colliding exit status a code of
+its own. Two changes can newly stop a vault that 1.6.1 passed; item 2 of the Adopting note says which.
+
+### Added
+
+- **Advisory `WARNING` lines from `vault-check.sh`.** After the count line, in both modes, it now
+  names a note whose `tier` is not `short`, `medium` or `long` (an empty value included) or is not
+  the tier of its folder, whose `type` is outside the six allowed values, that sits in a long-tier
+  folder with no `[[wikilink]]`, or whose `tier`, `type`, `created` or `last_verified` key is also
+  written as `"key":`, `'key':` or `key :`, or appears more than once. A future `last_verified`
+  written any of those ways passed C5. The lines change neither the count line nor the exit code
+  in this release, and a vault with nothing to warn about prints none.
+- **Exit 79 (AGENT-STATUS) for the dream and promotion runners.** An agent or `VAULT_AGENT_CMD`
+  wrapper that itself leaves with one of the runners' own codes (2, 3, 4, 5, 64, 70, 75, 78, 124,
+  125, 127, 129, 130, 143) made the runner leave with that code, so a wrapper's 78 read as a
+  tripwire nobody set and its 75 as a lock nobody held. The runner now leaves with 79 and logs an
+  `AGENT-STATUS:` line after the agent's own `exited with code` line, and does the same for an
+  agent that itself leaves with 79. 1 is not remapped: it is what `claude -p` and most wrappers
+  leave with for any failure. A wrapper that was gone when the watchdog came to start it stays 127;
+  one that is there but cannot start, its `#!` interpreter missing, gets bash's 126, which no runner
+  uses, and passes through as 126.
+- **`RUN_TESTS_ONLY=<section>`** runs one section of `run-tests.sh`, for work on that section. A
+  full run is unchanged and is still what CI and a release need.
+
+### Fixed
+
+- **`vault-check.sh` reads every note it reports on.** Its full scan ran `find` on absolute paths
+  without following links. A vault inside any folder named `templates` scanned nothing (exit 2, so
+  the commit gate refused every commit), a long-tier note named `compaction-*.md` was pruned as if
+  it were a compaction stub, and a tier folder or note that is a link was skipped while the report
+  said 0 violations. The scan now matches its prunes on the path from the vault root, prunes the
+  stubs directly in `20-projects/_logs/` only, and checks every link in a tier that could be a note
+  or a folder of notes: one whose real target the scan reads where it is, a folder or `.md` note
+  under a content-tier folder, is fine, and one that dangles or points anywhere else (outside the
+  tiers, into a templates folder, to a stub, to a file that is no note) is named on stderr,
+  counted on stdout after the count line, and makes the run exit 2. A note named after `--` that
+  lies in a tier, by identity rather than spelling, is held to the same rule when a link is on the
+  way to it, so both modes agree about it; named plainly, a note is checked whatever its name or
+  folder, as before. An exported `CDPATH` can no longer move the scan. C4 and C5 read a date with
+  an inline comment after it, the shape `docs/customizing.md` shows, as the date; before, they
+  reported it as malformed.
+- **The lint scans steering files whatever the path's spelling.** It skipped any file under a
+  folder named `templates` before deciding scope, and matched scope on the path as spelled, so
+  `.claude/rules/templates/x.md`, `.claude//rules/x.md`, `.claude/./rules/x.md`, a trailing dot on a
+  folder name, `..` parts such as `10-daily/templates/../x.md`, a trailing `/.` or `::$DATA` after
+  the name, and every file of a vault whose own path holds `/templates/` were skipped with no
+  warning and no log line, and so were `evil.md/x/..` and a folder named with its
+  `::$INDEX_ALLOCATION` or `:$I30:$INDEX_ALLOCATION` stream, all of which Win32 opens. Scope is now decided on the
+  vault-relative, normalised path, with `..` resolved as Win32 resolves it, and `templates/` is
+  skipped inside a content tier only and never for a steering file, so a `CLAUDE.md` in a tier's
+  templates folder is scanned too. A Windows 8.3 short name such as `CLAUDE~1` is still not
+  recognised (`docs/reference.md` §3.1).
+- **Containment covers reserved names directly in `.claude/worktrees/`.** A `CLAUDE.md`,
+  `AGENTS.md` or `.mcp.json` a pass planted there was reported by the fence and left in place, to
+  be read by a session started in any worktree below it. It is now restored, quarantined and named
+  by the tripwire like any other steering file, and so is anything under a child named like a
+  harness folder (`.claude`, `.git`), which is no worktree. A worktree's own
+  `.runner-line-break-names` is no longer counted. A link there, a worktree or `.claude/worktrees`
+  itself, was already contained, as every link a pass makes or changes is; the steering list now
+  names it too, which changes no outcome a test could find.
+- **The tripwire refusals point at the procedure.** `vault-check.sh`'s exit 78 and the pre-commit
+  gate's now name `docs/setup.md`, section "A tripwire is set".
+
+### Adopting this
+
+1. **Take `.claude/scripts/vault-check.sh`, `.claude/githooks/pre-commit`, `.claude/hooks/vault-lint.sh`,
+   `.claude/scripts/lib/runner-common.sh`, `.claude/scripts/dream-pass.sh`,
+   `.claude/scripts/promotion-pass.sh`, `.claude/scripts/run-tests.sh` and `docs/reference.md`
+   together.** The suite holds the runners' exit-code headers against `docs/reference.md`, and the
+   runners need the library's `agent_status_exit`. A 1.7.0 runner with an older library leaves
+   with the agent's code as before.
+2. **Two changes can newly stop a vault 1.6.1 passed**, and both reach the opt-in commit gate:
+   - A link in a content tier that dangles or points outside the content-tier folders, a tier
+     folder linked to a synced folder outside the vault included, now makes `vault-check.sh` exit
+     2 and names the link on stderr. So does a link to a template, a stub or a file that is no
+     `.md` note, and on Windows a junction counts as a link. If you link a tier on purpose, point
+     the link at a folder inside a content tier, or move the folder into the vault. Run
+     `bash .claude/scripts/vault-check.sh` before committing, to see whether any link is named.
+     The dream and promotion runners check each note they commit with `vault-check.sh -- <note>`,
+     so a note they wrote through such a link is refused there too.
+   - A note named `compaction-*.md` outside `20-projects/_logs/` is now read, so one with bad
+     frontmatter makes it exit 1. Fix the note.
+   Counts can rise for the same reasons, and for a vault inside a folder named `templates`, which
+   is now scanned at all.
+3. **Read the new `WARNING` lines once, and fix each note by hand.** They become violations in a
+   later release. Do not bulk-edit frontmatter to quiet them (AGENTS.md §9). A caller that reads
+   the count line's numbers or the exit code sees what it always saw. Two warnings mean the
+   checker's tables need the edit, not your notes: a `type` you use on purpose belongs in the type
+   list in `check_note()`, and a tier folder you renamed or added belongs in `folder_tier()`, or
+   its notes draw no tier-of-folder or long-tier-wikilink warning (`docs/customizing.md` §2 and
+   §3). A renamed `20-projects/_logs/` needs the three literals §2 names, too.
+4. **A scheduler or wrapper that reads the runners' exit code meets 79** where it met a colliding
+   code before, and for an agent that itself left with 79. The agent's own code is in the log's
+   `exited with code` line. If your
+   `VAULT_AGENT_CMD` wrapper passes on another program's status, it passes that program's codes on
+   too; have it leave with 1 for its own failures.
+5. **The lint now warns on steering files it skipped before**, such as one under
+   `.claude/rules/templates/`. A warning there is a finding, not noise.
+6. **`README.md` is a seed file.** Merge the frontmatter contract's two changed rows and the
+   sentence above them by hand if you kept your own, and the sentence after C5 that says what
+   the scan skips: a `templates/` folder inside a tier and the stubs directly in
+   `20-projects/_logs/`, not every `templates/` folder and `compaction-*.md` anywhere.
+7. **If you kept the template's `.github/workflows/ci.yml`**, which no vault is ever offered, its
+   required lists gain `c3-links` and `c4-templates-dot` on Ubuntu, macOS and bash 3.2, and
+   `c3-junction` and `c4-drive-spelling` on Windows. The 1.6.1 copy drops those lists outside
+   the template's repository, so nothing changes for a vault.
+8. The shipped files this release touches are `.claude/scripts/vault-check.sh`,
+   `.claude/githooks/pre-commit`, `.claude/hooks/vault-lint.sh`,
+   `.claude/scripts/lib/runner-common.sh`, `.claude/scripts/dream-pass.sh`,
+   `.claude/scripts/promotion-pass.sh`, `.claude/scripts/run-tests.sh`, `docs/reference.md`,
+   `docs/setup.md`, `docs/customizing.md`, `AGENTS.md` and `README.md`, plus `VERSION`, this file and
+   `.claude/template-manifest`. `.github/workflows/ci.yml` changed as well; a vault is offered
+   none of it.
+
+---
+
 ## 1.6.1 — 2026-11-14
 
 A patch release for what an owner meets first: the Quickstart's check, a tripwire, and the first

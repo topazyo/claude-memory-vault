@@ -363,13 +363,15 @@ Code gets the most automation), and (strongly recommended) `jq`. See [Requiremen
 
 Every note carries YAML frontmatter. `tier` and `type` are the two keys the machinery
 reads: the lint hook flags their absence on write, and `vault-check.sh` fails the vault without
-them. The rest are contract, enforced by review and by you.
+them. Since 1.7.0 it also prints a `WARNING` line for a value outside the lists below, a `tier`
+that is not its folder's, and a long-tier note with no wikilink; the warnings become violations
+in a later release. The rest are contract, enforced by review and by you.
 
 | Key | Status | Meaning |
 | --- | --- | --- |
 | `title` | contract | Human-readable title; may differ from the filename |
-| `tier` | **machine-checked (C2)** | `short`, `medium`, or `long` — declares the note's expected lifetime |
-| `type` | **machine-checked (C3)** | `daily`, `project-log`, `standard`, `wiki-entity`, `moc`, `reference` |
+| `tier` | **machine-checked (C2; its value advisory)** | `short`, `medium`, or `long` — declares the note's expected lifetime |
+| `type` | **machine-checked (C3; its value advisory)** | `daily`, `project-log`, `standard`, `wiki-entity`, `moc`, `reference` |
 | `tags` | contract | Flat tag list; the Dataview dashboards group on these |
 | `status` | contract | `active`, `stable`, `superseded` |
 | `created` | contract | ISO date the note was first written; never edited afterwards |
@@ -389,7 +391,8 @@ is never in the future. C4 also flags a `created` that is not a `YYYY-MM-DD` dat
 freshness signal. There is deliberately **no** check that a long-tier note carries
 `last_verified` at all. That judgement stays with you. The scan covers the six content tiers
 (`01-inbox`, `10-daily`, `20-projects`, `30-knowledge`, `31-standards`, `40-llm-wiki`), skipping
-`*/templates/*` and the compaction stubs; `90-auto-memory/` is machine-managed and out of scope.
+a `templates/` folder inside a tier and the `compaction-*.md` stubs directly in
+`20-projects/_logs/`; `90-auto-memory/` is machine-managed and out of scope.
 
 ---
 

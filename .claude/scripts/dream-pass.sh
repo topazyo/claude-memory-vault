@@ -98,6 +98,12 @@
 #        out or stalled: 78, or 70 when no tripwire could be written, then takes
 #        the place of 124 or 125, and the TIMEOUT or STALLED line is logged as
 #        well)
+#   79   AGENT-STATUS: the agent or wrapper itself left with one of the codes
+#        in this list other than 0 and 1 (2, 3, 4, 5, 64, 70, 75, 78, 79, 124,
+#        125, 127, 129, 130 or 143), so the runner does not repeat a code that
+#        would mean something else, and logs an AGENT-STATUS line. A wrapper
+#        that was gone when the watchdog came to start it stays 127. The log's "dream-agent exited with code" line
+#        holds the agent's own status
 #   124  TIMEOUT: the watchdog killed a run that exceeded DREAM_PASS_TIMEOUT, and
 #        everything it started
 #   125  STALLED: the watchdog killed a run whose output stopped growing for the
@@ -110,9 +116,9 @@
 #        and a pass stopped before containment sets the tripwire
 #   130  see 129
 #   143  see 129
-#   *    any other non-zero status is the agent's own. It is passed through as
-#        it is, so an agent that itself leaves on one of the codes above cannot
-#        be told from the runner by the code alone; the log's "dream-agent
+#   *    any other non-zero status is the agent's own, passed through as it is.
+#        That includes 1, the status of most failing wrappers and of claude -p,
+#        so a 1 can be the agent's or the runner's; the log's "dream-agent
 #        exited with code" line says which
 
 set -u
@@ -615,6 +621,13 @@ main() {
       no_record_exit
     fi
     record_leftovers "$ROOT" "$SNAP_DIR/nohooks" "$STATE" "$RUNNER" "$SNAP_DIR" "$LOG"
+    # The agent's own status, or 79 when it is one of this runner's codes. A
+    # library from before 1.7.0 has no agent_status_exit, and its absence must
+    # not turn into 127, which says the agent was never found.
+    if declare -F agent_status_exit >/dev/null; then
+      agent_status_exit dream-agent "$LOG"
+      exit $?
+    fi
     exit "$RUN_RC"
   fi
 

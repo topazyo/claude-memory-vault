@@ -44,10 +44,107 @@ log_line() {
   printf '[%s] %s\n' "$TS" "$1" >> "$LOG"
 }
 
+# norm_slashes <path> - sets NORM_OUT to <path> with backslashes turned into
+# slashes, runs of slashes and . parts dropped, each part's trailing dots and
+# spaces removed, which Win32 drops from every part of a path, not only the
+# last, and each .. taken out with the part before it, as Win32 resolves it
+# before it touches the disk. A .. with nothing before it to take out stays,
+# and so does a drive. Lexical, so through a symlink the answer can differ
+# from the file system's, and the file read is still the one named.
+# Parameter expansion only: this runs on every call, and a process here would
+# count against the lint's process budget (run-tests.sh holds it).
+#
+# With a second argument `keep`, the parts are not stripped. A test that SKIPS
+# a file reads that form: on Linux or macOS `templates.` is a folder of its own,
+# not `templates`, and a skip must never match more than is really there.
+norm_slashes() {
+  local p="${1//\\//}" strip="${2:-strip}" rest part out="" n=0 first=1
+  # The replacement is a bare /: bash before 5.2 keeps a backslash written in
+  # the replacement, so \/ there gave .claude\/rules on macOS's bash 3.2.
+  while :; do case "$p" in *//*) p="${p//\/\///}" ;; *) break ;; esac; done
+  rest="$p"
+  while :; do
+    part="${rest%%/*}"
+    case "$part" in
+      .) ;;
+      ..)
+        if [ "$n" -gt 0 ]; then
+          case "$out" in
+            */*) out="${out%/*}" ;;
+            *) out=""; first=1 ;;
+          esac
+          n=$((n - 1))
+        elif [ "$first" -eq 1 ]; then
+          out=".."; first=0
+        else
+          out="$out/.."
+        fi
+        ;;
+      *)
+        if [ "$strip" = strip ]; then
+          # NTFS opens a folder named with its ::$INDEX_ALLOCATION stream, or
+          # with the stream's own name, :$I30:$INDEX_ALLOCATION, as the folder
+          # itself, as it opens x.md::$DATA as x.md.
+          case "$part" in
+            *::\$[Ii][Nn][Dd][Ee][Xx]_[Aa][Ll][Ll][Oo][Cc][Aa][Tt][Ii][Oo][Nn]) part="${part%::*}" ;;
+            *:\$[Ii]30:\$[Ii][Nn][Dd][Ee][Xx]_[Aa][Ll][Ll][Oo][Cc][Aa][Tt][Ii][Oo][Nn]) part="${part%:\$[Ii]30:*}" ;;
+          esac
+          while :; do case "$part" in *.|*' ') part="${part%?}" ;; *) break ;; esac; done
+        fi
+        if [ "$first" -eq 1 ]; then out="$part"; else out="$out/$part"; fi
+        first=0
+        case "$part" in
+          ''|[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]:) ;;
+          *) n=$((n + 1)) ;;
+        esac
+        ;;
+    esac
+    case "$rest" in
+      */*) rest="${rest#*/}" ;;
+      *) break ;;
+    esac
+  done
+  NORM_OUT="$out"
+}
+
+# The vault root in that same form, and its other spelling on Windows, where
+# Git Bash names C:/x as /c/x and either can reach this hook.
+norm_slashes "$ROOT"
+ROOT_SCOPE="${NORM_OUT%/}"
+ROOT_SCOPE_ALT=""
+case "$ROOT_SCOPE" in
+  /[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]/*) ROOT_SCOPE_ALT="${ROOT_SCOPE:1:1}:/${ROOT_SCOPE:3}" ;;
+  [ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]:/*) ROOT_SCOPE_ALT="/${ROOT_SCOPE:0:1}/${ROOT_SCOPE:3}" ;;
+esac
+
+# scope_path <path> - sets SCOPEP to <path> normalised by norm_slashes and,
+# when it lies inside the vault, made relative to the vault root. The root is
+# compared without regard to case: a match only makes the path relative, so
+# the tests below see it as the vault's own file, which scans more, not less.
+#
+# Also sets SCOPEP_KEEP to the same path without the per-part stripping, for
+# the templates skip.
+scope_path() {
+  norm_slashes "$1"
+  SCOPEP="$NORM_OUT"
+  norm_slashes "$1" keep
+  SCOPEP_KEEP="$NORM_OUT"
+  shopt -s nocasematch
+  if [ -n "$ROOT_SCOPE" ]; then
+    case "$SCOPEP" in "$ROOT_SCOPE"/*) SCOPEP="${SCOPEP:${#ROOT_SCOPE}+1}" ;; esac
+    case "$SCOPEP_KEEP" in "$ROOT_SCOPE"/*) SCOPEP_KEEP="${SCOPEP_KEEP:${#ROOT_SCOPE}+1}" ;; esac
+  fi
+  if [ -n "$ROOT_SCOPE_ALT" ]; then
+    case "$SCOPEP" in "$ROOT_SCOPE_ALT"/*) SCOPEP="${SCOPEP:${#ROOT_SCOPE_ALT}+1}" ;; esac
+    case "$SCOPEP_KEEP" in "$ROOT_SCOPE_ALT"/*) SCOPEP_KEEP="${SCOPEP_KEEP:${#ROOT_SCOPE_ALT}+1}" ;; esac
+  fi
+  shopt -u nocasematch
+}
+
 # lint_file <path> - the whole check for one file. Returns, never exits, so
 # argument mode can lint several files in one call.
 lint_file() {
-  local FILE="$1" NORM MATCHN IS_CONTENT_TIER IS_CHAR_SCAN_SCOPE warn FMV HITS HITS_FMT HITS_JOINED SCAN_RAN
+  local FILE="$1" NORM MATCHN SCOPEP SCOPEP_KEEP TIER_DIR IS_CONTENT_TIER IS_CHAR_SCAN_SCOPE IS_TIER_SCOPE IS_STEERING warn FMV HITS HITS_FMT HITS_JOINED SCAN_RAN
 
   # normalize backslashes -> forward slashes for git-bash / MSYS.
   # Bash parameter expansion, not `printf | tr`. The old form cost a process on
@@ -97,10 +194,20 @@ lint_file() {
   #
   # Every iteration removes one character, so a name that is only dots and
   # spaces ends up empty and fails the .md test, which is the right answer.
-  MATCHN="$NORM"
+  #
+  # A trailing / or /. and an NTFS stream suffix go the same way: Win32 opens
+  # `evil.md/.` and `evil.md::$DATA` as evil.md, so before 1.7.0 both reached
+  # the vault unscanned through the .md test below. The name is normalised
+  # first, so `evil.md/x/..` is judged as evil.md, which Win32 opens. In keep
+  # mode, because MATCHN is also what scope_path reads, and its templates skip
+  # must see a folder named `templates.` as spelled: stripping here would hand
+  # it `templates` and skip a note that is no template on Linux and macOS.
+  norm_slashes "$NORM" keep
+  MATCHN="$NORM_OUT"
   while :; do
     case "$MATCHN" in
-      *.|*' ') MATCHN="${MATCHN%?}" ;;
+      *.|*' '|*/) MATCHN="${MATCHN%?}" ;;
+      *::\$[Dd][Aa][Tt][Aa]) MATCHN="${MATCHN%???????}" ;;
       *) break ;;
     esac
   done
@@ -115,10 +222,15 @@ lint_file() {
   shopt -s nocasematch
   case "$MATCHN" in *.md) ;; *) shopt -u nocasematch; return 0 ;; esac
   shopt -u nocasematch
-  # templates stays case sensitive on purpose. This test SKIPS a file, so
-  # matching more here would scan less, and a directory really named Templates
-  # on a case-sensitive filesystem is not the pruned one.
-  case "$MATCHN" in */templates/*) return 0 ;; esac
+
+  # Every scope test below reads SCOPEP: the name made relative to the vault
+  # and normalised, so the spelling of a path cannot take a file out of scope.
+  # Before 1.7.0 they read the name as spelled, and .claude//rules/t.md,
+  # .claude/./rules/t.md, a steering file in any folder named templates, and
+  # every file of a vault whose own path holds /templates/ were all skipped
+  # with no warning and no log line. Only the tests use it; the file read and
+  # the name logged are still the ones given.
+  scope_path "$MATCHN"
 
   # content tiers: the mandatory tier/type frontmatter check applies here only
   #
@@ -128,7 +240,7 @@ lint_file() {
   # loosely here would start reporting notes in a folder that is not a tier at
   # all on the platforms where it is not one.
   IS_CONTENT_TIER=0
-  case "$MATCHN" in
+  case "$SCOPEP" in
     *"/01-inbox/"*|*"/10-daily/"*|*"/20-projects/"*|*"/30-knowledge/"*|*"/31-standards/"*|*"/40-llm-wiki/"*) IS_CONTENT_TIER=1 ;;
     01-inbox/*|10-daily/*|20-projects/*|30-knowledge/*|31-standards/*|40-llm-wiki/*) IS_CONTENT_TIER=1 ;;
   esac
@@ -162,11 +274,15 @@ lint_file() {
   # and a steering file dropped in either must not slip past.
   IS_CHAR_SCAN_SCOPE=$IS_CONTENT_TIER
   shopt -s nocasematch
-  case "$MATCHN" in
+  case "$SCOPEP" in
     *"/01-inbox/"*|*"/10-daily/"*|*"/20-projects/"*|*"/30-knowledge/"*|*"/31-standards/"*|*"/40-llm-wiki/"*) IS_CHAR_SCAN_SCOPE=1 ;;
     01-inbox/*|10-daily/*|20-projects/*|30-knowledge/*|31-standards/*|40-llm-wiki/*) IS_CHAR_SCAN_SCOPE=1 ;;
   esac
-  case "$MATCHN" in
+  # The steering files are told apart from the tier notes, because the
+  # templates skip below must never take one of them out of the scan.
+  IS_TIER_SCOPE=$IS_CHAR_SCAN_SCOPE
+  IS_CHAR_SCAN_SCOPE=0
+  case "$SCOPEP" in
     *"/.claude/rules/"*|*"/.claude/agents/"*|*"/.claude/skills/"*) IS_CHAR_SCAN_SCOPE=1 ;;
     .claude/rules/*|.claude/agents/*|.claude/skills/*) IS_CHAR_SCAN_SCOPE=1 ;;
     */CLAUDE.md|CLAUDE.md|*/AGENTS.md|AGENTS.md|*/GEMINI.md|GEMINI.md) IS_CHAR_SCAN_SCOPE=1 ;;
@@ -190,6 +306,27 @@ lint_file() {
     *"/_agent/rules/"*|_agent/rules/*|*"/_agent/skills/"*|_agent/skills/*|*"/_agent/workflows/"*|_agent/workflows/*|*"/_agent/agents/"*|_agent/agents/*) IS_CHAR_SCAN_SCOPE=1 ;;
   esac
   shopt -u nocasematch
+  IS_STEERING=$IS_CHAR_SCAN_SCOPE
+  [ "$IS_TIER_SCOPE" = 1 ] && IS_CHAR_SCAN_SCOPE=1
+
+  # templates is pruned inside a content tier only, the place the tier
+  # templates live, and never for a steering file: a CLAUDE.md in a tier's
+  # templates folder, or a rule under .claude/rules/01-inbox/templates/, is
+  # still read by a harness. Read on the path from the vault root when there is
+  # one, so a folder named like a tier deeper down is no tier, and without the
+  # per-part stripping, so on Linux and macOS a folder named `templates.` is not
+  # taken for `templates`. Case sensitive on purpose: this test SKIPS a file, so
+  # matching more here would scan less.
+  if [ "$IS_STEERING" != 1 ]; then
+    for TIER_DIR in 01-inbox 10-daily 20-projects 30-knowledge 31-standards 40-llm-wiki; do
+      case "$SCOPEP_KEEP" in
+        /*|[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]:/*)
+          case "$SCOPEP_KEEP" in */"$TIER_DIR"/templates/*|*/"$TIER_DIR"/*/templates/*) return 0 ;; esac ;;
+        *)
+          case "$SCOPEP_KEEP" in "$TIER_DIR"/templates/*|"$TIER_DIR"/*/templates/*) return 0 ;; esac ;;
+      esac
+    done
+  fi
 
   [ "$IS_CONTENT_TIER" = 1 ] || [ "$IS_CHAR_SCAN_SCOPE" = 1 ] || return 0
   if [ ! -f "$NORM" ]; then
@@ -222,12 +359,12 @@ lint_file() {
     # and prints zero or more of nofence, notier and notype. The warnings below
     # are worded and ordered exactly as they were.
     #
-    # Both fences stay anchored and both match fm_of() in
+    # Both fences stay anchored and both match note_facts() in
     # .claude/scripts/vault-check.sh, so the hook and the checker agree on
     # where frontmatter ends. An unanchored /^---/ would end it at any line
     # merely STARTING with dashes.
     #
-    # The opening fence now uses the same [ \t\r] as fm_of. It used to be
+    # The opening fence now uses the same [ \t\r] as note_facts. It used to be
     # tested by a grep for [[:space:]] while the awk beside it used [ \t\r], so
     # an opening fence padded with a vertical tab was accepted by one and
     # rejected by the other, and the file was reported as missing both keys
