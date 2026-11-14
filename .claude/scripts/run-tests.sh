@@ -980,6 +980,38 @@ else
     fi
     rm -f "$C3L/20-projects/_logs/compaction-y.md/gone.md" "$C3L/31-standards/w-short.md"
     rm -rf "$C3L/20-projects/_logs/compaction-y.md"
+    # A tier's templates folder that is itself a link, to shared templates
+    # outside the vault or to another tier's templates, is pruned as a real
+    # templates folder is: the scan never reads one, so there is nothing it
+    # failed to check. 1.7.0 as first written refused both and exited 2,
+    # which made the commit gate refuse every commit in such a vault.
+    mkdir -p "$TMP/c3-shared-templates"
+    printf 'a shared template, malformed on purpose\n' > "$TMP/c3-shared-templates/t.md"
+    ln -s "$TMP/c3-shared-templates" "$C3L/30-knowledge/templates"
+    ln -s ../31-standards/templates "$C3L/10-daily/templates"
+    c3_out="$(c3_run "$C3L")"
+    if [ "$(c3_rc "$c3_out")" = 0 ] && [ "$(sentinel_files "$c3_out")" = 1 ] && ! printf '%s\n' "$c3_out" | grep -q 'is a link that\|link(s) refused'; then
+      ok "a tier's templates folder that is a link, out of the vault or to another tier's templates, is pruned like a real one"
+    else
+      bad "a linked templates folder -- expected exit 0, 1 file and no refusal -- got: $(printf '%s' "$c3_out" | tr '\n' '|' | cut -c1-500)"
+    fi
+    rm -f "$C3L/30-knowledge/templates" "$C3L/10-daily/templates"
+    rm -rf "$TMP/c3-shared-templates"
+    # A link's own name is the note's text too: a control byte in it prints
+    # as ? on the refusal line.
+    ln -s ../no-such-note.md "$C3L/31-standards/a$(printf '\033')[2Kb.md" 2>/dev/null
+    if [ -L "$C3L/31-standards/a$(printf '\033')[2Kb.md" ]; then
+      c3_err="$(CLAUDE_PROJECT_DIR="$C3L" bash "$CHECK" 2>&1 >/dev/null)"
+      case "$c3_err" in *$'\033'*) esc_raw=yes ;; *) esc_raw=no ;; esac
+      if [ "$esc_raw" = no ] && printf '%s\n' "$c3_err" | grep -qF '31-standards/a?[2Kb.md is a link that does not resolve'; then
+        ok "a control byte in a refused link's name prints as ?, never raw"
+      else
+        bad "a control byte in a link's name -- raw ESC: $esc_raw -- got: $(printf '%s' "$c3_err" | tr '\n\033' '|E' | cut -c1-300)"
+      fi
+      rm -f "$C3L/31-standards/a$(printf '\033')[2Kb.md"
+    else
+      bad "c3 fixture: no link with a control byte in its name could be made, though ln -s makes links here"
+    fi
   else
     skip c3-links "vault-check and links: ln -s made no link here"
   fi
@@ -1030,6 +1062,20 @@ else
         bad "c3j fixture: mklink /J made no junction for 31-standards/daily, so the case tests nothing"
       fi
       rm -rf "$C3J/10-daily/d"
+      # A tier's templates folder that is a junction to shared templates is
+      # pruned like a real one, not refused.
+      MSYS_NO_PATHCONV=1 cmd /c mklink /J "$(cygpath -w "$C3J/30-knowledge/templates")" "$(cygpath -w "$TMP/c3j-outside")" >/dev/null 2>&1
+      if [ -L "$C3J/30-knowledge/templates" ]; then
+        c3_out="$(c3_run "$C3J")"
+        if printf '%s\n' "$c3_out" | grep -q '31-standards/out is a link' && ! printf '%s\n' "$c3_out" | grep -q '30-knowledge/templates is a link'; then
+          ok "a tier's templates folder that is a junction is pruned like a real one, not refused"
+        else
+          bad "a templates junction -- expected only 31-standards/out refused -- got: $(printf '%s' "$c3_out" | tr '\n' '|' | cut -c1-500)"
+        fi
+        rm -f "$C3J/30-knowledge/templates"
+      else
+        bad "c3j fixture: mklink /J made no junction for 30-knowledge/templates, so the case tests nothing"
+      fi
       # Only the junctions go, by their bare names, never what they point at.
       rm -f "$C3J/31-standards/in" "$C3J/31-standards/out"
     else
@@ -1159,6 +1205,26 @@ else
     ok "a date with an inline comment is read as the date by C4 and C5, and a future one behind a comment is still a C5 violation"
   else
     bad "dates with inline comments -- expected exit 0 with no C4/C5 line, then exactly the future date's C5 -- got: $(printf '%s || %s' "$dc_out" "$dc_out2" | tr '\n' '|' | cut -c1-600)"
+  fi
+
+  # A note's own text in the report is shown, never obeyed: an escape sequence
+  # in a capture's tier, type or date would otherwise repaint or erase the
+  # terminal around the count line. Each control byte prints as ?.
+  ESCV="$TMP/esc-values"
+  mkdir -p "$ESCV/01-inbox"
+  printf -- '---\ntier: "x\033[2Kx"\ntype: "y\033[1Ay"\ncreated: "\033[2K"\n---\n\na capture\n' > "$ESCV/01-inbox/esc.md"
+  esc_out="$(c3_run "$ESCV")"
+  case "$esc_out" in
+    *$'\033'*) esc_raw=yes ;;
+    *) esc_raw=no ;;
+  esac
+  if [ "$esc_raw" = no ] && [ "$(c3_rc "$esc_out")" = 1 ] \
+     && printf '%s\n' "$esc_out" | grep -qF "01-inbox/esc.md — C4 — created '?[2K' is not a YYYY-MM-DD date" \
+     && printf '%s\n' "$esc_out" | grep -qF "tier 'x?[2Kx' is not short, medium or long" \
+     && printf '%s\n' "$esc_out" | grep -qF "type 'y?[1Ay' is not one of"; then
+    ok "control bytes in a note's tier, type and date print as ?, never raw, in violation and WARNING lines"
+  else
+    bad "control bytes in note values -- raw ESC in output: $esc_raw -- got: $(printf '%s' "$esc_out" | tr '\n\033' '|E' | cut -c1-500)"
   fi
 
   # The tripwire refusal points at the section that says what to do.
