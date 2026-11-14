@@ -482,7 +482,8 @@ else
     # Win32 opens evil.md/x/.. as evil.md, so the name is judged after the ..
     # is taken out, and a folder's ::$INDEX_ALLOCATION stream as the folder.
     for c4_p in .claude./rules/t.md .claude/rules/t.md/. '.claude/rules/t.md::$DATA' 10-daily/evil.md/x/.. \
-                '.claude/rules::$INDEX_ALLOCATION/t.md' '.claude/rules::$index_allocation/t.md'; do
+                '.claude/rules::$INDEX_ALLOCATION/t.md' '.claude/rules::$index_allocation/t.md' \
+                '.claude/rules:$I30:$INDEX_ALLOCATION/t.md' '.claude:$i30:$index_allocation/rules/t.md'; do
       c4_out="$(c4_lint "$C4V" "$c4_p")"
       if printf '%s' "$c4_out" | grep -qx 'LOGGED=1' && tail -n 1 "$C4V/.claude/logs/vault-lint.log" | grep -qF -- "$c4_p"; then
         ok "$c4_p is in the scan's scope, and logged under that name"
@@ -957,6 +958,28 @@ else
     else
       bad "the vault without links -- expected exit 0, 1 file and no refusal -- got: $(printf '%s' "$c3_out" | tr '\n' '|' | cut -c1-400)"
     fi
+    # The link pass prunes stub FILES only too: a dangling link in a _logs
+    # folder named like a stub is refused. And the order AGENTS.md section 6
+    # gives: the count line, then the refused-links line, then the WARNING
+    # lines, here from a short-tier note in a long-tier folder.
+    mkdir -p "$C3L/20-projects/_logs/compaction-y.md"
+    ln -s ../no-such-note.md "$C3L/20-projects/_logs/compaction-y.md/gone.md"
+    printf -- '---\ntier: short\ntype: standard\n---\n\nSee [[ARCH-INDEX]].\n' > "$C3L/31-standards/w-short.md"
+    c3_out="$(CLAUDE_PROJECT_DIR="$C3L" bash "$CHECK" 2>/dev/null)"
+    c3_rc_v=$?
+    c3_err="$(CLAUDE_PROJECT_DIR="$C3L" bash "$CHECK" 2>&1 >/dev/null)"
+    c3_n_count="$(printf '%s\n' "$c3_out" | awk '/ violation\(s\) across / { print NR; exit }')"
+    c3_n_ref="$(printf '%s\n' "$c3_out" | awk '/ link\(s\) refused/ { print NR; exit }')"
+    c3_n_warn="$(printf '%s\n' "$c3_out" | awk '/^vault-check: WARNING/ { print NR; exit }')"
+    if [ "$c3_rc_v" -eq 2 ] && printf '%s\n' "$c3_err" | grep -q '20-projects/_logs/compaction-y.md/gone.md is a link that does not resolve' \
+       && [ -n "$c3_n_count" ] && [ -n "$c3_n_ref" ] && [ -n "$c3_n_warn" ] \
+       && [ "$c3_n_count" -lt "$c3_n_ref" ] && [ "$c3_n_ref" -lt "$c3_n_warn" ]; then
+      ok "a dangling link in a _logs folder named like a stub is refused, and the refused line comes between the count line and the warnings"
+    else
+      bad "a link in a compaction-y.md folder, and the output order -- expected exit 2, its refusal, count<refused<warning -- got exit $c3_rc_v, lines $c3_n_count/$c3_n_ref/$c3_n_warn: $(printf '%s || %s' "$c3_out" "$c3_err" | tr '\n' '|' | cut -c1-500)"
+    fi
+    rm -f "$C3L/20-projects/_logs/compaction-y.md/gone.md" "$C3L/31-standards/w-short.md"
+    rm -rf "$C3L/20-projects/_logs/compaction-y.md"
   else
     skip c3-links "vault-check and links: ln -s made no link here"
   fi
@@ -990,6 +1013,23 @@ else
       else
         bad "named mode on 31-standards\\in\\in.md -- expected exit 0 and 1 file -- got: $(printf '%s' "$c3_out" | tr '\n' '|' | cut -c1-400)"
       fi
+      # Through a junction from a long tier into a short one, a daily note is
+      # judged by the folder it is really in, as on Linux and macOS.
+      mkdir -p "$C3J/10-daily/d"
+      printf -- '---\ntier: short\ntype: daily\n---\n\na daily note\n' > "$C3J/10-daily/d/2026-01-02.md"
+      MSYS_NO_PATHCONV=1 cmd /c mklink /J "$(cygpath -w "$C3J/31-standards/daily")" "$(cygpath -w "$C3J/10-daily/d")" >/dev/null 2>&1
+      if [ -L "$C3J/31-standards/daily" ]; then
+        c3_out="$(c3_run "$C3J" -- 31-standards/daily/2026-01-02.md)"
+        if [ "$(c3_rc "$c3_out")" = 0 ] && [ "$(sentinel_files "$c3_out")" = 1 ] && ! printf '%s\n' "$c3_out" | grep -q 'WARNING'; then
+          ok "named mode judges a note through a junction by the folder it is really in"
+        else
+          bad "named mode through a junction from a long tier into a short one -- expected exit 0, 1 file and no WARNING -- got: $(printf '%s' "$c3_out" | tr '\n' '|' | cut -c1-400)"
+        fi
+        rm -f "$C3J/31-standards/daily"
+      else
+        bad "c3j fixture: mklink /J made no junction for 31-standards/daily, so the case tests nothing"
+      fi
+      rm -rf "$C3J/10-daily/d"
       # Only the junctions go, by their bare names, never what they point at.
       rm -f "$C3J/31-standards/in" "$C3J/31-standards/out"
     else
@@ -1101,6 +1141,24 @@ else
     ok "a vault with a conformant note in every tier folder and of every type prints no WARNING line"
   else
     bad "a clean vault printed warnings -- got: $(printf '%s' "$d3_out" | tr '\n' '|' | cut -c1-600)"
+  fi
+
+  # A date with an inline comment, the shape docs/customizing.md shows, is the
+  # date: before 1.7.0 C4 and C5 read the comment as part of it and reported a
+  # malformed date. A future date behind a comment is still caught.
+  DCV="$TMP/date-comments"
+  mkdir -p "$DCV/31-standards"
+  printf -- '---\ntier: long\ntype: standard\ncreated: "2026-01-01"   # first written\nlast_verified: "2026-01-02"   # long tier: moves only on an actual re-probe\n---\n\nSee [[ARCH-INDEX]].\n' > "$DCV/31-standards/ok.md"
+  printf -- "---\ntier: long\ntype: standard\ncreated: '2026-01-01' # single quotes\nlast_verified: 2026-01-03 # unquoted\n---\n\nSee [[ARCH-INDEX]].\n" > "$DCV/31-standards/ok2.md"
+  dc_out="$(c3_run "$DCV")"
+  printf -- '---\ntier: long\ntype: standard\nlast_verified: "2099-01-01"   # stamped ahead\n---\n\nSee [[ARCH-INDEX]].\n' > "$DCV/31-standards/future.md"
+  dc_out2="$(c3_run "$DCV")"
+  if [ "$(c3_rc "$dc_out")" = 0 ] && [ "$(sentinel_files "$dc_out")" = 2 ] && ! printf '%s\n' "$dc_out" | grep -q 'C4\|C5' \
+     && [ "$(c3_rc "$dc_out2")" = 1 ] && printf '%s\n' "$dc_out2" | grep -q '^31-standards/future.md — C5 — last_verified 2099-01-01 is later than today' \
+     && [ "$(sentinel_violations "$dc_out2")" = 1 ]; then
+    ok "a date with an inline comment is read as the date by C4 and C5, and a future one behind a comment is still a C5 violation"
+  else
+    bad "dates with inline comments -- expected exit 0 with no C4/C5 line, then exactly the future date's C5 -- got: $(printf '%s || %s' "$dc_out" "$dc_out2" | tr '\n' '|' | cut -c1-600)"
   fi
 
   # The tripwire refusal points at the section that says what to do.
@@ -13545,6 +13603,23 @@ if [ "$ac_got" = 'rc=127 ran=1 exit=127 log=0' ]; then
   ok "a wrapper that was gone when the watchdog started it leaves as 127, not found, not as the agent's own 127"
 else
   bad "a wrapper gone at launch -- expected rc=127 ran=1 exit=127 log=0, got: $ac_got"
+fi
+# A wrapper that is there but cannot start, its #! naming an interpreter that
+# does not exist, gets 126 from bash (measured on Linux and Git Bash), which no
+# runner uses for itself, so it passes through with no AGENT-STATUS line.
+printf '#!/no/such/interpreter\necho ran\n' > "$TMP/ac-badinterp"
+chmod +x "$TMP/ac-badinterp"
+: > "$TMP/ac-badinterp.log"
+ac_got="$( . "$ROOT/.claude/scripts/lib/runner-common.sh" && WATCHDOG_POLL=1 WATCHDOG_GRACE=2 \
+  AGENT_KIND=command AGENT_BIN="$TMP/ac-badinterp" SNAP_SEALS=x \
+  run_agent 30 "$TMP/ac-badinterp.out" dream-agent task prompt.md >/dev/null 2>&1
+  printf 'rc=%s ran=%s ' "$RUN_RC" "${AGENT_RAN:-}"
+  agent_status_exit dream-agent "$TMP/ac-badinterp.log"
+  printf 'exit=%s log=%s' "$?" "$(awk 'END { print NR + 0 }' "$TMP/ac-badinterp.log" 2>/dev/null)" )"
+if [ "$ac_got" = 'rc=126 ran=1 exit=126 log=0' ]; then
+  ok "a wrapper whose interpreter is missing leaves as 126, cannot execute, with no AGENT-STATUS line"
+else
+  bad "a wrapper whose interpreter is missing -- expected rc=126 ran=1 exit=126 log=0, got: $ac_got"
 fi
 
 # A signal inside the runner's own reporting. Two hooks, each on only when its

@@ -48,8 +48,8 @@ its own. Two changes can newly stop a vault that 1.6.1 passed; item 2 of the Ado
   `AGENT-STATUS:` line after the agent's own `exited with code` line, and does the same for an
   agent that itself leaves with 79. 1 is not remapped: it is what `claude -p` and most wrappers
   leave with for any failure. A wrapper that was gone when the watchdog came to start it stays 127;
-  one that is there but cannot start, its interpreter missing, gets 127 from the shell that tried,
-  which reads as the agent's, so 79.
+  one that is there but cannot start, its `#!` interpreter missing, gets bash's 126, which no runner
+  uses, and passes through as 126.
 - **`RUN_TESTS_ONLY=<section>`** runs one section of `run-tests.sh`, for work on that section. A
   full run is unchanged and is still what CI and a release need.
 
@@ -65,15 +65,18 @@ its own. Two changes can newly stop a vault that 1.6.1 passed; item 2 of the Ado
   under a content-tier folder, is fine, and one that dangles or points anywhere else (outside the
   tiers, into a templates folder, to a stub, to a file that is no note) is named on stderr,
   counted on stdout after the count line, and makes the run exit 2. A note named after `--` that
-  lies in a tier, by identity rather than spelling, is held to the same rule, so both modes agree
-  about it. An exported `CDPATH` can no longer move the scan.
+  lies in a tier, by identity rather than spelling, is held to the same rule when a link is on the
+  way to it, so both modes agree about it; named plainly, a note is checked whatever its name or
+  folder, as before. An exported `CDPATH` can no longer move the scan. C4 and C5 read a date with
+  an inline comment after it, the shape `docs/customizing.md` shows, as the date; before, they
+  reported it as malformed.
 - **The lint scans steering files whatever the path's spelling.** It skipped any file under a
   folder named `templates` before deciding scope, and matched scope on the path as spelled, so
   `.claude/rules/templates/x.md`, `.claude//rules/x.md`, `.claude/./rules/x.md`, a trailing dot on a
   folder name, `..` parts such as `10-daily/templates/../x.md`, a trailing `/.` or `::$DATA` after
   the name, and every file of a vault whose own path holds `/templates/` were skipped with no
   warning and no log line, and so were `evil.md/x/..` and a folder named with its
-  `::$INDEX_ALLOCATION` stream, both of which Win32 opens. Scope is now decided on the
+  `::$INDEX_ALLOCATION` or `:$I30:$INDEX_ALLOCATION` stream, all of which Win32 opens. Scope is now decided on the
   vault-relative, normalised path, with `..` resolved as Win32 resolves it, and `templates/` is
   skipped inside a content tier only and never for a steering file, so a `CLAUDE.md` in a tier's
   templates folder is scanned too. A Windows 8.3 short name such as `CLAUDE~1` is still not
@@ -115,7 +118,8 @@ its own. Two changes can newly stop a vault that 1.6.1 passed; item 2 of the Ado
    the count line's numbers or the exit code sees what it always saw. Two warnings mean the
    checker's tables need the edit, not your notes: a `type` you use on purpose belongs in the type
    list in `check_note()`, and a tier folder you renamed or added belongs in `folder_tier()`, or
-   its notes draw no tier warnings at all (`docs/customizing.md` §2 and §3).
+   its notes draw no tier-of-folder or long-tier-wikilink warning (`docs/customizing.md` §2 and
+   §3). A renamed `20-projects/_logs/` needs the three literals §2 names, too.
 4. **A scheduler or wrapper that reads the runners' exit code meets 79** where it met a colliding
    code before, and for an agent that itself left with 79. The agent's own code is in the log's
    `exited with code` line. If your
@@ -128,8 +132,8 @@ its own. Two changes can newly stop a vault that 1.6.1 passed; item 2 of the Ado
    the scan skips: a `templates/` folder inside a tier and the stubs directly in
    `20-projects/_logs/`, not every `templates/` folder and `compaction-*.md` anywhere.
 7. **If you kept the template's `.github/workflows/ci.yml`**, which no vault is ever offered, its
-   required lists gain `c3-links` on Ubuntu and macOS and `c3-junction` and `c4-drive-spelling` on
-   Windows. The 1.6.1 copy drops those lists outside
+   required lists gain `c3-links` and `c4-templates-dot` on Ubuntu, macOS and bash 3.2, and
+   `c3-junction` and `c4-drive-spelling` on Windows. The 1.6.1 copy drops those lists outside
    the template's repository, so nothing changes for a vault.
 8. The shipped files this release touches are `.claude/scripts/vault-check.sh`,
    `.claude/githooks/pre-commit`, `.claude/hooks/vault-lint.sh`,

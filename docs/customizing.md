@@ -91,7 +91,7 @@ is the authoritative list.
 | `AGENTS.md` | The tier table, the promotion rules, and every prose path reference. Change every folder name mentioned. |
 | `CLAUDE.md` | The `@`-import path of `30-knowledge/moc/ARCH-INDEX.md`. |
 | `.claude/hooks/vault-lint.sh` | The path match that decides which written files get linted. Update the folder prefixes it tests against. |
-| `.claude/scripts/vault-check.sh` | Its `TIERS=` line — the directories it walks for the C1–C5 frontmatter invariants. Update the scan roots. Also `folder_tier()`, the table of which tier each folder's notes carry: a folder it does not name draws no tier-of-folder or long-tier-wikilink warning. And the `type` list in `check_note()`, beside the `is not one of` warning, if you add or rename a type. |
+| `.claude/scripts/vault-check.sh` | Its `TIERS=` line — the directories it walks for the C1–C5 frontmatter invariants. Update the scan roots. Also `folder_tier()`, the table of which tier each folder's notes carry: a folder it does not name draws no tier-of-folder or long-tier-wikilink warning. And the `type` list in `check_note()`, beside the `is not one of` warning, if you add or rename a type. If you rename `20-projects/_logs/`, also its three literals: the compaction-stub prune in both `find` lines and the stub test in `link_target_ok()`, or every stub is scanned and a link to one is no longer refused. |
 | `.claude/hooks/postcompact-wrap-up.sh` | The output directory for the compaction stub (`20-projects/_logs/` by default). Update the write target. |
 | `.claude/agents/dream-agent.md` | The read set (which folders it consolidates from) and the single write target for its dated journal. Update both. |
 | `.claude/agents/promotion-agent.md` | Its source tier and its promotion target. |

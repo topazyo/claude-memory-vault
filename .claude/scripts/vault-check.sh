@@ -157,10 +157,9 @@ fi
 #   link      1 when the note holds [[ anywhere, else 0
 #   n_<key>   how many frontmatter lines start <key>: (C2, C3), for tier, type,
 #             created and last_verified
-#   v_<key>   the first such line's value: a trailing CR and trailing spaces
-#             removed and one surrounding quote pair taken off (C4, C5)
-#   r_<key>   the same value before the quote pair is taken off, which the
-#             advisory checks read with an inline comment still on it
+#   r_<key>   the first such line's value with a trailing CR and trailing
+#             spaces removed, quotes and any inline comment still on it, for
+#             yaml_scalar to read (C4, C5 and the advisory checks)
 #   spell     one advisory finding about how one of those keys is written
 # The frontmatter is the lines after an opening fence on line 1, up to the next
 # fence line, the same anchored pattern vault-lint.sh uses. Before 1.7.0 this
@@ -199,11 +198,6 @@ note_facts() {
             gsub(/\r/, "", v)
             sub(/[ \t\r]+$/, "", v)
             raw[k] = v
-            if (length(v) >= 2) {
-              a = substr(v, 1, 1); b = substr(v, length(v), 1)
-              if (a == b && (a == "\"" || a == q)) v = substr(v, 2, length(v) - 2)
-            }
-            val[k] = v
           }
           continue
         }
@@ -228,7 +222,7 @@ note_facts() {
       for (i = 1; i <= 4; i++) {
         k = keys[i]
         printf "n_%s%s%d\n", k, us, n[k] + 0
-        if (n[k] > 0) { printf "v_%s%s%s\n", k, us, val[k]; printf "r_%s%s%s\n", k, us, raw[k] }
+        if (n[k] > 0) printf "r_%s%s%s\n", k, us, raw[k]
         if (k in odd) printf "spell%sthe key %s is also written as %s, which these checks do not read\n", us, k, odd[k]
         if (n[k] > 1) printf "spell%sthe key %s appears %d times; these checks read the first, a YAML reader the last\n", us, k, n[k]
       }
@@ -282,7 +276,9 @@ folder_tier() {
 # (quotes still on), less an inline comment (whitespace, then #) and the quotes
 # around what is left, so `tier: long   # short | medium | long`, which
 # docs/customizing.md shows, and `tier: "long" # the "long" tier` both read as
-# long. Only the advisory checks use it.
+# long. C4 and C5 read their dates through it too (since 1.7.0), so
+# `last_verified: "2026-01-15"   # ...`, which docs/customizing.md also shows,
+# is the date and not a malformed one.
 yaml_scalar() {
   local v="$1" q rest
   case "$v" in
@@ -346,7 +342,9 @@ link_target_ok() {
       return 1
     fi
     base="${p##*/}"
-    d="$(cd -P "${p%/*}" 2>/dev/null && pwd -P)"
+    # The trailing / keeps a target at the file system root, /x.md, from
+    # becoming cd "", which some bash versions treat as staying where they are.
+    d="$(cd -P "${p%/*}/" 2>/dev/null && pwd -P)"
   fi
   if [ -z "$d" ] || [ -z "$ROOT_P" ]; then
     LINK_WHY="could not be resolved"
@@ -445,8 +443,8 @@ check_note() {
       link) haslink="$val" ;;
       n_tier) n_tier="$val" ;;
       n_type) n_type="$val" ;;
-      v_created) created="$val" ;;
-      v_last_verified) verified="$val" ;;
+      r_created) yaml_scalar "$val"; created="$SCALAR" ;;
+      r_last_verified) yaml_scalar "$val"; verified="$SCALAR" ;;
       r_tier) r_tier="$val" ;;
       r_type) r_type="$val" ;;
       spell) spells+="$val"$'\n' ;;

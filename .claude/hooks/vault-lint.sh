@@ -80,10 +80,12 @@ norm_slashes() {
         ;;
       *)
         if [ "$strip" = strip ]; then
-          # NTFS opens a folder named with its ::$INDEX_ALLOCATION stream as
-          # the folder itself, as it opens x.md::$DATA as x.md.
+          # NTFS opens a folder named with its ::$INDEX_ALLOCATION stream, or
+          # with the stream's own name, :$I30:$INDEX_ALLOCATION, as the folder
+          # itself, as it opens x.md::$DATA as x.md.
           case "$part" in
             *::\$[Ii][Nn][Dd][Ee][Xx]_[Aa][Ll][Ll][Oo][Cc][Aa][Tt][Ii][Oo][Nn]) part="${part%::*}" ;;
+            *:\$[Ii]30:\$[Ii][Nn][Dd][Ee][Xx]_[Aa][Ll][Ll][Oo][Cc][Aa][Tt][Ii][Oo][Nn]) part="${part%:\$[Ii]30:*}" ;;
           esac
           while :; do case "$part" in *.|*' ') part="${part%?}" ;; *) break ;; esac; done
         fi
