@@ -12480,13 +12480,6 @@ sig_hung_pass() {
     bash "$RV/.claude/scripts/$sig_script" >/dev/null 2>&1 &
   sig_pid=$!
   sig_target="$sig_pid"
-  if [ -n "${SIG_GROUP:-}" ]; then
-    # setsid execs in place when its caller leads no group, which a background
-    # job of this non-interactive shell never does, so the pass's pid is its
-    # new group's id. Anything else would signal the wrong processes.
-    sig_pgid="$(ps -o pgid= -p "$sig_pid" 2>/dev/null | tr -d ' ')"
-    if [ "$sig_pgid" = "$sig_pid" ]; then sig_target="-$sig_pid"; else sig_group_ok=0; fi
-  fi
   # Setting a pass up can take half a minute on a slow Git Bash host. A signal
   # sent before the agent starts tests a different case, so that is a failure
   # of its own, not a wrong result for this one.
@@ -12496,6 +12489,15 @@ sig_hung_pass() {
   done
   [ -f "${SIG_WAIT_FILE:-$TMP/sig-rec.argv}" ] \
     || bad "the hung pass did not start its agent within 180s, so the signal came before it"
+  if [ -n "${SIG_GROUP:-}" ]; then
+    # setsid execs in place when its caller leads no group, which a background
+    # job of this non-interactive shell never does, so the pass's pid is its
+    # new group's id. Read only now, once the agent runs: read straight after
+    # the job started, setsid might not have run yet, and a CI runner caught it
+    # that way. Anything else would signal the wrong processes.
+    sig_pgid="$(ps -o pgid= -p "$sig_pid" 2>/dev/null | tr -d ' ')"
+    if [ "$sig_pgid" = "$sig_pid" ]; then sig_target="-$sig_pid"; else sig_group_ok=0; fi
+  fi
   kill -"$sig_name" "$sig_target" 2>/dev/null
   if [ -n "${SIG_SECOND:-}" ]; then
     sleep 0.3
