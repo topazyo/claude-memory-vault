@@ -91,7 +91,7 @@ is the authoritative list.
 | `AGENTS.md` | The tier table, the promotion rules, and every prose path reference. Change every folder name mentioned. |
 | `CLAUDE.md` | The `@`-import path of `30-knowledge/moc/ARCH-INDEX.md`. |
 | `.claude/hooks/vault-lint.sh` | The path match that decides which written files get linted. Update the folder prefixes it tests against. |
-| `.claude/scripts/vault-check.sh` | Its `TIERS=` line — the directories it walks for the C1–C5 frontmatter invariants. Update the scan roots. |
+| `.claude/scripts/vault-check.sh` | Its `TIERS=` line — the directories it walks for the C1–C5 frontmatter invariants. Update the scan roots. Also `folder_tier()`, the table of which tier each folder's notes carry: a folder it does not name draws no tier-of-folder or long-tier-wikilink warning. And the `type` list in `check_note()`, beside the `is not one of` warning, if you add or rename a type. If you rename `20-projects/_logs/`, also its three literals: the compaction-stub prune in both `find` lines and the stub test in `link_target_ok()`, or every stub is scanned and a link to one is no longer refused. |
 | `.claude/hooks/postcompact-wrap-up.sh` | The output directory for the compaction stub (`20-projects/_logs/` by default). Update the write target. |
 | `.claude/agents/dream-agent.md` | The read set (which folders it consolidates from) and the single write target for its dated journal. Update both. |
 | `.claude/agents/promotion-agent.md` | Its source tier and its promotion target. |
@@ -177,7 +177,9 @@ Three more optional keys are defined: `contradicts` and `superseded_by` (each a 
 asserts that `tier` and `type` are present, and `vault-check.sh` only enforces its own five
 invariants (a leading `---` fence, a `tier:` key, a `type:` key, `last_verified >= created` when
 both exist, and `last_verified` not in the future, with both dates in `YYYY-MM-DD` form). Add
-whatever you like.
+whatever you like. A new **value** of `type` is different: `vault-check.sh` prints a `WARNING` line
+for a type outside its list, and the warnings become violations in a later release, so add a type
+you mean to keep to the list in `check_note()` (the rename table in section 2 names it).
 
 **Removing or renaming `tier` or `type` is breaking.** Both are load-bearing in three places at
 once: `vault-lint.sh` (mandatory-key check), `vault-check.sh` (the C1–C5 invariants), and
