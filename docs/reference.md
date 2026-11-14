@@ -156,8 +156,14 @@ What it does, in order:
    `jq` is installed, which is how the control suite tests it. An input with no readable path, or
    an in-scope path that does not resolve to a file, is logged as `DEGRADED:` rather than skipped
    silently. Logs resolve from the script's own location when `CLAUDE_PROJECT_DIR` is unset.
-2. Normalizes backslashes to forward slashes, then bails out for non-`.md` files and for
-   anything under a `templates/` folder.
+2. Normalizes backslashes to forward slashes, then bails out for non-`.md` files. Every scope
+   test below reads the path made relative to the vault root and normalised: runs of `/` and `/./`
+   parts collapsed, and trailing dots and spaces removed from each part, as Win32 removes them.
+   So `.claude//rules/x.md`, `.claude/./rules/x.md` and a vault whose own path holds a folder
+   named `templates` are in scope like any other spelling. It then bails out for a `templates/`
+   folder inside a content tier, where the tier templates live, and nowhere else: a steering file
+   under `.claude/rules/templates/` is scanned (since 1.7.0; before, any `templates/` folder on
+   the path was skipped with no log line).
 3. **Frontmatter check** (content tiers only — `01-inbox/`, `10-daily/`, `20-projects/`,
    `30-knowledge/`, `31-standards/`, `40-llm-wiki/`): the first line must be a bare `---` fence,
    and the block must contain `tier:` and `type:`. The closing fence is found with the same

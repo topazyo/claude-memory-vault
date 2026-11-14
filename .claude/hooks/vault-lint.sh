@@ -44,10 +44,64 @@ log_line() {
   printf '[%s] %s\n' "$TS" "$1" >> "$LOG"
 }
 
+# norm_slashes <path> - sets NORM_OUT to <path> with backslashes turned into
+# slashes, runs of slashes and /./ parts collapsed, a leading ./ dropped, and
+# each part's trailing dots and spaces removed, which Win32 drops from every
+# part of a path, not only the last. The parts . and .. are kept as they are.
+# Parameter expansion only: this runs on every call, and a process here would
+# count against the lint's process budget (run-tests.sh holds it).
+norm_slashes() {
+  local p="${1//\\//}" rest part out=""
+  while :; do case "$p" in *//*) p="${p//\/\//\/}" ;; *) break ;; esac; done
+  while :; do case "$p" in */./*) p="${p//\/.\//\/}" ;; *) break ;; esac; done
+  while :; do case "$p" in ./*) p="${p#./}" ;; *) break ;; esac; done
+  rest="$p"
+  while :; do
+    part="${rest%%/*}"
+    case "$part" in
+      .|..) ;;
+      *) while :; do case "$part" in *.|*' ') part="${part%?}" ;; *) break ;; esac; done ;;
+    esac
+    out="$out$part"
+    case "$rest" in
+      */*) rest="${rest#*/}"; out="$out/" ;;
+      *) break ;;
+    esac
+  done
+  NORM_OUT="$out"
+}
+
+# The vault root in that same form, and its other spelling on Windows, where
+# Git Bash names C:/x as /c/x and either can reach this hook.
+norm_slashes "$ROOT"
+ROOT_SCOPE="${NORM_OUT%/}"
+ROOT_SCOPE_ALT=""
+case "$ROOT_SCOPE" in
+  /[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]/*) ROOT_SCOPE_ALT="${ROOT_SCOPE:1:1}:/${ROOT_SCOPE:3}" ;;
+  [ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]:/*) ROOT_SCOPE_ALT="/${ROOT_SCOPE:0:1}/${ROOT_SCOPE:3}" ;;
+esac
+
+# scope_path <path> - sets SCOPEP to <path> normalised by norm_slashes and,
+# when it lies inside the vault, made relative to the vault root. The root is
+# compared without regard to case: a match only makes the path relative, so
+# the tests below see it as the vault's own file, which scans more, not less.
+scope_path() {
+  norm_slashes "$1"
+  SCOPEP="$NORM_OUT"
+  shopt -s nocasematch
+  if [ -n "$ROOT_SCOPE" ]; then
+    case "$SCOPEP" in "$ROOT_SCOPE"/*) SCOPEP="${SCOPEP:${#ROOT_SCOPE}+1}" ;; esac
+  fi
+  if [ -n "$ROOT_SCOPE_ALT" ]; then
+    case "$SCOPEP" in "$ROOT_SCOPE_ALT"/*) SCOPEP="${SCOPEP:${#ROOT_SCOPE_ALT}+1}" ;; esac
+  fi
+  shopt -u nocasematch
+}
+
 # lint_file <path> - the whole check for one file. Returns, never exits, so
 # argument mode can lint several files in one call.
 lint_file() {
-  local FILE="$1" NORM MATCHN IS_CONTENT_TIER IS_CHAR_SCAN_SCOPE warn FMV HITS HITS_FMT HITS_JOINED SCAN_RAN
+  local FILE="$1" NORM MATCHN SCOPEP TIER_DIR IS_CONTENT_TIER IS_CHAR_SCAN_SCOPE warn FMV HITS HITS_FMT HITS_JOINED SCAN_RAN
 
   # normalize backslashes -> forward slashes for git-bash / MSYS.
   # Bash parameter expansion, not `printf | tr`. The old form cost a process on
@@ -115,10 +169,25 @@ lint_file() {
   shopt -s nocasematch
   case "$MATCHN" in *.md) ;; *) shopt -u nocasematch; return 0 ;; esac
   shopt -u nocasematch
-  # templates stays case sensitive on purpose. This test SKIPS a file, so
-  # matching more here would scan less, and a directory really named Templates
-  # on a case-sensitive filesystem is not the pruned one.
-  case "$MATCHN" in */templates/*) return 0 ;; esac
+
+  # Every scope test below reads SCOPEP: the name made relative to the vault
+  # and normalised, so the spelling of a path cannot take a file out of scope.
+  # Before 1.7.0 they read the name as spelled, and .claude//rules/t.md,
+  # .claude/./rules/t.md, a steering file in any folder named templates, and
+  # every file of a vault whose own path holds /templates/ were all skipped
+  # with no warning and no log line. Only the tests use it; the file read and
+  # the name logged are still the ones given.
+  scope_path "$MATCHN"
+
+  # templates is pruned inside a content tier only, the place the tier
+  # templates live, and stays case sensitive on purpose. This test SKIPS a
+  # file, so matching more here would scan less, and a directory really named
+  # Templates on a case-sensitive filesystem is not the pruned one.
+  for TIER_DIR in 01-inbox 10-daily 20-projects 30-knowledge 31-standards 40-llm-wiki; do
+    case "$SCOPEP" in
+      "$TIER_DIR"/templates/*|"$TIER_DIR"/*/templates/*|*/"$TIER_DIR"/templates/*|*/"$TIER_DIR"/*/templates/*) return 0 ;;
+    esac
+  done
 
   # content tiers: the mandatory tier/type frontmatter check applies here only
   #
@@ -128,7 +197,7 @@ lint_file() {
   # loosely here would start reporting notes in a folder that is not a tier at
   # all on the platforms where it is not one.
   IS_CONTENT_TIER=0
-  case "$MATCHN" in
+  case "$SCOPEP" in
     *"/01-inbox/"*|*"/10-daily/"*|*"/20-projects/"*|*"/30-knowledge/"*|*"/31-standards/"*|*"/40-llm-wiki/"*) IS_CONTENT_TIER=1 ;;
     01-inbox/*|10-daily/*|20-projects/*|30-knowledge/*|31-standards/*|40-llm-wiki/*) IS_CONTENT_TIER=1 ;;
   esac
@@ -162,11 +231,11 @@ lint_file() {
   # and a steering file dropped in either must not slip past.
   IS_CHAR_SCAN_SCOPE=$IS_CONTENT_TIER
   shopt -s nocasematch
-  case "$MATCHN" in
+  case "$SCOPEP" in
     *"/01-inbox/"*|*"/10-daily/"*|*"/20-projects/"*|*"/30-knowledge/"*|*"/31-standards/"*|*"/40-llm-wiki/"*) IS_CHAR_SCAN_SCOPE=1 ;;
     01-inbox/*|10-daily/*|20-projects/*|30-knowledge/*|31-standards/*|40-llm-wiki/*) IS_CHAR_SCAN_SCOPE=1 ;;
   esac
-  case "$MATCHN" in
+  case "$SCOPEP" in
     *"/.claude/rules/"*|*"/.claude/agents/"*|*"/.claude/skills/"*) IS_CHAR_SCAN_SCOPE=1 ;;
     .claude/rules/*|.claude/agents/*|.claude/skills/*) IS_CHAR_SCAN_SCOPE=1 ;;
     */CLAUDE.md|CLAUDE.md|*/AGENTS.md|AGENTS.md|*/GEMINI.md|GEMINI.md) IS_CHAR_SCAN_SCOPE=1 ;;
