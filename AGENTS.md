@@ -149,7 +149,7 @@ they were told apart a caller reading only the code could not choose.
 | --- | --- |
 | `0` | At least one note was scanned and none violates an invariant |
 | `1` | **The vault has a problem.** A note violates an invariant |
-| `2` | **This checker could not run**, so it says nothing about the vault. No notes were scanned, or there are no content-tier folders under the root, or a named note is not a readable file, or a link in a tier, or a note named in one, dangles or resolves outside the content-tier folders |
+| `2` | **This checker could not run**, so it says nothing about the vault. No notes were scanned, or there are no content-tier folders under the root, or a named note is not a readable file, or a link in a tier, or a note named in one, dangles or resolves to something the scan does not read where it is (outside the content-tier folders, a template, a stub) |
 | `64` | The command line was wrong |
 | `78` | A scheduled pass set the tripwire, so nothing was checked and a human has to look first ([`docs/setup.md`, A tripwire is set](docs/setup.md#a-tripwire-is-set)). The three runners use `78` for the same thing |
 
