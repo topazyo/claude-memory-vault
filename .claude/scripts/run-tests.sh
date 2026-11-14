@@ -21836,9 +21836,10 @@ printf '\n=== RUN_TESTS_ONLY (one section of this suite) ===\n'
 # The runs below are this suite started again, so a filter that let this
 # section run inside one of them would start them again, without end. They
 # carry RUN_TESTS_NESTED, and a nested run that reaches this section fails
-# here instead.
+# here instead. They start "$BASH", the shell running this suite, so a job on
+# bash 3.2 tests the filter under 3.2 too, whatever bash PATH finds first.
 if [ -n "${RUN_TESTS_NESTED:-}" ]; then
-  bad "the suite-filter section ran inside one of its own nested runs, so the filter let it through; its nested runs were not started again"
+  bad "RUN_TESTS_NESTED is set, so this section's nested runs were not started: either the filter let the section run inside one of them, or RUN_TESTS_NESTED is exported in the environment the suite was started from (unset it there)"
 else
 
 # The list the filter validates against and the guards in this file must name
@@ -21864,7 +21865,7 @@ fi
 
 # A name that is not a section is refused before anything runs, so a typo is
 # never a green run of nothing.
-sf_out="$(env -u RUN_TESTS_REQUIRED RUN_TESTS_NESTED=1 RUN_TESTS_ONLY=no-such-section bash "$SUITE_SELF" 2>&1)"
+sf_out="$(env -u RUN_TESTS_REQUIRED RUN_TESTS_NESTED=1 RUN_TESTS_ONLY=no-such-section "$BASH" "$SUITE_SELF" 2>&1)"
 sf_rc=$?
 if [ "$sf_rc" -eq 64 ] && printf '%s\n' "$sf_out" | grep -q 'RUN_TESTS_ONLY=no-such-section is not a section of this suite' \
    && ! printf '%s\n' "$sf_out" | grep -q '  PASS  '; then
@@ -21875,7 +21876,7 @@ fi
 
 # Combined with RUN_TESTS_REQUIRED it is refused, because the required ids of
 # every other section would read as not run.
-sf_out="$(env RUN_TESTS_REQUIRED=x RUN_TESTS_NESTED=1 RUN_TESTS_ONLY=skills bash "$SUITE_SELF" 2>&1)"
+sf_out="$(env RUN_TESTS_REQUIRED=x RUN_TESTS_NESTED=1 RUN_TESTS_ONLY=skills "$BASH" "$SUITE_SELF" 2>&1)"
 sf_rc=$?
 if [ "$sf_rc" -eq 64 ] && printf '%s\n' "$sf_out" | grep -q 'RUN_TESTS_ONLY and RUN_TESTS_REQUIRED cannot be combined'; then
   ok "RUN_TESTS_ONLY with RUN_TESTS_REQUIRED exits 64 and says why"
@@ -21885,7 +21886,7 @@ fi
 
 # One small section, end to end: its own header and passes, no other
 # section's header, and a summary that names the section.
-sf_out="$(env -u RUN_TESTS_REQUIRED RUN_TESTS_NESTED=1 RUN_TESTS_ONLY=skills bash "$SUITE_SELF" 2>&1)"
+sf_out="$(env -u RUN_TESTS_REQUIRED RUN_TESTS_NESTED=1 RUN_TESTS_ONLY=skills "$BASH" "$SUITE_SELF" 2>&1)"
 sf_rc=$?
 sf_pass="$(printf '%s\n' "$sf_out" | LC_ALL=C sed -n 's/^=== \([0-9][0-9]*\) passed, 0 failed (section skills only) ===$/\1/p' | head -n 1)"
 if [ "$sf_rc" -eq 0 ] && [ -n "$sf_pass" ] && [ "$sf_pass" -ge 3 ] \
@@ -21898,7 +21899,7 @@ fi
 
 # A filter that reaches no guard must not end green: the renamed copy, asked
 # for skills, runs no section and has to fail on that.
-sf_out="$(env -u RUN_TESTS_REQUIRED RUN_TESTS_NESTED=1 RUN_TESTS_ONLY=skills CLAUDE_PROJECT_DIR="$ROOT" bash "$sf_copy" 2>&1)"
+sf_out="$(env -u RUN_TESTS_REQUIRED RUN_TESTS_NESTED=1 RUN_TESTS_ONLY=skills CLAUDE_PROJECT_DIR="$ROOT" "$BASH" "$sf_copy" 2>&1)"
 sf_rc=$?
 if [ "$sf_rc" -eq 1 ] && printf '%s\n' "$sf_out" | grep -q 'FAIL  RUN_TESTS_ONLY=skills reached no section' \
    && ! printf '%s\n' "$sf_out" | grep -q '^=== mirrored skills '; then
