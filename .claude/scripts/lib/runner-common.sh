@@ -979,14 +979,23 @@ steering_filter() {
       }
       # A direct child of .claude/worktrees/ is a worktree folder, which is not
       # steering, unless its own name is: a CLAUDE.md or .mcp.json placed there
-      # is read by a session started in any worktree below it.
+      # is read by a session started in any worktree below it. A link there is
+      # steering too, since a worktree is a folder and a link can put one
+      # anywhere, and so is everything under a child whose own name is a
+      # harness folder (.claude, .git): that is no worktree. The line-break
+      # marker means something only at the vault root.
       if (lp ~ /^\.claude\/worktrees\/[^\/]+\//) {
+        wt = lp
+        sub(/^\.claude\/worktrees\//, "", wt)
+        sub(/\/.*$/, "", wt)
+        if (wt != ".runner-line-break-names" && steer(wt, 0)) { print $0; next }
         sub(/^\.claude\/worktrees\/[^\/]+\//, "", lp)
       } else if (lp == ".claude/worktrees") {
         next
       } else if (lp ~ /^\.claude\/worktrees\/[^\/]*$/) {
         sub(/^\.claude\/worktrees\//, "", lp)
-        if (lp == "" || !steer(lp, islink)) next
+        if (lp == "" || lp == ".runner-line-break-names") next
+        if (!islink && !steer(lp, islink)) next
         print $0
         next
       }
@@ -4208,8 +4217,10 @@ run_agent() {
 # 75 a lock nobody held), so agent_status_exit sends it out as 79. 1 is left out
 # on purpose: claude -p and most wrappers leave with 1 for any failure, so
 # mapping it would change the code of the commonest failed pass, and the log's
-# "exited with code" line already says the status was the agent's.
-AGENT_RESERVED_STATUSES="2 3 4 5 64 70 75 78 124 125 127 129 130 143"
+# "exited with code" line already says the status was the agent's. 79 itself is
+# in the list, so an agent that leaves with 79 gets the same AGENT-STATUS line
+# and cannot pass for a remapped code.
+AGENT_RESERVED_STATUSES="2 3 4 5 64 70 75 78 79 124 125 127 129 130 143"
 
 # agent_status_exit <agent-name> <log>
 # Returns the code a runner leaves with when the agent returned RUN_RC, which
@@ -4219,6 +4230,11 @@ AGENT_RESERVED_STATUSES="2 3 4 5 64 70 75 78 124 125 127 129 130 143"
 # remapped.
 agent_status_exit() {
   local agent="$1" log="$2" c
+  # 127 from a binary that was gone when the watchdog came to start it is the
+  # shell's, not the agent's, and keeps its own meaning: not found.
+  if [ "$RUN_RC" = 127 ] && ! command -v -- "${AGENT_BIN:-}" >/dev/null 2>&1; then
+    return 127
+  fi
   if [ "${AGENT_RAN:-0}" = 1 ]; then
     for c in $AGENT_RESERVED_STATUSES; do
       if [ "$RUN_RC" = "$c" ]; then

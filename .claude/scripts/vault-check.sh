@@ -23,8 +23,12 @@
 #            vault. No notes were scanned at all, or there are no content-tier
 #            folders under the root, or a named note is not a readable file, or
 #            (since 1.7.0) a link in a content tier, or a named note, dangles or
-#            resolves outside the content-tier folders, so what it holds was
-#            not read.
+#            resolves to something the scan does not read where it is, so what
+#            it holds was not read.
+#         64 the command line was wrong.
+#         78 a scheduled pass set the tripwire, so nothing was checked and a
+#            human has to look first. The three runners use 78 for the same
+#            thing, so one number means one thing across all four.
 #
 # Advisory (since 1.7.0): WARNING lines after the count line for a tier value
 # that is not short, medium or long or not the folder's tier, a type outside
@@ -32,10 +36,6 @@
 # created or last_verified key a YAML reader would read differently. They
 # change neither the count nor the exit code; a later release makes them
 # violations.
-#         64 the command line was wrong.
-#         78 a scheduled pass set the tripwire, so nothing was checked and a
-#            human has to look first. The three runners use 78 for the same
-#            thing, so one number means one thing across all four.
 #
 # These used to be a single 1, which meant a caller could not tell "the vault
 # has a problem" from "the checker could not run", and those want opposite
@@ -56,6 +56,10 @@
 #             absolute, wherever they are. The runners use this to check exactly
 #             the files a pass is about to commit.
 
+# A cd that finds its folder through CDPATH prints the folder, and every cd
+# below is inside a command substitution or feeds find's output, so an
+# exported CDPATH would put a path into either.
+unset CDPATH
 ROOT="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "$0")/../.." && pwd)}"
 TODAY="$(date +%F)"
 
@@ -202,19 +206,42 @@ report() {
 # count line, so the count line and the exit code stay what callers parse; a
 # later release makes these violations.
 warn() {
-  WARN_LINES="${WARN_LINES}vault-check: WARNING: $1 — $2
+  WARN_LINES+="vault-check: WARNING: $1 — $2
 "
   warnings=$((warnings + 1))
 }
 
-# folder_tier <rel> - the tier the folder a note sits in calls for, from the
-# table in AGENTS.md section 3, or nothing where that table names none.
+# folder_tier <rel> - sets FOLDER_TIER to the tier the folder a note sits in
+# calls for, from the table in AGENTS.md section 3, or to nothing where that
+# table names none. A variable, not printed, so no subshell is spent per note.
 folder_tier() {
   case "$1" in
-    01-inbox/*|10-daily/*|40-llm-wiki/raw/*) printf 'short' ;;
-    20-projects/*) printf 'medium' ;;
-    30-knowledge/*|31-standards/*|40-llm-wiki/wiki/*) printf 'long' ;;
+    01-inbox/*|10-daily/*|40-llm-wiki/raw/*) FOLDER_TIER=short ;;
+    20-projects/*) FOLDER_TIER=medium ;;
+    30-knowledge/*|31-standards/*|40-llm-wiki/wiki/*) FOLDER_TIER=long ;;
+    *) FOLDER_TIER="" ;;
   esac
+}
+
+# yaml_scalar <value> - sets SCALAR to a value as value_of returned it, less an
+# inline comment (whitespace, then #) and the quotes around what is left, so
+# `tier: long   # short | medium | long`, which docs/customizing.md shows,
+# reads as long. Only the advisory checks use it.
+yaml_scalar() {
+  local v="$1" q rest
+  case "$v" in
+    \"*|\'*)
+      # Quoted, with a comment after the closing quote (value_of strips a
+      # quote pair only when the value ends in it): the text up to that quote.
+      q="${v:0:1}" rest="${v:1}"
+      case "$rest" in *"$q"*) v="${rest%%"$q"*}" ;; esac
+      ;;
+    *)
+      v="${v%%[[:space:]]#*}"
+      v="${v%"${v##*[![:space:]]}"}"
+      ;;
+  esac
+  SCALAR="$v"
 }
 
 # key_spellings <frontmatter> - one line per key this checker reads (tier,
@@ -261,30 +288,38 @@ key_spellings() {
 ROOT_P="$(cd -P "$ROOT" 2>/dev/null && pwd -P)"
 
 # link_target_ok <absolute path> - true when the path, a link or a path through
-# one, resolves to something under one of this vault's content-tier folders.
-# Sets LINK_WHY to the reason when it does not. Identity is tested with -ef
-# against each tier folder, walking up from the resolved folder, so two
-# spellings of one folder (a Windows short name, a different letter case)
-# still match.
+# one, resolves to something the full scan reads where it really is: a folder
+# under one of this vault's content-tier folders and not in a templates folder
+# there, or a .md file such a folder holds that is not a compaction stub in
+# 20-projects/_logs. Sets LINK_WHY to the reason when it does not. Identity is
+# tested with -ef against each tier folder, walking up from the resolved
+# folder, so two spellings of one folder (a Windows short name, a different
+# letter case) still match.
 link_target_ok() {
-  local p="$1" n=0 t d prev
+  local p="$1" n=0 t d prev base="" sub="" isdir=0
   LINK_WHY=""
   if [ ! -e "$p" ]; then
     LINK_WHY="does not resolve"
     return 1
   fi
   if [ -d "$p" ]; then
+    isdir=1
     d="$(cd -P "$p" 2>/dev/null && pwd -P)"
   else
-    # Follow the chain of links to the last name, then resolve its folder.
-    while [ -L "$p" ] && [ "$n" -lt 40 ]; do
-      t="$(readlink "$p" 2>/dev/null)" || break
+    # Follow the chain of links to the last name, then resolve its folder. A
+    # link readlink cannot read is refused rather than taken at its own name.
+    while [ -L "$p" ]; do
+      if [ "$n" -ge 40 ] || ! t="$(readlink "$p" 2>/dev/null)" || [ -z "$t" ]; then
+        LINK_WHY="could not be resolved"
+        return 1
+      fi
       case "$t" in
         /*) p="$t" ;;
         *) p="${p%/*}/$t" ;;
       esac
       n=$((n + 1))
     done
+    base="${p##*/}"
     d="$(cd -P "${p%/*}" 2>/dev/null && pwd -P)"
   fi
   if [ -z "$d" ] || [ -z "$ROOT_P" ]; then
@@ -295,14 +330,54 @@ link_target_ok() {
   while [ -n "$d" ] && [ "$d" != "$prev" ]; do
     for t in $TIERS; do
       if [ -d "$ROOT_P/$t" ] && [ ! -L "$ROOT_P/$t" ] && [ "$d" -ef "$ROOT_P/$t" ]; then
+        # Under a tier. What the scan prunes there it never reads, so a link
+        # to it is a note, or folder of notes, nobody checks.
+        case "/$sub" in
+          */templates/*) LINK_WHY="points into a templates folder, which the scan does not read"; return 1 ;;
+        esac
+        if [ "$isdir" -eq 0 ]; then
+          case "$base" in
+            *.md) ;;
+            *) LINK_WHY="points to $base, which is not a .md note"; return 1 ;;
+          esac
+          if [ "$t/$sub" = "20-projects/_logs/" ]; then
+            case "$base" in
+              compaction-*.md) LINK_WHY="points to a compaction stub, which the scan does not read"; return 1 ;;
+            esac
+          fi
+        fi
         return 0
       fi
     done
     [ "$d" -ef "$ROOT_P" ] && break
     prev="$d"
+    sub="${d##*/}/$sub"
     d="${d%/*}"
   done
   LINK_WHY="points outside the vault's content-tier folders"
+  return 1
+}
+
+# named_tier_rel <absolute path> - true when the path lies in one of this
+# vault's content-tier folders, by identity rather than by spelling, so
+# ./31-standards/x.md, a doubled slash or the other Windows spelling of the
+# root count as well. Sets NAMED_REL to the path from the vault root.
+named_tier_rel() {
+  local f="${1//\\//}" d sub="" t prev=""
+  d="${f%/*}"
+  NAMED_REL=""
+  while [ -n "$d" ] && [ "$d" != "$prev" ]; do
+    for t in $TIERS; do
+      if [ -e "$ROOT/$t" ] && [ "$d" -ef "$ROOT/$t" ]; then
+        NAMED_REL="$t/$sub${f##*/}"
+        return 0
+      fi
+    done
+    [ "$d" -ef "$ROOT" ] && return 1
+    prev="$d"
+    sub="${d##*/}/$sub"
+    d="${d%/*}"
+  done
   return 1
 }
 
@@ -314,7 +389,7 @@ refuse_link() {  # refuse_link <rel> <why>
 }
 
 check_note() {
-  local file="$1" rel="${2:-}" fm created verified created_ok verified_ok tierv typev want line
+  local file="$1" rel="${2:-}" fm created verified created_ok verified_ok tierv typev line n_tier n_type
   files=$((files + 1))
   [ -n "$rel" ] || rel="${file#"$ROOT"/}"
 
@@ -327,32 +402,36 @@ check_note() {
 
   fm="$(fm_of "$file")"
 
-  [ "$(count_key tier "$fm")" -eq 0 ] && report "$rel" "C2" "frontmatter has no 'tier:' key"
-  [ "$(count_key type "$fm")" -eq 0 ] && report "$rel" "C3" "frontmatter has no 'type:' key"
+  n_tier="$(count_key tier "$fm")"
+  n_type="$(count_key type "$fm")"
+  [ "$n_tier" -eq 0 ] && report "$rel" "C2" "frontmatter has no 'tier:' key"
+  [ "$n_type" -eq 0 ] && report "$rel" "C3" "frontmatter has no 'type:' key"
 
   # What the two keys say, not only that they are there (D3, 1.7.0). Advisory
   # for one release, because an existing vault may newly fail, and a WARNING
   # changes neither the count line nor the exit code.
-  if [ "$(count_key tier "$fm")" -gt 0 ]; then
-    tierv="$(value_of tier "$fm")"
+  folder_tier "$rel"
+  if [ "$n_tier" -gt 0 ]; then
+    yaml_scalar "$(value_of tier "$fm")"
+    tierv="$SCALAR"
     case "$tierv" in
       short|medium|long)
-        want="$(folder_tier "$rel")"
-        if [ -n "$want" ] && [ "$tierv" != "$want" ]; then
-          warn "$rel" "tier is $tierv, but the folder it is in holds $want-tier notes"
+        if [ -n "$FOLDER_TIER" ] && [ "$tierv" != "$FOLDER_TIER" ]; then
+          warn "$rel" "tier is $tierv, but the folder it is in holds $FOLDER_TIER-tier notes"
         fi
         ;;
       *) warn "$rel" "tier '$tierv' is not short, medium or long" ;;
     esac
   fi
-  if [ "$(count_key type "$fm")" -gt 0 ]; then
-    typev="$(value_of type "$fm")"
+  if [ "$n_type" -gt 0 ]; then
+    yaml_scalar "$(value_of type "$fm")"
+    typev="$SCALAR"
     case "$typev" in
       reference|daily|project-log|moc|standard|wiki-entity) ;;
       *) warn "$rel" "type '$typev' is not one of reference, daily, project-log, moc, standard, wiki-entity" ;;
     esac
   fi
-  if [ "$(folder_tier "$rel")" = long ] && ! LC_ALL=C grep -q '\[\[' "$file"; then
+  if [ "$FOLDER_TIER" = long ] && ! LC_ALL=C grep -q '\[\[' "$file"; then
     warn "$rel" "a long-tier note with no [[wikilink]] to a peer or an index"
   fi
   # Split by parameter expansion: a here-document can make bash write a
@@ -412,19 +491,22 @@ if [ "${#NAMED[@]}" -gt 0 ]; then
       continue
     fi
     # A note named inside a content tier is held to the full scan's rule for
-    # links (since 1.7.0): it is read only when it really lies under a
-    # content-tier folder, so the two modes agree about the same note. A note
-    # named anywhere else is checked as it always was.
-    named_in_tier=0
-    for d in $TIERS; do
-      case "$file" in "$ROOT/$d/"*) named_in_tier=1 ;; esac
-    done
-    if [ "$named_in_tier" -eq 1 ] && ! link_target_ok "$file"; then
-      printf 'vault-check: %s %s, so it was not checked.\n' "$file" "$LINK_WHY" >&2
-      missing=$((missing + 1))
-      continue
+    # links (since 1.7.0): it is read only when it really lies where the scan
+    # reads it, so the two modes agree about the same note. Inside a tier is
+    # decided by identity, not spelling, so ./31-standards/x.md or the other
+    # Windows spelling of the root count too, and the path from the root is
+    # what the advisory checks read. A note named anywhere else is checked as
+    # it always was.
+    if named_tier_rel "$file"; then
+      if ! link_target_ok "$file"; then
+        printf 'vault-check: %s %s, so it was not checked.\n' "$file" "$LINK_WHY" >&2
+        refused=$((refused + 1))
+        continue
+      fi
+      check_note "$file" "$NAMED_REL"
+    else
+      check_note "$file"
     fi
-    check_note "$file"
   done
 else
   # Paths relative to the root, never absolute: the prune patterns are matched
@@ -435,11 +517,18 @@ else
   # 20-projects/_logs only.
   #
   # find does not follow links (no -L, no -H), so it never reads a note twice
-  # or walks out of the vault. Every link it meets is then checked on its own:
-  # one whose real target is under a content-tier folder holds only notes this
-  # walk reads there anyway, and one that dangles or points anywhere else (a
-  # synced folder outside the vault included) is refused, and the run exits 2.
-  # Before 1.7.0 a linked tier folder or note was skipped without a word.
+  # or walks out of the vault. Every link it meets that could be a note or a
+  # folder of notes is then checked on its own: one whose real target is
+  # something this walk reads where it is (link_target_ok) is fine, and one
+  # that dangles or points anywhere else (a synced folder outside the vault, a
+  # template, a file that is no .md note) is refused, and the run exits 2. A
+  # link to a file under another name than *.md, an image say, is no note and
+  # is left alone, and so is a dangling one whose name has an extension other
+  # than .md. Before 1.7.0 a linked tier folder or note was skipped without a
+  # word.
+  #
+  # The stub prune matches only directly in 20-projects/_logs: find's * crosses
+  # a /, so the pattern alone would also prune a folder named compaction-*.
   TIER_NAMES=()
   for d in $TIERS; do
     { [ -d "$ROOT/$d" ] || [ -L "$ROOT/$d" ]; } && TIER_NAMES+=("$d")
@@ -447,14 +536,33 @@ else
   # -print0 / read -d '': several vault notes have spaces in their filenames.
   while IFS= read -r -d '' file; do
     check_note "$ROOT/$file" "$file"
-  done < <(cd "$ROOT" && find "${TIER_NAMES[@]}" \( -path '*/templates/*' -o -path '20-projects/_logs/compaction-*.md' \) -prune -o -type f -name '*.md' -print0)
+  done < <(cd "$ROOT" && find "${TIER_NAMES[@]}" \( -path '*/templates/*' -o \( -path '20-projects/_logs/compaction-*.md' ! -path '20-projects/_logs/*/*' \) \) -prune -o -type f -name '*.md' -print0)
   while IFS= read -r -d '' file; do
+    case "$file" in
+      *.md) ;;
+      *)
+        if [ -d "$ROOT/$file" ]; then
+          :
+        elif [ -e "$ROOT/$file" ]; then
+          continue
+        else
+          case "${file##*/}" in *.*) continue ;; esac
+        fi
+        ;;
+    esac
     link_target_ok "$ROOT/$file" || refuse_link "$file" "$LINK_WHY"
-  done < <(cd "$ROOT" && find "${TIER_NAMES[@]}" \( -path '*/templates/*' -o -path '20-projects/_logs/compaction-*.md' \) -prune -o -type l -print0)
+  done < <(cd "$ROOT" && find "${TIER_NAMES[@]}" \( -path '*/templates/*' -o \( -path '20-projects/_logs/compaction-*.md' ! -path '20-projects/_logs/*/*' \) \) -prune -o -type l -print0)
 fi
 
 printf 'vault-check: %s violation(s) across %s file(s) checked (as of %s).\n' \
   "$violations" "$files" "$TODAY"
+
+# A link refused above is a note, or folder of notes, the count does not
+# cover, so it is said on stdout beside the count as well as on stderr, for a
+# caller that reads only the first.
+if [ "$refused" -gt 0 ]; then
+  printf 'vault-check: %s link(s) refused, so what they hold was not checked; stderr names them, and the exit code is 2 unless a note violates an invariant.\n' "$refused"
+fi
 
 # The advisory findings, after the count line and apart from it, so a caller
 # that reads the count line's numbers, or the exit code, sees what it always

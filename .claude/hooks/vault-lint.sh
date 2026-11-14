@@ -45,26 +45,47 @@ log_line() {
 }
 
 # norm_slashes <path> - sets NORM_OUT to <path> with backslashes turned into
-# slashes, runs of slashes and /./ parts collapsed, a leading ./ dropped, and
-# each part's trailing dots and spaces removed, which Win32 drops from every
-# part of a path, not only the last. The parts . and .. are kept as they are.
+# slashes, runs of slashes and . parts dropped, each part's trailing dots and
+# spaces removed, which Win32 drops from every part of a path, not only the
+# last, and each .. taken out with the part before it, as Win32 resolves it
+# before it touches the disk. A .. with nothing before it to take out stays,
+# and so does a drive. Lexical, so through a symlink the answer can differ
+# from the file system's, and the file read is still the one named.
 # Parameter expansion only: this runs on every call, and a process here would
 # count against the lint's process budget (run-tests.sh holds it).
 norm_slashes() {
-  local p="${1//\\//}" rest part out=""
+  local p="${1//\\//}" rest part out="" n=0 first=1
   while :; do case "$p" in *//*) p="${p//\/\//\/}" ;; *) break ;; esac; done
-  while :; do case "$p" in */./*) p="${p//\/.\//\/}" ;; *) break ;; esac; done
-  while :; do case "$p" in ./*) p="${p#./}" ;; *) break ;; esac; done
   rest="$p"
   while :; do
     part="${rest%%/*}"
     case "$part" in
-      .|..) ;;
-      *) while :; do case "$part" in *.|*' ') part="${part%?}" ;; *) break ;; esac; done ;;
+      .) ;;
+      ..)
+        if [ "$n" -gt 0 ]; then
+          case "$out" in
+            */*) out="${out%/*}" ;;
+            *) out=""; first=1 ;;
+          esac
+          n=$((n - 1))
+        elif [ "$first" -eq 1 ]; then
+          out=".."; first=0
+        else
+          out="$out/.."
+        fi
+        ;;
+      *)
+        while :; do case "$part" in *.|*' ') part="${part%?}" ;; *) break ;; esac; done
+        if [ "$first" -eq 1 ]; then out="$part"; else out="$out/$part"; fi
+        first=0
+        case "$part" in
+          ''|[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]:) ;;
+          *) n=$((n + 1)) ;;
+        esac
+        ;;
     esac
-    out="$out$part"
     case "$rest" in
-      */*) rest="${rest#*/}"; out="$out/" ;;
+      */*) rest="${rest#*/}" ;;
       *) break ;;
     esac
   done
@@ -151,10 +172,15 @@ lint_file() {
   #
   # Every iteration removes one character, so a name that is only dots and
   # spaces ends up empty and fails the .md test, which is the right answer.
+  #
+  # A trailing / or /. and an NTFS stream suffix go the same way: Win32 opens
+  # `evil.md/.` and `evil.md::$DATA` as evil.md, so before 1.7.0 both reached
+  # the vault unscanned through the .md test below.
   MATCHN="$NORM"
   while :; do
     case "$MATCHN" in
-      *.|*' ') MATCHN="${MATCHN%?}" ;;
+      *.|*' '|*/) MATCHN="${MATCHN%?}" ;;
+      *::\$[Dd][Aa][Tt][Aa]) MATCHN="${MATCHN%???????}" ;;
       *) break ;;
     esac
   done

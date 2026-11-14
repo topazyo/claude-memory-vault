@@ -117,9 +117,10 @@
 #        the place of 124 or 125, and the TIMEOUT or STALLED line is logged as
 #        well)
 #   79   AGENT-STATUS: the agent or wrapper itself left with one of the codes
-#        in this list other than 0 and 1 (2, 3, 4, 5, 64, 70, 75, 78, 124, 125,
-#        127, 129, 130 or 143), so the runner does not repeat a code that would
-#        mean something else. The log's "promotion-agent exited with code" line
+#        in this list other than 0 and 1 (2, 3, 4, 5, 64, 70, 75, 78, 79, 124,
+#        125, 127, 129, 130 or 143), so the runner does not repeat a code that
+#        would mean something else, and logs an AGENT-STATUS line. A wrapper
+#        that was gone when the watchdog came to start it stays 127. The log's "promotion-agent exited with code" line
 #        holds the agent's own status
 #   124  TIMEOUT: the watchdog killed a run that exceeded PROMOTION_PASS_TIMEOUT,
 #        and everything it started
