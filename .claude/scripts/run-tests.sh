@@ -506,7 +506,7 @@ else
     c4_mk "$C4W"
     c4_out="$(c4_lint "$C4W" "$C4W/.claude/rules/t.md")"
     c4_out2="$(c4_lint "$C4W" "$C4W/31-standards/lintme.md")"
-    printf 'no frontmatter at the root\n' > "$C4W/notes.md"
+    printf -- '---\ntitle: "r"\n---\n\na note at the root, no tier on purpose\n' > "$C4W/notes.md"
     c4_out3="$(c4_lint "$C4W" "$C4W/notes.md")"
     rm -f "$C4W/notes.md"
     if printf '%s' "$c4_out" | grep -q 'U+202E' && printf '%s' "$c4_out" | grep -qx 'LOGGED=1' \
@@ -533,7 +533,7 @@ else
       # The same vault sits under 31-standards/templates/, so a path left
       # absolute would be judged by its parents: a tier note there would be
       # skipped as a template, and a note at the root taken for a tier note.
-      printf 'no frontmatter at the root\n' > "$C4W/notes.md"
+      printf -- '---\ntitle: "r"\n---\n\na note at the root, no tier on purpose\n' > "$C4W/notes.md"
       c4_tier="$(CLAUDE_PROJECT_DIR="$c4_root_m" bash "$HOOK" -- "${c4_path_u%/.claude/rules/t.md}/31-standards/lintme.md" </dev/null 2>&1 | strip_notices)"
       c4_root_note="$(CLAUDE_PROJECT_DIR="$c4_root_m" bash "$HOOK" -- "${c4_path_u%/.claude/rules/t.md}/notes.md" </dev/null 2>&1 | strip_notices)"
       if printf '%s' "$c4_tier" | grep -q "missing 'tier'" && ! printf '%s' "$c4_root_note" | grep -q "missing 'tier'"; then
