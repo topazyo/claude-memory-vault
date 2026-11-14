@@ -790,10 +790,18 @@ else
   d3_note 31-standards/w-space.md 'tier: long\ntype: standard\nlast_verified : "2099-01-01"\n'
   d3_note 31-standards/w-dup.md 'tier: long\ntype: standard\nlast_verified: ""\nlast_verified: "2099-01-01"\n'
   d3_note 10-daily/w-daily.md 'tier: long\ntype: daily\n' 'a daily note'
+  # A note at the wrong tier in every other folder the tier table names, so
+  # each entry of that table is held by a warning.
+  mkdir -p "$D3V/01-inbox" "$D3V/20-projects/_logs" "$D3V/30-knowledge" "$D3V/40-llm-wiki/raw" "$D3V/40-llm-wiki/wiki"
+  d3_note 01-inbox/w-inbox.md 'tier: long\ntype: reference\n'
+  d3_note 40-llm-wiki/raw/w-raw.md 'tier: long\ntype: reference\n'
+  d3_note 20-projects/_logs/w-log.md 'tier: long\ntype: project-log\n'
+  d3_note 30-knowledge/w-knowledge.md 'tier: short\ntype: reference\n'
+  d3_note 40-llm-wiki/wiki/w-wiki.md 'tier: short\ntype: wiki-entity\n'
   d3_out="$(c3_run "$D3V")"
   d3_bad=''
   [ "$(c3_rc "$d3_out")" = 0 ] || d3_bad="$d3_bad rc:$(c3_rc "$d3_out")"
-  [ "$(sentinel_violations "$d3_out")" = 0 ] && [ "$(sentinel_files "$d3_out")" = 10 ] || d3_bad="$d3_bad count-line"
+  [ "$(sentinel_violations "$d3_out")" = 0 ] && [ "$(sentinel_files "$d3_out")" = 15 ] || d3_bad="$d3_bad count-line"
   for d3_want in "31-standards/w-tier.md — tier 'banana' is not short, medium or long" \
                  "31-standards/w-empty.md — tier '' is not short, medium or long" \
                  "31-standards/w-folder.md — tier is short, but the folder it is in holds long-tier notes" \
@@ -802,11 +810,16 @@ else
                  "31-standards/w-quoted.md — the key last_verified is also written as \"last_verified\":" \
                  "31-standards/w-space.md — the key last_verified is also written as last_verified :" \
                  "31-standards/w-dup.md — the key last_verified appears 2 times" \
-                 "10-daily/w-daily.md — tier is long, but the folder it is in holds short-tier notes"; do
+                 "10-daily/w-daily.md — tier is long, but the folder it is in holds short-tier notes" \
+                 "01-inbox/w-inbox.md — tier is long, but the folder it is in holds short-tier notes" \
+                 "40-llm-wiki/raw/w-raw.md — tier is long, but the folder it is in holds short-tier notes" \
+                 "20-projects/_logs/w-log.md — tier is long, but the folder it is in holds medium-tier notes" \
+                 "30-knowledge/w-knowledge.md — tier is short, but the folder it is in holds long-tier notes" \
+                 "40-llm-wiki/wiki/w-wiki.md — tier is short, but the folder it is in holds long-tier notes"; do
     printf '%s\n' "$d3_out" | grep -q "^vault-check: WARNING: $d3_want" || d3_bad="$d3_bad missing[$d3_want]"
   done
   printf '%s\n' "$d3_out" | grep -q '^vault-check: WARNING: 31-standards/good.md' && d3_bad="$d3_bad good-note-warned"
-  printf '%s\n' "$d3_out" | grep -q '^vault-check: 9 warning(s)\. They change neither the count above nor the exit code' || d3_bad="$d3_bad no-summary"
+  printf '%s\n' "$d3_out" | grep -q '^vault-check: 14 warning(s)\. They change neither the count above nor the exit code' || d3_bad="$d3_bad no-summary"
   # The warnings come after the count line, never before it.
   d3_first="$(printf '%s\n' "$d3_out" | awk '/^vault-check: WARNING/ { print NR; exit }')"
   d3_count="$(printf '%s\n' "$d3_out" | awk '/ violation\(s\) across / { print NR; exit }')"
@@ -819,7 +832,8 @@ else
   # A vault with nothing to warn about prints no WARNING line at all. One note
   # in every folder the tier table names, at that folder's tier, and every
   # allowed type, so each entry of both lists is held by a note.
-  rm -f "$D3V"/31-standards/w-*.md "$D3V"/10-daily/w-*.md
+  rm -f "$D3V"/31-standards/w-*.md "$D3V"/10-daily/w-*.md "$D3V"/01-inbox/w-*.md "$D3V"/40-llm-wiki/raw/w-*.md \
+    "$D3V"/20-projects/_logs/w-*.md "$D3V"/30-knowledge/w-*.md "$D3V"/40-llm-wiki/wiki/w-*.md
   mkdir -p "$D3V/01-inbox" "$D3V/20-projects/_logs" "$D3V/30-knowledge/moc" "$D3V/40-llm-wiki/raw" "$D3V/40-llm-wiki/wiki"
   d3_note 01-inbox/capture.md 'tier: short\ntype: reference\n'
   d3_note 10-daily/2026-01-01.md 'tier: short\ntype: daily\n'
@@ -21483,6 +21497,14 @@ if suite_section suite-filter; then
 
 printf '\n=== RUN_TESTS_ONLY (one section of this suite) ===\n'
 
+# The runs below are this suite started again, so a filter that let this
+# section run inside one of them would start them again, without end. They
+# carry RUN_TESTS_NESTED, and a nested run that reaches this section fails
+# here instead.
+if [ -n "${RUN_TESTS_NESTED:-}" ]; then
+  bad "the suite-filter section ran inside one of its own nested runs, so the filter let it through; its nested runs were not started again"
+else
+
 # The list the filter validates against and the guards in this file must name
 # the same sections in the same order, or a section is unreachable by name (a
 # guard the list lacks) or a name runs nothing (a list entry with no guard).
@@ -21506,7 +21528,7 @@ fi
 
 # A name that is not a section is refused before anything runs, so a typo is
 # never a green run of nothing.
-sf_out="$(env -u RUN_TESTS_REQUIRED RUN_TESTS_ONLY=no-such-section bash "$SUITE_SELF" 2>&1)"
+sf_out="$(env -u RUN_TESTS_REQUIRED RUN_TESTS_NESTED=1 RUN_TESTS_ONLY=no-such-section bash "$SUITE_SELF" 2>&1)"
 sf_rc=$?
 if [ "$sf_rc" -eq 64 ] && printf '%s\n' "$sf_out" | grep -q 'RUN_TESTS_ONLY=no-such-section is not a section of this suite' \
    && ! printf '%s\n' "$sf_out" | grep -q '  PASS  '; then
@@ -21517,7 +21539,7 @@ fi
 
 # Combined with RUN_TESTS_REQUIRED it is refused, because the required ids of
 # every other section would read as not run.
-sf_out="$(env RUN_TESTS_REQUIRED=x RUN_TESTS_ONLY=skills bash "$SUITE_SELF" 2>&1)"
+sf_out="$(env RUN_TESTS_REQUIRED=x RUN_TESTS_NESTED=1 RUN_TESTS_ONLY=skills bash "$SUITE_SELF" 2>&1)"
 sf_rc=$?
 if [ "$sf_rc" -eq 64 ] && printf '%s\n' "$sf_out" | grep -q 'RUN_TESTS_ONLY and RUN_TESTS_REQUIRED cannot be combined'; then
   ok "RUN_TESTS_ONLY with RUN_TESTS_REQUIRED exits 64 and says why"
@@ -21527,7 +21549,7 @@ fi
 
 # One small section, end to end: its own header and passes, no other
 # section's header, and a summary that names the section.
-sf_out="$(env -u RUN_TESTS_REQUIRED RUN_TESTS_ONLY=skills bash "$SUITE_SELF" 2>&1)"
+sf_out="$(env -u RUN_TESTS_REQUIRED RUN_TESTS_NESTED=1 RUN_TESTS_ONLY=skills bash "$SUITE_SELF" 2>&1)"
 sf_rc=$?
 sf_pass="$(printf '%s\n' "$sf_out" | LC_ALL=C sed -n 's/^=== \([0-9][0-9]*\) passed, 0 failed (section skills only) ===$/\1/p' | head -n 1)"
 if [ "$sf_rc" -eq 0 ] && [ -n "$sf_pass" ] && [ "$sf_pass" -ge 3 ] \
@@ -21540,7 +21562,7 @@ fi
 
 # A filter that reaches no guard must not end green: the renamed copy, asked
 # for skills, runs no section and has to fail on that.
-sf_out="$(env -u RUN_TESTS_REQUIRED RUN_TESTS_ONLY=skills CLAUDE_PROJECT_DIR="$ROOT" bash "$sf_copy" 2>&1)"
+sf_out="$(env -u RUN_TESTS_REQUIRED RUN_TESTS_NESTED=1 RUN_TESTS_ONLY=skills CLAUDE_PROJECT_DIR="$ROOT" bash "$sf_copy" 2>&1)"
 sf_rc=$?
 if [ "$sf_rc" -eq 1 ] && printf '%s\n' "$sf_out" | grep -q 'FAIL  RUN_TESTS_ONLY=skills reached no section' \
    && ! printf '%s\n' "$sf_out" | grep -q '^=== mirrored skills '; then
@@ -21548,6 +21570,8 @@ if [ "$sf_rc" -eq 1 ] && printf '%s\n' "$sf_out" | grep -q 'FAIL  RUN_TESTS_ONLY
 else
   bad "a RUN_TESTS_ONLY run that reaches no section -- expected exit 1 and the reached-no-section failure, got exit $sf_rc: $(printf '%s' "$sf_out" | grep -e '^===' -e FAIL | tr '\n' ' ' | cut -c1-400)"
 fi
+
+fi  # not nested
 
 fi  # section suite-filter
 
