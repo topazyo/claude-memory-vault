@@ -194,8 +194,11 @@ lint_file() {
   # A trailing / or /. and an NTFS stream suffix go the same way: Win32 opens
   # `evil.md/.` and `evil.md::$DATA` as evil.md, so before 1.7.0 both reached
   # the vault unscanned through the .md test below. The name is normalised
-  # first, so `evil.md/x/..` is judged as evil.md, which Win32 opens.
-  norm_slashes "$NORM"
+  # first, so `evil.md/x/..` is judged as evil.md, which Win32 opens. In keep
+  # mode, because MATCHN is also what scope_path reads, and its templates skip
+  # must see a folder named `templates.` as spelled: stripping here would hand
+  # it `templates` and skip a note that is no template on Linux and macOS.
+  norm_slashes "$NORM" keep
   MATCHN="$NORM_OUT"
   while :; do
     case "$MATCHN" in
