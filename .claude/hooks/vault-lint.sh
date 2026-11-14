@@ -352,12 +352,12 @@ lint_file() {
     # and prints zero or more of nofence, notier and notype. The warnings below
     # are worded and ordered exactly as they were.
     #
-    # Both fences stay anchored and both match fm_of() in
+    # Both fences stay anchored and both match note_facts() in
     # .claude/scripts/vault-check.sh, so the hook and the checker agree on
     # where frontmatter ends. An unanchored /^---/ would end it at any line
     # merely STARTING with dashes.
     #
-    # The opening fence now uses the same [ \t\r] as fm_of. It used to be
+    # The opening fence now uses the same [ \t\r] as note_facts. It used to be
     # tested by a grep for [[:space:]] while the awk beside it used [ \t\r], so
     # an opening fence padded with a vertical tab was accepted by one and
     # rejected by the other, and the file was reported as missing both keys

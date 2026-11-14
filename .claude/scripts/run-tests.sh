@@ -21808,8 +21808,8 @@ printf 'hash sha256\n' > "$vu_d/.claude/template-manifest"
 vu_vc_nover="$( CLAUDE_PROJECT_DIR="$vu_d" "$VU_BASH" "$VU_VC" 2>&1 )"
 vu_vc_rc_nover=$?
 
-# A scan narrowed with -- prints only the count. AGENTS.md and docs/reference.md
-# both publish that sentence, and no control ran the narrowed form at all, so
+# A scan narrowed with -- prints none of the three report lines. AGENTS.md
+# publishes that, and no control ran the narrowed form at all, so
 # the new block could have printed into it and nothing would have said so.
 printf 'version 9.9.9\nhash sha256\nowned 0000000000000000000000000000000000000000000000000000000000000000 AGENTS.md\n' \
   > "$vu_d/.claude/template-manifest"

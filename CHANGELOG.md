@@ -47,7 +47,9 @@ its own. Two changes can newly stop a vault that 1.6.1 passed; item 2 of the Ado
   tripwire nobody set and its 75 as a lock nobody held. The runner now leaves with 79 and logs an
   `AGENT-STATUS:` line after the agent's own `exited with code` line, and does the same for an
   agent that itself leaves with 79. 1 is not remapped: it is what `claude -p` and most wrappers
-  leave with for any failure. A wrapper that was gone when the watchdog came to start it stays 127.
+  leave with for any failure. A wrapper that was gone when the watchdog came to start it stays 127;
+  one that is there but cannot start, its interpreter missing, gets 127 from the shell that tried,
+  which reads as the agent's, so 79.
 - **`RUN_TESTS_ONLY=<section>`** runs one section of `run-tests.sh`, for work on that section. A
   full run is unchanged and is still what CI and a release need.
 
@@ -70,13 +72,18 @@ its own. Two changes can newly stop a vault that 1.6.1 passed; item 2 of the Ado
   `.claude/rules/templates/x.md`, `.claude//rules/x.md`, `.claude/./rules/x.md`, a trailing dot on a
   folder name, `..` parts such as `10-daily/templates/../x.md`, a trailing `/.` or `::$DATA` after
   the name, and every file of a vault whose own path holds `/templates/` were skipped with no
-  warning and no log line. Scope is now decided on the vault-relative, normalised path, with `..`
-  resolved as Win32 resolves it, and `templates/` is skipped inside a content tier only.
+  warning and no log line, and so were `evil.md/x/..` and a folder named with its
+  `::$INDEX_ALLOCATION` stream, both of which Win32 opens. Scope is now decided on the
+  vault-relative, normalised path, with `..` resolved as Win32 resolves it, and `templates/` is
+  skipped inside a content tier only and never for a steering file, so a `CLAUDE.md` in a tier's
+  templates folder is scanned too. A Windows 8.3 short name such as `CLAUDE~1` is still not
+  recognised (`docs/reference.md` §3.1).
 - **Containment covers reserved names directly in `.claude/worktrees/`.** A `CLAUDE.md`,
   `AGENTS.md` or `.mcp.json` a pass planted there was reported by the fence and left in place, to
   be read by a session started in any worktree below it. It is now restored, quarantined and named
-  by the tripwire like any other steering file, and so is a link placed there and anything under a
-  child named like a harness folder (`.claude`, `.git`), which is no worktree.
+  by the tripwire like any other steering file, and so is a link placed there, `.claude/worktrees`
+  itself swapped for a link, and anything under a child named like a harness folder (`.claude`,
+  `.git`), which is no worktree. A worktree's own `.runner-line-break-names` is no longer counted.
 - **The tripwire refusals point at the procedure.** `vault-check.sh`'s exit 78 and the pre-commit
   gate's now name `docs/setup.md`, section "A tripwire is set".
 
@@ -103,7 +110,10 @@ its own. Two changes can newly stop a vault that 1.6.1 passed; item 2 of the Ado
    is now scanned at all.
 3. **Read the new `WARNING` lines once, and fix each note by hand.** They become violations in a
    later release. Do not bulk-edit frontmatter to quiet them (AGENTS.md §9). A caller that reads
-   the count line's numbers or the exit code sees what it always saw.
+   the count line's numbers or the exit code sees what it always saw. Two warnings mean the
+   checker's tables need the edit, not your notes: a `type` you use on purpose belongs in the type
+   list in `check_note()`, and a tier folder you renamed or added belongs in `folder_tier()`, or
+   its notes draw no tier warnings at all (`docs/customizing.md` §2 and §3).
 4. **A scheduler or wrapper that reads the runners' exit code meets 79** where it met a colliding
    code before, and for an agent that itself left with 79. The agent's own code is in the log's
    `exited with code` line. If your
@@ -112,7 +122,9 @@ its own. Two changes can newly stop a vault that 1.6.1 passed; item 2 of the Ado
 5. **The lint now warns on steering files it skipped before**, such as one under
    `.claude/rules/templates/`. A warning there is a finding, not noise.
 6. **`README.md` is a seed file.** Merge the frontmatter contract's two changed rows and the
-   sentence above them by hand if you kept your own.
+   sentence above them by hand if you kept your own, and the sentence after C5 that says what
+   the scan skips: a `templates/` folder inside a tier and the stubs directly in
+   `20-projects/_logs/`, not every `templates/` folder and `compaction-*.md` anywhere.
 7. **If you kept the template's `.github/workflows/ci.yml`**, which no vault is ever offered, its
    required lists gain `c3-links` on Ubuntu and macOS and `c3-junction` and `c4-drive-spelling` on
    Windows. The 1.6.1 copy drops those lists outside
@@ -121,7 +133,7 @@ its own. Two changes can newly stop a vault that 1.6.1 passed; item 2 of the Ado
    `.claude/githooks/pre-commit`, `.claude/hooks/vault-lint.sh`,
    `.claude/scripts/lib/runner-common.sh`, `.claude/scripts/dream-pass.sh`,
    `.claude/scripts/promotion-pass.sh`, `.claude/scripts/run-tests.sh`, `docs/reference.md`,
-   `docs/setup.md`, `AGENTS.md` and `README.md`, plus `VERSION`, this file and
+   `docs/setup.md`, `docs/customizing.md`, `AGENTS.md` and `README.md`, plus `VERSION`, this file and
    `.claude/template-manifest`. `.github/workflows/ci.yml` changed as well; a vault is offered
    none of it.
 

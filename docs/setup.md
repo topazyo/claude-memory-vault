@@ -368,7 +368,9 @@ Do **not** pipe this into `less`, `head`, or `tail` if you plan to read `$?` —
 the last command's status, not the checker's.
 
 It validates five invariants across the content tiers (`01-inbox`, `10-daily`, `20-projects`,
-`30-knowledge`, `31-standards`, `40-llm-wiki`), skipping `templates/` and `compaction-*.md`:
+`30-knowledge`, `31-standards`, `40-llm-wiki`), skipping a `templates/` folder inside a tier and
+the `compaction-*.md` stubs directly in `20-projects/_logs/` (`docs/reference.md` §4.1 has the
+scope and how links are treated):
 
 | ID | Invariant |
 | --- | --- |

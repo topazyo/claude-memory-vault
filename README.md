@@ -391,7 +391,8 @@ is never in the future. C4 also flags a `created` that is not a `YYYY-MM-DD` dat
 freshness signal. There is deliberately **no** check that a long-tier note carries
 `last_verified` at all. That judgement stays with you. The scan covers the six content tiers
 (`01-inbox`, `10-daily`, `20-projects`, `30-knowledge`, `31-standards`, `40-llm-wiki`), skipping
-`*/templates/*` and the compaction stubs; `90-auto-memory/` is machine-managed and out of scope.
+a `templates/` folder inside a tier and the `compaction-*.md` stubs directly in
+`20-projects/_logs/`; `90-auto-memory/` is machine-managed and out of scope.
 
 ---
 
