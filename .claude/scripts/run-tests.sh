@@ -194,7 +194,8 @@ mkdir -p "$WORK/31-standards/templates" "$WORK/10-daily" "$WORK/20-projects/_log
   printf 'zero-width:\342\200\213 bidi:\342\200\256 done\n'
 } > "$WORK/31-standards/probe.md"
 
-# Fully conformant note. Must produce NO warning.
+# Fully conformant note. Must produce NO warning. A long-tier note links to an
+# index, or vault-check warns about it (1.7.0).
 {
   printf -- '---\n'
   printf 'title: "clean"\n'
@@ -203,7 +204,7 @@ mkdir -p "$WORK/31-standards/templates" "$WORK/10-daily" "$WORK/20-projects/_log
   printf 'created: "2026-01-01"\n'
   printf 'last_verified: "2026-02-01"\n'
   printf -- '---\n\n'
-  printf 'ordinary text\n'
+  printf 'ordinary text, see [[ARCH-INDEX]]\n'
 } > "$WORK/31-standards/clean.md"
 
 # Frontmatter present but missing the two mandatory keys.
@@ -615,6 +616,181 @@ else
     ok "one violating note exits 1 with a summary line whose file count and violation count are both above zero"
   else
     bad "one violating note exited $vs_rc with counts [${vs_n:-none}/${vs_k:-none}] -- expected 1 with both above zero"
+  fi
+
+  # --- what the full scan reads (1.7.0) ---
+  # The scan ran find on absolute paths, did not follow links, and pruned by
+  # name in every tier, so a linked tier folder or note, a long-tier note named
+  # compaction-*.md, and every note of a vault under a folder named templates
+  # were left out of a report that still said 0 violations.
+  c3_vault() {  # c3_vault <root> - a small vault: one good note, one tier folder each
+    mkdir -p "$1/10-daily" "$1/20-projects/_logs" "$1/30-knowledge" "$1/31-standards/templates"
+    printf -- '---\ntier: long\ntype: standard\n---\n\nSee [[ARCH-INDEX]].\n' > "$1/31-standards/good.md"
+    printf 'a template, malformed on purpose\n' > "$1/31-standards/templates/tpl.md"
+    printf 'a stub, malformed on purpose\n' > "$1/20-projects/_logs/compaction-abc.md"
+  }
+  c3_run() {  # c3_run <root> [args...] - prints the output, then RC=<status> on its own line
+    local o r
+    o="$(CLAUDE_PROJECT_DIR="$1" bash "$CHECK" "${@:2}" 2>&1)"
+    r=$?
+    printf '%s\nRC=%s\n' "$o" "$r"
+  }
+  c3_rc() { printf '%s\n' "$1" | LC_ALL=C sed -n 's/^RC=//p' | tail -n 1; }
+
+  # (c) A long-tier note named like a stub is read; a real stub in _logs is not.
+  C3C="$TMP/c3c"
+  c3_vault "$C3C"
+  printf 'no fence\n' > "$C3C/31-standards/compaction-policy.md"
+  c3_out="$(c3_run "$C3C")"
+  if [ "$(c3_rc "$c3_out")" = 1 ] && printf '%s\n' "$c3_out" | grep -q '^31-standards/compaction-policy.md — C1' \
+     && [ "$(sentinel_files "$c3_out")" = 2 ]; then
+    ok "a note named compaction-*.md outside 20-projects/_logs is read, and a stub and a template are still pruned"
+  else
+    bad "compaction-*.md outside _logs -- expected exit 1, its C1 line and 2 files -- got: $(printf '%s' "$c3_out" | tr '\n' '|' | cut -c1-400)"
+  fi
+
+  # (d) A vault inside a folder named templates scans like any other.
+  C3D="$TMP/c3 under/templates/v"
+  c3_vault "$C3D"
+  c3_out="$(c3_run "$C3D")"
+  if [ "$(c3_rc "$c3_out")" = 0 ] && [ "$(sentinel_files "$c3_out")" = 1 ]; then
+    ok "a vault whose own path holds a folder named templates is scanned, its tier templates still pruned"
+  else
+    bad "a vault under a templates folder -- expected exit 0 and 1 file -- got: $(printf '%s' "$c3_out" | tr '\n' '|' | cut -c1-400)"
+  fi
+
+  # Links. Git Bash's ln -s copies unless native links are switched on, so each
+  # case first proves it made a link, and the cases are skipped by name where
+  # none could be made.
+  C3L="$TMP/c3l"
+  c3_vault "$C3L"
+  mkdir -p "$C3L/elsewhere" "$TMP/c3-outside/std" "$C3L/30-knowledge/shared"
+  printf 'no fence\n' > "$C3L/30-knowledge/shared/bad.md"
+  printf 'no fence\n' > "$C3L/elsewhere/n.md"
+  printf 'no fence\n' > "$TMP/c3-outside/std/bad.md"
+  ln -s "../30-knowledge/shared" "$C3L/31-standards/shared" 2>/dev/null
+  if [ -L "$C3L/31-standards/shared" ]; then
+    ran c3-links
+    # A link to a folder inside another tier: its note is read once, through
+    # that tier, and the link itself is fine.
+    c3_out="$(c3_run "$C3L")"
+    if [ "$(c3_rc "$c3_out")" = 1 ] && [ "$(sentinel_files "$c3_out")" = 2 ] \
+       && [ "$(printf '%s\n' "$c3_out" | grep -c 'bad.md — C1')" = 1 ] \
+       && ! printf '%s\n' "$c3_out" | grep -q 'is a link that'; then
+      ok "a link into another content tier is followed: its note is read once and the link is not refused"
+    else
+      bad "a link into another tier -- expected exit 1, 2 files, one C1 line, no refusal -- got: $(printf '%s' "$c3_out" | tr '\n' '|' | cut -c1-500)"
+    fi
+    # The same note named through the link is read, as the full scan reads it.
+    c3_out="$(c3_run "$C3L" -- 31-standards/shared/bad.md)"
+    if [ "$(c3_rc "$c3_out")" = 1 ] && [ "$(sentinel_files "$c3_out")" = 1 ]; then
+      ok "named mode reads a note through a link into a content tier, as the full scan does"
+    else
+      bad "named mode through a link into a tier -- expected exit 1 and 1 file -- got: $(printf '%s' "$c3_out" | tr '\n' '|' | cut -c1-400)"
+    fi
+    rm -f "$C3L/31-standards/shared"
+    rm -rf "$C3L/30-knowledge/shared"
+    # (a) A tier folder that is a link out of the vault, (b) a note linked to a
+    # folder of the vault that is no tier, and a link that dangles: each is
+    # refused and the run exits 2, in the full scan and, for the note, by name.
+    # No note in the tiers violates anything here, because a violation's 1
+    # outranks the 2, as it does for a named note that could not be read.
+    mv "$C3L/10-daily" "$C3L/10-daily.real"
+    ln -s "$TMP/c3-outside/std" "$C3L/10-daily"
+    ln -s "../elsewhere/n.md" "$C3L/31-standards/n.md"
+    ln -s "../no-such-folder/gone.md" "$C3L/31-standards/gone.md"
+    c3_out="$(c3_run "$C3L")"
+    if [ "$(c3_rc "$c3_out")" = 2 ] \
+       && printf '%s\n' "$c3_out" | grep -q "^vault-check: 10-daily is a link that points outside the vault's content-tier folders" \
+       && printf '%s\n' "$c3_out" | grep -q "^vault-check: 31-standards/n.md is a link that points outside the vault's content-tier folders" \
+       && printf '%s\n' "$c3_out" | grep -q '^vault-check: 31-standards/gone.md is a link that does not resolve' \
+       && ! printf '%s\n' "$c3_out" | grep -q 'bad.md — C1'; then
+      ok "a tier folder linked out of the vault, a note linked to a folder that is no tier, and a dangling link are each refused, and the scan exits 2"
+    else
+      bad "links out of the tiers -- expected exit 2 and three refusals -- got: $(printf '%s' "$c3_out" | tr '\n' '|' | cut -c1-600)"
+    fi
+    c3_out="$(c3_run "$C3L" -- 31-standards/n.md)"
+    if [ "$(c3_rc "$c3_out")" = 2 ] && printf '%s\n' "$c3_out" | grep -q "31-standards/n.md points outside the vault's content-tier folders, so it was not checked"; then
+      ok "named mode refuses a note linked out of the content tiers with exit 2, as the full scan does"
+    else
+      bad "named mode on a note linked out of the tiers -- expected exit 2 and the refusal -- got: $(printf '%s' "$c3_out" | tr '\n' '|' | cut -c1-400)"
+    fi
+    rm -f "$C3L/10-daily" "$C3L/31-standards/n.md" "$C3L/31-standards/gone.md"
+    mv "$C3L/10-daily.real" "$C3L/10-daily"
+    c3_out="$(c3_run "$C3L")"
+    if [ "$(c3_rc "$c3_out")" = 0 ] && [ "$(sentinel_files "$c3_out")" = 1 ] && ! printf '%s\n' "$c3_out" | grep -q 'is a link that'; then
+      ok "with the links gone the same vault exits 0 on its notes alone, with no refusal"
+    else
+      bad "the vault without links -- expected exit 0, 1 file and no refusal -- got: $(printf '%s' "$c3_out" | tr '\n' '|' | cut -c1-400)"
+    fi
+  else
+    skip c3-links "vault-check and links: ln -s made no link here"
+  fi
+
+  # --- what the two keys say (1.7.0, advisory) ---
+  # One note per warning, each otherwise conformant, so the count line has to
+  # stay at 0 violations and the exit code at 0 while every warning prints.
+  D3V="$TMP/d3"
+  mkdir -p "$D3V/31-standards" "$D3V/10-daily"
+  d3_note() {  # d3_note <name> <frontmatter lines> [body]
+    printf -- '---\n%b---\n\n%s\n' "$2" "${3:-See [[ARCH-INDEX]].}" > "$D3V/$1"
+  }
+  d3_note 31-standards/good.md 'tier: long\ntype: standard\ncreated: "2026-01-01"\n'
+  d3_note 31-standards/w-tier.md 'tier: banana\ntype: standard\n'
+  d3_note 31-standards/w-empty.md 'tier:\ntype: standard\n'
+  d3_note 31-standards/w-folder.md 'tier: short\ntype: standard\n'
+  d3_note 31-standards/w-type.md 'tier: long\ntype: banana\n'
+  d3_note 31-standards/w-nolink.md 'tier: long\ntype: standard\n' 'no link here'
+  d3_note 31-standards/w-quoted.md 'tier: long\ntype: standard\n"last_verified": "2099-01-01"\n'
+  d3_note 31-standards/w-space.md 'tier: long\ntype: standard\nlast_verified : "2099-01-01"\n'
+  d3_note 31-standards/w-dup.md 'tier: long\ntype: standard\nlast_verified: ""\nlast_verified: "2099-01-01"\n'
+  d3_note 10-daily/w-daily.md 'tier: long\ntype: daily\n' 'a daily note'
+  d3_out="$(c3_run "$D3V")"
+  d3_bad=''
+  [ "$(c3_rc "$d3_out")" = 0 ] || d3_bad="$d3_bad rc:$(c3_rc "$d3_out")"
+  [ "$(sentinel_violations "$d3_out")" = 0 ] && [ "$(sentinel_files "$d3_out")" = 10 ] || d3_bad="$d3_bad count-line"
+  for d3_want in "31-standards/w-tier.md — tier 'banana' is not short, medium or long" \
+                 "31-standards/w-empty.md — tier '' is not short, medium or long" \
+                 "31-standards/w-folder.md — tier is short, but the folder it is in holds long-tier notes" \
+                 "31-standards/w-type.md — type 'banana' is not one of" \
+                 "31-standards/w-nolink.md — a long-tier note with no \[\[wikilink\]\]" \
+                 "31-standards/w-quoted.md — the key last_verified is also written as \"last_verified\":" \
+                 "31-standards/w-space.md — the key last_verified is also written as last_verified :" \
+                 "31-standards/w-dup.md — the key last_verified appears 2 times" \
+                 "10-daily/w-daily.md — tier is long, but the folder it is in holds short-tier notes"; do
+    printf '%s\n' "$d3_out" | grep -q "^vault-check: WARNING: $d3_want" || d3_bad="$d3_bad missing[$d3_want]"
+  done
+  printf '%s\n' "$d3_out" | grep -q '^vault-check: WARNING: 31-standards/good.md' && d3_bad="$d3_bad good-note-warned"
+  printf '%s\n' "$d3_out" | grep -q '^vault-check: 9 warning(s)\. They change neither the count above nor the exit code' || d3_bad="$d3_bad no-summary"
+  # The warnings come after the count line, never before it.
+  d3_first="$(printf '%s\n' "$d3_out" | awk '/^vault-check: WARNING/ { print NR; exit }')"
+  d3_count="$(printf '%s\n' "$d3_out" | awk '/ violation\(s\) across / { print NR; exit }')"
+  [ -n "$d3_first" ] && [ -n "$d3_count" ] && [ "$d3_first" -gt "$d3_count" ] || d3_bad="$d3_bad order[$d3_count/$d3_first]"
+  if [ -z "$d3_bad" ]; then
+    ok "tier and type values, the folder's tier, a long-tier wikilink and key spellings are reported as WARNING lines after an unchanged count line, exit 0"
+  else
+    bad "D3 warnings --$d3_bad -- got: $(printf '%s' "$d3_out" | tr '\n' '|' | cut -c1-900)"
+  fi
+  # A vault with nothing to warn about prints no WARNING line at all.
+  rm -f "$D3V"/31-standards/w-*.md "$D3V"/10-daily/w-*.md
+  d3_out="$(c3_run "$D3V")"
+  if [ "$(c3_rc "$d3_out")" = 0 ] && ! printf '%s\n' "$d3_out" | grep -q 'WARNING' && [ "$(sentinel_files "$d3_out")" = 1 ]; then
+    ok "a vault with nothing to warn about prints no WARNING line"
+  else
+    bad "a clean vault printed warnings -- got: $(printf '%s' "$d3_out" | tr '\n' '|' | cut -c1-400)"
+  fi
+
+  # The tripwire refusal points at the section that says what to do.
+  TWV="$TMP/tw-pointer"
+  mkdir -p "$TWV/31-standards" "$TWV/.claude/logs"
+  printf -- '---\ntier: long\ntype: standard\n---\n\nSee [[ARCH-INDEX]].\n' > "$TWV/31-standards/a.md"
+  printf 'reason: test\n' > "$TWV/.claude/logs/runner-tripwire"
+  tw_out="$(CLAUDE_PROJECT_DIR="$TWV" VAULT_STATE_DIR="$TMP/tw-pointer-state" bash "$CHECK" 2>&1)"
+  tw_rc=$?
+  if [ "$tw_rc" -eq 78 ] && printf '%s\n' "$tw_out" | grep -q '^vault-check: docs/setup.md, section "A tripwire is set", has the steps in order\.$'; then
+    ok "vault-check's tripwire refusal names docs/setup.md's section A tripwire is set"
+  else
+    bad "vault-check's tripwire refusal -- expected exit 78 and the pointer to docs/setup.md -- got exit $tw_rc: $(printf '%s' "$tw_out" | tr '\n' '|' | cut -c1-400)"
   fi
 fi
 
