@@ -309,7 +309,8 @@ named notes, relative to the vault root or absolute, and fails a name that is no
 The dream runner uses it to check exactly the journals it is about to commit.
 
 Scope: the six content tiers (`01-inbox`, `10-daily`, `20-projects`, `30-knowledge`,
-`31-standards`, `40-llm-wiki`), `*.md` only. It **prunes** a `templates/` folder inside a tier and
+`31-standards`, `40-llm-wiki`), `*.md` only. It **prunes** a `templates/` folder inside a tier,
+a link of that name included (shared templates), and
 the `compaction-*.md` stubs in `20-projects/_logs/`, matched on the path from the vault root, so a
 vault inside a folder named `templates` is scanned like any other and a long-tier note named
 `compaction-*.md` is read (both since 1.7.0).

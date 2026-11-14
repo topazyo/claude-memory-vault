@@ -67,7 +67,11 @@ its own. Two changes can newly stop a vault that 1.6.1 passed; item 2 of the Ado
   counted on stdout after the count line, and makes the run exit 2. A note named after `--` that
   lies in a tier, by identity rather than spelling, is held to the same rule when a link is on the
   way to it, so both modes agree about it; named plainly, a note is checked whatever its name or
-  folder, as before. An exported `CDPATH` can no longer move the scan. C4 and C5 read a date with
+  folder, as before. A tier's `templates` folder that is itself a link, to templates shared from
+  elsewhere, is pruned as a real one is rather than refused. An exported `CDPATH` can no longer move
+  the scan. A note's own text in the report, a value or a file or link name, prints each control
+  byte as `?`, so an escape sequence in an untrusted capture cannot repaint the lines around the
+  count line. C4 and C5 read a date with
   an inline comment after it, the shape `docs/customizing.md` shows, as the date; before, they
   reported it as malformed.
 - **The lint scans steering files whatever the path's spelling.** It skipped any file under a
