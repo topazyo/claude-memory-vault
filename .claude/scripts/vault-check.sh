@@ -21,7 +21,17 @@
 #         1  the vault has a problem. A note violates an invariant.
 #         2  this checker could not run, so it is saying nothing about the
 #            vault. No notes were scanned at all, or there are no content-tier
-#            folders under the root, or a named note is not a readable file.
+#            folders under the root, or a named note is not a readable file, or
+#            (since 1.7.0) a link in a content tier, or a named note, dangles or
+#            resolves outside the content-tier folders, so what it holds was
+#            not read.
+#
+# Advisory (since 1.7.0): WARNING lines after the count line for a tier value
+# that is not short, medium or long or not the folder's tier, a type outside
+# the allowed set, a long-tier note with no wikilink, and a tier, type,
+# created or last_verified key a YAML reader would read differently. They
+# change neither the count nor the exit code; a later release makes them
+# violations.
 #         64 the command line was wrong.
 #         78 a scheduled pass set the tripwire, so nothing was checked and a
 #            human has to look first. The three runners use 78 for the same
@@ -79,6 +89,7 @@ if tw_present "$TW_STATE" || tw_present "$TW_VAULT"; then
   # copy when there is one, which a pass can write, so its instructions are not
   # vouched for. Otherwise the state path.
   printf 'vault-check: TRIPWIRE - a scheduled pass changed a steering or execution surface, was interrupted before containment, or may have left a process running.\n' >&2
+  printf 'vault-check: docs/setup.md, section "A tripwire is set", has the steps in order.\n' >&2
   if [ -n "$TW_STATE" ] && [ -f "$TW_STATE" ] && [ ! -L "$TW_STATE" ]; then
     printf 'vault-check: read %s and do what it says, then delete it and its copy. Nothing was checked.\n' "$TW_STATE" >&2
   elif tw_present "$TW_VAULT" && [ -n "$TW_STATE" ]; then
@@ -179,16 +190,133 @@ is_iso_date() {
 
 violations=0
 files=0
+warnings=0
+WARN_LINES=""
 
 report() {
   printf '%s — %s — %s\n' "$1" "$2" "$3"
   violations=$((violations + 1))
 }
 
+# warn <rel> <text> - an advisory finding (1.7.0). Kept, and printed after the
+# count line, so the count line and the exit code stay what callers parse; a
+# later release makes these violations.
+warn() {
+  WARN_LINES="${WARN_LINES}vault-check: WARNING: $1 — $2
+"
+  warnings=$((warnings + 1))
+}
+
+# folder_tier <rel> - the tier the folder a note sits in calls for, from the
+# table in AGENTS.md section 3, or nothing where that table names none.
+folder_tier() {
+  case "$1" in
+    01-inbox/*|10-daily/*|40-llm-wiki/raw/*) printf 'short' ;;
+    20-projects/*) printf 'medium' ;;
+    30-knowledge/*|31-standards/*|40-llm-wiki/wiki/*) printf 'long' ;;
+  esac
+}
+
+# key_spellings <frontmatter> - one line per key this checker reads (tier,
+# type, created, last_verified) that a YAML reader would also find under a
+# spelling the checks above do not read ("tier":, 'tier':, tier :), or that
+# appears more than once, where this checker reads the first and a YAML
+# reader the last. A future last_verified written either way passed C5.
+key_spellings() {
+  printf '%s\n' "$1" | LC_ALL=C awk '
+    BEGIN { q = sprintf("%c", 39); split("tier type created last_verified", keys, " ") }
+    { sub(/\r$/, "") }
+    {
+      for (i = 1; i <= 4; i++) {
+        k = keys[i]
+        if (index($0, k ":") == 1) { plain[k]++; continue }
+        s = $0
+        if (substr(s, 1, 1) == "\"" || substr(s, 1, 1) == q) {
+          c = substr(s, 1, 1)
+          if (substr(s, 2, length(k) + 1) == k c) {
+            r = substr(s, length(k) + 3)
+            sub(/^[ \t]*/, "", r)
+            if (substr(r, 1, 1) == ":") odd[k] = odd[k] ? odd[k] : c k c ":"
+          }
+          continue
+        }
+        if (index(s, k) == 1) {
+          r = substr(s, length(k) + 1)
+          if (r ~ /^[ \t]+:/) odd[k] = odd[k] ? odd[k] : k " :"
+        }
+      }
+    }
+    END {
+      for (i = 1; i <= 4; i++) {
+        k = keys[i]
+        if (k in odd) printf "the key %s is also written as %s, which these checks do not read\n", k, odd[k]
+        if (plain[k] > 1) printf "the key %s appears %d times; these checks read the first, a YAML reader the last\n", k, plain[k]
+      }
+    }'
+}
+
+# The vault root as the file system has it, for telling where a link really
+# points. Empty when it cannot be resolved, which link_target_ok reads as
+# "cannot tell" and refuses.
+ROOT_P="$(cd -P "$ROOT" 2>/dev/null && pwd -P)"
+
+# link_target_ok <absolute path> - true when the path, a link or a path through
+# one, resolves to something under one of this vault's content-tier folders.
+# Sets LINK_WHY to the reason when it does not. Identity is tested with -ef
+# against each tier folder, walking up from the resolved folder, so two
+# spellings of one folder (a Windows short name, a different letter case)
+# still match.
+link_target_ok() {
+  local p="$1" n=0 t d prev
+  LINK_WHY=""
+  if [ ! -e "$p" ]; then
+    LINK_WHY="does not resolve"
+    return 1
+  fi
+  if [ -d "$p" ]; then
+    d="$(cd -P "$p" 2>/dev/null && pwd -P)"
+  else
+    # Follow the chain of links to the last name, then resolve its folder.
+    while [ -L "$p" ] && [ "$n" -lt 40 ]; do
+      t="$(readlink "$p" 2>/dev/null)" || break
+      case "$t" in
+        /*) p="$t" ;;
+        *) p="${p%/*}/$t" ;;
+      esac
+      n=$((n + 1))
+    done
+    d="$(cd -P "${p%/*}" 2>/dev/null && pwd -P)"
+  fi
+  if [ -z "$d" ] || [ -z "$ROOT_P" ]; then
+    LINK_WHY="could not be resolved"
+    return 1
+  fi
+  prev=""
+  while [ -n "$d" ] && [ "$d" != "$prev" ]; do
+    for t in $TIERS; do
+      if [ -d "$ROOT_P/$t" ] && [ ! -L "$ROOT_P/$t" ] && [ "$d" -ef "$ROOT_P/$t" ]; then
+        return 0
+      fi
+    done
+    [ "$d" -ef "$ROOT_P" ] && break
+    prev="$d"
+    d="${d%/*}"
+  done
+  LINK_WHY="points outside the vault's content-tier folders"
+  return 1
+}
+
+# Links a scan refused, each one a note or folder of notes that was not read.
+refused=0
+refuse_link() {  # refuse_link <rel> <why>
+  printf 'vault-check: %s is a link that %s, so what it holds was not checked.\n' "$1" "$2" >&2
+  refused=$((refused + 1))
+}
+
 check_note() {
-  local file="$1" rel fm created verified created_ok verified_ok
+  local file="$1" rel="${2:-}" fm created verified created_ok verified_ok tierv typev want line
   files=$((files + 1))
-  rel="${file#"$ROOT"/}"
+  [ -n "$rel" ] || rel="${file#"$ROOT"/}"
 
   if [ "$(awk 'NR==1{if ($0 ~ /^---[ \t\r]*$/) print 1; else print 0} END{if (NR==0) print 0}' "$file")" != "1" ]; then
     report "$rel" "C1" "first line is not a bare --- fence"
@@ -201,6 +329,42 @@ check_note() {
 
   [ "$(count_key tier "$fm")" -eq 0 ] && report "$rel" "C2" "frontmatter has no 'tier:' key"
   [ "$(count_key type "$fm")" -eq 0 ] && report "$rel" "C3" "frontmatter has no 'type:' key"
+
+  # What the two keys say, not only that they are there (D3, 1.7.0). Advisory
+  # for one release, because an existing vault may newly fail, and a WARNING
+  # changes neither the count line nor the exit code.
+  if [ "$(count_key tier "$fm")" -gt 0 ]; then
+    tierv="$(value_of tier "$fm")"
+    case "$tierv" in
+      short|medium|long)
+        want="$(folder_tier "$rel")"
+        if [ -n "$want" ] && [ "$tierv" != "$want" ]; then
+          warn "$rel" "tier is $tierv, but the folder it is in holds $want-tier notes"
+        fi
+        ;;
+      *) warn "$rel" "tier '$tierv' is not short, medium or long" ;;
+    esac
+  fi
+  if [ "$(count_key type "$fm")" -gt 0 ]; then
+    typev="$(value_of type "$fm")"
+    case "$typev" in
+      reference|daily|project-log|moc|standard|wiki-entity) ;;
+      *) warn "$rel" "type '$typev' is not one of reference, daily, project-log, moc, standard, wiki-entity" ;;
+    esac
+  fi
+  if [ "$(folder_tier "$rel")" = long ] && ! LC_ALL=C grep -q '\[\[' "$file"; then
+    warn "$rel" "a long-tier note with no [[wikilink]] to a peer or an index"
+  fi
+  # Split by parameter expansion: a here-document can make bash write a
+  # temporary file, and this checker writes nothing.
+  line="$(key_spellings "$fm")"
+  while [ -n "$line" ]; do
+    warn "$rel" "${line%%$'\n'*}"
+    case "$line" in
+      *$'\n'*) line="${line#*$'\n'}" ;;
+      *) line="" ;;
+    esac
+  done
 
   created="$(value_of created "$fm")"
   verified="$(value_of last_verified "$fm")"
@@ -242,22 +406,63 @@ if [ "${#NAMED[@]}" -gt 0 ]; then
     # would read a relative name beginning with such a letter and a colon as an
     # absolute path on one platform and not on another.
     case "$file" in /*|[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]:[\\/]*) ;; *) file="$ROOT/$file" ;; esac
-    if [ -f "$file" ] && [ -r "$file" ]; then
-      check_note "$file"
-    else
+    if [ ! -f "$file" ] || [ ! -r "$file" ]; then
       printf 'vault-check: %s is not a readable file, so it was not checked.\n' "$file" >&2
       missing=$((missing + 1))
+      continue
     fi
+    # A note named inside a content tier is held to the full scan's rule for
+    # links (since 1.7.0): it is read only when it really lies under a
+    # content-tier folder, so the two modes agree about the same note. A note
+    # named anywhere else is checked as it always was.
+    named_in_tier=0
+    for d in $TIERS; do
+      case "$file" in "$ROOT/$d/"*) named_in_tier=1 ;; esac
+    done
+    if [ "$named_in_tier" -eq 1 ] && ! link_target_ok "$file"; then
+      printf 'vault-check: %s %s, so it was not checked.\n' "$file" "$LINK_WHY" >&2
+      missing=$((missing + 1))
+      continue
+    fi
+    check_note "$file"
   done
 else
+  # Paths relative to the root, never absolute: the prune patterns are matched
+  # against the whole path, so before 1.7.0 a vault under any folder named
+  # templates matched '*/templates/*' at its root and scanned nothing, and a
+  # compaction-*.md note in any tier was pruned as if it were a stub. The
+  # templates prune now applies inside a tier and the stub prune in
+  # 20-projects/_logs only.
+  #
+  # find does not follow links (no -L, no -H), so it never reads a note twice
+  # or walks out of the vault. Every link it meets is then checked on its own:
+  # one whose real target is under a content-tier folder holds only notes this
+  # walk reads there anyway, and one that dangles or points anywhere else (a
+  # synced folder outside the vault included) is refused, and the run exits 2.
+  # Before 1.7.0 a linked tier folder or note was skipped without a word.
+  TIER_NAMES=()
+  for d in $TIERS; do
+    { [ -d "$ROOT/$d" ] || [ -L "$ROOT/$d" ]; } && TIER_NAMES+=("$d")
+  done
   # -print0 / read -d '': several vault notes have spaces in their filenames.
   while IFS= read -r -d '' file; do
-    check_note "$file"
-  done < <(find "${DIRS[@]}" \( -path '*/templates/*' -o -name 'compaction-*.md' \) -prune -o -type f -name '*.md' -print0)
+    check_note "$ROOT/$file" "$file"
+  done < <(cd "$ROOT" && find "${TIER_NAMES[@]}" \( -path '*/templates/*' -o -path '20-projects/_logs/compaction-*.md' \) -prune -o -type f -name '*.md' -print0)
+  while IFS= read -r -d '' file; do
+    link_target_ok "$ROOT/$file" || refuse_link "$file" "$LINK_WHY"
+  done < <(cd "$ROOT" && find "${TIER_NAMES[@]}" \( -path '*/templates/*' -o -path '20-projects/_logs/compaction-*.md' \) -prune -o -type l -print0)
 fi
 
 printf 'vault-check: %s violation(s) across %s file(s) checked (as of %s).\n' \
   "$violations" "$files" "$TODAY"
+
+# The advisory findings, after the count line and apart from it, so a caller
+# that reads the count line's numbers, or the exit code, sees what it always
+# saw. Nothing is printed for a vault with none.
+if [ "$warnings" -gt 0 ]; then
+  printf '%s' "$WARN_LINES"
+  printf 'vault-check: %s warning(s). They change neither the count above nor the exit code in this release; a later release makes them violations, so fix each note by hand.\n' "$warnings"
+fi
 
 # A scan that examined nothing proves nothing. Fail it, so a caller that only
 # reads the exit code - a CI step, a pre-commit hook, an agent - cannot mistake
@@ -351,6 +556,8 @@ fi
 # note, not the note being wrong, so it is a 2 and not a 1. The distinction
 # matters most to the runners, which name exactly the files a pass is about to
 # commit. A 1 tells them a note they wrote is bad. A 2 tells them a path is
-# wrong, and those want different answers from whoever reads the log.
+# wrong, and those want different answers from whoever reads the log. A link
+# the full scan refused is the same kind of answer: notes it did not read.
 [ "$missing" -gt 0 ] && exit 2
+[ "$refused" -gt 0 ] && exit 2
 exit 0
