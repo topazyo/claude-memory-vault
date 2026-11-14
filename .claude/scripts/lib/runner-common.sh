@@ -983,14 +983,19 @@ steering_filter() {
       # steering too, since a worktree is a folder and a link can put one
       # anywhere, and so is everything under a child whose own name is a
       # harness folder (.claude, .git): that is no worktree. The line-break
-      # marker means something only at the vault root.
+      # marker means something only at the vault root, so the one in a
+      # worktree belongs to its session. .claude/worktrees itself is a folder
+      # like the others, unless it is a link, which puts every worktree, and
+      # the instruction files a session there reads, wherever it points.
       if (lp ~ /^\.claude\/worktrees\/[^\/]+\//) {
         wt = lp
         sub(/^\.claude\/worktrees\//, "", wt)
         sub(/\/.*$/, "", wt)
         if (wt != ".runner-line-break-names" && steer(wt, 0)) { print $0; next }
         sub(/^\.claude\/worktrees\/[^\/]+\//, "", lp)
+        if (lp == ".runner-line-break-names") next
       } else if (lp == ".claude/worktrees") {
+        if (islink) print $0
         next
       } else if (lp ~ /^\.claude\/worktrees\/[^\/]*$/) {
         sub(/^\.claude\/worktrees\//, "", lp)
