@@ -537,6 +537,32 @@ else
   else
     bad "a template inside a content tier was linted -- got: $(printf '%s | %s' "$c4_out" "$c4_out2" | tr '\n' ' ')"
   fi
+  # A path outside the vault root stays absolute, and its own tier templates
+  # are still skipped there, while a note beside them is still linted.
+  c4_out="$(CLAUDE_PROJECT_DIR="$C4V" bash "$HOOK" -- "$C4T/31-standards/templates/tpl.md" </dev/null 2>&1 | strip_notices)"
+  c4_out2="$(CLAUDE_PROJECT_DIR="$C4V" bash "$HOOK" -- "$C4T/31-standards/lintme.md" </dev/null 2>&1 | strip_notices)"
+  if ! printf '%s' "$c4_out" | grep -q 'U+202E' && printf '%s' "$c4_out2" | grep -q "missing 'tier'"; then
+    ok "a tier template named by absolute path outside the vault root is skipped, and a note beside it is linted"
+  else
+    bad "a template inside a content tier was linted by absolute path from another root, or its neighbour was not -- got: $(printf '%s | %s' "$c4_out" "$c4_out2" | tr '\n' ' ')"
+  fi
+  # On Linux and macOS a folder named templates. is a folder of its own, not a
+  # tier's templates folder, so the skip must not take what is in it. Where
+  # the name is the same folder (Win32 drops the dot), there is nothing to ask.
+  mkdir -p "$C4V/31-standards/templates." 2>/dev/null
+  if [ -d "$C4V/31-standards/templates." ] && ! [ "$C4V/31-standards/templates." -ef "$C4V/31-standards/templates" ]; then
+    ran c4-templates-dot
+    printf -- '---\ntitle: "x"\n---\n\nno tier\n' > "$C4V/31-standards/templates./x.md"
+    c4_out="$(c4_lint "$C4V" 31-standards/templates./x.md)"
+    if printf '%s' "$c4_out" | grep -q "missing 'tier'"; then
+      ok "a note in a folder named templates. is linted, not taken for a tier template"
+    else
+      bad "a note in a templates. folder was skipped as a template -- got: $(printf '%s' "$c4_out" | tr '\n' ' ')"
+    fi
+    rm -rf "$C4V/31-standards/templates."
+  else
+    skip c4-templates-dot "lint and a folder named templates.: the file system takes it for templates here"
+  fi
 
   if [ -f "$WORK/.claude/logs/vault-lint.log" ]; then
     ok "audit log written to .claude/logs/vault-lint.log"
