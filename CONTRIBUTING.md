@@ -141,8 +141,9 @@ safety: the fence reports a planted file and leaves it in place, or the lint nev
 file. That is how `.omp/` and `.hermes.md` stayed unfenced until 1.5.1. For a harness the template
 supports, go through all of them. For one it does not support but that reads files or runs code
 from a vault, as Antigravity's `_agents/` was in 1.5.2, the fence, the reserved names, the lint,
-`docs/reference.md` and the tests still apply. The guide index, the support table, `AGENTS.md` §8
-and the CI guard wait until the template ships something for the harness. The guard came before the
+`docs/reference.md` and the tests still apply. The guide index, the support table, `AGENTS.md` §8,
+the harness lists in `README.md` and `docs/setup.md` §6a, and the CI guard wait until the template
+ships something for the harness. The guard came before the
 adapter for omp only because the adapter was already planned.
 
 - `steering_filter` in `.claude/scripts/lib/runner-common.sh` has three lists. Root-only file names
@@ -158,7 +159,14 @@ adapter for omp only because the adapter was already planned.
 - `docs/harnesses/README.md` needs a row in the guide index and the support table. Update the
   hook-surface list, the container mount list and the scheduled-pass section wherever the harness
   reads or runs something there.
-- `AGENTS.md` §8 needs the harness's row values in its mechanism table.
+- `AGENTS.md` §8 needs the harness's row values in its mechanism table, and its name in the list of
+  guides that opens the section.
+- `README.md` names the supported harnesses in two places: the "It works with any harness"
+  paragraph, which lists what the template ships config for, and the repository layout block,
+  which has a line for each adapter and harness config file or folder the template ships (a
+  harness that ships nothing, as Hermes Agent does, has none there). `README.md` is classed `seed`,
+  so say in the changelog's *Adopting this* that vaults merge it by hand.
+- `docs/setup.md` §6a, "Wiring any other harness", opens with the same list of shipped harnesses.
 - `.github/workflows/ci.yml` needs a guard that the template ships nothing in a folder the harness
   runs by itself, modelled on the `.pi` and `.omp` steps.
 - `run-tests.sh` needs a positive control for each new name or pattern, a negative look-alike for
@@ -319,6 +327,12 @@ It skips everywhere else, and that includes **pushes to your own fork** as well 
 made with "Use this template". This is the same wrinkle the manifest step has above, and it has the
 same answer: watching it skip on your fork does not mean it is unenforced, and it will run on the
 pull request.
+
+The same holds for every other step guarded to this repository: the published-changelog check, the
+two control-list checks, the documented-counts check, the Pi, omp and OpenCode opt-in checks and
+the user-path scan. Outside this repository both control-suite steps also drop their
+`RUN_TESTS_REQUIRED` lists, so a green push to your fork does not show that a platform-gated
+control ran. Read those on the pull request.
 
 ## Changing the documentation
 
