@@ -16,14 +16,90 @@ How to see where you stand, and what moved:
 
 ```bash
 bash .claude/scripts/vault-update.sh --status
-# then fetch a newer copy yourself, and compare against it
-git clone https://github.com/<owner>/claude-memory-vault.git ../template-new
+# then fetch a newer copy yourself, the release tag rather than the default branch, and compare
+git clone --depth 1 --branch <tag> https://github.com/<owner>/claude-memory-vault.git ../template-new
 bash .claude/scripts/vault-update.sh --check --from ../template-new
 ```
 
 [`docs/updating.md`](docs/updating.md) explains both, and says what they do not protect against.
 
 ---
+
+## 1.6.1 — 2026-11-14
+
+A patch release for what an owner meets first: the Quickstart's check, a tripwire, and the first
+update check. It closes the gaps a review of 1.6.0 found and reproduced on that path.
+
+### Added
+
+- **`docs/setup.md`, "A tripwire is set"**, a numbered procedure for clearing a tripwire: where
+  both copies are on each system, which one to trust, what to compare with the runner log, how to
+  review each shape of tripwire, exactly what to delete, and how to confirm. Every exit-78 row in
+  `docs/setup.md`, `docs/reference.md` and `docs/updating.md` links it, as do `AGENTS.md` §7 and
+  the `resume` skill. Until now the only instruction was a table cell.
+
+### Fixed
+
+- **A hangup stops a pass as TERM does.** The dream and promotion runners trapped INT and TERM but
+  not HUP, so a closed terminal or an ended SSH session ended the runner at once: exit 129, the
+  agent still running, the run lock released and no tripwire. They now trap HUP, stop the agent's
+  tree, set the tripwire before containment and exit 129, as the retention runner already did. A
+  second signal that lands while the first one's handler runs, which a hangup makes routine, no
+  longer starts the handler again from inside itself; the pass ends on the first signal's code.
+- **`vault-update.sh --check` no longer calls a vault's own edits a disagreement.** At the same
+  version it decided "two copies disagree" from every verdict, local edits included, so a vault
+  with one changed file, checked against a pristine copy of its own release, was refused with
+  `SAME-VERSION-DISAGREES`. It now compares the two manifests only.
+- **The exit-code tables list 129, 130 and 143** for both runners, in the runners' headers and in
+  `docs/reference.md`, which left out codes the runners have always returned. They also say that
+  an agent's own status is passed through as it is, so an agent that leaves on one of the
+  runner's codes is told apart only by the log's `exited with code` line.
+- **The Quickstart's verify step is `vault-check.sh` alone**, with the control suite as an
+  optional step that says how long it takes: about 10 minutes on Linux, 12 to 17 on macOS and about
+  an hour on Windows, measured on GitHub's runners. The suite's banner and `docs/setup.md` said
+  "about a minute", which sent Windows owners to kill a healthy run as hung.
+- **The Quickstart says to decide public or private before "Use this template"**, where GitHub
+  asks, rather than leaving it to `docs/setup.md` §2 after the first push.
+- **The update clone command names a release tag** in `README.md` and at the top of this file, as
+  `docs/updating.md` already did. The untagged clone is the likeliest way to meet
+  `SAME-VERSION-DISAGREES` for real.
+- **`docs/customizing.md` no longer says no pre-commit hook ships.** One does, opt-in.
+
+### Adopting this
+
+1. **Take `.claude/scripts/dream-pass.sh`, `.claude/scripts/promotion-pass.sh` and
+   `.claude/scripts/run-tests.sh` together.** The suite holds the runners' exit-code headers
+   against `docs/reference.md` and drives the new HUP handling, so take `docs/reference.md` with
+   them. A scheduler or wrapper that met an untrapped HUP before now sees 129 with the tripwire
+   set, and clears it as the new section says.
+2. **Take `.claude/skills/resume/SKILL.md` and `.agents/skills/resume/SKILL.md` together**, so the
+   two copies stay byte-identical.
+3. **`README.md` is a seed file.** Merge the Quickstart's steps 1 and 5 and the tagged clone
+   command by hand if you kept your own.
+4. **If you kept the template's `.github/workflows/ci.yml`**, which no vault is ever offered, the
+   template's copy now runs four of its checks only in the template's own repository: the
+   documented counts, the recorded-control cross-check, the OpenCode opt-in check and the
+   user-path scan. Each goes red in a vault that is working, on your first note, your first update,
+   an enabled OpenCode plugin or a note naming your own folders. Both control-suite steps also
+   drop their `RUN_TESTS_REQUIRED` lists outside the template's repository (the `TEMPLATE_REPO`
+   lines), because those lists stay as you first got them while the suite moves with every update,
+   and the credential scan prints only where a hit is. Copy those changes by hand, or delete the
+   workflow if you do not want CI on your vault.
+5. **If you kept the template's `.github/release-check.sh`**, which no vault is ever offered either,
+   the suite you take in 1 checks it for the new `--tag` refusal, and the copy you have does not
+   make it, so `tmpl-release-uncommitted` fails. Copy the 1.6.1 file by hand, or delete it: with it
+   gone the suite skips the release controls by name, which is right for a vault, since a vault has
+   no releases to cut.
+6. The shipped files this release touches are `.claude/scripts/dream-pass.sh`,
+   `.claude/scripts/promotion-pass.sh`, `.claude/scripts/vault-update.sh`,
+   `.claude/scripts/run-tests.sh`, `.claude/skills/resume/SKILL.md`,
+   `.agents/skills/resume/SKILL.md`, `docs/setup.md`, `docs/reference.md`, `docs/updating.md`,
+   `docs/customizing.md`, `AGENTS.md` and `README.md`, plus `VERSION`, this file and
+   `.claude/template-manifest`. `.github/release-check.sh` (`--tag` now refuses, as
+   `UNCOMMITTED-RELEASE`, to tag a commit that does not hold the bump), `.github/workflows/ci.yml`
+   (the changes in 4, and the new controls in the required lists) and `CONTRIBUTING.md` (the
+   harness checklist names `README.md` and `docs/setup.md` §6a, and says which CI steps run only
+   on pull requests here) changed as well; a vault is offered none of them.
 
 ## 1.6.0 — 2026-11-12
 

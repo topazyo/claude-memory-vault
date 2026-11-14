@@ -269,7 +269,11 @@ stays small.
 Code gets the most automation), and (strongly recommended) `jq`. See [Requirements](#requirements--platform-notes) before you start; `jq` is
 *not* bundled with Git for Windows.
 
-1. **Clone the template.** Click **Use this template** (or fork) on GitHub first, then:
+1. **Clone the template.** **Decide first whether your copy will be public or private**, because
+   GitHub asks on the *Use this template* screen, and once notes have been pushed to a public
+   repository the choice is close to one-way. If you will keep notes in it, make it private
+   ([`docs/setup.md` §2](docs/setup.md#make-your-copy-private-if-you-will-store-notes-in-it)).
+   Then click **Use this template** (or fork) on GitHub, and:
 
    ```bash
    git clone https://github.com/<you>/claude-memory-vault.git <your-vault>
@@ -313,22 +317,25 @@ Code gets the most automation), and (strongly recommended) `jq`. See [Requiremen
      That setting replaces `.git/hooks`, so copy any hook you already rely on (git-lfs installs
      several) into `.claude/githooks/` first.
 
-5. **Verify the automation runs.** Two commands, both from the vault root:
+5. **Verify the checker reads your notes.** From the vault root:
 
    ```bash
-   bash .claude/scripts/run-tests.sh     # control suite for the hooks
    bash .claude/scripts/vault-check.sh   # frontmatter invariants C1–C5
    ```
 
-   `run-tests.sh` includes positive controls, cases that are *supposed* to be flagged. If one of
-   those stops firing, the suite tells you, because a checker that flags nothing and a checker
-   that scanned nothing look identical from the outside. Note what it does **not** cover: it
-   builds synthetic fixtures in a temp directory and runs the hooks against those, so it stays
-   green even if you have renamed a tier folder out from under the vault. `vault-check.sh` is the
-   only thing that reads your real notes, and it is report-only: it never edits a note, it prints
-   violations and exits 1 if it found any. On a fresh clone the correct output is
-   `0 violation(s) across 9 file(s) checked`. If you see *0 files checked*, that is a vacuous
-   result, not a pass, and it means nothing was scanned.
+   On a fresh clone the correct output is `0 violation(s) across 9 file(s) checked`. If you see
+   *0 files checked*, that is a vacuous result, not a pass, and it means nothing was scanned.
+   `vault-check.sh` is the only thing that reads your real notes, and it is report-only: it never
+   edits a note, it prints violations and exits 1 if it found any.
+
+   **Optional, and slow: the control suite.** `bash .claude/scripts/run-tests.sh` takes about
+   10 minutes on Linux, 12 to 17 on macOS and about an hour on Windows (measured on GitHub's
+   runners), and prints each result as it lands, so a long run is not a hang. It includes
+   positive controls, cases that are *supposed* to be flagged. If one of those stops firing, the
+   suite tells you, because a checker that flags nothing and a checker that scanned nothing look
+   identical from the outside. Note what it does **not** cover: it builds synthetic fixtures in a
+   temp directory and runs the hooks against those, so it stays green even if you have renamed a
+   tier folder out from under the vault.
 
 6. **Write your first note.** Copy a template from the matching `templates/` folder, fill the
    frontmatter, save. The `vault-lint.sh` hook will comment if `tier:` or `type:` is missing,
@@ -561,7 +568,9 @@ never reaches the network, never runs anything out of that folder, and never ove
 you — it names what is safe to take and prints the copy commands for you to read first.
 
 ```bash
-git clone https://github.com/<owner>/claude-memory-vault.git ../template-new
+# <tag> is the newest release on this repository's Releases page. Clone the tag, not the
+# default branch, which is routinely ahead of the last release (docs/updating.md §3).
+git clone --depth 1 --branch <tag> https://github.com/<owner>/claude-memory-vault.git ../template-new
 bash .claude/scripts/vault-update.sh --check --from ../template-new
 ```
 
