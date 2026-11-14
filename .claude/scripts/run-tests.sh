@@ -2316,6 +2316,9 @@ case "${FAKE_MODE:-nothing}" in
   silent-grandchild) ( ( exec bash -c 'while :; do printf x >> "$1"; sleep 1; done' fake-heartbeat "$FAKE_HEARTBEAT" "$NONCE" ) &
                   printf '%s\n' "$!" > "$FAKE_HEARTBEAT.pid" )
                   exec sleep 120 ;;
+  # Leaves with FAKE_STATUS having written nothing, as a crashing agent or a
+  # wrapper that passes on some other program's status would.
+  exitstatus)     exit "${FAKE_STATUS:-0}" ;;
   plainsummary)   printf 'PROMOTION-SUMMARY: promoted=1 pending=0\n' >&2 ;;
   streamsummary)  printf '{"type":"result","subtype":"success","is_error":false,"result":"Promoted nothing this week.\\nPROMOTION-SUMMARY: promoted=0 pending=2"}\n' ;;
   midsummary)     printf '{"type":"result","subtype":"success","is_error":false,"result":"I would print PROMOTION-SUMMARY: promoted=1 pending=0 if I had finished."}\n' ;;
@@ -12874,6 +12877,44 @@ for ec_script in dream-pass.sh promotion-pass.sh; do
     ok "$ec_script documents one list of exit codes in its header and in docs/reference.md, and it holds every code its signal traps leave with"
   else
     bad "$ec_script's exit codes are not one documented list --$ec_bad"
+  fi
+done
+
+# An agent or wrapper status that is also a code the runner uses for itself
+# leaves as 79 (1.7.0). Before, a wrapper that exited 78 made the runner exit 78
+# with no tripwire and no lock, and 75 read as LOCKED with no lock held, so a
+# scheduler acting on the code acted on something that had not happened. One
+# case per reserved code per runner, so each code in the list is held by its
+# own case. The log line with the agent's own status is the fixture check: it
+# shows the fake really left with that code, so a 79 cannot come from anything
+# else. 1, the status of most failing wrappers and of claude -p, and 9, which
+# no runner uses, pass through as they are.
+for ac_script in dream-pass.sh promotion-pass.sh; do
+  ac_agent=dream-agent
+  [ "$ac_script" = promotion-pass.sh ] && ac_agent=promotion-agent
+  ac_log="$RV/.claude/logs/$ac_agent.log"
+  ac_bad=''
+  for ac_case in 2:79 3:79 4:79 5:79 64:79 70:79 75:79 78:79 124:79 125:79 127:79 129:79 130:79 143:79 1:1 9:9; do
+    ac_code=${ac_case%%:*} ac_want=${ac_case#*:}
+    new_case_state "agentstatus-$ac_agent-$ac_code"
+    ac_before="$(awk 'END { print NR + 0 }' "$ac_log" 2>/dev/null)"
+    ac_rc="$(runner "$ac_script" exitstatus FAKE_STATUS="$ac_code")"
+    ac_new="$(awk -v n="${ac_before:-0}" 'NR > n' "$ac_log" 2>/dev/null)"
+    if ! printf '%s\n' "$ac_new" | grep -q "$ac_agent exited with code $ac_code\$"; then
+      ac_bad="$ac_bad [$ac_code: fixture, no '$ac_agent exited with code $ac_code' line, rc $ac_rc]"
+    elif [ "$ac_rc" != "$ac_want" ]; then
+      ac_bad="$ac_bad [$ac_code: rc $ac_rc, wanted $ac_want]"
+    elif [ "$ac_want" = 79 ] && ! printf '%s\n' "$ac_new" | grep -q "AGENT-STATUS: $ac_agent left with $ac_code, a code this runner uses for itself, so the pass exits 79"; then
+      ac_bad="$ac_bad [$ac_code: no AGENT-STATUS line]"
+    elif [ -e "$RV/.claude/logs/runner-tripwire" ] || [ -e "$CASE_STATE/runner-tripwire" ] || [ -e "$CASE_STATE/run.lock" ]; then
+      ac_bad="$ac_bad [$ac_code: a tripwire or the run lock was left]"
+    fi
+    tripwire_clear
+  done
+  if [ -z "$ac_bad" ]; then
+    ok "$ac_script: an agent status that is one of the runner's own codes leaves as 79 and is logged, and 1 and 9 pass through"
+  else
+    bad "$ac_script: agent statuses and runner codes --$ac_bad"
   fi
 done
 
