@@ -156,11 +156,16 @@ What it does, in order:
    `jq` is installed, which is how the control suite tests it. An input with no readable path, or
    an in-scope path that does not resolve to a file, is logged as `DEGRADED:` rather than skipped
    silently. Logs resolve from the script's own location when `CLAUDE_PROJECT_DIR` is unset.
-2. Normalizes backslashes to forward slashes, then bails out for non-`.md` files. Every scope
-   test below reads the path made relative to the vault root and normalised: runs of `/` and `/./`
-   parts collapsed, and trailing dots and spaces removed from each part, as Win32 removes them.
-   So `.claude//rules/x.md`, `.claude/./rules/x.md` and a vault whose own path holds a folder
-   named `templates` are in scope like any other spelling. It then bails out for a `templates/`
+2. Normalizes backslashes to forward slashes, then bails out for non-`.md` files, judged with
+   trailing dots, spaces, a trailing `/` or `/.` and an NTFS `::$DATA` suffix removed, since
+   Win32 opens `x.md.`, `x.md/.` and `x.md::$DATA` as `x.md`. Every scope test below reads the
+   path made relative to the vault root and normalised: runs of `/` and `.` parts dropped,
+   trailing dots and spaces removed from each part, and each `..` taken out with the part before
+   it, as Win32 resolves them before it touches the disk. So `.claude//rules/x.md`,
+   `.claude/x/../rules/x.md`, `10-daily/templates/../x.md` and a vault whose own path holds a
+   folder named `templates` are in scope like any other spelling. The file read and the name
+   logged are still the ones given, so a spelling that names no file here is logged as
+   `DEGRADED`. It then bails out for a `templates/`
    folder inside a content tier, where the tier templates live, and nowhere else: a steering file
    under `.claude/rules/templates/` is scanned (since 1.7.0; before, any `templates/` folder on
    the path was skipped with no log line).
@@ -305,13 +310,20 @@ vault inside a folder named `templates` is scanned like any other and a long-tie
 `90-auto-memory/` (machine-managed, under its own schema) and `99-archive/` are out of scope.
 
 **Links.** The scan does not follow links, so it never reads a note twice or walks out of the
-vault, and it checks every link it meets in a tier instead. A link whose real target is under one
-of the vault's content-tier folders is fine: the scan reads those notes where they are. A link
-that does not resolve, or resolves anywhere else (a tier folder linked to a synced folder outside
-the vault included), is named on stderr as `<path> is a link that ..., so what it holds was not
-checked.`, and the run exits 2, because notes it holds were not read. A note named after `--`
-inside a tier is held to the same rule, so both modes agree about the same note. Before 1.7.0 a
-linked tier folder or note was skipped and the report still said 0 violations.
+vault, and it checks every link it meets in a tier that could be a note or a folder of notes
+instead. A link is accepted when its real target is something the scan reads where it is: a
+folder under one of the vault's content-tier folders, not in a `templates/` folder there, or a
+`.md` note in such a folder that is not a compaction stub in `20-projects/_logs/`. Any other link
+is refused: one that does not resolve, or resolves outside the content-tier folders (a tier folder
+linked, or on Windows joined by a junction, to a synced folder outside the vault included), into a
+templates folder, to a stub, or to a file that is no `.md` note. A refused link is named on stderr
+as `<path> is a link that ..., so what it holds was not checked.`, counted on stdout after the
+count line as `N link(s) refused`, and makes the run exit 2, because notes it holds were not read
+(a violating note still makes it 1). A link that is no note, such as an image, is left alone, and
+so is a dangling one whose name has an extension other than `.md`. A note named after `--` that
+lies in a tier, by identity and not by spelling, so `./31-standards/x.md` counts, is held to the
+same rule, so both modes agree about the same note. Before 1.7.0 a linked tier folder or note was
+skipped and the report still said 0 violations.
 
 | ID | Invariant | Reported when |
 | --- | --- | --- |
@@ -340,7 +352,12 @@ vault with nothing to warn about prints none of them. Each one names a note wher
 - a note in a long-tier folder holds no `[[wikilink]]`;
 - `tier`, `type`, `created` or `last_verified` is also written as `"key":`, `'key':` or `key :`,
   which C2–C5 do not read and a YAML reader does, or appears more than once, where C4 and C5 read
-  the first and a YAML reader the last. Either way a future `last_verified` passed C5.
+  the first and a YAML reader the last. Either way a future `last_verified` passed C5. Rarer YAML
+  spellings are not looked for: an explicit `? key` entry, a flow mapping `{key: ...}`, or an
+  escaped key such as `"last_verified"`.
+
+An inline comment, `tier: long   # short | medium | long` as [`customizing.md`](customizing.md)
+writes one, is no part of the value for these lines.
 
 Dates are compared as strings: ISO `YYYY-MM-DD` sorts lexicographically, so there is no date
 parsing and no locale dependency.
@@ -424,8 +441,10 @@ a lint that does nothing and a lint that found nothing wrong print the same thin
   conformant note is *not* reported; `templates/` and `compaction-*.md` are pruned even though
   those fixtures are malformed; the run exits non-zero; a scan of zero notes exits non-zero and
   says `VACUOUS`; a long-tier `compaction-*.md` is read and a vault under a `templates` folder is
-  scanned; a link into another tier is followed once in both modes, and a tier folder or note
-  linked elsewhere, or a dangling link, exits 2 (where the platform can make a link); each
+  scanned; a link into another tier is accepted and its note read once, in both modes, and a tier
+  folder, note or folder linked elsewhere, into a templates folder, to a stub or to a file that is
+  no note, or a dangling link, exits 2 (with links where the platform can make them, and with
+  junctions on Windows); each
   advisory `WARNING` prints after an unchanged count line, and a clean vault prints none.
 - **Vacuity guard** — the suite fails if the checker reports `across 0 file`.
 - **Lint argument mode** — every named file is linted, a conformant file after `--` stays silent,
@@ -2142,7 +2161,7 @@ Known limits, each failing in the quiet direction:
 | `125` | STALLED: the run's output stopped growing for the stall threshold (claude mode, or command mode with `RUNNER_STALL_SECONDS` set), and the watchdog killed the run and everything it started. `KILL_FAILED` means the same as for 124, and so does a runner's folder changed while the agent ran (78, or 70), with the `STALLED:` line beside the `UNVERIFIED:` or `TRIPWIRE-ERROR:` one |
 | `127` | the `claude` binary, the `VAULT_AGENT_CMD` wrapper, or (from a `.cmd`) Git Bash was not found |
 | `129`, `130`, `143` | stopped by HUP, INT or TERM. The agent's tree is stopped. Before containment the tripwire is set (`INTERRUPTED before containment. Tripwire set.`); after it, a tripwire containment set stays with a note. Until 1.6.1 HUP was not trapped and left the agent running with the run lock released and no tripwire |
-| `79` | AGENT-STATUS: the agent or wrapper itself left with one of the codes in this table other than 0 and 1 (2, 3, 4, 5, 64, 70, 75, 78, 124, 125, 127, 129, 130 or 143), so the runner does not repeat a code that would mean something it did not do: a tripwire nobody set, a lock nobody held. The log holds the agent's own status in its `exited with code` line and an `AGENT-STATUS:` line after it. Everything a failing pass does otherwise happens as for any other status: nothing is committed and what the pass wrote is left for the next run to check. Since 1.7.0; before, the runner left with the agent's code, so a wrapper that exited 78 made the runner exit 78 with no tripwire set |
+| `79` | AGENT-STATUS: the agent or wrapper itself left with one of the codes in this table other than 0 and 1 (2, 3, 4, 5, 64, 70, 75, 78, 79, 124, 125, 127, 129, 130 or 143), so the runner does not repeat a code that would mean something it did not do: a tripwire nobody set, a lock nobody held, or a remap the agent did not get. A wrapper that was gone when the watchdog came to start it stays 127, which keeps its meaning, not found. The log holds the agent's own status in its `exited with code` line and an `AGENT-STATUS:` line after it. Everything a failing pass does otherwise happens as for any other status: nothing is committed and what the pass wrote is left for the next run to check. Since 1.7.0; before, the runner left with the agent's code, so a wrapper that exited 78 made the runner exit 78 with no tripwire set |
 | other | the agent's own non-zero status, when nothing above applies, passed through as it is. That includes 1, which most failing wrappers and `claude -p` leave with, so a 1 is told from the runner's own only by the log's `exited with code` line |
 
 | Environment variable | Default | Used by |
@@ -2529,8 +2548,8 @@ while a note under `40-llm-wiki/wiki/` is covered by the six-tier rules only.
 | `.claude/hooks/postcompact-wrap-up.sh` | always `0` | `20-projects/_logs/compaction-<session_id>.md`; events to `.claude/logs/hook-events.log` |
 | `.claude/hooks/instructions-loaded-log.sh` (opt-in, not registered) | always `0` | `.claude/logs/instructions-loaded.log` |
 | `.claude/hooks/read-guard.sh` | `2` blocked (`.env`, `.env.*`, `secrets/`) · `0` allowed, or no path to check | `.claude/logs/read-guard.log` (`BLOCKED:`, `DEGRADED:`); the reason also to stderr |
-| `.claude/scripts/vault-check.sh` | `0` at least one note scanned and none violates an invariant · `1` a note violates an invariant, including a malformed date · `2` the checker could not run, meaning zero notes scanned (`VACUOUS`), no content-tier folder under the root, or a named note that is not a readable file · `64` the command line was wrong · `78` a scheduled pass set the tripwire ([what to do](setup.md#a-tripwire-is-set)) | stdout, plus the `VACUOUS` and unreadable-note lines on stderr — never writes to a note |
-| `.claude/scripts/run-tests.sh` | `0` all controls passed · `1` at least one failed · `130` SIGINT · `143` SIGTERM | stdout only; fixtures in a temp dir, removed on exit |
+| `.claude/scripts/vault-check.sh` | `0` at least one note scanned and none violates an invariant · `1` a note violates an invariant, including a malformed date · `2` the checker could not run, meaning zero notes scanned (`VACUOUS`), no content-tier folder under the root, or a named note that is not a readable file, or a link in a tier the scan refused · `64` the command line was wrong · `78` a scheduled pass set the tripwire ([what to do](setup.md#a-tripwire-is-set)) | stdout, with the advisory `WARNING` lines and the `link(s) refused` line after the count line, plus the `VACUOUS`, unreadable-note and refused-link lines on stderr — never writes to a note |
+| `.claude/scripts/run-tests.sh` | `0` all controls passed · `1` at least one failed · `64` `RUN_TESTS_ONLY` names no section, or is combined with `RUN_TESTS_REQUIRED` · `130` SIGINT · `143` SIGTERM | stdout only; fixtures in a temp dir, removed on exit |
 | `.claude/scripts/dream-pass.sh` / `.cmd` | `0` OK · `1` NO-ARTIFACT · `2` VIOLATION · `3` REFUSED · `4` COMMIT-FAILED · `5` CHECK-FAILED · `64` unknown `VAULT_AGENT` · `70` TRIPWIRE-ERROR · `75` LOCKED · `78` TRIPWIRE or UNVERIFIED ([what to do](setup.md#a-tripwire-is-set)) · `79` AGENT-STATUS, the agent or wrapper itself left with one of these codes other than 0 or 1 · `124` TIMEOUT · `125` STALLED · `127` `claude`, wrapper or Git Bash not found · `129` `130` `143` stopped by HUP, INT or TERM, with the agent's tree stopped and, before containment, the tripwire set · otherwise the agent's code, passed through as it is, including 1, which most failing wrappers and `claude -p` leave with, so a 1 is told from the runner's own only by the log's `exited with code` line | `.claude/logs/dream-agent.log` · agent output in `dream-agent.run.log` · `dream-pass.git-state.txt` · `dream-pass.prompt.md` in command mode · `pass-settings.json` in the runner's own folder for the pass in claude mode, the memory override and hook switch passed with `--settings`, written by each claude-mode pass whose folder and path checks pass and removed with that folder when the pass ends, unless the folder is kept · `runner-tripwire` after a contained violation, a `KILL_FAILED` stop, or a change to the runner's own folder for the pass while it ran, when that folder and `inflight-backup.tar` in the state directory are kept for review · `dream-pass.interrupted.run` in the state directory after a signal, a `KILL_FAILED` stop or a change to the runner's own folder, or when the run log could not be written, or `dream-pass.interrupted.run.<six characters>` beside it when something was in the way · `dream-pass.uncontained.log` in the state directory in place of the log, when the log or a folder above it is a link or not what it should be, after a signal before containment, at 78, or on a run that finds the tripwire or the passes' in-flight marker (`runner-inflight`), before it takes the run lock or once it holds it |
 | `.claude/scripts/promotion-pass.sh` / `.cmd` | `0` OK · `1` NO-ARTIFACT · `2` VIOLATION · `3` REFUSED · `4` COMMIT-FAILED · `5` CHECK-FAILED · `64` unknown `VAULT_AGENT` · `70` TRIPWIRE-ERROR · `75` LOCKED · `78` TRIPWIRE or UNVERIFIED ([what to do](setup.md#a-tripwire-is-set)) · `79` AGENT-STATUS, the agent or wrapper itself left with one of these codes other than 0 or 1 · `124` TIMEOUT · `125` STALLED · `127` `claude`, wrapper or Git Bash not found · `129` `130` `143` stopped by HUP, INT or TERM, with the agent's tree stopped and, before containment, the tripwire set · otherwise the agent's code, passed through as it is, including 1, which most failing wrappers and `claude -p` leave with, so a 1 is told from the runner's own only by the log's `exited with code` line | `.claude/logs/promotion-agent.log` · agent output added to `promotion-agent.run.log` · `promotion-pass.git-state.txt` · `promotion-pass.prompt.md` in command mode · `pass-settings.json` in the runner's own folder for the pass in claude mode, the memory override and hook switch passed with `--settings`, written by each claude-mode pass whose folder and path checks pass and removed with that folder when the pass ends, unless the folder is kept · `runner-tripwire` after a contained violation, a `KILL_FAILED` stop, or a change to the runner's own folder for the pass while it ran, when that folder and `inflight-backup.tar` in the state directory are kept for review · `promotion-pass.interrupted.run` in the state directory after a signal, a `KILL_FAILED` stop or a change to the runner's own folder, or when the run log could not be written, or `promotion-pass.interrupted.run.<six characters>` beside it when something was in the way · `promotion-pass.uncontained.log` in the state directory in place of the log, when the log or a folder above it is a link or not what it should be, after a signal before containment, at 78, or on a run that finds the tripwire or the passes' in-flight marker (`runner-inflight`), before it takes the run lock or once it holds it |
 | `.claude/scripts/vault-retention.sh` / `.cmd` | `0` OK · `1` setup, a `_logs` it cannot list or enter, git or repository shape · `2` REPORT-REFUSED · `3` PARTIAL · `4` COMMIT-FAILED · `6` PATH-BLOCKED · `64` usage · `70` TRIPWIRE-ERROR · `71` RECOVERY-NEEDED · `75` LOCKED · `78` TRIPWIRE ([what to do](setup.md#a-tripwire-is-set)) · `127` Git Bash not found (from the `.cmd`) · `129` `130` `143` stopped by HUP, INT or TERM · `128`+N a signal it does not catch | `.claude/logs/vault-retention.log`, and on stdout as the run ends its own copy of the lines it logged, kept in its temporary folder until then, in the form § 4.3.1 describes, or, when it could keep no copy or not read it back, a line saying so that names the log the lines are in · in the state directory `retention-legacy-<date>-<hash8>.txt` and the `retention-legacy.hashes` index of reports it wrote, and `retention-inflight` while a move is in flight, which is left behind on exit 71 and holds later runs back · `vault-retention.uncontained.log` in the state directory in place of the log, when the tripwire or the passes' in-flight marker (`runner-inflight`) is there, before the run lock or once it is held, and the log or a folder above it is a link or not what it should be · no run log and no prompt file, because it starts no agent |

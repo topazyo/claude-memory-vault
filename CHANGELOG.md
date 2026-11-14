@@ -45,8 +45,9 @@ its own. Two changes can newly stop a vault that 1.6.1 passed; item 2 of the Ado
   wrapper that itself leaves with one of the runners' own codes (2, 3, 4, 5, 64, 70, 75, 78, 124,
   125, 127, 129, 130, 143) made the runner leave with that code, so a wrapper's 78 read as a
   tripwire nobody set and its 75 as a lock nobody held. The runner now leaves with 79 and logs an
-  `AGENT-STATUS:` line after the agent's own `exited with code` line. 1 is not remapped: it is what
-  `claude -p` and most wrappers leave with for any failure.
+  `AGENT-STATUS:` line after the agent's own `exited with code` line, and does the same for an
+  agent that itself leaves with 79. 1 is not remapped: it is what `claude -p` and most wrappers
+  leave with for any failure. A wrapper that was gone when the watchdog came to start it stays 127.
 - **`RUN_TESTS_ONLY=<section>`** runs one section of `run-tests.sh`, for work on that section. A
   full run is unchanged and is still what CI and a release need.
 
@@ -56,21 +57,26 @@ its own. Two changes can newly stop a vault that 1.6.1 passed; item 2 of the Ado
   without following links. A vault inside any folder named `templates` scanned nothing (exit 2, so
   the commit gate refused every commit), a long-tier note named `compaction-*.md` was pruned as if
   it were a compaction stub, and a tier folder or note that is a link was skipped while the report
-  said 0 violations. The scan now matches its prunes on the path from the vault root, prunes stubs
-  in `20-projects/_logs/` only, and checks every link in a tier: one whose real target is under a
-  content-tier folder is fine, because the scan reads those notes there, and one that dangles or
-  points anywhere else is named and makes the run exit 2. A note named after `--` inside a tier is
-  held to the same rule, so both modes agree about it.
+  said 0 violations. The scan now matches its prunes on the path from the vault root, prunes the
+  stubs directly in `20-projects/_logs/` only, and checks every link in a tier that could be a note
+  or a folder of notes: one whose real target the scan reads where it is, a folder or `.md` note
+  under a content-tier folder, is fine, and one that dangles or points anywhere else (outside the
+  tiers, into a templates folder, to a stub, to a file that is no note) is named on stderr,
+  counted on stdout after the count line, and makes the run exit 2. A note named after `--` that
+  lies in a tier, by identity rather than spelling, is held to the same rule, so both modes agree
+  about it. An exported `CDPATH` can no longer move the scan.
 - **The lint scans steering files whatever the path's spelling.** It skipped any file under a
   folder named `templates` before deciding scope, and matched scope on the path as spelled, so
   `.claude/rules/templates/x.md`, `.claude//rules/x.md`, `.claude/./rules/x.md`, a trailing dot on a
-  folder name, and every file of a vault whose own path holds `/templates/` were skipped with no
-  warning and no log line. Scope is now decided on the vault-relative, normalised path, and
-  `templates/` is skipped inside a content tier only.
+  folder name, `..` parts such as `10-daily/templates/../x.md`, a trailing `/.` or `::$DATA` after
+  the name, and every file of a vault whose own path holds `/templates/` were skipped with no
+  warning and no log line. Scope is now decided on the vault-relative, normalised path, with `..`
+  resolved as Win32 resolves it, and `templates/` is skipped inside a content tier only.
 - **Containment covers reserved names directly in `.claude/worktrees/`.** A `CLAUDE.md`,
   `AGENTS.md` or `.mcp.json` a pass planted there was reported by the fence and left in place, to
   be read by a session started in any worktree below it. It is now restored, quarantined and named
-  by the tripwire like any other steering file.
+  by the tripwire like any other steering file, and so is a link placed there and anything under a
+  child named like a harness folder (`.claude`, `.git`), which is no worktree.
 - **The tripwire refusals point at the procedure.** `vault-check.sh`'s exit 78 and the pre-commit
   gate's now name `docs/setup.md`, section "A tripwire is set".
 
@@ -85,9 +91,12 @@ its own. Two changes can newly stop a vault that 1.6.1 passed; item 2 of the Ado
 2. **Two changes can newly stop a vault 1.6.1 passed**, and both reach the opt-in commit gate:
    - A link in a content tier that dangles or points outside the content-tier folders, a tier
      folder linked to a synced folder outside the vault included, now makes `vault-check.sh` exit
-     2 and names the link on stderr. If you link a tier on purpose, point the link at a folder
-     inside a content tier, or move the folder into the vault. Run `bash .claude/scripts/vault-check.sh`
-     before committing, to see whether any link is named.
+     2 and names the link on stderr. So does a link to a template, a stub or a file that is no
+     `.md` note, and on Windows a junction counts as a link. If you link a tier on purpose, point
+     the link at a folder inside a content tier, or move the folder into the vault. Run
+     `bash .claude/scripts/vault-check.sh` before committing, to see whether any link is named.
+     The dream and promotion runners check each note they commit with `vault-check.sh -- <note>`,
+     so a note they wrote through such a link is refused there too.
    - A note named `compaction-*.md` outside `20-projects/_logs/` is now read, so one with bad
      frontmatter makes it exit 1. Fix the note.
    Counts can rise for the same reasons, and for a vault inside a folder named `templates`, which
@@ -96,7 +105,8 @@ its own. Two changes can newly stop a vault that 1.6.1 passed; item 2 of the Ado
    later release. Do not bulk-edit frontmatter to quiet them (AGENTS.md §9). A caller that reads
    the count line's numbers or the exit code sees what it always saw.
 4. **A scheduler or wrapper that reads the runners' exit code meets 79** where it met a colliding
-   code before. The agent's own code is in the log's `exited with code` line. If your
+   code before, and for an agent that itself left with 79. The agent's own code is in the log's
+   `exited with code` line. If your
    `VAULT_AGENT_CMD` wrapper passes on another program's status, it passes that program's codes on
    too; have it leave with 1 for its own failures.
 5. **The lint now warns on steering files it skipped before**, such as one under
@@ -104,7 +114,8 @@ its own. Two changes can newly stop a vault that 1.6.1 passed; item 2 of the Ado
 6. **`README.md` is a seed file.** Merge the frontmatter contract's two changed rows and the
    sentence above them by hand if you kept your own.
 7. **If you kept the template's `.github/workflows/ci.yml`**, which no vault is ever offered, its
-   required lists gain `c3-links` on Ubuntu and macOS. The 1.6.1 copy drops those lists outside
+   required lists gain `c3-links` on Ubuntu and macOS and `c3-junction` and `c4-drive-spelling` on
+   Windows. The 1.6.1 copy drops those lists outside
    the template's repository, so nothing changes for a vault.
 8. The shipped files this release touches are `.claude/scripts/vault-check.sh`,
    `.claude/githooks/pre-commit`, `.claude/hooks/vault-lint.sh`,
