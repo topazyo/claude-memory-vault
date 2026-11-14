@@ -363,13 +363,15 @@ Code gets the most automation), and (strongly recommended) `jq`. See [Requiremen
 
 Every note carries YAML frontmatter. `tier` and `type` are the two keys the machinery
 reads: the lint hook flags their absence on write, and `vault-check.sh` fails the vault without
-them. The rest are contract, enforced by review and by you.
+them. Since 1.7.0 it also prints a `WARNING` line for a value outside the lists below, a `tier`
+that is not its folder's, and a long-tier note with no wikilink; the warnings become violations
+in a later release. The rest are contract, enforced by review and by you.
 
 | Key | Status | Meaning |
 | --- | --- | --- |
 | `title` | contract | Human-readable title; may differ from the filename |
-| `tier` | **machine-checked (C2)** | `short`, `medium`, or `long` — declares the note's expected lifetime |
-| `type` | **machine-checked (C3)** | `daily`, `project-log`, `standard`, `wiki-entity`, `moc`, `reference` |
+| `tier` | **machine-checked (C2; its value advisory)** | `short`, `medium`, or `long` — declares the note's expected lifetime |
+| `type` | **machine-checked (C3; its value advisory)** | `daily`, `project-log`, `standard`, `wiki-entity`, `moc`, `reference` |
 | `tags` | contract | Flat tag list; the Dataview dashboards group on these |
 | `status` | contract | `active`, `stable`, `superseded` |
 | `created` | contract | ISO date the note was first written; never edited afterwards |

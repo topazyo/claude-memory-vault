@@ -298,8 +298,20 @@ named notes, relative to the vault root or absolute, and fails a name that is no
 The dream runner uses it to check exactly the journals it is about to commit.
 
 Scope: the six content tiers (`01-inbox`, `10-daily`, `20-projects`, `30-knowledge`,
-`31-standards`, `40-llm-wiki`), `*.md` only. It **prunes** `*/templates/*` and `compaction-*.md`.
+`31-standards`, `40-llm-wiki`), `*.md` only. It **prunes** a `templates/` folder inside a tier and
+the `compaction-*.md` stubs in `20-projects/_logs/`, matched on the path from the vault root, so a
+vault inside a folder named `templates` is scanned like any other and a long-tier note named
+`compaction-*.md` is read (both since 1.7.0).
 `90-auto-memory/` (machine-managed, under its own schema) and `99-archive/` are out of scope.
+
+**Links.** The scan does not follow links, so it never reads a note twice or walks out of the
+vault, and it checks every link it meets in a tier instead. A link whose real target is under one
+of the vault's content-tier folders is fine: the scan reads those notes where they are. A link
+that does not resolve, or resolves anywhere else (a tier folder linked to a synced folder outside
+the vault included), is named on stderr as `<path> is a link that ..., so what it holds was not
+checked.`, and the run exits 2, because notes it holds were not read. A note named after `--`
+inside a tier is held to the same rule, so both modes agree about the same note. Before 1.7.0 a
+linked tier folder or note was skipped and the report still said 0 violations.
 
 | ID | Invariant | Reported when |
 | --- | --- | --- |
@@ -309,10 +321,26 @@ Scope: the six content tiers (`01-inbox`, `10-daily`, `20-projects`, `30-knowled
 | **C4** | If both `created:` and `last_verified:` exist, `last_verified >= created`. | `last_verified` is earlier than `created`, or a non-empty `created` is not a `YYYY-MM-DD` date. An empty value counts as absent, so `last_verified: ""` never triggers this. |
 | **C5** | `last_verified:` is not later than today. | A future stamp, or a non-empty `last_verified` that is not a `YYYY-MM-DD` date. Without the format check a value like `Jan 5` would compare as text and switch C4 and C5 off silently. |
 
-**That list is exhaustive.** C1–C5 are everything the script implements. In particular there is
-*no* check that a long-tier note carries a `last_verified` at all, and no check that any key holds
-a legal value beyond the two date formats — a note with `tier: mideum` passes all five. Freshness pressure comes from the
-dashboard queries and the dream-agent's trust sweep, which are prompts and views, not gates.
+**That list is exhaustive.** C1–C5 are everything the script reports as a violation. In particular
+there is *no* check that a long-tier note carries a `last_verified` at all. Freshness pressure
+comes from the dashboard queries and the dream-agent's trust sweep, which are prompts and views,
+not gates.
+
+**Advisory lines (since 1.7.0).** What the keys say is reported as `vault-check: WARNING: <note> —
+<what>` lines, printed after the count line, with a closing `vault-check: N warning(s).` line.
+They change neither the count line nor the exit code in this release, and a later release makes
+them violations, so fix each note by hand (AGENTS.md §9: no bulk edit to quiet a checker). A
+vault with nothing to warn about prints none of them. Each one names a note where:
+
+- `tier` is not `short`, `medium` or `long`, an empty value included;
+- `tier` is not the tier of the folder the note is in (`01-inbox/`, `10-daily/` and
+  `40-llm-wiki/raw/` short, `20-projects/` medium, `30-knowledge/`, `31-standards/` and
+  `40-llm-wiki/wiki/` long);
+- `type` is not one of `reference`, `daily`, `project-log`, `moc`, `standard`, `wiki-entity`;
+- a note in a long-tier folder holds no `[[wikilink]]`;
+- `tier`, `type`, `created` or `last_verified` is also written as `"key":`, `'key':` or `key :`,
+  which C2–C5 do not read and a YAML reader does, or appears more than once, where C4 and C5 read
+  the first and a YAML reader the last. Either way a future `last_verified` passed C5.
 
 Dates are compared as strings: ISO `YYYY-MM-DD` sorts lexicographically, so there is no date
 parsing and no locale dependency.
@@ -328,7 +356,7 @@ opposite responses, and while both were `1` a caller reading only the code could
 | --- | --- | --- |
 | `0` | At least one note was scanned and none violates an invariant | Nothing |
 | `1` | **A note violates an invariant**, including a malformed date | Fix the notes it names |
-| `2` | **The checker could not run**, so it establishes nothing about the vault. Either no notes were scanned at all, or there is no content-tier folder under the root, or a note named after `--` is not a readable file | Check the root and the working directory. Nothing here says a note is wrong |
+| `2` | **The checker could not run**, so it establishes nothing about the vault. Either no notes were scanned at all, or there is no content-tier folder under the root, or a note named after `--` is not a readable file, or (since 1.7.0) a link in a tier, or a note named in one, dangles or resolves outside the content-tier folders, so what it holds was not read. A note that violates an invariant still makes it `1` | Check the root and the working directory, and any link stderr names. Nothing here says a note is wrong |
 | `64` | The command line was wrong | Fix the invocation |
 | `78` | A scheduled pass set the tripwire, so nothing was checked | Follow [`setup.md`, A tripwire is set](setup.md#a-tripwire-is-set). The three runners use `78` for this too |
 
@@ -377,6 +405,13 @@ directory, which is removed on exit — including on `INT` (exit 130) and `TERM`
 the trap cleans up *and then exits*, rather than letting the script continue against fixtures that
 no longer exist.
 
+`RUN_TESTS_ONLY=<section> bash .claude/scripts/run-tests.sh` (since 1.7.0) runs one section after
+the shared fixtures, then the closing checks, and its last line names the section. It is for
+working on that section; a full run is what CI and a release need. `SUITE_SECTIONS` at the top of
+the script lists the names. A name that is no section, or `RUN_TESTS_ONLY` together with
+`RUN_TESTS_REQUIRED`, exits **64** before any control runs, and a filtered run that reaches no
+section fails.
+
 The suite is built from two kinds of input. **Known-bad** inputs must be flagged: when those stop
 firing, the instrument has silently broken. **Known-good** inputs must stay silent. Without both,
 a lint that does nothing and a lint that found nothing wrong print the same thing. Coverage:
@@ -388,7 +423,10 @@ a lint that does nothing and a lint that found nothing wrong print the same thin
   `last_verified` is reported; a note whose filename contains spaces is still scanned; the
   conformant note is *not* reported; `templates/` and `compaction-*.md` are pruned even though
   those fixtures are malformed; the run exits non-zero; a scan of zero notes exits non-zero and
-  says `VACUOUS`.
+  says `VACUOUS`; a long-tier `compaction-*.md` is read and a vault under a `templates` folder is
+  scanned; a link into another tier is followed once in both modes, and a tier folder or note
+  linked elsewhere, or a dangling link, exits 2 (where the platform can make a link); each
+  advisory `WARNING` prints after an unchanged count line, and a clean vault prints none.
 - **Vacuity guard** — the suite fails if the checker reports `across 0 file`.
 - **Lint argument mode** — every named file is linted, a conformant file after `--` stays silent,
   stdin is ignored when arguments are present, and hook JSON with a top-level `file_path` is read.

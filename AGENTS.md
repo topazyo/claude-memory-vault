@@ -80,7 +80,10 @@ entity. Something reaches `31-standards/` only after it has survived a real proj
 
 Every note opens with a YAML frontmatter block. `tier:` and `type:` are **mandatory and
 machine-checked**; the rest are conventional but keep the Dataview dashboards working. Dates are
-ISO `YYYY-MM-DD`.
+ISO `YYYY-MM-DD`. Their values are checked too: `tier` is the tier of the folder the note is in
+(§3) and `type` one of the values there, and `vault-check.sh` prints a `WARNING` line for one that
+is not, for a long-tier note with no wikilink, and for a key written as `"tier":` or `tier :` or
+written twice. The warnings become violations in a later release.
 
 ```yaml
 ---
@@ -146,7 +149,7 @@ they were told apart a caller reading only the code could not choose.
 | --- | --- |
 | `0` | At least one note was scanned and none violates an invariant |
 | `1` | **The vault has a problem.** A note violates an invariant |
-| `2` | **This checker could not run**, so it says nothing about the vault. No notes were scanned, or there are no content-tier folders under the root, or a named note is not a readable file |
+| `2` | **This checker could not run**, so it says nothing about the vault. No notes were scanned, or there are no content-tier folders under the root, or a named note is not a readable file, or a link in a tier, or a note named in one, dangles or resolves outside the content-tier folders |
 | `64` | The command line was wrong |
 | `78` | A scheduled pass set the tripwire, so nothing was checked and a human has to look first ([`docs/setup.md`, A tripwire is set](docs/setup.md#a-tripwire-is-set)). The three runners use `78` for the same thing |
 
@@ -164,7 +167,9 @@ exit code. The first says how many notes the retention pass has taken out of the
 second names the last retention pass and how many notes it moved once one has run, and says the last
 pass is unknown when git cannot answer. The third names the template version this vault was created
 from, and says `No template provenance marker` when the vault has none. A scan narrowed with `--`
-prints only the count.
+prints only the count. A vault with notes to warn about (§4) has `vault-check: WARNING:` lines and a
+`N warning(s)` line straight after the count line, in both modes; they change neither the count
+nor the exit code.
 
 `0 violations across 0 files` is not a pass, and the script exits **2** with a `VACUOUS` message
 when it happens. It means the scan matched nothing — wrong working directory, a wrong
