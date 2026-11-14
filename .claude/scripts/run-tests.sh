@@ -423,8 +423,10 @@ else
   # every file of a vault whose own path holds /templates/ were skipped with no
   # warning and no log line. Two vaults: one plain, one under a templates folder.
   c4_mk() {  # c4_mk <vault>
-    mkdir -p "$1/.claude/rules/templates" "$1/.claude/skills/templates" "$1/31-standards/templates" "$1/.claude/logs"
+    mkdir -p "$1/.claude/rules/templates" "$1/.claude/skills/templates" "$1/31-standards/templates" "$1/.claude/logs" \
+      "$1/.claude/x" "$1/10-daily/templates" "$1/01-inbox/templates"
     printf -- '---\ntitle: "t"\n---\n\nhidden:\342\200\256 here\n' > "$1/.claude/rules/t.md"
+    cp "$1/.claude/rules/t.md" "$1/10-daily/evil.md"
     cp "$1/.claude/rules/t.md" "$1/.claude/rules/templates/t.md"
     cp "$1/.claude/rules/t.md" "$1/.claude/skills/templates/SKILL.md"
     printf 'no frontmatter, hidden:\342\200\256 here\n' > "$1/31-standards/templates/tpl.md"
@@ -454,7 +456,11 @@ else
   if ! printf '%s' "$c4_out" | grep -q 'U+202E' || ! printf '%s' "$c4_out" | grep -qx 'LOGGED=1'; then
     bad "c4 fixture: the plain spelling .claude/rules/t.md was not reported and logged, so the cases below test nothing -- got: $(printf '%s' "$c4_out" | tr '\n' ' ')"
   else
-    for c4_p in .claude/rules/templates/t.md .claude/skills/templates/SKILL.md .claude/./rules/t.md .claude//rules/t.md; do
+    # A .. part is taken out with the part before it, as Win32 does, so it can
+    # neither land a path in a tier's templates folder nor hide a steering
+    # folder. The folders it passes through exist, so every platform opens it.
+    for c4_p in .claude/rules/templates/t.md .claude/skills/templates/SKILL.md .claude/./rules/t.md .claude//rules/t.md \
+                .claude/x/../rules/t.md 10-daily/templates/../evil.md 01-inbox/templates/../../.claude/rules/t.md; do
       c4_out="$(c4_lint "$C4V" "$c4_p")"
       if printf '%s' "$c4_out" | grep -q 'U+202E' && printf '%s' "$c4_out" | grep -qx 'LOGGED=1'; then
         ok "the character scan reaches $c4_p and logs it"
@@ -465,12 +471,17 @@ else
     # Win32 drops a trailing dot from every part of a path, so .claude./rules is
     # .claude/rules there. Elsewhere it is another folder, which does not exist
     # here, so the call has to say so in the log rather than return in silence.
-    c4_out="$(c4_lint "$C4V" .claude./rules/t.md)"
-    if printf '%s' "$c4_out" | grep -qx 'LOGGED=1'; then
-      ok "a trailing dot on a folder of the path does not take it out of the scan's scope"
-    else
-      bad "a trailing dot on a folder of the path was out of scope and left no log line -- got: $(printf '%s' "$c4_out" | tr '\n' ' ')"
-    fi
+    # The same for a trailing /. and an NTFS stream suffix, which Win32 opens
+    # as the file itself. Git Bash and Linux do not, so the hook says the path
+    # does not resolve; either way it is in scope and logged under its name.
+    for c4_p in .claude./rules/t.md .claude/rules/t.md/. '.claude/rules/t.md::$DATA'; do
+      c4_out="$(c4_lint "$C4V" "$c4_p")"
+      if printf '%s' "$c4_out" | grep -qx 'LOGGED=1' && tail -n 1 "$C4V/.claude/logs/vault-lint.log" | grep -qF -- "$c4_p"; then
+        ok "$c4_p is in the scan's scope, and logged under that name"
+      else
+        bad "$c4_p was out of scope and left no log line naming it -- got: $(printf '%s' "$c4_out" | tr '\n' ' ') log: $(tail -n 1 "$C4V/.claude/logs/vault-lint.log" 2>/dev/null)"
+      fi
+    done
     for c4_how in arg json; do
       c4_out="$(c4_lint "$C4T" "$C4T/.claude/rules/t.md" "$c4_how")"
       c4_out2="$(c4_lint "$C4T" "$C4T/31-standards/lintme.md" "$c4_how")"
@@ -694,6 +705,35 @@ else
     bad "compaction-*.md outside _logs -- expected exit 1, its C1 line and 2 files -- got: $(printf '%s' "$c3_out" | tr '\n' '|' | cut -c1-400)"
   fi
 
+  # The stub prune is for the stubs directly in 20-projects/_logs. find's *
+  # crosses a /, so a folder there named like a stub must still be read.
+  mkdir -p "$C3C/20-projects/_logs/compaction-notes"
+  printf 'no fence\n' > "$C3C/20-projects/_logs/compaction-notes/2026-01-01.md"
+  c3_out="$(c3_run "$C3C")"
+  if [ "$(c3_rc "$c3_out")" = 1 ] && printf '%s\n' "$c3_out" | grep -q '^20-projects/_logs/compaction-notes/2026-01-01.md — C1' \
+     && [ "$(sentinel_files "$c3_out")" = 3 ]; then
+    ok "a note in a folder of 20-projects/_logs named like a stub is read; only the stubs directly there are pruned"
+  else
+    bad "a folder named compaction-* in _logs -- expected exit 1, its C1 line and 3 files -- got: $(printf '%s' "$c3_out" | tr '\n' '|' | cut -c1-400)"
+  fi
+  rm -rf "$C3C/20-projects/_logs/compaction-notes"
+
+  # An exported CDPATH makes a cd that finds its folder through it print the
+  # folder, which would land in find's output and in the resolved root. Two
+  # vaults of one name, the one in CDPATH holding a bad note: the scan must
+  # read the vault the relative root names from where it was started.
+  mkdir -p "$TMP/cdp-start" "$TMP/cdp-other"
+  c3_vault "$TMP/cdp-start/cdv"
+  c3_vault "$TMP/cdp-other/cdv"
+  printf 'no fence\n' > "$TMP/cdp-other/cdv/31-standards/elsewhere.md"
+  c3_out="$(cd "$TMP/cdp-start" && CDPATH="$TMP/cdp-other" CLAUDE_PROJECT_DIR=cdv bash "$CHECK" 2>&1)"
+  c3_rc_v=$?
+  if [ "$c3_rc_v" -eq 0 ] && [ "$(sentinel_files "$c3_out")" = 1 ] && ! printf '%s\n' "$c3_out" | grep -q 'C1'; then
+    ok "an exported CDPATH does not move the scan, or put a folder into what it reads"
+  else
+    bad "vault-check with CDPATH exported -- expected exit 0 and 1 file -- got exit $c3_rc_v: $(printf '%s' "$c3_out" | tr '\n' '|' | cut -c1-400)"
+  fi
+
   # (d) A vault inside a folder named templates scans like any other.
   C3D="$TMP/c3 under/templates/v"
   c3_vault "$C3D"
@@ -722,7 +762,7 @@ else
     if [ "$(c3_rc "$c3_out")" = 1 ] && [ "$(sentinel_files "$c3_out")" = 2 ] \
        && [ "$(printf '%s\n' "$c3_out" | grep -c 'bad.md — C1')" = 1 ] \
        && ! printf '%s\n' "$c3_out" | grep -q 'is a link that'; then
-      ok "a link into another content tier is followed: its note is read once and the link is not refused"
+      ok "a link into another content tier is accepted: its note is read once, where it is, and the link is not refused"
     else
       bad "a link into another tier -- expected exit 1, 2 files, one C1 line, no refusal -- got: $(printf '%s' "$c3_out" | tr '\n' '|' | cut -c1-500)"
     fi
@@ -754,14 +794,59 @@ else
     else
       bad "links out of the tiers -- expected exit 2 and three refusals -- got: $(printf '%s' "$c3_out" | tr '\n' '|' | cut -c1-600)"
     fi
-    c3_out="$(c3_run "$C3L" -- 31-standards/n.md)"
-    if [ "$(c3_rc "$c3_out")" = 2 ] && printf '%s\n' "$c3_out" | grep -q "31-standards/n.md points outside the vault's content-tier folders, so it was not checked"; then
-      ok "named mode refuses a note linked out of the content tiers with exit 2, as the full scan does"
+    for c3_named in 31-standards/n.md ./31-standards/n.md 31-standards//n.md; do
+      c3_out="$(c3_run "$C3L" -- "$c3_named")"
+      if [ "$(c3_rc "$c3_out")" = 2 ] && printf '%s\n' "$c3_out" | grep -q "n.md points outside the vault's content-tier folders, so it was not checked"; then
+        ok "named mode refuses $c3_named, linked out of the content tiers, with exit 2, as the full scan does"
+      else
+        bad "named mode on $c3_named, linked out of the tiers -- expected exit 2 and the refusal -- got: $(printf '%s' "$c3_out" | tr '\n' '|' | cut -c1-400)"
+      fi
+    done
+    # The count line covers only what was read, so a refusal is said beside it
+    # on stdout too, and a violating note still makes the run exit 1.
+    printf 'no fence\n' > "$C3L/31-standards/bad-too.md"
+    c3_out="$(CLAUDE_PROJECT_DIR="$C3L" bash "$CHECK" 2>/dev/null)"
+    c3_rc_v=$?
+    if [ "$c3_rc_v" -eq 1 ] && printf '%s\n' "$c3_out" | grep -q '^vault-check: 3 link(s) refused, so what they hold was not checked'; then
+      ok "a refused link is counted on stdout beside the count line, and a violating note still makes it exit 1"
     else
-      bad "named mode on a note linked out of the tiers -- expected exit 2 and the refusal -- got: $(printf '%s' "$c3_out" | tr '\n' '|' | cut -c1-400)"
+      bad "a refused link beside a violation -- expected exit 1 and the stdout line -- got exit $c3_rc_v: $(printf '%s' "$c3_out" | tr '\n' '|' | cut -c1-400)"
     fi
-    rm -f "$C3L/10-daily" "$C3L/31-standards/n.md" "$C3L/31-standards/gone.md"
+    rm -f "$C3L/10-daily" "$C3L/31-standards/n.md" "$C3L/31-standards/gone.md" "$C3L/31-standards/bad-too.md"
     mv "$C3L/10-daily.real" "$C3L/10-daily"
+    # A link under a tier whose target the scan never reads where it is: a
+    # template, a compaction stub, a file that is no .md note, a templates
+    # folder, and a folder outside the vault. Each is refused. A link that is
+    # no note at all, an image, is left alone.
+    printf 'no fence\n' > "$C3L/31-standards/templates/draft.md"
+    printf 'no fence\n' > "$C3L/31-standards/rule.txt"
+    printf 'no fence\n' > "$C3L/20-projects/_logs/compaction-x.md"
+    printf 'png\n' > "$TMP/c3-outside/pic.png"
+    ln -s templates/draft.md "$C3L/31-standards/to-template.md"
+    ln -s ../20-projects/_logs/compaction-x.md "$C3L/10-daily/to-stub.md"
+    ln -s rule.txt "$C3L/31-standards/to-text.md"
+    ln -s ../31-standards/templates "$C3L/30-knowledge/to-templates"
+    ln -s "$TMP/c3-outside/std" "$C3L/31-standards/to-outside"
+    ln -s "$TMP/c3-outside/pic.png" "$C3L/31-standards/pic.png"
+    c3_out="$(c3_run "$C3L")"
+    c3_bad=''
+    [ "$(c3_rc "$c3_out")" = 2 ] || c3_bad="$c3_bad rc:$(c3_rc "$c3_out")"
+    for c3_want in "31-standards/to-template.md is a link that points into a templates folder" \
+                   "10-daily/to-stub.md is a link that points to a compaction stub" \
+                   "31-standards/to-text.md is a link that points to rule.txt, which is not a .md note" \
+                   "30-knowledge/to-templates is a link that points into a templates folder" \
+                   "31-standards/to-outside is a link that points outside the vault's content-tier folders"; do
+      printf '%s\n' "$c3_out" | grep -q "^vault-check: $c3_want" || c3_bad="$c3_bad missing[$c3_want]"
+    done
+    printf '%s\n' "$c3_out" | grep -q 'pic.png' && c3_bad="$c3_bad image-refused"
+    if [ -z "$c3_bad" ]; then
+      ok "a link to a template, a stub, a file that is no note, a templates folder or a folder outside the vault is refused, and a linked image is left alone"
+    else
+      bad "links the scan does not read --$c3_bad -- got: $(printf '%s' "$c3_out" | tr '\n' '|' | cut -c1-700)"
+    fi
+    rm -f "$C3L/31-standards/to-template.md" "$C3L/10-daily/to-stub.md" "$C3L/31-standards/to-text.md" \
+      "$C3L/30-knowledge/to-templates" "$C3L/31-standards/to-outside" "$C3L/31-standards/pic.png" \
+      "$C3L/31-standards/rule.txt" "$C3L/20-projects/_logs/compaction-x.md"
     c3_out="$(c3_run "$C3L")"
     if [ "$(c3_rc "$c3_out")" = 0 ] && [ "$(sentinel_files "$c3_out")" = 1 ] && ! printf '%s\n' "$c3_out" | grep -q 'is a link that'; then
       ok "with the links gone the same vault exits 0 on its notes alone, with no refusal"
@@ -770,6 +855,36 @@ else
     fi
   else
     skip c3-links "vault-check and links: ln -s made no link here"
+  fi
+
+  # On Windows a tier linked elsewhere is most likely a junction, which Git
+  # Bash lists as a link (measured: find -type l, -L and cd -P all see it).
+  # One junction into another tier is accepted, one out of the vault refused.
+  if is_windows_host && command -v cygpath >/dev/null 2>&1; then
+    C3J="$TMP/c3j"
+    c3_vault "$C3J"
+    mkdir -p "$C3J/30-knowledge/shared" "$TMP/c3j-outside"
+    printf -- '---\ntier: long\ntype: moc\n---\n\nSee [[ARCH-INDEX]].\n' > "$C3J/30-knowledge/shared/in.md"
+    printf 'no fence\n' > "$TMP/c3j-outside/out.md"
+    MSYS_NO_PATHCONV=1 cmd /c mklink /J "$(cygpath -w "$C3J/31-standards/in")" "$(cygpath -w "$C3J/30-knowledge/shared")" >/dev/null 2>&1
+    MSYS_NO_PATHCONV=1 cmd /c mklink /J "$(cygpath -w "$C3J/31-standards/out")" "$(cygpath -w "$TMP/c3j-outside")" >/dev/null 2>&1
+    if [ -L "$C3J/31-standards/in" ] && [ -L "$C3J/31-standards/out" ]; then
+      ran c3-junction
+      c3_out="$(c3_run "$C3J")"
+      if [ "$(c3_rc "$c3_out")" = 2 ] && [ "$(sentinel_files "$c3_out")" = 2 ] \
+         && printf '%s\n' "$c3_out" | grep -q "^vault-check: 31-standards/out is a link that points outside the vault's content-tier folders" \
+         && ! printf '%s\n' "$c3_out" | grep -q '31-standards/in is a link' && ! printf '%s\n' "$c3_out" | grep -q 'out.md'; then
+        ok "a junction into another tier is accepted and one out of the vault is refused, with exit 2"
+      else
+        bad "junctions in a tier -- expected exit 2, 2 files and one refusal -- got: $(printf '%s' "$c3_out" | tr '\n' '|' | cut -c1-500)"
+      fi
+      # Only the junctions go, by their bare names, never what they point at.
+      rm -f "$C3J/31-standards/in" "$C3J/31-standards/out"
+    else
+      bad "c3j fixture: mklink /J made no junction, so the junction cases test nothing"
+    fi
+  else
+    skip c3-junction "vault-check and junctions: not Git Bash on Windows"
   fi
 
   # --- what the two keys say (1.7.0, advisory) ---
@@ -789,6 +904,10 @@ else
   d3_note 31-standards/w-quoted.md 'tier: long\ntype: standard\n"last_verified": "2099-01-01"\n'
   d3_note 31-standards/w-space.md 'tier: long\ntype: standard\nlast_verified : "2099-01-01"\n'
   d3_note 31-standards/w-dup.md 'tier: long\ntype: standard\nlast_verified: ""\nlast_verified: "2099-01-01"\n'
+  d3_note 31-standards/w-squote.md "tier: long\ntype: standard\n'last_verified': \"2099-01-01\"\n"
+  # An inline comment, as docs/customizing.md writes one, is no part of the
+  # value, so this note is conformant and must not be warned about.
+  d3_note 31-standards/commented.md 'tier: long   # short | medium | long\ntype: "standard"   # the type\n'
   d3_note 10-daily/w-daily.md 'tier: long\ntype: daily\n' 'a daily note'
   # A note at the wrong tier in every other folder the tier table names, so
   # each entry of that table is held by a warning.
@@ -801,7 +920,7 @@ else
   d3_out="$(c3_run "$D3V")"
   d3_bad=''
   [ "$(c3_rc "$d3_out")" = 0 ] || d3_bad="$d3_bad rc:$(c3_rc "$d3_out")"
-  [ "$(sentinel_violations "$d3_out")" = 0 ] && [ "$(sentinel_files "$d3_out")" = 15 ] || d3_bad="$d3_bad count-line"
+  [ "$(sentinel_violations "$d3_out")" = 0 ] && [ "$(sentinel_files "$d3_out")" = 17 ] || d3_bad="$d3_bad count-line"
   for d3_want in "31-standards/w-tier.md — tier 'banana' is not short, medium or long" \
                  "31-standards/w-empty.md — tier '' is not short, medium or long" \
                  "31-standards/w-folder.md — tier is short, but the folder it is in holds long-tier notes" \
@@ -810,6 +929,7 @@ else
                  "31-standards/w-quoted.md — the key last_verified is also written as \"last_verified\":" \
                  "31-standards/w-space.md — the key last_verified is also written as last_verified :" \
                  "31-standards/w-dup.md — the key last_verified appears 2 times" \
+                 "31-standards/w-squote.md — the key last_verified is also written as 'last_verified':" \
                  "10-daily/w-daily.md — tier is long, but the folder it is in holds short-tier notes" \
                  "01-inbox/w-inbox.md — tier is long, but the folder it is in holds short-tier notes" \
                  "40-llm-wiki/raw/w-raw.md — tier is long, but the folder it is in holds short-tier notes" \
@@ -819,7 +939,8 @@ else
     printf '%s\n' "$d3_out" | grep -q "^vault-check: WARNING: $d3_want" || d3_bad="$d3_bad missing[$d3_want]"
   done
   printf '%s\n' "$d3_out" | grep -q '^vault-check: WARNING: 31-standards/good.md' && d3_bad="$d3_bad good-note-warned"
-  printf '%s\n' "$d3_out" | grep -q '^vault-check: 14 warning(s)\. They change neither the count above nor the exit code' || d3_bad="$d3_bad no-summary"
+  printf '%s\n' "$d3_out" | grep -q '^vault-check: WARNING: 31-standards/commented.md' && d3_bad="$d3_bad inline-comment-warned"
+  printf '%s\n' "$d3_out" | grep -q '^vault-check: 15 warning(s)\. They change neither the count above nor the exit code' || d3_bad="$d3_bad no-summary"
   # The warnings come after the count line, never before it.
   d3_first="$(printf '%s\n' "$d3_out" | awk '/^vault-check: WARNING/ { print NR; exit }')"
   d3_count="$(printf '%s\n' "$d3_out" | awk '/ violation\(s\) across / { print NR; exit }')"
@@ -829,6 +950,18 @@ else
   else
     bad "D3 warnings --$d3_bad -- got: $(printf '%s' "$d3_out" | tr '\n' '|' | cut -c1-900)"
   fi
+  # Named mode prints the same lines, with the path from the vault root
+  # however the note was spelled, so the folder's tier is known there too.
+  d3_out="$(c3_run "$D3V" -- 31-standards/w-tier.md ./31-standards/w-folder.md)"
+  if [ "$(c3_rc "$d3_out")" = 0 ] \
+     && printf '%s\n' "$d3_out" | grep -q "^vault-check: WARNING: 31-standards/w-tier.md — tier 'banana' is not short, medium or long" \
+     && printf '%s\n' "$d3_out" | grep -q '^vault-check: WARNING: 31-standards/w-folder.md — tier is short, but the folder it is in holds long-tier notes' \
+     && printf '%s\n' "$d3_out" | grep -q '^vault-check: 2 warning(s)\.'; then
+    ok "named mode prints the advisory lines too, a note spelled ./31-standards/... included"
+  else
+    bad "named mode's advisory lines -- got: $(printf '%s' "$d3_out" | tr '\n' '|' | cut -c1-500)"
+  fi
+
   # A vault with nothing to warn about prints no WARNING line at all. One note
   # in every folder the tier table names, at that folder's tier, and every
   # allowed type, so each entry of both lists is held by a note.
@@ -842,7 +975,7 @@ else
   d3_note 40-llm-wiki/raw/source.md 'tier: short\ntype: reference\n'
   d3_note 40-llm-wiki/wiki/entity.md 'tier: long\ntype: wiki-entity\n'
   d3_out="$(c3_run "$D3V")"
-  if [ "$(c3_rc "$d3_out")" = 0 ] && ! printf '%s\n' "$d3_out" | grep -q 'WARNING' && [ "$(sentinel_files "$d3_out")" = 7 ]; then
+  if [ "$(c3_rc "$d3_out")" = 0 ] && ! printf '%s\n' "$d3_out" | grep -q 'WARNING' && [ "$(sentinel_files "$d3_out")" = 8 ]; then
     ok "a vault with a conformant note in every tier folder and of every type prints no WARNING line"
   else
     bad "a clean vault printed warnings -- got: $(printf '%s' "$d3_out" | tr '\n' '|' | cut -c1-600)"
@@ -6502,6 +6635,22 @@ if [ "$sf_wt_got" = '.claude/worktrees/CLAUDE.md|.claude/worktrees/AGENTS.md|.cl
   ok "steering_filter treats a reserved name directly in .claude/worktrees/ as steering, and a worktree folder or a note there as not"
 else
   bad "steering_filter directly in .claude/worktrees/ -- reserved: $sf_wt_got -- not reserved: $sf_wt_not"
+fi
+# A link directly there, which the snapshot marks, is steering, since a
+# worktree is a folder and a link can put one anywhere; everything under a
+# child named like a harness folder is too, since that is no worktree; and the
+# line-break marker means something only at the vault root.
+printf 'L000 0 ./.claude/worktrees/wt\n' > "$TMP/sf-wt-links"
+sf_wt_got="$( . "$ROOT/.claude/scripts/lib/runner-common.sh" && printf '%s\n' \
+  '.claude/worktrees/wt' '.claude/worktrees/.claude/rules/evil.md' '.claude/worktrees/.agents/skills/s/SKILL.md' \
+  '.claude/worktrees/.runner-line-break-names' '.claude/worktrees/.runner-line-break-names/x.md' \
+  | steering_filter "$TMP/sf-wt-links" | tr '\n' '|')"
+sf_wt_not="$( . "$ROOT/.claude/scripts/lib/runner-common.sh" && printf '%s\n' '.claude/worktrees/wt' | steering_filter | tr '\n' '|')"
+if [ "$sf_wt_got" = '.claude/worktrees/wt|.claude/worktrees/.claude/rules/evil.md|.claude/worktrees/.agents/skills/s/SKILL.md|' ] \
+   && [ -z "$sf_wt_not" ]; then
+  ok "in .claude/worktrees/ a link and everything under a harness-named child are steering, and the line-break marker's name is not"
+else
+  bad "steering_filter in .claude/worktrees/ -- with the link marked: $sf_wt_got -- without: $sf_wt_not"
 fi
 
 # The steering classifier itself, over paths no fixture needs to create. A
@@ -13130,7 +13279,17 @@ for ac_script in dream-pass.sh promotion-pass.sh; do
   [ "$ac_script" = promotion-pass.sh ] && ac_agent=promotion-agent
   ac_log="$RV/.claude/logs/$ac_agent.log"
   ac_bad=''
-  for ac_case in 2:79 3:79 4:79 5:79 64:79 70:79 75:79 78:79 124:79 125:79 127:79 129:79 130:79 143:79 1:1 9:9; do
+  # The codes come from the runner's own exit-code header, every one but 0 and
+  # 1, so a code added there and not to the library's list fails here rather
+  # than both lists passing as two copies that agree.
+  ac_codes="$(LC_ALL=C awk '/^# Exit codes:/ { on = 1; next } on && /^#   \*/ { exit }
+    on && match($0, /^#   [0-9]+ /) { print $2 }' "$ROOT/.claude/scripts/$ac_script" 2>/dev/null | LC_ALL=C sort -un | tr '\n' ' ')"
+  ac_cases=''
+  for ac_code in $ac_codes; do
+    case "$ac_code" in 0|1) ;; *) ac_cases="$ac_cases $ac_code:79" ;; esac
+  done
+  case " $ac_codes " in *" 78 "*" 79 "*) : ;; *) ac_bad="$ac_bad [fixture: the header's codes could not be read: $ac_codes]" ;; esac
+  for ac_case in $ac_cases 1:1 9:9; do
     ac_code=${ac_case%%:*} ac_want=${ac_case#*:}
     new_case_state "agentstatus-$ac_agent-$ac_code"
     ac_before="$(awk 'END { print NR + 0 }' "$ac_log" 2>/dev/null)"
@@ -13165,6 +13324,45 @@ for ac_script in dream-pass.sh promotion-pass.sh; do
     bad "$ac_script: agent statuses and runner codes --$ac_bad"
   fi
 done
+
+# A 1.7.0 runner with a library from before it has no agent_status_exit, and
+# leaves with the agent's own code as it always did, rather than with the 127
+# of a function it cannot find, which would say the agent was never found.
+ac_lib="$RV/.claude/scripts/lib/runner-common.sh"
+LC_ALL=C sed 's/^agent_status_exit() {/agent_status_exit_gone() {/' "$ROOT/.claude/scripts/lib/runner-common.sh" > "$ac_lib"
+if grep -q '^agent_status_exit_gone() {' "$ac_lib" && ! grep -q '^agent_status_exit() {' "$ac_lib"; then
+  new_case_state agentstatus-old-library
+  ac_before="$(awk 'END { print NR + 0 }' "$RV/.claude/logs/dream-agent.log" 2>/dev/null)"
+  ac_rc="$(runner dream-pass.sh exitstatus FAKE_STATUS=78)"
+  ac_new="$(awk -v n="${ac_before:-0}" 'NR > n' "$RV/.claude/logs/dream-agent.log" 2>/dev/null)"
+  if [ "$ac_rc" = 78 ] && printf '%s\n' "$ac_new" | grep -q 'dream-agent exited with code 78$' \
+     && ! printf '%s\n' "$ac_new" | grep -q 'AGENT-STATUS'; then
+    ok "a 1.7.0 runner with a library that has no agent_status_exit passes the agent's code through, as before"
+  else
+    bad "a runner with an older library -- expected exit 78 and no AGENT-STATUS line, got $ac_rc: $(printf '%s' "$ac_new" | tail -n 4 | tr '\n' '|')"
+  fi
+  tripwire_clear
+else
+  bad "agentstatus-old-library fixture: the library copy still defines agent_status_exit, so the case would test nothing"
+fi
+cp "$ROOT/.claude/scripts/lib/runner-common.sh" "$ac_lib"
+
+# 127 from a wrapper that was gone when the watchdog came to start it is the
+# shell's, so it keeps its meaning, not found, rather than reading as the
+# agent's own 127 and leaving as 79. Function level, because preflight finds
+# a missing wrapper first and only a race gets one this far.
+: > "$TMP/ac-missing.log"
+ac_got="$( . "$ROOT/.claude/scripts/lib/runner-common.sh" && WATCHDOG_POLL=1 WATCHDOG_GRACE=2 \
+  AGENT_KIND=command AGENT_BIN="$TMP/no-such-wrapper" SNAP_SEALS=x \
+  run_agent 30 "$TMP/ac-missing.out" dream-agent task prompt.md >/dev/null 2>&1
+  printf 'rc=%s ran=%s ' "$RUN_RC" "${AGENT_RAN:-}"
+  agent_status_exit dream-agent "$TMP/ac-missing.log"
+  printf 'exit=%s log=%s' "$?" "$(awk 'END { print NR + 0 }' "$TMP/ac-missing.log" 2>/dev/null)" )"
+if [ "$ac_got" = 'rc=127 ran=1 exit=127 log=0' ]; then
+  ok "a wrapper that was gone when the watchdog started it leaves as 127, not found, not as the agent's own 127"
+else
+  bad "a wrapper gone at launch -- expected rc=127 ran=1 exit=127 log=0, got: $ac_got"
+fi
 
 # A signal inside the runner's own reporting. Two hooks, each on only when its
 # variable is set, are added to the vault's copy of the library for these cases
@@ -16655,6 +16853,27 @@ else
   else
     bad "the gate gave the violation sentence for a checker that could not run -- [$(printf '%s' "$out_gate" | tr '\n' '|')]"
   fi
+  # The 2 sentence names a link as one reason, since a refused link is the
+  # one way to it in a vault that is otherwise fine (1.7.0).
+  if printf '%s' "$out_gate" | grep -q 'a link in a content tier that dangles or points outside the content-tier folders'; then
+    ok "the gate's exit-2 sentence names a refused link among the reasons"
+  else
+    bad "the gate's exit-2 sentence does not name a refused link -- [$(printf '%s' "$out_gate" | tr '\n' '|')]"
+  fi
+
+  # Over a tripwire the gate names the procedure, as vault-check does.
+  printf -- '---\ntier: long\ntype: standard\n---\n\nSee [[ARCH-INDEX]].\n' > "$GV/31-standards/fine.md"
+  mkdir -p "$GV/.claude/logs"
+  printf 'reason: test\n' > "$GV/.claude/logs/runner-tripwire"
+  out_gate="$(VAULT_STATE_DIR="$TMP/gate-tw-state" bash "$GV/.claude/githooks/pre-commit" 2>&1)"
+  rc_gate=$?
+  expect_rc "pre-commit over a tripwire refuses with 78" 78 "$rc_gate"
+  if printf '%s' "$out_gate" | grep -q '^pre-commit: vault-check exited 78.*docs/setup.md, section "A tripwire is set", has the steps in order\.$'; then
+    ok "the gate's tripwire sentence names docs/setup.md's section A tripwire is set"
+  else
+    bad "the gate's tripwire sentence does not name the procedure -- [$(printf '%s' "$out_gate" | tr '\n' '|')]"
+  fi
+  rm -f "$GV/.claude/logs/runner-tripwire"
 fi
 
 fi  # section pre-commit
@@ -21590,8 +21809,8 @@ elif echo x | grep -qP x 2>/dev/null; then
 else
   printf '  MISSING  perl and grep -P -- the invisible-character scan CANNOT RUN and will say so.\n'
 fi
-if [ -z "${pi_node_major+set}" ] && [ -n "$RUN_TESTS_ONLY" ]; then
-  printf '  -        node    not probed: the Pi section did not run under RUN_TESTS_ONLY\n'
+if [ -n "$RUN_TESTS_ONLY" ] && [ "$RUN_TESTS_ONLY" != pi ] && [ "$RUN_TESTS_ONLY" != omp ]; then
+  printf '  -        node    %s; the Pi and omp sections did not run under RUN_TESTS_ONLY\n' "${pi_node_version:-not found}"
 elif [ "${pi_node_major:-0}" -ge 18 ] 2>/dev/null; then
   printf '  present  node    %s (the Pi extension checks)\n' "$pi_node_version"
 else
