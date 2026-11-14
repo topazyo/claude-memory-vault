@@ -150,36 +150,91 @@ fi
 # never match and EVERY note would be reported as missing tier and type. The
 # explicit list is understood identically by BWK awk, mawk and gawk. Keep \r in
 # the set or notes checked out with CRLF endings stop matching.
-fm_of() {
-  awk 'NR==1&&/^---[ \t\r]*$/{f=1;next} f&&/^---[ \t\r]*$/{exit} f{print}' "$1"
-}
-
-# Count occurrences with awk, never `grep -c`: grep -c prints 0 AND exits 1 on
-# no-match, so `n=$(grep -c k f || echo 0)` yields "0\n0" and breaks the test.
-count_key() {
-  printf '%s\n' "$2" | awk -v k="^$1:" '$0 ~ k {n++} END {print n+0}'
-}
-
-# First value for a key, stripped of a trailing CR, trailing spaces, and one
-# surrounding quote pair. The apostrophe is built with sprintf rather than
-# written as \047, because it cannot be written literally inside this single
-# quoted program and the awk macOS ships does not read an octal escape in a
-# string the way gawk and mawk do. That difference has already cost this
+#
+# note_facts <file> - everything the checks need from one note, in ONE awk pass,
+# as lines of NAME<US>VALUE (US is the unit separator, byte 31):
+#   fence     1 when the first line is a bare --- fence (C1), else 0
+#   link      1 when the note holds [[ anywhere, else 0
+#   n_<key>   how many frontmatter lines start <key>: (C2, C3), for tier, type,
+#             created and last_verified
+#   v_<key>   the first such line's value: a trailing CR and trailing spaces
+#             removed and one surrounding quote pair taken off (C4, C5)
+#   r_<key>   the same value before the quote pair is taken off, which the
+#             advisory checks read with an inline comment still on it
+#   spell     one advisory finding about how one of those keys is written
+# The frontmatter is the lines after an opening fence on line 1, up to the next
+# fence line, the same anchored pattern vault-lint.sh uses. Before 1.7.0 this
+# took six processes a note (the fence, the frontmatter, two counts, two
+# values); the advisory checks would have made it twelve.
+#
+# The apostrophe and the separator are built with sprintf rather than written
+# as \047 or \037, because the awk macOS ships does not read an octal escape in
+# a string the way gawk and mawk do. That difference has already cost this
 # repository two silent wrong answers, both of which took a CI run to see.
-value_of() {
-  printf '%s\n' "$2" | awk -v k="^$1:" '
-    BEGIN { q = sprintf("%c", 39) }
-    $0 ~ k {
-      sub(/^[^:]*:[ \t]*/, "")
-      gsub(/\r/, "")
-      sub(/[ \t\r]+$/, "")
-      if (length($0) >= 2) {
-        a = substr($0, 1, 1); b = substr($0, length($0), 1)
-        if (a == b && (a == "\"" || a == q)) $0 = substr($0, 2, length($0) - 2)
+#
+# Spellings: a key a YAML reader would also find written as "tier":, 'tier':
+# or tier :, which C2-C5 do not read, or one that appears more than once, where
+# C4 and C5 read the first and a YAML reader the last. A future last_verified
+# written either way passed C5.
+note_facts() {
+  LC_ALL=C awk '
+    BEGIN {
+      us = sprintf("%c", 31); q = sprintf("%c", 39)
+      split("tier type created last_verified", keys, " ")
+      fence = 0; f = 0; link = 0
+    }
+    index($0, "[[") { link = 1 }
+    NR == 1 { if ($0 ~ /^---[ \t\r]*$/) { fence = 1; f = 1 }; next }
+    f && /^---[ \t\r]*$/ { f = 0; next }
+    f {
+      s = $0
+      sub(/\r$/, "", s)
+      for (i = 1; i <= 4; i++) {
+        k = keys[i]
+        if ($0 ~ ("^" k ":")) {
+          n[k]++
+          if (n[k] == 1) {
+            v = $0
+            sub(/^[^:]*:[ \t]*/, "", v)
+            gsub(/\r/, "", v)
+            sub(/[ \t\r]+$/, "", v)
+            raw[k] = v
+            if (length(v) >= 2) {
+              a = substr(v, 1, 1); b = substr(v, length(v), 1)
+              if (a == b && (a == "\"" || a == q)) v = substr(v, 2, length(v) - 2)
+            }
+            val[k] = v
+          }
+          continue
+        }
+        if (substr(s, 1, 1) == "\"" || substr(s, 1, 1) == q) {
+          c = substr(s, 1, 1)
+          if (substr(s, 2, length(k) + 1) == k c) {
+            r = substr(s, length(k) + 3)
+            sub(/^[ \t]*/, "", r)
+            if (substr(r, 1, 1) == ":" && !(k in odd)) odd[k] = c k c ":"
+          }
+          continue
+        }
+        if (index(s, k) == 1) {
+          r = substr(s, length(k) + 1)
+          if (r ~ /^[ \t]+:/ && !(k in odd)) odd[k] = k " :"
+        }
       }
-      print; exit
-    }'
+    }
+    END {
+      printf "fence%s%d\n", us, fence
+      printf "link%s%d\n", us, link
+      for (i = 1; i <= 4; i++) {
+        k = keys[i]
+        printf "n_%s%s%d\n", k, us, n[k] + 0
+        if (n[k] > 0) { printf "v_%s%s%s\n", k, us, val[k]; printf "r_%s%s%s\n", k, us, raw[k] }
+        if (k in odd) printf "spell%sthe key %s is also written as %s, which these checks do not read\n", us, k, odd[k]
+        if (n[k] > 1) printf "spell%sthe key %s appears %d times; these checks read the first, a YAML reader the last\n", us, k, n[k]
+      }
+    }' "$1"
 }
+US=$'\037'
 
 # True when the value is shaped like an ISO calendar date. The C4/C5 comparisons
 # below are string comparisons, which are only date comparisons when both sides
@@ -223,16 +278,16 @@ folder_tier() {
   esac
 }
 
-# yaml_scalar <value> - sets SCALAR to a value as value_of returned it, less an
-# inline comment (whitespace, then #) and the quotes around what is left, so
-# `tier: long   # short | medium | long`, which docs/customizing.md shows,
-# reads as long. Only the advisory checks use it.
+# yaml_scalar <value> - sets SCALAR to a value as note_facts's r_ line gives it
+# (quotes still on), less an inline comment (whitespace, then #) and the quotes
+# around what is left, so `tier: long   # short | medium | long`, which
+# docs/customizing.md shows, and `tier: "long" # the "long" tier` both read as
+# long. Only the advisory checks use it.
 yaml_scalar() {
   local v="$1" q rest
   case "$v" in
     \"*|\'*)
-      # Quoted, with a comment after the closing quote (value_of strips a
-      # quote pair only when the value ends in it): the text up to that quote.
+      # Quoted: the text up to the closing quote, whatever follows it.
       q="${v:0:1}" rest="${v:1}"
       case "$rest" in *"$q"*) v="${rest%%"$q"*}" ;; esac
       ;;
@@ -242,44 +297,6 @@ yaml_scalar() {
       ;;
   esac
   SCALAR="$v"
-}
-
-# key_spellings <frontmatter> - one line per key this checker reads (tier,
-# type, created, last_verified) that a YAML reader would also find under a
-# spelling the checks above do not read ("tier":, 'tier':, tier :), or that
-# appears more than once, where this checker reads the first and a YAML
-# reader the last. A future last_verified written either way passed C5.
-key_spellings() {
-  printf '%s\n' "$1" | LC_ALL=C awk '
-    BEGIN { q = sprintf("%c", 39); split("tier type created last_verified", keys, " ") }
-    { sub(/\r$/, "") }
-    {
-      for (i = 1; i <= 4; i++) {
-        k = keys[i]
-        if (index($0, k ":") == 1) { plain[k]++; continue }
-        s = $0
-        if (substr(s, 1, 1) == "\"" || substr(s, 1, 1) == q) {
-          c = substr(s, 1, 1)
-          if (substr(s, 2, length(k) + 1) == k c) {
-            r = substr(s, length(k) + 3)
-            sub(/^[ \t]*/, "", r)
-            if (substr(r, 1, 1) == ":") odd[k] = odd[k] ? odd[k] : c k c ":"
-          }
-          continue
-        }
-        if (index(s, k) == 1) {
-          r = substr(s, length(k) + 1)
-          if (r ~ /^[ \t]+:/) odd[k] = odd[k] ? odd[k] : k " :"
-        }
-      }
-    }
-    END {
-      for (i = 1; i <= 4; i++) {
-        k = keys[i]
-        if (k in odd) printf "the key %s is also written as %s, which these checks do not read\n", k, odd[k]
-        if (plain[k] > 1) printf "the key %s appears %d times; these checks read the first, a YAML reader the last\n", k, plain[k]
-      }
-    }'
 }
 
 # The vault root as the file system has it, for telling where a link really
@@ -298,6 +315,7 @@ ROOT_P="$(cd -P "$ROOT" 2>/dev/null && pwd -P)"
 link_target_ok() {
   local p="$1" n=0 t d prev base="" sub="" isdir=0
   LINK_WHY=""
+  LINK_REL=""
   if [ ! -e "$p" ]; then
     LINK_WHY="does not resolve"
     return 1
@@ -313,12 +331,20 @@ link_target_ok() {
         LINK_WHY="could not be resolved"
         return 1
       fi
+      # A target spelled with a drive letter is absolute too: Git Bash's
+      # readlink can give C:/... for a link Windows made.
       case "$t" in
-        /*) p="$t" ;;
+        /*|[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]:[\\/]*) p="${t//\\//}" ;;
         *) p="${p%/*}/$t" ;;
       esac
       n=$((n + 1))
     done
+    # The name the walk ended on has to be the file the link opens, or the
+    # walk went wrong and its folder says nothing about the target.
+    if ! [ "$p" -ef "$1" ]; then
+      LINK_WHY="could not be resolved"
+      return 1
+    fi
     base="${p##*/}"
     d="$(cd -P "${p%/*}" 2>/dev/null && pwd -P)"
   fi
@@ -345,6 +371,9 @@ link_target_ok() {
               compaction-*.md) LINK_WHY="points to a compaction stub, which the scan does not read"; return 1 ;;
             esac
           fi
+          # Where the note really is, so named mode judges its folder's
+          # tier by that and not by the folder the link sits in.
+          LINK_REL="$t/$sub$base"
         fi
         return 0
       fi
@@ -396,21 +425,41 @@ refuse_link() {  # refuse_link <rel> <why>
 }
 
 check_note() {
-  local file="$1" rel="${2:-}" fm created verified created_ok verified_ok tierv typev line n_tier n_type
+  local file="$1" rel="${2:-}" facts line key val created="" verified="" created_ok verified_ok tierv typev
+  local fence=0 haslink=0 n_tier=0 n_type=0 r_tier="" r_type="" spells=""
   files=$((files + 1))
   [ -n "$rel" ] || rel="${file#"$ROOT"/}"
 
-  if [ "$(awk 'NR==1{if ($0 ~ /^---[ \t\r]*$/) print 1; else print 0} END{if (NR==0) print 0}' "$file")" != "1" ]; then
+  # One pass over the note, split here by parameter expansion: a here-document
+  # can make bash write a temporary file, and this checker writes nothing.
+  facts="$(note_facts "$file")"
+  while [ -n "$facts" ]; do
+    line="${facts%%$'\n'*}"
+    case "$facts" in
+      *$'\n'*) facts="${facts#*$'\n'}" ;;
+      *) facts="" ;;
+    esac
+    key="${line%%"$US"*}" val="${line#*"$US"}"
+    case "$key" in
+      fence) fence="$val" ;;
+      link) haslink="$val" ;;
+      n_tier) n_tier="$val" ;;
+      n_type) n_type="$val" ;;
+      v_created) created="$val" ;;
+      v_last_verified) verified="$val" ;;
+      r_tier) r_tier="$val" ;;
+      r_type) r_type="$val" ;;
+      spell) spells+="$val"$'\n' ;;
+    esac
+  done
+
+  if [ "$fence" != 1 ]; then
     report "$rel" "C1" "first line is not a bare --- fence"
     # Without an opening fence there is no frontmatter to inspect; C2-C5 would
     # otherwise read the note body and report nonsense.
     return
   fi
 
-  fm="$(fm_of "$file")"
-
-  n_tier="$(count_key tier "$fm")"
-  n_type="$(count_key type "$fm")"
   [ "$n_tier" -eq 0 ] && report "$rel" "C2" "frontmatter has no 'tier:' key"
   [ "$n_type" -eq 0 ] && report "$rel" "C3" "frontmatter has no 'type:' key"
 
@@ -419,7 +468,7 @@ check_note() {
   # changes neither the count line nor the exit code.
   folder_tier "$rel"
   if [ "$n_tier" -gt 0 ]; then
-    yaml_scalar "$(value_of tier "$fm")"
+    yaml_scalar "$r_tier"
     tierv="$SCALAR"
     case "$tierv" in
       short|medium|long)
@@ -431,29 +480,20 @@ check_note() {
     esac
   fi
   if [ "$n_type" -gt 0 ]; then
-    yaml_scalar "$(value_of type "$fm")"
+    yaml_scalar "$r_type"
     typev="$SCALAR"
     case "$typev" in
       reference|daily|project-log|moc|standard|wiki-entity) ;;
       *) warn "$rel" "type '$typev' is not one of reference, daily, project-log, moc, standard, wiki-entity" ;;
     esac
   fi
-  if [ "$FOLDER_TIER" = long ] && ! LC_ALL=C grep -q '\[\[' "$file"; then
+  if [ "$FOLDER_TIER" = long ] && [ "$haslink" != 1 ]; then
     warn "$rel" "a long-tier note with no [[wikilink]] to a peer or an index"
   fi
-  # Split by parameter expansion: a here-document can make bash write a
-  # temporary file, and this checker writes nothing.
-  line="$(key_spellings "$fm")"
-  while [ -n "$line" ]; do
-    warn "$rel" "${line%%$'\n'*}"
-    case "$line" in
-      *$'\n'*) line="${line#*$'\n'}" ;;
-      *) line="" ;;
-    esac
+  while [ -n "$spells" ]; do
+    warn "$rel" "${spells%%$'\n'*}"
+    spells="${spells#*$'\n'}"
   done
-
-  created="$(value_of created "$fm")"
-  verified="$(value_of last_verified "$fm")"
 
   # An empty value is treated as absent. A bare `last_verified:` compares as ""
   # against created, and "" sorts before every date, which would invent a C4
@@ -505,12 +545,17 @@ if [ "${#NAMED[@]}" -gt 0 ]; then
     # what the advisory checks read. A note named anywhere else is checked as
     # it always was.
     if named_tier_rel "$file"; then
-      if [ "$NAMED_VIA_LINK" -eq 1 ] && ! link_target_ok "$file"; then
+      # Backslashes as slashes for the link walk, which splits on /: Windows
+      # tab completion names 31-standards\x.md.
+      LINK_REL=""
+      if [ "$NAMED_VIA_LINK" -eq 1 ] && ! link_target_ok "${file//\\//}"; then
         printf 'vault-check: %s %s, so it was not checked.\n' "$file" "$LINK_WHY" >&2
         refused=$((refused + 1))
         continue
       fi
-      check_note "$file" "$NAMED_REL"
+      # Through an accepted link, the folder the note really is in decides its
+      # tier for the advisory checks, as it does in the full scan.
+      check_note "$file" "${LINK_REL:-$NAMED_REL}"
     else
       check_note "$file"
     fi
@@ -543,7 +588,7 @@ else
   # -print0 / read -d '': several vault notes have spaces in their filenames.
   while IFS= read -r -d '' file; do
     check_note "$ROOT/$file" "$file"
-  done < <(cd "$ROOT" && find "${TIER_NAMES[@]}" \( -path '*/templates/*' -o \( -path '20-projects/_logs/compaction-*.md' ! -path '20-projects/_logs/*/*' \) \) -prune -o -type f -name '*.md' -print0)
+  done < <(cd "$ROOT" && find "${TIER_NAMES[@]}" \( -path '*/templates/*' -o \( -type f -path '20-projects/_logs/compaction-*.md' ! -path '20-projects/_logs/*/*' \) \) -prune -o -type f -name '*.md' -print0)
   while IFS= read -r -d '' file; do
     case "$file" in
       *.md) ;;
@@ -558,7 +603,7 @@ else
         ;;
     esac
     link_target_ok "$ROOT/$file" || refuse_link "$file" "$LINK_WHY"
-  done < <(cd "$ROOT" && find "${TIER_NAMES[@]}" \( -path '*/templates/*' -o \( -path '20-projects/_logs/compaction-*.md' ! -path '20-projects/_logs/*/*' \) \) -prune -o -type l -print0)
+  done < <(cd "$ROOT" && find "${TIER_NAMES[@]}" \( -path '*/templates/*' -o \( -type f -path '20-projects/_logs/compaction-*.md' ! -path '20-projects/_logs/*/*' \) \) -prune -o -type l -print0)
 fi
 
 printf 'vault-check: %s violation(s) across %s file(s) checked (as of %s).\n' \
