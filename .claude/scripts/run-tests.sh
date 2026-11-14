@@ -705,6 +705,20 @@ else
     bad "compaction-*.md outside _logs -- expected exit 1, its C1 line and 2 files -- got: $(printf '%s' "$c3_out" | tr '\n' '|' | cut -c1-400)"
   fi
 
+  # Named plainly, with no link on the way, a note is checked whatever its
+  # name or folder, as named mode always did: the link rule is for links. The
+  # runners name every note a pass wrote, and the promotion pass can write a
+  # copy whose name ends in a space.
+  printf -- '---\ntier: long\ntype: standard\n---\n\nSee [[ARCH-INDEX]].\n' > "$C3C/31-standards/notes.markdown"
+  c3_out="$(c3_run "$C3C" -- 31-standards/templates/tpl.md 31-standards/notes.markdown)"
+  if [ "$(c3_rc "$c3_out")" = 1 ] && printf '%s\n' "$c3_out" | grep -q '^31-standards/templates/tpl.md — C1' \
+     && [ "$(sentinel_files "$c3_out")" = 2 ] && ! printf '%s\n' "$c3_out" | grep -q 'not checked'; then
+    ok "named mode checks a template and a note not named *.md when no link is on the way, rather than refusing them"
+  else
+    bad "named mode on a plain template and a .markdown note -- expected exit 1, its C1 line and 2 files -- got: $(printf '%s' "$c3_out" | tr '\n' '|' | cut -c1-400)"
+  fi
+  rm -f "$C3C/31-standards/notes.markdown"
+
   # The stub prune is for the stubs directly in 20-projects/_logs. find's *
   # crosses a /, so a folder there named like a stub must still be read.
   mkdir -p "$C3C/20-projects/_logs/compaction-notes"
@@ -828,6 +842,7 @@ else
     ln -s ../31-standards/templates "$C3L/30-knowledge/to-templates"
     ln -s "$TMP/c3-outside/std" "$C3L/31-standards/to-outside"
     ln -s "$TMP/c3-outside/pic.png" "$C3L/31-standards/pic.png"
+    ln -s "$TMP/c3-outside/pic.png" "$C3L/31-standards/LICENSE"
     c3_out="$(c3_run "$C3L")"
     c3_bad=''
     [ "$(c3_rc "$c3_out")" = 2 ] || c3_bad="$c3_bad rc:$(c3_rc "$c3_out")"
@@ -839,12 +854,13 @@ else
       printf '%s\n' "$c3_out" | grep -q "^vault-check: $c3_want" || c3_bad="$c3_bad missing[$c3_want]"
     done
     printf '%s\n' "$c3_out" | grep -q 'pic.png' && c3_bad="$c3_bad image-refused"
+    printf '%s\n' "$c3_out" | grep -q 'LICENSE' && c3_bad="$c3_bad extensionless-file-refused"
     if [ -z "$c3_bad" ]; then
       ok "a link to a template, a stub, a file that is no note, a templates folder or a folder outside the vault is refused, and a linked image is left alone"
     else
       bad "links the scan does not read --$c3_bad -- got: $(printf '%s' "$c3_out" | tr '\n' '|' | cut -c1-700)"
     fi
-    rm -f "$C3L/31-standards/to-template.md" "$C3L/10-daily/to-stub.md" "$C3L/31-standards/to-text.md" \
+    rm -f "$C3L/31-standards/LICENSE" "$C3L/31-standards/to-template.md" "$C3L/10-daily/to-stub.md" "$C3L/31-standards/to-text.md" \
       "$C3L/30-knowledge/to-templates" "$C3L/31-standards/to-outside" "$C3L/31-standards/pic.png" \
       "$C3L/31-standards/rule.txt" "$C3L/20-projects/_logs/compaction-x.md"
     c3_out="$(c3_run "$C3L")"
@@ -13290,7 +13306,7 @@ for ac_script in dream-pass.sh promotion-pass.sh; do
   for ac_code in $ac_codes; do
     case "$ac_code" in 0|1) ;; *) ac_cases="$ac_cases $ac_code:79" ;; esac
   done
-  case " $ac_codes " in *" 78 "*" 79 "*) : ;; *) ac_bad="$ac_bad [fixture: the header's codes could not be read: $ac_codes]" ;; esac
+  case " $ac_codes " in *" 78 79 "*) : ;; *) ac_bad="$ac_bad [fixture: the header's codes could not be read: $ac_codes]" ;; esac
   for ac_case in $ac_cases 1:1 9:9; do
     ac_code=${ac_case%%:*} ac_want=${ac_case#*:}
     new_case_state "agentstatus-$ac_agent-$ac_code"
