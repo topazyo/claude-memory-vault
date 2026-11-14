@@ -977,9 +977,10 @@ else
   # An inline comment, as docs/customizing.md writes one, is no part of the
   # value, so this note is conformant and must not be warned about.
   d3_note 31-standards/commented.md 'tier: long   # short | medium | long\ntype: "standard"   # the type\n'
-  # A quoted value whose comment holds quotes too: the value is the text up to
-  # its closing quote, so this one is conformant as well.
-  d3_note 31-standards/commented-quoted.md 'tier: "long" # the "long" tier\ntype: standard\n'
+  # A quoted value whose comment ends in a quote too: the value is the text up
+  # to its first closing quote, so this one is conformant as well. Before the
+  # fix the outer pair was taken off first, leaving long" # the "long.
+  d3_note 31-standards/commented-quoted.md 'tier: "long" # the "long"\ntype: standard\n'
   # Every key the checks read is held to its spellings, created and tier too.
   d3_note 31-standards/w-created.md 'tier: long\ntype: standard\n"created": "2026-01-01"\n'
   d3_note 31-standards/w-duptier.md 'tier: long\ntier: long\ntype: standard\n'
