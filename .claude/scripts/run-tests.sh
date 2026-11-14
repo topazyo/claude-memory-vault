@@ -424,9 +424,13 @@ else
   # warning and no log line. Two vaults: one plain, one under a templates folder.
   c4_mk() {  # c4_mk <vault>
     mkdir -p "$1/.claude/rules/templates" "$1/.claude/skills/templates" "$1/31-standards/templates" "$1/.claude/logs" \
-      "$1/.claude/x" "$1/10-daily/templates" "$1/01-inbox/templates"
+      "$1/.claude/x" "$1/10-daily/templates" "$1/01-inbox/templates" "$1/.claude/rules/01-inbox/templates"
     printf -- '---\ntitle: "t"\n---\n\nhidden:\342\200\256 here\n' > "$1/.claude/rules/t.md"
     cp "$1/.claude/rules/t.md" "$1/10-daily/evil.md"
+    # Steering files in a folder spelled like a tier's templates folder: a
+    # harness still reads both, so the templates skip must not take them.
+    cp "$1/.claude/rules/t.md" "$1/.claude/rules/01-inbox/templates/x.md"
+    cp "$1/.claude/rules/t.md" "$1/01-inbox/templates/CLAUDE.md"
     cp "$1/.claude/rules/t.md" "$1/.claude/rules/templates/t.md"
     cp "$1/.claude/rules/t.md" "$1/.claude/skills/templates/SKILL.md"
     printf 'no frontmatter, hidden:\342\200\256 here\n' > "$1/31-standards/templates/tpl.md"
@@ -460,7 +464,8 @@ else
     # neither land a path in a tier's templates folder nor hide a steering
     # folder. The folders it passes through exist, so every platform opens it.
     for c4_p in .claude/rules/templates/t.md .claude/skills/templates/SKILL.md .claude/./rules/t.md .claude//rules/t.md \
-                .claude/x/../rules/t.md 10-daily/templates/../evil.md 01-inbox/templates/../../.claude/rules/t.md; do
+                .claude/x/../rules/t.md 10-daily/templates/../evil.md 01-inbox/templates/../../.claude/rules/t.md \
+                .claude/rules/01-inbox/templates/x.md 01-inbox/templates/CLAUDE.md; do
       c4_out="$(c4_lint "$C4V" "$c4_p")"
       if printf '%s' "$c4_out" | grep -q 'U+202E' && printf '%s' "$c4_out" | grep -qx 'LOGGED=1'; then
         ok "the character scan reaches $c4_p and logs it"
@@ -474,7 +479,10 @@ else
     # The same for a trailing /. and an NTFS stream suffix, which Win32 opens
     # as the file itself. Git Bash and Linux do not, so the hook says the path
     # does not resolve; either way it is in scope and logged under its name.
-    for c4_p in .claude./rules/t.md .claude/rules/t.md/. '.claude/rules/t.md::$DATA'; do
+    # Win32 opens evil.md/x/.. as evil.md, so the name is judged after the ..
+    # is taken out, and a folder's ::$INDEX_ALLOCATION stream as the folder.
+    for c4_p in .claude./rules/t.md .claude/rules/t.md/. '.claude/rules/t.md::$DATA' 10-daily/evil.md/x/.. \
+                '.claude/rules::$INDEX_ALLOCATION/t.md' '.claude/rules::$index_allocation/t.md'; do
       c4_out="$(c4_lint "$C4V" "$c4_p")"
       if printf '%s' "$c4_out" | grep -qx 'LOGGED=1' && tail -n 1 "$C4V/.claude/logs/vault-lint.log" | grep -qF -- "$c4_p"; then
         ok "$c4_p is in the scan's scope, and logged under that name"
@@ -731,6 +739,18 @@ else
     bad "a folder named compaction-* in _logs -- expected exit 1, its C1 line and 3 files -- got: $(printf '%s' "$c3_out" | tr '\n' '|' | cut -c1-400)"
   fi
   rm -rf "$C3C/20-projects/_logs/compaction-notes"
+  # The same for a folder whose own name is a stub's, .md included: the prune
+  # takes files only.
+  mkdir -p "$C3C/20-projects/_logs/compaction-x.md"
+  printf 'no fence\n' > "$C3C/20-projects/_logs/compaction-x.md/2026-01-01.md"
+  c3_out="$(c3_run "$C3C")"
+  if [ "$(c3_rc "$c3_out")" = 1 ] && printf '%s\n' "$c3_out" | grep -q '^20-projects/_logs/compaction-x.md/2026-01-01.md — C1' \
+     && [ "$(sentinel_files "$c3_out")" = 3 ]; then
+    ok "a note in a folder of 20-projects/_logs named compaction-x.md is read; the stub prune takes files only"
+  else
+    bad "a folder named compaction-x.md in _logs -- expected exit 1, its C1 line and 3 files -- got: $(printf '%s' "$c3_out" | tr '\n' '|' | cut -c1-400)"
+  fi
+  rm -rf "$C3C/20-projects/_logs/compaction-x.md"
 
   # An exported CDPATH makes a cd that finds its folder through it print the
   # folder, which would land in find's output and in the resolved root. Two
@@ -787,6 +807,20 @@ else
     else
       bad "named mode through a link into a tier -- expected exit 1 and 1 file -- got: $(printf '%s' "$c3_out" | tr '\n' '|' | cut -c1-400)"
     fi
+    # Named through a link from a long-tier folder into a short-tier one, a
+    # daily note is judged by the folder it is in, as the full scan judges it,
+    # so its tier draws no warning.
+    mkdir -p "$C3L/10-daily/d"
+    printf -- '---\ntier: short\ntype: daily\n---\n\na daily note\n' > "$C3L/10-daily/d/2026-01-02.md"
+    ln -s ../10-daily/d "$C3L/31-standards/daily"
+    c3_out="$(c3_run "$C3L" -- 31-standards/daily/2026-01-02.md)"
+    if [ "$(c3_rc "$c3_out")" = 0 ] && [ "$(sentinel_files "$c3_out")" = 1 ] && ! printf '%s\n' "$c3_out" | grep -q 'WARNING'; then
+      ok "named mode judges a note reached through an accepted link by the folder it is really in"
+    else
+      bad "named mode through a link from a long tier into a short one -- expected exit 0, 1 file and no WARNING -- got: $(printf '%s' "$c3_out" | tr '\n' '|' | cut -c1-400)"
+    fi
+    rm -f "$C3L/31-standards/daily"
+    rm -rf "$C3L/10-daily/d"
     rm -f "$C3L/31-standards/shared"
     rm -rf "$C3L/30-knowledge/shared"
     # (a) A tier folder that is a link out of the vault, (b) a note linked to a
@@ -905,6 +939,14 @@ else
       else
         bad "junctions in a tier -- expected exit 2, 2 files and one refusal -- got: $(printf '%s' "$c3_out" | tr '\n' '|' | cut -c1-500)"
       fi
+      # Windows tab completion names a note with backslashes. Through the
+      # junction into another tier it is read, as it is with slashes.
+      c3_out="$(c3_run "$C3J" -- '31-standards\in\in.md')"
+      if [ "$(c3_rc "$c3_out")" = 0 ] && [ "$(sentinel_files "$c3_out")" = 1 ] && ! printf '%s\n' "$c3_out" | grep -q 'not checked'; then
+        ok "named mode reads a note spelled with backslashes through a junction into another tier"
+      else
+        bad "named mode on 31-standards\\in\\in.md -- expected exit 0 and 1 file -- got: $(printf '%s' "$c3_out" | tr '\n' '|' | cut -c1-400)"
+      fi
       # Only the junctions go, by their bare names, never what they point at.
       rm -f "$C3J/31-standards/in" "$C3J/31-standards/out"
     else
@@ -935,6 +977,12 @@ else
   # An inline comment, as docs/customizing.md writes one, is no part of the
   # value, so this note is conformant and must not be warned about.
   d3_note 31-standards/commented.md 'tier: long   # short | medium | long\ntype: "standard"   # the type\n'
+  # A quoted value whose comment holds quotes too: the value is the text up to
+  # its closing quote, so this one is conformant as well.
+  d3_note 31-standards/commented-quoted.md 'tier: "long" # the "long" tier\ntype: standard\n'
+  # Every key the checks read is held to its spellings, created and tier too.
+  d3_note 31-standards/w-created.md 'tier: long\ntype: standard\n"created": "2026-01-01"\n'
+  d3_note 31-standards/w-duptier.md 'tier: long\ntier: long\ntype: standard\n'
   d3_note 10-daily/w-daily.md 'tier: long\ntype: daily\n' 'a daily note'
   # A note at the wrong tier in every other folder the tier table names, so
   # each entry of that table is held by a warning.
@@ -947,7 +995,7 @@ else
   d3_out="$(c3_run "$D3V")"
   d3_bad=''
   [ "$(c3_rc "$d3_out")" = 0 ] || d3_bad="$d3_bad rc:$(c3_rc "$d3_out")"
-  [ "$(sentinel_violations "$d3_out")" = 0 ] && [ "$(sentinel_files "$d3_out")" = 17 ] || d3_bad="$d3_bad count-line"
+  [ "$(sentinel_violations "$d3_out")" = 0 ] && [ "$(sentinel_files "$d3_out")" = 20 ] || d3_bad="$d3_bad count-line"
   for d3_want in "31-standards/w-tier.md — tier 'banana' is not short, medium or long" \
                  "31-standards/w-empty.md — tier '' is not short, medium or long" \
                  "31-standards/w-folder.md — tier is short, but the folder it is in holds long-tier notes" \
@@ -957,6 +1005,8 @@ else
                  "31-standards/w-space.md — the key last_verified is also written as last_verified :" \
                  "31-standards/w-dup.md — the key last_verified appears 2 times" \
                  "31-standards/w-squote.md — the key last_verified is also written as 'last_verified':" \
+                 "31-standards/w-created.md — the key created is also written as \"created\":" \
+                 "31-standards/w-duptier.md — the key tier appears 2 times" \
                  "10-daily/w-daily.md — tier is long, but the folder it is in holds short-tier notes" \
                  "01-inbox/w-inbox.md — tier is long, but the folder it is in holds short-tier notes" \
                  "40-llm-wiki/raw/w-raw.md — tier is long, but the folder it is in holds short-tier notes" \
@@ -967,7 +1017,8 @@ else
   done
   printf '%s\n' "$d3_out" | grep -q '^vault-check: WARNING: 31-standards/good.md' && d3_bad="$d3_bad good-note-warned"
   printf '%s\n' "$d3_out" | grep -q '^vault-check: WARNING: 31-standards/commented.md' && d3_bad="$d3_bad inline-comment-warned"
-  printf '%s\n' "$d3_out" | grep -q '^vault-check: 15 warning(s)\. They change neither the count above nor the exit code' || d3_bad="$d3_bad no-summary"
+  printf '%s\n' "$d3_out" | grep -q '^vault-check: WARNING: 31-standards/commented-quoted.md' && d3_bad="$d3_bad quoted-comment-warned"
+  printf '%s\n' "$d3_out" | grep -q '^vault-check: 17 warning(s)\. They change neither the count above nor the exit code' || d3_bad="$d3_bad no-summary"
   # The warnings come after the count line, never before it.
   d3_first="$(printf '%s\n' "$d3_out" | awk '/^vault-check: WARNING/ { print NR; exit }')"
   d3_count="$(printf '%s\n' "$d3_out" | awk '/ violation\(s\) across / { print NR; exit }')"
@@ -1002,7 +1053,7 @@ else
   d3_note 40-llm-wiki/raw/source.md 'tier: short\ntype: reference\n'
   d3_note 40-llm-wiki/wiki/entity.md 'tier: long\ntype: wiki-entity\n'
   d3_out="$(c3_run "$D3V")"
-  if [ "$(c3_rc "$d3_out")" = 0 ] && ! printf '%s\n' "$d3_out" | grep -q 'WARNING' && [ "$(sentinel_files "$d3_out")" = 8 ]; then
+  if [ "$(c3_rc "$d3_out")" = 0 ] && ! printf '%s\n' "$d3_out" | grep -q 'WARNING' && [ "$(sentinel_files "$d3_out")" = 9 ]; then
     ok "a vault with a conformant note in every tier folder and of every type prints no WARNING line"
   else
     bad "a clean vault printed warnings -- got: $(printf '%s' "$d3_out" | tr '\n' '|' | cut -c1-600)"
