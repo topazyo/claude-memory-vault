@@ -505,10 +505,15 @@ else
     C4W="$TMP/c4 deep/31-standards/templates/v"
     c4_mk "$C4W"
     c4_out="$(c4_lint "$C4W" "$C4W/.claude/rules/t.md")"
-    if printf '%s' "$c4_out" | grep -q 'U+202E' && printf '%s' "$c4_out" | grep -qx 'LOGGED=1'; then
-      ok "a vault inside a folder spelled like a tier's templates folder is linted by absolute path"
+    c4_out2="$(c4_lint "$C4W" "$C4W/31-standards/lintme.md")"
+    printf 'no frontmatter at the root\n' > "$C4W/notes.md"
+    c4_out3="$(c4_lint "$C4W" "$C4W/notes.md")"
+    rm -f "$C4W/notes.md"
+    if printf '%s' "$c4_out" | grep -q 'U+202E' && printf '%s' "$c4_out" | grep -qx 'LOGGED=1' \
+       && printf '%s' "$c4_out2" | grep -q "missing 'tier'" && ! printf '%s' "$c4_out3" | grep -q "missing 'tier'"; then
+      ok "a vault inside a folder spelled like a tier's templates folder is linted by absolute path from its root: its steering files and tier notes, and not a root note"
     else
-      bad "a vault under 31-standards/templates linted nothing by absolute path -- got: $(printf '%s' "$c4_out" | tr '\n' ' ')"
+      bad "a vault under 31-standards/templates linted nothing, or the wrong thing, by absolute path -- got: $(printf '%s | %s | %s' "$c4_out" "$c4_out2" "$c4_out3" | tr '\n' ' ')"
     fi
     # Git Bash names one folder C:/x and /c/x, and a harness can pass the root
     # in one spelling and the path in the other.
@@ -525,6 +530,18 @@ else
       else
         bad "the root as $c4_root_m and the path as $c4_path_u -- got: ${c4_got:-<silence>}"
       fi
+      # The same vault sits under 31-standards/templates/, so a path left
+      # absolute would be judged by its parents: a tier note there would be
+      # skipped as a template, and a note at the root taken for a tier note.
+      printf 'no frontmatter at the root\n' > "$C4W/notes.md"
+      c4_tier="$(CLAUDE_PROJECT_DIR="$c4_root_m" bash "$HOOK" -- "${c4_path_u%/.claude/rules/t.md}/31-standards/lintme.md" </dev/null 2>&1 | strip_notices)"
+      c4_root_note="$(CLAUDE_PROJECT_DIR="$c4_root_m" bash "$HOOK" -- "${c4_path_u%/.claude/rules/t.md}/notes.md" </dev/null 2>&1 | strip_notices)"
+      if printf '%s' "$c4_tier" | grep -q "missing 'tier'" && ! printf '%s' "$c4_root_note" | grep -q "missing 'tier'"; then
+        ok "in the other drive spelling a tier note is linted and a root note is not taken for one, whatever folders hold the vault"
+      else
+        bad "the other drive spelling under 31-standards/templates/ -- tier note: ${c4_tier:-<silence>} -- root note: ${c4_root_note:-<silence>}"
+      fi
+      rm -f "$C4W/notes.md"
     else
       skip c4-drive-spelling "lint scope and the two Windows drive spellings: no cygpath here"
     fi
