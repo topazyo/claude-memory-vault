@@ -480,6 +480,35 @@ else
         bad "[$c4_how] a vault under a templates folder linted nothing -- got: $(printf '%s | %s' "$c4_out" "$c4_out2" | tr '\n' ' ')"
       fi
     done
+    # The scope tests read the path from the vault root. A vault inside a
+    # folder spelled like a tier's templates folder only shows that: with the
+    # absolute path its steering file would match the tier templates skip.
+    C4W="$TMP/c4 deep/31-standards/templates/v"
+    c4_mk "$C4W"
+    c4_out="$(c4_lint "$C4W" "$C4W/.claude/rules/t.md")"
+    if printf '%s' "$c4_out" | grep -q 'U+202E' && printf '%s' "$c4_out" | grep -qx 'LOGGED=1'; then
+      ok "a vault inside a folder spelled like a tier's templates folder is linted by absolute path"
+    else
+      bad "a vault under 31-standards/templates linted nothing by absolute path -- got: $(printf '%s' "$c4_out" | tr '\n' ' ')"
+    fi
+    # Git Bash names one folder C:/x and /c/x, and a harness can pass the root
+    # in one spelling and the path in the other.
+    if command -v cygpath >/dev/null 2>&1; then
+      ran c4-drive-spelling
+      # cygpath -u would give /tmp/... for the temporary folder, so the /c/
+      # spelling is built from the drive letter.
+      c4_root_m="$(cygpath -m "$C4W")"
+      c4_path_u="/$(printf '%s' "${c4_root_m%%:*}" | tr '[:upper:]' '[:lower:]')${c4_root_m#?:}/.claude/rules/t.md"
+      c4_before="$(c4_log_n "$C4W")"
+      c4_got="$(CLAUDE_PROJECT_DIR="$c4_root_m" bash "$HOOK" -- "$c4_path_u" </dev/null 2>&1 | strip_notices)"
+      if printf '%s' "$c4_got" | grep -q 'U+202E' && [ "$(c4_log_n "$C4W")" -gt "$c4_before" ]; then
+        ok "a path in the other Windows drive spelling of the vault root is still read from the root"
+      else
+        bad "the root as $c4_root_m and the path as $c4_path_u -- got: ${c4_got:-<silence>}"
+      fi
+    else
+      skip c4-drive-spelling "lint scope and the two Windows drive spellings: no cygpath here"
+    fi
   fi
   # The skip itself still holds where it belongs: a template inside a tier.
   c4_out="$(c4_lint "$C4V" 31-standards/templates/tpl.md)"
@@ -787,13 +816,22 @@ else
   else
     bad "D3 warnings --$d3_bad -- got: $(printf '%s' "$d3_out" | tr '\n' '|' | cut -c1-900)"
   fi
-  # A vault with nothing to warn about prints no WARNING line at all.
+  # A vault with nothing to warn about prints no WARNING line at all. One note
+  # in every folder the tier table names, at that folder's tier, and every
+  # allowed type, so each entry of both lists is held by a note.
   rm -f "$D3V"/31-standards/w-*.md "$D3V"/10-daily/w-*.md
+  mkdir -p "$D3V/01-inbox" "$D3V/20-projects/_logs" "$D3V/30-knowledge/moc" "$D3V/40-llm-wiki/raw" "$D3V/40-llm-wiki/wiki"
+  d3_note 01-inbox/capture.md 'tier: short\ntype: reference\n'
+  d3_note 10-daily/2026-01-01.md 'tier: short\ntype: daily\n'
+  d3_note 20-projects/_logs/log.md 'tier: medium\ntype: project-log\n'
+  d3_note 30-knowledge/moc/index.md 'tier: long\ntype: moc\n'
+  d3_note 40-llm-wiki/raw/source.md 'tier: short\ntype: reference\n'
+  d3_note 40-llm-wiki/wiki/entity.md 'tier: long\ntype: wiki-entity\n'
   d3_out="$(c3_run "$D3V")"
-  if [ "$(c3_rc "$d3_out")" = 0 ] && ! printf '%s\n' "$d3_out" | grep -q 'WARNING' && [ "$(sentinel_files "$d3_out")" = 1 ]; then
-    ok "a vault with nothing to warn about prints no WARNING line"
+  if [ "$(c3_rc "$d3_out")" = 0 ] && ! printf '%s\n' "$d3_out" | grep -q 'WARNING' && [ "$(sentinel_files "$d3_out")" = 7 ]; then
+    ok "a vault with a conformant note in every tier folder and of every type prints no WARNING line"
   else
-    bad "a clean vault printed warnings -- got: $(printf '%s' "$d3_out" | tr '\n' '|' | cut -c1-400)"
+    bad "a clean vault printed warnings -- got: $(printf '%s' "$d3_out" | tr '\n' '|' | cut -c1-600)"
   fi
 
   # The tripwire refusal points at the section that says what to do.
@@ -13095,8 +13133,20 @@ for ac_script in dream-pass.sh promotion-pass.sh; do
     fi
     tripwire_clear
   done
+  # Command mode starts the agent down its own branch of run_agent, so one
+  # case there as well, with the fake as the wrapper.
+  new_case_state "agentstatus-$ac_agent-command"
+  ac_before="$(awk 'END { print NR + 0 }' "$ac_log" 2>/dev/null)"
+  ac_rc="$(runner "$ac_script" exitstatus FAKE_STATUS=78 VAULT_AGENT=command VAULT_AGENT_CMD="$FAKE" VAULT_ALLOW_UNENFORCED_TOOLS=1)"
+  ac_new="$(awk -v n="${ac_before:-0}" 'NR > n' "$ac_log" 2>/dev/null)"
+  if ! printf '%s\n' "$ac_new" | grep -q "$ac_agent exited with code 78\$"; then
+    ac_bad="$ac_bad [command 78: fixture, no '$ac_agent exited with code 78' line, rc $ac_rc]"
+  elif [ "$ac_rc" != 79 ]; then
+    ac_bad="$ac_bad [command 78: rc $ac_rc, wanted 79]"
+  fi
+  tripwire_clear
   if [ -z "$ac_bad" ]; then
-    ok "$ac_script: an agent status that is one of the runner's own codes leaves as 79 and is logged, and 1 and 9 pass through"
+    ok "$ac_script: an agent status that is one of the runner's own codes leaves as 79 and is logged, in both modes, and 1 and 9 pass through"
   else
     bad "$ac_script: agent statuses and runner codes --$ac_bad"
   fi
