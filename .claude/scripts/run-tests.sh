@@ -16,19 +16,64 @@
 # and the positive controls below are what keep that honest.
 #
 # Usage:  bash .claude/scripts/run-tests.sh
-# Exit:   0 = all controls passed, 1 = at least one failed.
+#         RUN_TESTS_ONLY=<section> bash .claude/scripts/run-tests.sh
+#           runs one section after the shared fixtures, then the closing checks.
+#           It is for working on that section; CI and every release run the
+#           whole suite. The sections are listed in SUITE_SECTIONS below.
+# Exit:   0 = all controls passed, 1 = at least one failed,
+#         64 = RUN_TESTS_ONLY names no section, or is combined with
+#         RUN_TESTS_REQUIRED.
 # Writes: nothing outside a temporary directory, which is removed on exit.
 #         On Windows one twin also makes, and removes, a folder under Git Bash's /tmp.
 
 set -u
+
+# The sections, in the order they run. Each one below is wrapped in
+# `if suite_section <name>; then ... fi`, so this list and those lines must
+# agree; the suite-filter section checks that they do.
+SUITE_SECTIONS='lint check no-jq postcompact read-guard harness-configs pi omp skills runners retention collation pre-commit update suite-filter'
+RUN_TESTS_ONLY="${RUN_TESTS_ONLY:-}"
+if [ -n "$RUN_TESTS_ONLY" ]; then
+  suite_known=
+  for suite_name in $SUITE_SECTIONS; do
+    [ "$suite_name" = "$RUN_TESTS_ONLY" ] && suite_known=1
+  done
+  if [ -z "$suite_known" ]; then
+    printf 'run-tests: RUN_TESTS_ONLY=%s is not a section of this suite. The sections are: %s\n' "$RUN_TESTS_ONLY" "$SUITE_SECTIONS" >&2
+    exit 64
+  fi
+  # A required control lives in one section, so naming any while running
+  # another would report it as not run. Refused rather than ignored.
+  if [ -n "${RUN_TESTS_REQUIRED:-}" ]; then
+    printf 'run-tests: RUN_TESTS_ONLY and RUN_TESTS_REQUIRED cannot be combined: the required controls of every other section would be reported as not run.\n' >&2
+    exit 64
+  fi
+fi
+# True for every section in a full run, and only for the named one under
+# RUN_TESTS_ONLY. SUITE_SECTION_RAN lets the summary prove the named section
+# was reached, so a filter that matched nothing cannot end green.
+SUITE_SECTION_RAN=
+suite_section() {  # suite_section <name>
+  if [ -z "$RUN_TESTS_ONLY" ] || [ "$RUN_TESTS_ONLY" = "$1" ]; then
+    SUITE_SECTION_RAN="$1"
+    return 0
+  fi
+  return 1
+}
 
 # Say up front how long this takes, so a slow run is never mistaken for a hang.
 # Every assertion starts fresh bash processes, and process start-up is far
 # slower on Windows than on macOS or Linux. Output streams as each check lands.
 printf 'run-tests: control suite for the hooks, the checker and the scheduled runners.\n'
 printf 'run-tests: about 10 minutes on Linux, 12 to 17 on macOS, about an hour on Windows (GitHub runners). Results print as they complete.\n'
+if [ -n "$RUN_TESTS_ONLY" ]; then
+  printf 'run-tests: RUN_TESTS_ONLY=%s: this run covers that one section, not the suite. A full run is what CI and a release need.\n' "$RUN_TESTS_ONLY"
+fi
 
 ROOT="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "$0")/../.." && pwd)}"
+# This file by absolute path, taken before any section changes directory, for
+# the suite-filter section's nested runs.
+SUITE_SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 HOOK="$ROOT/.claude/hooks/vault-lint.sh"
 CHECK="$ROOT/.claude/scripts/vault-check.sh"
 
@@ -190,6 +235,7 @@ printf 'malformed stub\n'     > "$WORK/20-projects/_logs/compaction-abc.md"
 printf -- '---\ntitle: "y"\n---\n\nbody\n' > "$WORK/10-daily/a note with spaces.md"
 
 # ------------------------------------------------------ vault-lint.sh tests --
+if suite_section lint; then
 
 lint() {
   # Backslashes are doubled because the value is interpolated into JSON, where a
@@ -361,7 +407,10 @@ else
   fi
 fi
 
+fi  # section lint
+
 # ----------------------------------------------------- vault-check.sh tests --
+if suite_section check; then
 
 printf '\n=== vault-check.sh (frontmatter invariants C1-C5) ===\n'
 
@@ -496,7 +545,10 @@ else
   fi
 fi
 
+fi  # section check
+
 # ------------------------------------------------- degraded (no-jq) paths --
+if suite_section no-jq; then
 #
 # VAULT_FORCE_NO_JQ=1 makes the hooks take their no-jq branch even when jq is
 # installed. Each assertion below also requires the branch's own notice, which
@@ -966,7 +1018,10 @@ else
   rm -f "$WORK/31-standards/budget.md" "$WORK/budget.txt"
 fi
 
+fi  # section no-jq
+
 # ------------------------------------------------ postcompact-wrap-up.sh --
+if suite_section postcompact; then
 
 POSTCOMPACT="$ROOT/.claude/hooks/postcompact-wrap-up.sh"
 printf '\n=== postcompact-wrap-up.sh (compaction stubs) ===\n'
@@ -1032,7 +1087,10 @@ else
   done
 fi
 
+fi  # section postcompact
+
 # ------------------------------------------------------- read-guard.sh --
+if suite_section read-guard; then
 
 READ_GUARD="$ROOT/.claude/hooks/read-guard.sh"
 printf '\n=== read-guard.sh (pre-read secrets guard) ===\n'
@@ -1097,7 +1155,10 @@ else
   fi
 fi
 
+fi  # section read-guard
+
 # ------------------------------------------------ shipped harness configs --
+if suite_section harness-configs; then
 #
 # Each shipped config names hook scripts by path. A renamed or deleted script
 # would leave that harness's hook calling nothing, which looks exactly like a
@@ -1275,7 +1336,10 @@ else
   bad ".aider.conf.yml lacks git-commit-verify: true or gitignore: false"
 fi
 
+fi  # section harness-configs
+
 # ------------------------------------------------ the Pi extension ---------
+if suite_section pi; then
 #
 # The Pi adapter is JavaScript, so it is driven through Node with a stand-in
 # for Pi's extension API: its handlers are called with the event shapes Pi's
@@ -1736,7 +1800,10 @@ PI_OUT_EOF
   fi
 fi
 
+fi  # section pi
+
 # ------------------------------------------------ the omp extension --------
+if suite_section omp; then
 #
 # The omp adapter keeps the Pi adapter's path, glob and hook-running code, so a
 # fix to one has to reach the other. Each shared function is read out of both
@@ -2061,7 +2128,10 @@ OMP_OUT_EOF
   fi
 fi
 
+fi  # section omp
+
 # ------------------------------------------------ mirrored skills ----------
+if suite_section skills; then
 #
 # Codex, Gemini CLI and Hermes read skills only from .agents/skills/, Pi from
 # there and its own .pi/skills/, and Claude Code only from .claude/skills/. The
@@ -2106,7 +2176,10 @@ else
   bad "skill mirror (checked $n_skills) -- $(printf '%s' "$mir_out" | tr '\n' ';')"
 fi
 
+fi  # section skills
+
 # ------------------------------------------------ scheduled runners --------
+if suite_section runners; then
 #
 # The runners are exercised end to end against a throwaway vault, with a fake
 # `claude` whose behaviour is chosen per test. Every mode is bounded: the one
@@ -13146,7 +13219,10 @@ else
   bad "a runner wrote into the decoy vault: $(find "$DECOY" -type f | tr '\n' ' ')"
 fi
 
+fi  # section runners
+
 # ------------------------------------------------------- vault-retention.sh --
+if suite_section retention; then
 #
 # The retention mover archives old dream journals and compaction stubs into
 # 99-archive/ with one commit. Every vault here is a throwaway git repository.
@@ -16050,7 +16126,10 @@ fi
 
 fi
 
+fi  # section retention
+
 # ------------------------------------ source: collating ranges in patterns --
+if suite_section collation; then
 
 printf '\n=== source: no collating range in a shell case pattern ===\n'
 
@@ -16139,7 +16218,10 @@ else
   ok "none of the $cr_seen shipped scripts and hooks has a letter range in a shell case pattern"
 fi
 
+fi  # section collation
+
 # ---------------------------------------------- githooks/pre-commit ---------
+if suite_section pre-commit; then
 
 printf '\n=== githooks/pre-commit (opt-in commit gate) ===\n'
 
@@ -16186,7 +16268,10 @@ else
   fi
 fi
 
+fi  # section pre-commit
+
 # ------------------------------------------------------- template updates --
+if suite_section update; then
 
 printf '\n=== vault-update.sh, the template update mechanism ===\n'
 
@@ -21016,6 +21101,81 @@ else
   bad "the provenance line in vault-check did not report what it should --$vu_bad"
 fi
 
+fi  # section update
+
+# --------------------------------------------- RUN_TESTS_ONLY, this suite --
+if suite_section suite-filter; then
+
+printf '\n=== RUN_TESTS_ONLY (one section of this suite) ===\n'
+
+# The list the filter validates against and the guards in this file must name
+# the same sections in the same order, or a section is unreachable by name (a
+# guard the list lacks) or a name runs nothing (a list entry with no guard).
+# The flip control renames one guard in a copy and must see a disagreement,
+# so the comparison is shown able to fail.
+sf_guards() {  # sf_guards <file> - the section names of its guard lines, space-separated
+  LC_ALL=C awk '/^if suite_section [a-z-]+; then$/ { sub(/^if suite_section /, ""); sub(/; then$/, ""); printf "%s%s", sep, $0; sep = " " }' "$1"
+}
+sf_list="$(LC_ALL=C sed -n "s/^SUITE_SECTIONS='\\([^']*\\)'\$/\\1/p" "$SUITE_SELF" | head -n 1)"
+sf_have="$(sf_guards "$SUITE_SELF")"
+sf_copy="$TMP/sf-renamed.sh"
+LC_ALL=C sed 's/^if suite_section skills; then$/if suite_section skillz; then/' "$SUITE_SELF" > "$sf_copy"
+sf_flip="$(sf_guards "$sf_copy")"
+if [ -z "$sf_list" ] || [ "$sf_flip" = "$sf_have" ]; then
+  bad "suite-filter fixture: the section list could not be read, or renaming the skills guard in a copy changed nothing (list='$sf_list')"
+elif [ "$sf_have" = "$sf_list" ]; then
+  ok "every section in SUITE_SECTIONS has a guard in the suite, in the same order, and a renamed guard is seen as a disagreement"
+else
+  bad "SUITE_SECTIONS and the suite's guards disagree -- list: $sf_list -- guards: $sf_have"
+fi
+
+# A name that is not a section is refused before anything runs, so a typo is
+# never a green run of nothing.
+sf_out="$(env -u RUN_TESTS_REQUIRED RUN_TESTS_ONLY=no-such-section bash "$SUITE_SELF" 2>&1)"
+sf_rc=$?
+if [ "$sf_rc" -eq 64 ] && printf '%s\n' "$sf_out" | grep -q 'RUN_TESTS_ONLY=no-such-section is not a section of this suite' \
+   && ! printf '%s\n' "$sf_out" | grep -q '  PASS  '; then
+  ok "RUN_TESTS_ONLY naming no section exits 64 before any control runs"
+else
+  bad "RUN_TESTS_ONLY naming no section -- expected exit 64, the refusal and no PASS line, got exit $sf_rc: $(printf '%s' "$sf_out" | tr '\n' ' ' | cut -c1-300)"
+fi
+
+# Combined with RUN_TESTS_REQUIRED it is refused, because the required ids of
+# every other section would read as not run.
+sf_out="$(env RUN_TESTS_REQUIRED=x RUN_TESTS_ONLY=skills bash "$SUITE_SELF" 2>&1)"
+sf_rc=$?
+if [ "$sf_rc" -eq 64 ] && printf '%s\n' "$sf_out" | grep -q 'RUN_TESTS_ONLY and RUN_TESTS_REQUIRED cannot be combined'; then
+  ok "RUN_TESTS_ONLY with RUN_TESTS_REQUIRED exits 64 and says why"
+else
+  bad "RUN_TESTS_ONLY with RUN_TESTS_REQUIRED -- expected exit 64 and the refusal, got exit $sf_rc: $(printf '%s' "$sf_out" | tr '\n' ' ' | cut -c1-300)"
+fi
+
+# One small section, end to end: its own header and passes, no other
+# section's header, and a summary that names the section.
+sf_out="$(env -u RUN_TESTS_REQUIRED RUN_TESTS_ONLY=skills bash "$SUITE_SELF" 2>&1)"
+sf_rc=$?
+sf_pass="$(printf '%s\n' "$sf_out" | LC_ALL=C sed -n 's/^=== \([0-9][0-9]*\) passed, 0 failed (section skills only) ===$/\1/p' | head -n 1)"
+if [ "$sf_rc" -eq 0 ] && [ -n "$sf_pass" ] && [ "$sf_pass" -ge 3 ] \
+   && printf '%s\n' "$sf_out" | grep -q '^=== mirrored skills ' \
+   && ! printf '%s\n' "$sf_out" | grep -q -e '^=== vault-lint.sh ' -e '^=== vault-update.sh, ' -e '^=== scheduled runners'; then
+  ok "RUN_TESTS_ONLY=skills runs the skills section alone and says so in its summary ($sf_pass passed)"
+else
+  bad "RUN_TESTS_ONLY=skills -- expected exit 0, the skills header only and a summary naming the section, got exit $sf_rc: $(printf '%s' "$sf_out" | grep -e '^===' -e FAIL | tr '\n' ' ' | cut -c1-400)"
+fi
+
+# A filter that reaches no guard must not end green: the renamed copy, asked
+# for skills, runs no section and has to fail on that.
+sf_out="$(env -u RUN_TESTS_REQUIRED RUN_TESTS_ONLY=skills CLAUDE_PROJECT_DIR="$ROOT" bash "$sf_copy" 2>&1)"
+sf_rc=$?
+if [ "$sf_rc" -eq 1 ] && printf '%s\n' "$sf_out" | grep -q 'FAIL  RUN_TESTS_ONLY=skills reached no section' \
+   && ! printf '%s\n' "$sf_out" | grep -q '^=== mirrored skills '; then
+  ok "a RUN_TESTS_ONLY run that reaches no section fails instead of ending green"
+else
+  bad "a RUN_TESTS_ONLY run that reaches no section -- expected exit 1 and the reached-no-section failure, got exit $sf_rc: $(printf '%s' "$sf_out" | grep -e '^===' -e FAIL | tr '\n' ' ' | cut -c1-400)"
+fi
+
+fi  # section suite-filter
+
 # ------------------------------------------------------------ dependencies --
 
 printf '\n=== dependencies on this machine (informational) ===\n'
@@ -21031,7 +21191,9 @@ elif echo x | grep -qP x 2>/dev/null; then
 else
   printf '  MISSING  perl and grep -P -- the invisible-character scan CANNOT RUN and will say so.\n'
 fi
-if [ "${pi_node_major:-0}" -ge 18 ] 2>/dev/null; then
+if [ -z "${pi_node_major+set}" ] && [ -n "$RUN_TESTS_ONLY" ]; then
+  printf '  -        node    not probed: the Pi section did not run under RUN_TESTS_ONLY\n'
+elif [ "${pi_node_major:-0}" -ge 18 ] 2>/dev/null; then
   printf '  present  node    %s (the Pi extension checks)\n' "$pi_node_version"
 else
   printf '  MISSING  node 18+ -- the Pi extension checks were skipped, and said so.\n'
@@ -21072,6 +21234,16 @@ for req in ${RUN_TESTS_REQUIRED:-}; do
   fi
 done
 
-printf '\n=== %s passed, %s failed ===\n' "$pass" "$fail"
+# A RUN_TESTS_ONLY run proves it reached the section it named; one that ran
+# no section would otherwise end green on the closing checks alone.
+if [ -n "$RUN_TESTS_ONLY" ] && [ "$SUITE_SECTION_RAN" != "$RUN_TESTS_ONLY" ]; then
+  bad "RUN_TESTS_ONLY=$RUN_TESTS_ONLY reached no section of this suite, so nothing in it was tested"
+fi
+
+if [ -n "$RUN_TESTS_ONLY" ]; then
+  printf '\n=== %s passed, %s failed (section %s only) ===\n' "$pass" "$fail" "$RUN_TESTS_ONLY"
+else
+  printf '\n=== %s passed, %s failed ===\n' "$pass" "$fail"
+fi
 [ "$fail" -eq 0 ] || exit 1
 exit 0
