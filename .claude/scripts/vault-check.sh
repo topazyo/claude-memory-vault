@@ -230,6 +230,16 @@ note_facts() {
 }
 US=$'\037'
 
+# show <text> - sets SHOWN to <text> with every control byte as ?. A note's own
+# text (a value, a file or link name) reaches the report, and a capture is
+# untrusted: an escape sequence there could repaint or erase the lines around
+# the count line. The bytes are listed one by one, not as a range, because
+# bash 3.2 reads a range in a pattern by the locale's collating order.
+CTRL_CHARS="$(printf '\001\002\003\004\005\006\007\010\011\012\013\014\015\016\017\020\021\022\023\024\025\026\027\030\031\032\033\034\035\036\037\177')"
+show() {
+  SHOWN="${1//[$CTRL_CHARS]/?}"
+}
+
 # True when the value is shaped like an ISO calendar date. The C4/C5 comparisons
 # below are string comparisons, which are only date comparisons when both sides
 # are YYYY-MM-DD. Without this guard a value like "Jan 5" or "2026-1-5" is
@@ -247,7 +257,10 @@ warnings=0
 WARN_LINES=""
 
 report() {
-  printf '%s — %s — %s\n' "$1" "$2" "$3"
+  local shown_rel
+  show "$1"; shown_rel="$SHOWN"
+  show "$3"
+  printf '%s — %s — %s\n' "$shown_rel" "$2" "$SHOWN"
   violations=$((violations + 1))
 }
 
@@ -255,7 +268,10 @@ report() {
 # count line, so the count line and the exit code stay what callers parse; a
 # later release makes these violations.
 warn() {
-  WARN_LINES+="vault-check: WARNING: $1 — $2
+  local shown_rel
+  show "$1"; shown_rel="$SHOWN"
+  show "$2"
+  WARN_LINES+="vault-check: WARNING: $shown_rel — $SHOWN
 "
   warnings=$((warnings + 1))
 }
@@ -418,7 +434,10 @@ named_tier_rel() {
 # Links a scan refused, each one a note or folder of notes that was not read.
 refused=0
 refuse_link() {  # refuse_link <rel> <why>
-  printf 'vault-check: %s is a link that %s, so what it holds was not checked.\n' "$1" "$2" >&2
+  local shown_rel
+  show "$1"; shown_rel="$SHOWN"
+  show "$2"
+  printf 'vault-check: %s is a link that %s, so what it holds was not checked.\n' "$shown_rel" "$SHOWN" >&2
   refused=$((refused + 1))
 }
 
@@ -531,7 +550,8 @@ if [ "${#NAMED[@]}" -gt 0 ]; then
     # absolute path on one platform and not on another.
     case "$file" in /*|[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]:[\\/]*) ;; *) file="$ROOT/$file" ;; esac
     if [ ! -f "$file" ] || [ ! -r "$file" ]; then
-      printf 'vault-check: %s is not a readable file, so it was not checked.\n' "$file" >&2
+      show "$file"
+      printf 'vault-check: %s is not a readable file, so it was not checked.\n' "$SHOWN" >&2
       missing=$((missing + 1))
       continue
     fi
@@ -547,7 +567,8 @@ if [ "${#NAMED[@]}" -gt 0 ]; then
       # tab completion names 31-standards\x.md.
       LINK_REL=""
       if [ "$NAMED_VIA_LINK" -eq 1 ] && ! link_target_ok "${file//\\//}"; then
-        printf 'vault-check: %s %s, so it was not checked.\n' "$file" "$LINK_WHY" >&2
+        show "$file $LINK_WHY"
+        printf 'vault-check: %s, so it was not checked.\n' "$SHOWN" >&2
         refused=$((refused + 1))
         continue
       fi
@@ -579,6 +600,9 @@ else
   #
   # The stub prune matches only directly in 20-projects/_logs: find's * crosses
   # a /, so the pattern alone would also prune a folder named compaction-*.
+  # A templates entry is pruned by its own name too, so one that is a link (a
+  # shared templates folder) is skipped as a real one is, not refused: the scan
+  # reads neither. Both walks keep the same prune, so they agree on scope.
   TIER_NAMES=()
   for d in $TIERS; do
     { [ -d "$ROOT/$d" ] || [ -L "$ROOT/$d" ]; } && TIER_NAMES+=("$d")
@@ -586,7 +610,7 @@ else
   # -print0 / read -d '': several vault notes have spaces in their filenames.
   while IFS= read -r -d '' file; do
     check_note "$ROOT/$file" "$file"
-  done < <(cd "$ROOT" && find "${TIER_NAMES[@]}" \( -path '*/templates/*' -o \( -type f -path '20-projects/_logs/compaction-*.md' ! -path '20-projects/_logs/*/*' \) \) -prune -o -type f -name '*.md' -print0)
+  done < <(cd "$ROOT" && find "${TIER_NAMES[@]}" \( -path '*/templates' -o -path '*/templates/*' -o \( -type f -path '20-projects/_logs/compaction-*.md' ! -path '20-projects/_logs/*/*' \) \) -prune -o -type f -name '*.md' -print0)
   while IFS= read -r -d '' file; do
     case "$file" in
       *.md) ;;
@@ -601,7 +625,7 @@ else
         ;;
     esac
     link_target_ok "$ROOT/$file" || refuse_link "$file" "$LINK_WHY"
-  done < <(cd "$ROOT" && find "${TIER_NAMES[@]}" \( -path '*/templates/*' -o \( -type f -path '20-projects/_logs/compaction-*.md' ! -path '20-projects/_logs/*/*' \) \) -prune -o -type l -print0)
+  done < <(cd "$ROOT" && find "${TIER_NAMES[@]}" \( -path '*/templates' -o -path '*/templates/*' -o \( -type f -path '20-projects/_logs/compaction-*.md' ! -path '20-projects/_logs/*/*' \) \) -prune -o -type l -print0)
 fi
 
 printf 'vault-check: %s violation(s) across %s file(s) checked (as of %s).\n' \
