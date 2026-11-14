@@ -808,6 +808,14 @@ else
     else
       bad "links out of the tiers -- expected exit 2 and three refusals -- got: $(printf '%s' "$c3_out" | tr '\n' '|' | cut -c1-600)"
     fi
+    # A note named under the tier folder that is itself the link out of the
+    # vault is refused too: the link is on the way to it.
+    c3_out="$(c3_run "$C3L" -- 10-daily/bad.md)"
+    if [ "$(c3_rc "$c3_out")" = 2 ] && printf '%s\n' "$c3_out" | grep -q "10-daily/bad.md points outside the vault's content-tier folders, so it was not checked"; then
+      ok "named mode refuses a note under a tier folder that is a link out of the vault"
+    else
+      bad "named mode under a linked tier folder -- expected exit 2 and the refusal -- got: $(printf '%s' "$c3_out" | tr '\n' '|' | cut -c1-400)"
+    fi
     for c3_named in 31-standards/n.md ./31-standards/n.md 31-standards//n.md; do
       c3_out="$(c3_run "$C3L" -- "$c3_named")"
       if [ "$(c3_rc "$c3_out")" = 2 ] && printf '%s\n' "$c3_out" | grep -q "n.md points outside the vault's content-tier folders, so it was not checked"; then
@@ -855,6 +863,9 @@ else
     done
     printf '%s\n' "$c3_out" | grep -q 'pic.png' && c3_bad="$c3_bad image-refused"
     printf '%s\n' "$c3_out" | grep -q 'LICENSE' && c3_bad="$c3_bad extensionless-file-refused"
+    # Named through a folder link that points outside, a note is refused too.
+    c3_out2="$(c3_run "$C3L" -- 31-standards/to-outside/bad.md)"
+    [ "$(c3_rc "$c3_out2")" = 2 ] || c3_bad="$c3_bad named-through-folder-link:rc$(c3_rc "$c3_out2")"
     if [ -z "$c3_bad" ]; then
       ok "a link to a template, a stub, a file that is no note, a templates folder or a folder outside the vault is refused, and a linked image is left alone"
     else
