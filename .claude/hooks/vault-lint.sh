@@ -59,7 +59,9 @@ log_line() {
 # not `templates`, and a skip must never match more than is really there.
 norm_slashes() {
   local p="${1//\\//}" strip="${2:-strip}" rest part out="" n=0 first=1
-  while :; do case "$p" in *//*) p="${p//\/\//\/}" ;; *) break ;; esac; done
+  # The replacement is a bare /: bash before 5.2 keeps a backslash written in
+  # the replacement, so \/ there gave .claude\/rules on macOS's bash 3.2.
+  while :; do case "$p" in *//*) p="${p//\/\///}" ;; *) break ;; esac; done
   rest="$p"
   while :; do
     part="${rest%%/*}"
