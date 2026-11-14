@@ -11832,7 +11832,9 @@ if [ "$RV_GIT" -eq 1 ]; then
       bad "the trailing-space copy reached the dirty note -- committed: [$(git -C "$RV" diff-tree --no-commit-id --name-only -r HEAD | tr '\n' '|')] log: $(tr '\n' '|' < "$PROMO_LOG" | cut -c1-300)"
     fi
     new_case_state promotion-twin-adopt
-    expect_rc "promotion-pass: a failing pass leaves a copy named with two trailing spaces -> agent status" 3 \
+    # The fake leaves with 3, which is the runner's REFUSED, so since 1.7.0 the
+    # pass leaves with 79 (AGENT-STATUS) rather than repeat it.
+    expect_rc "promotion-pass: a failing pass leaves a copy named with two trailing spaces -> AGENT-STATUS for the agent's 3" 79 \
       "$(RUNNER_NO_SETTLE=1 runner promotion-pass.sh promote-twin-fail FAKE_TWIN_SUFFIX='  ')"
     : > "$PROMO_LOG"
     expect_rc "promotion-pass: the next run adopts that copy -> OK" 0 "$(RUNNER_NO_SETTLE=1 runner promotion-pass.sh summary)"
