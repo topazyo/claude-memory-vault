@@ -149,7 +149,7 @@ they were told apart a caller reading only the code could not choose.
 | --- | --- |
 | `0` | At least one note was scanned and none violates an invariant |
 | `1` | **The vault has a problem.** A note violates an invariant |
-| `2` | **This checker could not run**, so it says nothing about the vault. No notes were scanned, or there are no content-tier folders under the root, or a named note is not a readable file, or a link in a tier, or a note named through one, dangles or resolves to something the scan does not read where it is (outside the content-tier folders, a template, a stub) |
+| `2` | **This checker could not run**, so it says nothing about the vault. No notes were scanned, or there are no content-tier folders under the root, or a named note is not a readable file, or a link in a tier, or a note named through one, dangles or resolves to something the scan does not read where it is (outside the content-tier folders, a template, a stub), or a content-tier folder could not be read in full |
 | `64` | The command line was wrong |
 | `78` | A scheduled pass set the tripwire, so nothing was checked and a human has to look first ([`docs/setup.md`, A tripwire is set](docs/setup.md#a-tripwire-is-set)). The three runners use `78` for the same thing |
 
@@ -166,11 +166,13 @@ The three lines after the count report rather than judge, and none of them chang
 exit code. The first says how many notes the retention pass has taken out of the live tiers. The
 second names the last retention pass and how many notes it moved once one has run, and says the last
 pass is unknown when git cannot answer. The third names the template version this vault was created
-from, and says `No template provenance marker` when the vault has none. In both modes, two kinds
+from, and says `No template provenance marker` when the vault has none. In both modes, three kinds
 of line can come between the count line and those three. First a `vault-check: N link(s) refused`
 line, when a link was refused: what it holds was not read, and the exit code is 2 unless a note
 violates an invariant, so `0 violation(s) across N` with exit 2 means some notes went unchecked.
-Then, for a vault with notes to warn about (§4), `vault-check: WARNING:` lines and a
+On a full scan, a `vault-check: a content-tier folder could not be read in full` line means the
+same for a folder `find` could not read. Then, for a vault with notes to warn about (§4),
+`vault-check: WARNING:` lines and a
 `N warning(s)` line, which change neither the count nor the exit code. A scan narrowed with `--`
 prints those and nothing after them.
 

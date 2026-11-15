@@ -234,7 +234,12 @@ off (§4.3), so no stub is written during a pass.
 value containing `/` or `..` cannot write outside `20-projects/_logs/`; the substitution is
 logged. A missing `session_id` becomes `unknown-<YYYY-MM-DD>` rather than a dropped write, so one
 day's unidentified compactions share a single capped stub. A visibly wrong stub beats a silent
-no-op.
+no-op. Since 1.7.1 an id longer than 100 characters is cut to its first 100 and given the
+checksum of the whole id after a `-`, so the file name fits the 255 bytes a file system allows and
+two long ids that share a beginning stay two stubs; before, such an id wrote no stub and said
+nothing. Control bytes in `trigger` and `transcript_path` are removed, so each entry stays one
+line, and a stub that could not be written is logged as an `ERROR` line in
+`.claude/logs/hook-events.log`.
 
 The stub is **not** a substitute for `/wrap-up` or `/obsidian-save`. Both the dream-agent and the
 `resume` skill deliberately exclude `compaction-*.md` from their scans, as does `vault-check.sh`:
@@ -250,13 +255,14 @@ the next session those passes' output as if it were the work.
 | Wired in | `.windsurf/hooks.json` (`pre_read_code`), the one shipped harness whose read hook documents exit 2 as blocking |
 | Arguments | `read-guard.sh [--] <path>...` checks the named paths and never reads stdin |
 | stdin (no arguments) | Hook JSON: `tool_info.file_path`, `tool_input.file_path` / `tool_input.path`, or top-level `file_path` / `path` |
-| Blocks | Exit **2** with a reason on stderr for a basename of `.env` or `.env.*`, or any path with a `secrets` directory component, at any depth, with either separator and in any letter case (`.ENV`, `Secrets/`, since Windows and macOS file systems ignore case). Logged as `BLOCKED:` |
-| Allows | Exit 0 for everything else, including a note merely named `secrets.md` |
+| Blocks | Exit **2** with a reason on stderr for a basename of `.env` or `.env.*`, or any path with a `secrets` directory component, at any depth, with either separator and in any letter case (`.ENV`, `Secrets/`, since Windows and macOS file systems ignore case). Since 1.7.1 each part of the path first loses an NTFS stream suffix (from its first `:`) and its trailing dots and spaces, because Windows opens `.env `, `.env.`, `.env::$DATA` and `secrets./x` as `.env` and `secrets/x`. Logged as `BLOCKED:` |
+| Allows | Exit 0 for everything else, including a note merely named `secrets.md` and `.envrc` |
 | Fails | **Closed, loudly**, in hook mode: hook input with no readable path is blocked (exit 2) and logged as `DEGRADED: no path`, so a broken setup refuses every read instead of silently checking none. It cannot fail closed if it never starts: a harness that cannot launch `bash` gets a different exit code and, in Windsurf, lets the read through. The onboarding check in `docs/harnesses/windsurf.md` is what proves it runs |
 | Logs | `.claude/logs/read-guard.log` |
 
 Claude Code does not use it: `.claude/settings.json` denies the same paths natively. OpenCode's
-plugin applies the same test in JavaScript. Pi's opt-in extension applies its own, which first
+plugin applies the same test in JavaScript, the per-part stripping included (1.7.1). A Windows
+8.3 short name such as `SECRET~1` is not resolved by either, and stays a known limit. Pi's opt-in extension applies its own, which first
 reads a path the way Pi's file tools will open it (a leading `@`, `~`, `file://` URLs, Windows
 drive and Git Bash forms, trailing dots and spaces, NTFS stream names, and symbolic links,
 including one whose target does not exist yet) and compares names as NTFS does. It also refuses a
@@ -331,6 +337,11 @@ so is a dangling one whose name has an extension other than `.md`. A note named 
 lies in a tier, by identity and not by spelling, so `./31-standards/x.md` counts, is held to the
 same rule, so both modes agree about the same note. Before 1.7.0 a linked tier folder or note was
 skipped and the report still said 0 violations.
+
+A content-tier folder `find` cannot read in full, for want of permission say, is the same kind of
+answer: `find`'s own message on stderr names it, a line after the count line says
+`a content-tier folder could not be read in full`, and the run exits 2 unless a note violates an
+invariant. Before 1.7.1 `find`'s status was thrown away and such a scan exited 0.
 
 | ID | Invariant | Reported when |
 | --- | --- | --- |
@@ -555,7 +566,8 @@ a lint that does nothing and a lint that found nothing wrong print the same thin
   note, a `grep` of the folder or over `**/*.md`, a `glob` of `**/*`, `ast_grep` and `ast_edit`
   of notes, and a `bash` call, which the extension does not cover. A successful `write` lints the
   vault-relative path, with `CLAUDE_PROJECT_DIR` naming the vault, and a steering file reaches the
-  lint; an `edit` lints each file in its per-file results and where a moved note went, or the path
+  lint; a path written `@notes/x.md`, `:notes/x.md` or `[notes/x.md#ABCD]` lints the note omp
+  opened, every spelling of it that is on disk, where 1.7.0 linted the spelling as written; an `edit` lints each file in its per-file results and where a moved note went, or the path
   omp derived; an applied `ast_edit`, and the `write` to `xd://resolve` that applies one, lint each
   file it changed, while a preview and an `xd://resolve` write that applied nothing lint nothing
   and warn of nothing; a failed write and a `read` are not linted. `/compact` sends trigger `manual`, a compaction between
@@ -1148,6 +1160,15 @@ Around that call, each runner does several things an exit code cannot:
   place of GNU's from 25.10, escapes it, and there is no switch to stop it — so the runner decodes
   the escaping and the same vault fences the same way whichever one is installed.
 
+  `cksum` is a CRC, and for a file of a given size four chosen bytes give any CRC wanted: a
+  `CLAUDE.md` rewritten to the same size and `cksum` passed the fence unseen until 1.7.1 (measured
+  2026-11-15). Every steering file now has a second fence line holding its SHA-256, from
+  `sha256sum`, or `shasum -a 256` where that is the one installed, so such a rewrite is a change.
+  Notes keep the CRC alone, which is enough to report an edit. Known limit: where neither tool is
+  on `PATH` the second line is not written and the fence is the CRC alone, as before. On Windows
+  the second line added about 3 seconds to each snapshot of the template's own tree (78 steering
+  files, measured 2026-11-15).
+
   The fence checksums symlinks by their target, so swapping a file for a link, or retargeting one,
   counts as a change. A `.obsidian` or `.git` that is itself a symlink is fenced as a link as well,
   and the files described below are still fenced through it. In `.claude/logs` only the files the
@@ -1355,7 +1376,9 @@ Around that call, each runner does several things an exit code cannot:
   (its config, `commondir`, hooks, `info/attributes` and the like) and any symlink in it, such as
   a `hooks` folder replaced by a link, but not its index, objects, branches, tags or logs. Inside
   `.claude/worktrees/<name>/` the same rules apply to the rest of the path, apart from the
-  line-break marker, which belongs to that worktree's session. Since 1.7.0 two more things there
+  line-break marker, which belongs to that worktree's session. That includes the worktree's own
+  `.claude/logs/`, held since 1.7.1 to the same list of left-out names as the vault's: before, every
+  file there was left out, a planted `CLAUDE.md` among them. Since 1.7.0 two more things there
   are steering: a file of a reserved name placed directly in `.claude/worktrees/` (a `CLAUDE.md`
   or `.mcp.json` there is read by a session in any worktree below it), and everything under a
   child whose own name is a harness folder, such as `.claude/worktrees/.claude/`, which is no
@@ -1941,7 +1964,8 @@ Three ways to run it:
 - `vault-retention.sh` moves what is eligible and commits it.
 - `vault-retention.sh --dry-run` takes the lock, judges everything, logs and prints the judgement,
   and writes nothing else at all, neither a move nor a report nor any state. Run this first on a
-  real vault.
+  real vault. A recovery record an earlier run left, which a real run would clear, is reported as
+  such and left in place; before 1.7.1 a dry run deleted it and then said nothing was written.
 - `vault-retention.sh --adopt-legacy <report>` moves the journals a report from an earlier run
   lists, and only those.
 
@@ -2120,34 +2144,38 @@ Known limits, each failing in the quiet direction:
 - `99-archive/` is not scanned by `vault-check.sh`, so a note's frontmatter stops being checked the
   moment it is archived. The runner never rewrites frontmatter, so what is there is what was last
   checked in the live tier.
-- **A file whose stored bytes do not survive a round trip through the repository's own
-  end-of-line setting cannot be archived, and the run that tries ends at 71.** The commit is made
-  with `git commit --only`, which takes its content from the work tree rather than from the index,
-  so git runs the conversion `core.autocrlf` asks for. A blob committed with that conversion
-  switched off, by another tool or on another machine, therefore hashes to something else on the
-  way back in, and the file would be committed with different bytes under a trailer saying it had
-  only moved. The runner asks HEAD what it actually holds after the commit, does not recognise it,
-  keeps the commit, writes the recovery file and exits 71, so nothing is lost and nothing is
-  silently rewritten. Every later run then refuses with 78 until the vault is settled by hand.
-  `git status` calls such a file clean, because the index stat information matches it, which is
-  why nothing earlier in the run notices. It is most likely on Windows, where `core.autocrlf` is
-  on by default. The fix is for the commit to be built from the index this run has already
-  verified rather than from the work tree, which would also close the case below where a source
-  recreated between the check and the commit is committed back alongside its destination. Until
-  then, renormalise the file by hand, or set the line endings for that path in `.gitattributes`,
-  and the next run will archive it.
-- A source path recreated between the index check and the commit is committed back alongside its
-  destination, under a trailer saying it moved away. `head_holds_moves` catches it, the commit is
-  kept and the run exits 71, so the mismatch is reported rather than hidden, but the commit stays
-  in the history.
+- **How the archiving commit is made, since 1.7.1.** HEAD is read once. The commit's tree is
+  built in an index of the run's own from that HEAD, with the moves written in from the entries
+  `git mv` staged, so nothing is re-read from the work tree. `git commit-tree` makes the commit
+  with that HEAD as its only parent, and `git update-ref` moves HEAD onto it only if HEAD is still
+  that commit. Until 1.7.0 `git commit` took the parent from HEAD again a moment after the tree
+  was built, so a commit that landed in between, from a sync client or a pull, was silently
+  reverted and the run still said OK. Now a HEAD that moved refuses the swap and nothing is
+  undone. The run starts again from the HEAD that won, up to three tries, and only while that
+  HEAD descends from where the run started and changed none of the files it moves; then it puts
+  the vault back and exits 4. A HEAD that changed one of those files is left alone, with a
+  recovery record and 71, because a commit built on it would delete that change. Moves another
+  tool already committed get no commit of the run's, empty or otherwise. No commit hook runs, as
+  before, and because `commit-tree` does not read `commit.gpgsign`, the run passes `-S` when that
+  setting is true. It does not conclude a merge or anything else started while it ran: a merge,
+  rebase, cherry-pick, revert or bisect begun mid-run, or a switch to another branch, stops the
+  commit and the vault is put back (exit 4).
+- **Known limit of that commit.** The branch and the operation markers are checked again just
+  before `update-ref`, and `update-ref` follows HEAD to whatever branch it names at that moment.
+  A switch to another branch at the same commit in the instant between the check and the swap
+  would give that branch the archiving commit. The window is the start-up of one git process.
+- The two limits listed here until 1.7.0, a blob that did not survive the repository's
+  end-of-line conversion and a source recreated between the check and the commit, described
+  `git commit --only`, which this runner no longer uses: the commit is built from the index
+  entries `git mv` staged and removes every source outright.
 
 | Exit | Meaning (`vault-retention.sh`) |
 | --- | --- |
 | `0` | OK: the moves were committed, nothing was eligible, this was a dry run, or there is no `20-projects/_logs` folder. Its last printed line, and the log, say which |
 | `1` | setup failure, `20-projects/_logs` cannot be listed or entered, git cannot read the vault, the vault is not the top of its own repository, a shallow clone, `info/grafts`, or a sparse checkout, or, on Windows or wherever a `cygpath` is found on `PATH`, the vault's path holds a part ending in a dot, a colon that is not a drive letter's or a last part ending in a space ("the vault, ..., is spelled with a part that ends in a dot", before the state directory, the run lock or any git call), or the run's temporary folder is spelled with a `..` or a part ending in a dot, which git there would read as another folder ("is spelled with .. or with a part that ends in a dot", before any git call). Also, before any git call, when neither `$TMPDIR` nor `/tmp` can hold the run's folder ("could not create a temporary directory"; there is no last-resort folder), when that folder is not an absolute path ("is not an absolute path, so it was made inside the vault", which this runner cannot meet through `TMPDIR`, since it uses `TMPDIR` only when it starts with `/`), or when, on Windows or wherever a `cygpath` is found, it holds a colon that is not a drive letter's ("is spelled with a colon that is not a drive letter's"). Also, before any git call, when the run's folder, resolved, fails the checks every runner runs on it from 1.5.0 (§ 4.3, Known limits): the state directory's checks, inside the vault by file identity, or not the path it resolves to ("the runner's folder for the pass", then the check, then "and the runner keeps the pass's snapshots, its backup and git's hooks folder there"), not there as a folder, a folder above it that cannot be reached, a resolution that led to another folder, a walk that gave no answer or a vault that cannot be resolved; off Windows, a permission bit for its group or for others ("is open to other accounts (its mode is not 0700)") or a `find` that could not check it ("could not run (find failed)"); and, on Windows or wherever a `cygpath` is found, a `cygpath` that cannot convert the folder ("cygpath could not convert the runner's temporary folder"), gives a path that is not a drive path ("for the runner's temporary folder, which is not a Windows drive path") or gives another folder ("which is not the same folder"). The folder for the run's own copy of its log gets the same checks, and the copy goes into exactly the path they passed, but one that fails them is not a refusal: each line is logged as `WARNING: (the folder for this run's copy of its log) …`, ending "So this run keeps no copy of its log, which goes to the log alone.", or, when the check prints nothing, as "WARNING: the folder for this run's copy of its log could not be checked, …", and the run goes on. With 1.4.2's `lib/runner-common.sh` a 1.5.0 runner exits 1 before its first git call with `runner_folder_checked: command not found` on stderr, not in its log, and 1.4.2's runner with 1.5.0's library runs as 1.4.2 did, without the new checks (both reasoned, not measured). With 1.4.1's `lib/runner-common.sh` a 1.4.2 runner exits 1 with `git_env_warning: command not found` and `vault_root_spelling_ok: command not found` on stderr, not in its log, and with 1.4.0's a 1.4.1 runner exits 1 with `temp_dir_spelling_ok: command not found` there (both measured on Linux; older libraries are unmeasured). Also the script failing in itself, such as on an unset variable, which bash ends with `1`. A folder that cannot be listed is never read as an empty one, which is a clean `0` |
 | `2` | REPORT-REFUSED: the `--adopt-legacy` report was not written by this runner, or its list has changed since. Nothing moved |
-| `3` | PARTIAL: a move failed while HEAD was unchanged, and every file was put back. Nothing is committed. Also when the archive folders could not be made, or one turned out to be a link or not a folder just as the move was about to use it (the log says `ERROR:` or `PATH-BLOCKED:`), where nothing had moved to put back |
-| `4` | COMMIT-FAILED: the commit failed with HEAD unchanged, and the moves were put back |
+| `3` | PARTIAL: a move, or the check after the moves, failed, and every file was put back. Nothing is committed. Since 1.7.1 this holds also when HEAD moved meanwhile without touching any file this run moves; a HEAD that touched one leaves a recovery record and 71 instead. Also when the archive folders could not be made, or one turned out to be a link or not a folder just as the move was about to use it (the log says `ERROR:` or `PATH-BLOCKED:`), where nothing had moved to put back |
+| `4` | COMMIT-FAILED: the commit was not made and the moves were put back. Either HEAD did not move, or it moved without touching any file this run moves (every try lost the swap, a branch was switched or a git operation started meanwhile). The log carries the first lines git gave as its reason, such as a missing identity or a signature gpg could not make (1.7.1) |
 | `6` | PATH-BLOCKED: `20-projects`, `20-projects/_logs` or one of the archive folders is a link, a junction, not a folder, or another entry differs from it only in case. Checked before anything is judged, so nothing moved |
 | `64` | usage error: an unknown option, or a report file that is missing or unreadable |
 | `70` | TRIPWIRE-ERROR, the same meaning as for the other runners |
