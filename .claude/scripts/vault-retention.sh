@@ -2616,8 +2616,20 @@ head_src_blob() {
 # far the run is thought to have got, because the two disagree exactly when this
 # is needed. True when every source is back where HEAD has it and no destination
 # is left.
+# put_back_killed <what that means for the put-back>
+# True, with the kill-failed mark, record and line written, when a watched git
+# of the put-back was stopped and may still be running.
+put_back_killed() {
+  [ "${RUN_KILL_FAILED:-0}" -eq 1 ] || return 1
+  mark_kill_failed "$LIB_LOG" "${RUN_KILL_REPORT:-}"
+  lib_logged
+  write_recovery kill-failed
+  say "RECOVERY-NEEDED: a git command of the put-back was stopped and may still be running, so $1. $(shown_name "$STATE")/retention-inflight says where each file belongs."
+  return 0
+}
+
 put_back() {
-  local k=0 src dst ok=1 lock want pb_kill=0 line="" pb_head=""
+  local k=0 src dst ok=1 lock want pb_kill=0 line="" pb_head="" hs_rc=0
   # Nothing is undone over a HEAD that moved and may hold the moves. A commit
   # made while this run was working may hold them, and taking them back would
   # undo whatever else that commit carried, which is a change of somebody
@@ -2640,11 +2652,7 @@ put_back() {
   if [ -z "$pb_head" ] || ! untouched_at "$pb_head"; then
     # The read untouched_at makes can itself be stopped and left running, and
     # that is the outcome to report, not a HEAD that moved.
-    if [ "${RUN_KILL_FAILED:-0}" -eq 1 ]; then
-      mark_kill_failed "$LIB_LOG" "${RUN_KILL_REPORT:-}"
-      lib_logged
-      write_recovery kill-failed
-      say "RECOVERY-NEEDED: a git command of the put-back was stopped and may still be running, so nothing was put back. $(shown_name "$STATE")/retention-inflight says where each file belongs."
+    if put_back_killed "nothing was put back"; then
       return 1
     fi
     write_recovery putback-head-moved
@@ -2733,7 +2741,15 @@ put_back() {
   # is undone, so an edit or a deletion of a source reaches here only when it
   # was committed while the put-back itself was running; asking for the old
   # blob would then turn that commit into a refusal no later run could clear.
-  if ! head_of_sources; then
+  head_of_sources || hs_rc=$?
+  # head_of_sources asks through a watched git, which can be stopped and left
+  # running; that is the outcome to report, not a HEAD that could not be read
+  # (round 2 of the 1.7.1 review). index_of_moves asks through rgit, which
+  # is not watched, so it cannot leave this flag set.
+  if put_back_killed "the put-back could not be checked"; then
+    return 1
+  fi
+  if [ "$hs_rc" -ne 0 ]; then
     write_recovery putback-unverified
     say "RECOVERY-NEEDED: the files may be back, but HEAD could not be read to check them, so this run does not claim either way. $(shown_name "$STATE")/retention-inflight says where each file belongs."
     return 1
@@ -2804,19 +2820,21 @@ verify_moves() {
   return 1
 }
 
-# head_holds_moves
-# True when HEAD holds every destination with the blob that was judged and no
-# source at all. Asked fresh rather than from the batch taken before the move.
+# head_holds_moves [<commit>]
+# True when <commit>, HEAD by default, holds every destination with the blob
+# that was judged and no source at all. Asked fresh rather than from the batch
+# taken before the move. settle_outcome names this run's own commit, which need
+# not be what HEAD names by the time it asks (round 2 of the 1.7.1 review).
 head_holds_moves() {
-  local k=0 ok=1
+  local c="${1:-HEAD}" k=0 ok=1
   HEAD_HOLDS_UNKNOWN=0
   # Both files are truncated, the way head_of_sources does it. Leaving the
   # answer map from a previous call is the asymmetry the next edit trips on.
   : > "$SNAP_DIR/after"
   : > "$SNAP_DIR/after.in"
   while [ "$k" -lt "${#SRCS[@]}" ]; do
-    printf 'HEAD:%s\n' "${DSTS[$k]}" >> "$SNAP_DIR/after.in"
-    printf 'HEAD:%s\n' "${SRCS[$k]}" >> "$SNAP_DIR/after.in"
+    printf '%s:%s\n' "$c" "${DSTS[$k]}" >> "$SNAP_DIR/after.in"
+    printf '%s:%s\n' "$c" "${SRCS[$k]}" >> "$SNAP_DIR/after.in"
     k=$((k + 1))
   done
   # watched_git rather than rgit, because rgit goes through safe_git, which
@@ -2844,8 +2862,8 @@ head_holds_moves() {
       printf "%s\t%s\n", ask[i], v }' "$SNAP_DIR/after.out" > "$SNAP_DIR/after"
   k=0
   while [ "$k" -lt "${#SRCS[@]}" ]; do
-    [ "$(LC_ALL=C AFT_P="HEAD:${DSTS[$k]}" awk -F '\t' 'BEGIN { p = ENVIRON["AFT_P"] } $1 == p { print $2; exit }' "$SNAP_DIR/after")" = "${MBLOBS[$k]}" ] || ok=0
-    [ "$(LC_ALL=C AFT_P="HEAD:${SRCS[$k]}" awk -F '\t' 'BEGIN { p = ENVIRON["AFT_P"] } $1 == p { print $2; exit }' "$SNAP_DIR/after")" = - ] || ok=0
+    [ "$(LC_ALL=C AFT_P="$c:${DSTS[$k]}" awk -F '\t' 'BEGIN { p = ENVIRON["AFT_P"] } $1 == p { print $2; exit }' "$SNAP_DIR/after")" = "${MBLOBS[$k]}" ] || ok=0
+    [ "$(LC_ALL=C AFT_P="$c:${SRCS[$k]}" awk -F '\t' 'BEGIN { p = ENVIRON["AFT_P"] } $1 == p { print $2; exit }' "$SNAP_DIR/after")" = - ] || ok=0
     k=$((k + 1))
   done
   [ "$ok" -eq 1 ]
@@ -3057,7 +3075,9 @@ do_commit() {
 # commit, which commit_blocker now refuses before either could happen.
 commit_loop() {
   local try=0 h tree htree new now sign="" moved=0 waited=0 subject why
-  if [ "$(rgit config --type=bool --get commit.gpgsign 2>/dev/null)" = true ]; then
+  # --bool rather than --type=bool, which needs git 2.18, and an older git
+  # answers nothing, so the commit was made unsigned where 1.7.0 signed it.
+  if [ "$(rgit config --bool --get commit.gpgsign 2>/dev/null)" = true ]; then
     sign="-S"
   fi
   subject="$(head -n 1 "$SNAP_DIR/commit-msg")"
@@ -3145,7 +3165,7 @@ commit_loop() {
     # A git that was stopped may still be running, and a second writer is the
     # one thing worse than not knowing. settle_outcome reads what happened.
     if [ "$RUN_TIMED_OUT" -ne 0 ] || [ "${RUN_KILL_FAILED:-0}" -eq 1 ]; then
-      say "COMMIT-FAILED: moving HEAD did not finish in time, so this run does not try again. A lock file git left may need removing."
+      say "COMMIT-FAILED: moving HEAD did not finish in time, so this run does not try again."
       return 0
     fi
     if [ -n "$now" ] && [ "$now" != "$h" ]; then
@@ -3160,7 +3180,11 @@ commit_loop() {
       try=$((try - 1))
       continue
     fi
-    say "COMMIT-FAILED: git refused to move HEAD and HEAD had not moved, so nothing was committed."
+    if [ -n "$now" ]; then
+      say "COMMIT-FAILED: git refused to move HEAD and HEAD had not moved, so nothing was committed."
+    else
+      say "COMMIT-FAILED: git refused to move HEAD and HEAD could not be read afterwards, so this run does not try again."
+    fi
     git_reason
     return 0
   done
@@ -3169,12 +3193,23 @@ commit_loop() {
   return 0
 }
 
+# own_commit_in <commit>
+# Prints the newest commit between HEAD_BEFORE and <commit> whose message
+# carries this run's nonce, or nothing. The whole range rather than the tip, as
+# recovery_check asks it, because a commit somebody makes on top of this run's
+# is not a reason to stop recognising this run's own.
+own_commit_in() {
+  [ -n "$1" ] || return 0
+  rgit log --format=%H --fixed-strings --grep="Vault-Retention-Run: $RETENTION_NONCE" "$HEAD_BEFORE..$1" 2>/dev/null \
+    | LC_ALL=C awk 'NR == 1 { print; exit }'
+}
+
 # settle_outcome [<signal note>]
 # What this run actually did, judged from the repository rather than from the
 # exit code of the last command. Also what a signal and a later run use, so
 # there is one answer to the question and not three.
 settle_outcome() {
-  local head_now parent msg ref_now
+  local head_now parent ref_now start_tip own="" lock=""
   # do_commit clears this itself, but a signal can land between setting it and
   # clearing it, and this is the one place both the ordinary path and the
   # signal path come through. Everything below, the put-back included, must ask
@@ -3186,53 +3221,57 @@ settle_outcome() {
   fi
   # A git that moves HEAD and was stopped mid-way can leave its lock, and the
   # owner's next commit then fails on it. Said once, whatever the outcome.
+  # Only the lock that is there is named, so the owner knows which file to
+  # look at (round 2 of the 1.7.1 review).
   ref_lock_paths
-  if ref_lock_held; then
-    say "NOTE: a git lock file is in place ($(shown_name "$REF_LOCK_BRANCH") or $(shown_name "$REF_LOCK_HEAD")). If no git is running, remove it, or the next commit in this vault fails on it."
+  if [ -n "$REF_LOCK_BRANCH" ] && [ -e "$REF_LOCK_BRANCH" ]; then
+    lock="$(shown_name "$REF_LOCK_BRANCH")"
   fi
+  if [ -n "$REF_LOCK_HEAD" ] && [ -e "$REF_LOCK_HEAD" ]; then
+    lock="${lock:+$lock and }$(shown_name "$REF_LOCK_HEAD")"
+  fi
+  if [ -n "$lock" ]; then
+    say "NOTE: a git lock file is in place: $lock. If no git is running, remove it, or the next commit in this vault fails on it."
+  fi
+  # Whether this run's commit landed is asked of the branch this run judged
+  # first, and asked of its whole history since the start rather than of its
+  # tip. Asking only of whatever HEAD named by now turned a switch the owner
+  # made just after the commit landed into a false 71, or, when the switch went
+  # to a branch that touches nothing moved, into a false exit 4 with the commit
+  # in place; and a commit somebody made on top of this run's was credited with
+  # the moves (round 2 of the 1.7.1 review).
+  start_tip="$(rgit rev-parse -q --verify "$START_REF^{commit}" 2>/dev/null)"
+  own="$(own_commit_in "$start_tip")"
   head_now="$(rgit rev-parse -q --verify 'HEAD^{commit}' 2>/dev/null)"
-  if [ -z "$head_now" ]; then
-    write_recovery head-unreadable
-    say "RECOVERY-NEEDED: HEAD could not be read after the move, so what this run did is not known. $(shown_name "$STATE")/retention-inflight says what was being moved."
-    MOVING=0
-    return 71
-  fi
-  if [ "$head_now" = "$HEAD_BEFORE" ]; then
-    say "COMMIT-FAILED: nothing was committed, so the vault is being put back to what HEAD holds."
-    if put_back; then
-      MOVING=0
-      return 4
-    fi
-    MOVING=0
-    return 71
-  fi
-  parent="$(rgit rev-parse -q --verify "$head_now^1" 2>/dev/null)"
-  msg="$(rgit log -1 --format=%B "$head_now" 2>/dev/null)"
-  # This run's own commit at HEAD, wherever it landed. Since 1.7.1 a commit
-  # that won a swap on a moved HEAD has a parent other than HEAD_BEFORE, so the
-  # nonce, not the parent, is what says the commit is this run's; asking for
-  # the parent as well sent a failed check of this run's own commit to the
-  # branch below that blames somebody else's (round 1 of the 1.7.1 review).
-  if printf '%s\n' "$msg" | LC_ALL=C grep -qxF "Vault-Retention-Run: $RETENTION_NONCE" \
-     && rgit merge-base --is-ancestor "$HEAD_BEFORE" "$head_now" >/dev/null 2>&1; then
+  ref_now="$(rgit symbolic-ref -q HEAD 2>/dev/null)"
+  if [ -z "$own" ] && [ -n "$head_now" ]; then
+    own="$(own_commit_in "$head_now")"
     # The swap follows HEAD to the branch it names at that moment, and a switch
-    # in the instant before it would put this run's commit on a branch nobody
-    # judged. That is never called OK.
-    ref_now="$(rgit symbolic-ref -q HEAD 2>/dev/null)"
-    if [ "$ref_now" != "$START_REF" ]; then
+    # in the instant before it puts this run's commit on a branch nobody judged.
+    # That is never called OK.
+    if [ -n "$own" ] && [ "$ref_now" != "$START_REF" ]; then
       write_recovery other-branch
-      say "RECOVERY-NEEDED: this run's commit $head_now landed on ${ref_now:-a detached HEAD}, not on $START_REF, the branch this run started on, because the branch was switched while it committed. It is left alone. $(shown_name "$STATE")/retention-inflight says what was being moved."
+      say "RECOVERY-NEEDED: this run's commit $own landed on ${ref_now:-a HEAD that names no branch it could read}, not on $START_REF, the branch this run started on, because the branch was switched while it committed. It is left alone. $(shown_name "$STATE")/retention-inflight says what was being moved."
       MOVING=0
       return 71
     fi
-    if head_holds_moves; then
+  fi
+  if [ -n "$own" ]; then
+    if head_holds_moves "$own"; then
       rm -f "$STATE/retention-inflight" 2>/dev/null
       MOVING=0
       MOVED_N="${#SRCS[@]}"
+      parent="$(rgit rev-parse -q --verify "$own^1" 2>/dev/null)"
       if [ "$parent" = "$HEAD_BEFORE" ]; then
-        say "OK: $MOVED_N file(s) moved to $ARCH_REL and committed as $head_now."
+        say "OK: $MOVED_N file(s) moved to $ARCH_REL and committed as $own."
       else
-        say "OK: $MOVED_N file(s) moved to $ARCH_REL and committed as $head_now. Something else committed while this run was working, so the commit sits on that rather than on the HEAD this run started from."
+        say "OK: $MOVED_N file(s) moved to $ARCH_REL and committed as $own. Something else committed while this run was working, so the commit sits on that rather than on the HEAD this run started from."
+      fi
+      if [ "$own" != "$start_tip" ] && [ "$own" != "$head_now" ]; then
+        say "NOTE: something has been committed on top of this run's commit since. It is left as it is."
+      fi
+      if [ "$ref_now" != "$START_REF" ]; then
+        say "NOTE: HEAD now names ${ref_now:-no branch it could read}, not $START_REF. This run's commit is on $START_REF."
       fi
       return 0
     fi
@@ -3247,9 +3286,24 @@ settle_outcome() {
     # the owner the first when it was the second sends them looking for a
     # disagreement that may not exist.
     if [ "$HEAD_HOLDS_UNKNOWN" -eq 1 ]; then
-      say "RECOVERY-NEEDED: the commit was made and whether HEAD holds what was judged could not be established, so it is left alone. $(shown_name "$STATE")/retention-inflight says what was being moved."
+      say "RECOVERY-NEEDED: the commit was made as $own and whether HEAD holds what was judged could not be established, so it is left alone. $(shown_name "$STATE")/retention-inflight says what was being moved."
     else
-      say "RECOVERY-NEEDED: the commit was made but HEAD does not hold what was judged, so it is left alone. $(shown_name "$STATE")/retention-inflight says what was being moved."
+      say "RECOVERY-NEEDED: the commit was made as $own but HEAD does not hold what was judged, so it is left alone. $(shown_name "$STATE")/retention-inflight says what was being moved."
+    fi
+    MOVING=0
+    return 71
+  fi
+  if [ -z "$head_now" ]; then
+    write_recovery head-unreadable
+    say "RECOVERY-NEEDED: HEAD could not be read after the move, so what this run did is not known. $(shown_name "$STATE")/retention-inflight says what was being moved."
+    MOVING=0
+    return 71
+  fi
+  if [ "$head_now" = "$HEAD_BEFORE" ]; then
+    say "COMMIT-FAILED: nothing was committed, so the vault is being put back to what HEAD holds."
+    if put_back; then
+      MOVING=0
+      return 4
     fi
     MOVING=0
     return 71
@@ -3287,7 +3341,7 @@ settle_outcome() {
     return 71
   fi
   write_recovery head-moved
-  say "RECOVERY-NEEDED: HEAD moved to $head_now while this run was working, and it does not hold the moves and either changed a file this run moves or does not descend from the commit this run started at, so nothing is put back. $(shown_name "$STATE")/retention-inflight says what was being moved."
+  say "RECOVERY-NEEDED: HEAD moved to $head_now while this run was working, and it does not hold the moves and either changed a file this run moves, does not descend from the commit this run started at, or could not be read, so nothing is put back. $(shown_name "$STATE")/retention-inflight says what was being moved."
   MOVING=0
   return 71
 }

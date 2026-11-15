@@ -801,22 +801,27 @@ EOF
       fi
     fi
   ) | LC_ALL=C sort >"$out"
-  # A second line for every steering file, with its SHA-256 (1.7.1). The line
+  # A second line for every regular file, with its SHA-256 (1.7.1). The line
   # above is cksum, a CRC: for a file of a given size, four chosen bytes give
   # any CRC wanted, and a rewritten CLAUDE.md of the same size and CRC passed
-  # the fence unseen (measured 2026-11-15). The notes keep the cheap CRC, which
-  # is enough to report an edit, and the files the fence exists to contain are
-  # held to a digest nobody can match by choosing bytes.
+  # the fence unseen (measured 2026-11-15). Notes are held to it as well as
+  # steering files, because an instruction file can load a note into every
+  # session (CLAUDE.md imports ARCH-INDEX), and a note forged the same way
+  # passed too (round 2 of the 1.7.1 review). cksum has already read every byte
+  # by then, so the cost is a second read, not a process per file.
   { cat "$out"; fence_strong "$out" "$root"; } | LC_ALL=C sort >"$out.strong" && mv -f "$out.strong" "$out"
 }
 
 # fence_strong <snapshot> <root>
 # Prints "S<digest> 0 ./<path>" for every regular file among the snapshot's
-# steering paths, the digest from snap_tool. Paths under .git-common/ are read
-# from the git directories they stand for. Prints nothing where snap_tool finds
-# only cksum, which would add nothing, and the known limit says so. A file the
-# tool did not answer for gets the word unreadable, so it reads as changed if it
-# was readable before.
+# paths, the digest from snap_tool. Paths under .git-common/ are read from the
+# git directories they stand for. Prints nothing where snap_tool finds only
+# cksum, which would add nothing, and the known limit says so. A file the tool
+# did not answer for gets the word unreadable, so it reads as changed if it was
+# readable before. An answer that is not 64 hex digits gets malformed and a
+# value new to this snapshot, so it reads as changed every time: a tool that
+# printed the same odd word for every file would otherwise make every line the
+# same before and after (round 2 of the 1.7.1 review).
 #
 # One run of the tool over all of them, not one per file: per file, a snapshot
 # of the template took 33 s on Windows against 7 s without these lines
@@ -833,6 +838,28 @@ EOF
 # Before this, a mismatch gave every steering file the same "unreadable" line
 # before and after, which left only the CRC the line exists to back up (round
 # 1 of the 1.7.1 review).
+# fence_digest <file> <tool name> <tool path>
+# One file's fence digest on its own: the 64 hex digits, unreadable, or
+# malformed with a value from /dev/urandom. Not $RANDOM, which bash before 5.1
+# repeats in two subshells forked from the same parent, and the before and
+# after snapshots are exactly that.
+fence_digest() {
+  local d
+  d="$(snap_digest "$1" "$2" "$3")" || { printf 'unreadable'; return 0; }
+  # The bare digest, as the batch gives it, so a file that goes one way in one
+  # snapshot and the other way in the next does not read as changed:
+  # snap_digest's answer ends ":-" or ":*-" after it.
+  d="${d%%:*}"
+  case "$d" in
+    *[!0123456789abcdef]*) d="" ;;
+  esac
+  if [ "${#d}" -eq 64 ]; then
+    printf '%s' "$d"
+  else
+    printf 'malformed-%s%s' "$(od -An -N8 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n')" "$$"
+  fi
+}
+
 fence_strong() {
   local snap="$1" root="$2" tool name path p f d dirs gd="" cdir="" list ok_list=1 tab
   tab="$(printf '\t')"
@@ -845,7 +872,7 @@ fence_strong() {
   fi
   list="$snap.strong-list"
   : > "$list" 2>/dev/null || ok_list=0
-  snapshot_paths "$snap" | steering_filter "$snap" | LC_ALL=C sort -u | while IFS= read -r p; do
+  snapshot_paths "$snap" | LC_ALL=C sort -u | while IFS= read -r p; do
     case "$p" in
       .git-common/worktree/*) [ -n "$gd" ] || continue; f="$gd/${p#.git-common/worktree/}" ;;
       .git-common/*) [ -n "$cdir" ] || continue; f="$cdir/${p#.git-common/}" ;;
@@ -854,11 +881,7 @@ fence_strong() {
     [ -f "$f" ] && [ ! -L "$f" ] || continue
     case "$ok_list:$f" in
       0:*|*\\*|*[[:cntrl:]]*)
-        # The bare digest, as the batch gives it, so a file that goes one way
-        # in one snapshot and the other way in the next does not read as
-        # changed: snap_digest's answer ends ":-" or ":*-" after it.
-        d="$(snap_digest "$f" "$name" "$path")" && d="${d%%:*}" || d=unreadable
-        printf 'S%s 0 ./%s\n' "$d" "$p"
+        printf 'S%s 0 ./%s\n' "$(fence_digest "$f" "$name" "$path")" "$p"
         ;;
       *) printf '%s\t%s\n' "$p" "$f" >> "$list" ;;
     esac
@@ -869,11 +892,13 @@ fence_strong() {
   # two characters later (two spaces, or a space and the * of binary mode).
   # The list's path reaches awk through the environment, because -v would
   # treat a backslash in it as an escape. A path the batch did not answer for
-  # is printed as "MISS <path> <file>" for the loop below.
+  # is printed as "MISS <path> <file>" for the loop below, and so is one whose
+  # answer is not 64 hex digits, which fence_digest then judges on its own.
   cut -f2- "$list" | tr '\n' '\0' | {
     if [ "$name" = shasum ]; then LC_ALL=C xargs -0 "$path" -a 256 --; else LC_ALL=C xargs -0 "$path" --; fi
   } 2>/dev/null | FS_LIST="$list" LC_ALL=C awk '
-    { if (length($0) > 66) sum[substr($0, 67)] = substr($0, 1, 64) }
+    { h = substr($0, 1, 64)
+      if (length($0) > 66 && h !~ /[^0123456789abcdef]/) sum[substr($0, 67)] = h }
     END {
       lf = ENVIRON["FS_LIST"]
       while ((getline l < lf) > 0) {
@@ -887,8 +912,7 @@ fence_strong() {
           p="${p#MISS"$tab"}"
           f="${p#*"$tab"}"
           p="${p%%"$tab"*}"
-          d="$(snap_digest "$f" "$name" "$path")" && d="${d%%:*}" || d=unreadable
-          printf 'S%s 0 ./%s\n' "$d" "$p"
+          printf 'S%s 0 ./%s\n' "$(fence_digest "$f" "$name" "$path")" "$p"
           ;;
         *) printf '%s\n' "$p" ;;
       esac
@@ -910,9 +934,10 @@ changed_paths() {
 }
 
 # snapshot_paths <snapshot>
-# The relative paths a snapshot covers, one per line.
+# The relative paths a snapshot covers, each once. A regular file has two lines
+# since 1.7.1, its cksum and its SHA-256.
 snapshot_paths() {
-  cut -d' ' -f3- "$1" | sed 's|^\./||'
+  cut -d' ' -f3- "$1" | sed 's|^\./||' | LC_ALL=C sort -u
 }
 
 # ---------------------------------------------------------------------------

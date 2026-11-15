@@ -21,14 +21,16 @@ const EDIT_TOOLS = new Set(["write", "edit", "apply_patch"])
 // before it is compared, as the Pi and omp guards do (1.7.1).
 // A drive-relative first part, C:.env, names .env in that drive's current
 // folder, so its drive is taken off first; and ENV~1, or ENV~1.LOC, is the 8.3
-// short name Windows gives .env or .env.local, which opens the same file.
+// short name Windows gives .env or .env.local, which opens the same file. Once
+// more than four names in a folder share that stem, Windows names the rest with
+// two letters and four hex digits, EN1A2B~1.
 function isSecret(path) {
   const parts = String(path ?? "")
     .split(/[\\/]/)
     .map((part, i) => (i === 0 && /^[a-z]:./i.test(part) ? part.slice(2) : part))
     .map((part) => part.replace(/:.*$/s, "").replace(/[. ]+$/, "").toLowerCase())
   const base = parts[parts.length - 1]
-  return base === ".env" || base.startsWith(".env.") || /^env~[0-9]/.test(base) || parts.includes("secrets")
+  return base === ".env" || base.startsWith(".env.") || /^env~[0-9]/.test(base) || /^en[0-9a-f]{4}~[0-9]/.test(base) || parts.includes("secrets")
 }
 
 // A patch names each file it writes in an "*** Add File:", "*** Update File:"
