@@ -166,13 +166,13 @@ The three lines after the count report rather than judge, and none of them chang
 exit code. The first says how many notes the retention pass has taken out of the live tiers. The
 second names the last retention pass and how many notes it moved once one has run, and says the last
 pass is unknown when git cannot answer. The third names the template version this vault was created
-from, and says `No template provenance marker` when the vault has none. In both modes, three kinds
-of line can come between the count line and those three. First a `vault-check: N link(s) refused`
-line, when a link was refused: what it holds was not read, and the exit code is 2 unless a note
+from, and says `No template provenance marker` when the vault has none. Some lines can come
+between the count line and those three. First a `vault-check: N link(s) refused` line, in both
+modes, when a link was refused: what it holds was not read, and the exit code is 2 unless a note
 violates an invariant, so `0 violation(s) across N` with exit 2 means some notes went unchecked.
-On a full scan, a `vault-check: a content-tier folder could not be read in full` line means the
-same for a folder `find` could not read. Then, for a vault with notes to warn about (§4),
-`vault-check: WARNING:` lines and a
+On a full scan only, a `vault-check: a content-tier folder could not be read in full` line means
+the same for a folder `find` could not read. Then, in both modes, for a vault with notes to warn
+about (§4), `vault-check: WARNING:` lines and a
 `N warning(s)` line, which change neither the count nor the exit code. A scan narrowed with `--`
 prints those and nothing after them.
 

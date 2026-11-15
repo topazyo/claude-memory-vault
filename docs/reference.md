@@ -255,14 +255,15 @@ the next session those passes' output as if it were the work.
 | Wired in | `.windsurf/hooks.json` (`pre_read_code`), the one shipped harness whose read hook documents exit 2 as blocking |
 | Arguments | `read-guard.sh [--] <path>...` checks the named paths and never reads stdin |
 | stdin (no arguments) | Hook JSON: `tool_info.file_path`, `tool_input.file_path` / `tool_input.path`, or top-level `file_path` / `path` |
-| Blocks | Exit **2** with a reason on stderr for a basename of `.env` or `.env.*`, or any path with a `secrets` directory component, at any depth, with either separator and in any letter case (`.ENV`, `Secrets/`, since Windows and macOS file systems ignore case). Since 1.7.1 each part of the path first loses an NTFS stream suffix (from its first `:`) and its trailing dots and spaces, because Windows opens `.env `, `.env.`, `.env::$DATA` and `secrets./x` as `.env` and `secrets/x`. Logged as `BLOCKED:` |
+| Blocks | Exit **2** with a reason on stderr for a basename of `.env` or `.env.*`, or any path with a `secrets` directory component, at any depth, with either separator and in any letter case (`.ENV`, `Secrets/`, since Windows and macOS file systems ignore case). Since 1.7.1 each part of the path first loses an NTFS stream suffix (from its first `:`) and its trailing dots and spaces, because Windows opens `.env `, `.env.`, `.env::$DATA` and `secrets./x` as `.env` and `secrets/x`; a drive-relative first part such as `C:.env` keeps what follows the drive; and a basename `ENV~<digits>`, the 8.3 short name Windows gives `.env` and `.env.local`, is blocked too. Cutting a part at its colon can refuse a note named, say, `Secrets: plan.md` on macOS or Linux, which is accepted as the safe direction. Logged as `BLOCKED:` |
 | Allows | Exit 0 for everything else, including a note merely named `secrets.md` and `.envrc` |
 | Fails | **Closed, loudly**, in hook mode: hook input with no readable path is blocked (exit 2) and logged as `DEGRADED: no path`, so a broken setup refuses every read instead of silently checking none. It cannot fail closed if it never starts: a harness that cannot launch `bash` gets a different exit code and, in Windsurf, lets the read through. The onboarding check in `docs/harnesses/windsurf.md` is what proves it runs |
 | Logs | `.claude/logs/read-guard.log` |
 
 Claude Code does not use it: `.claude/settings.json` denies the same paths natively. OpenCode's
-plugin applies the same test in JavaScript, the per-part stripping included (1.7.1). A Windows
-8.3 short name such as `SECRET~1` is not resolved by either, and stays a known limit. Pi's opt-in extension applies its own, which first
+plugin applies the same test in JavaScript, the per-part stripping included (1.7.1). Short names
+are not resolved in general: `ENV~1` is caught by name, but a short name of a longer folder is
+not, and stays a known limit. Pi's opt-in extension applies its own, which first
 reads a path the way Pi's file tools will open it (a leading `@`, `~`, `file://` URLs, Windows
 drive and Git Bash forms, trailing dots and spaces, NTFS stream names, and symbolic links,
 including one whose target does not exist yet) and compares names as NTFS does. It also refuses a
@@ -341,7 +342,10 @@ skipped and the report still said 0 violations.
 A content-tier folder `find` cannot read in full, for want of permission say, is the same kind of
 answer: `find`'s own message on stderr names it, a line after the count line says
 `a content-tier folder could not be read in full`, and the run exits 2 unless a note violates an
-invariant. Before 1.7.1 `find`'s status was thrown away and such a scan exited 0.
+invariant. Before 1.7.1 `find`'s status was thrown away and such a scan exited 0. Because `find`
+also fails when a file vanishes while it is read, which a sync client does all the time, a failed
+walk is repeated once, listing only: if every folder reads the second time, the scan stands and
+stderr says a file most likely vanished.
 
 | ID | Invariant | Reported when |
 | --- | --- | --- |
@@ -1164,10 +1168,14 @@ Around that call, each runner does several things an exit code cannot:
   `CLAUDE.md` rewritten to the same size and `cksum` passed the fence unseen until 1.7.1 (measured
   2026-11-15). Every steering file now has a second fence line holding its SHA-256, from
   `sha256sum`, or `shasum -a 256` where that is the one installed, so such a rewrite is a change.
-  Notes keep the CRC alone, which is enough to report an edit. Known limit: where neither tool is
-  on `PATH` the second line is not written and the fence is the CRC alone, as before. On Windows
-  the second line added about 3 seconds to each snapshot of the template's own tree (78 steering
-  files, measured 2026-11-15).
+  Notes keep the CRC alone, which is enough to report an edit. The digests come from one run of
+  the tool, matched back by name, and any file that run did not answer for is digested again on
+  its own, so a tool that prints names another way cannot turn the line off. Known limits: where
+  neither tool is on `PATH` the second line is not written and the fence is the CRC alone, as
+  before; and a process left running after a failed stop could swap a FIFO in between the check
+  that a path is a file and its read, which `cksum` is open to as well, and a failed stop already
+  sets the tripwire. On Windows the second line added about 3 seconds to each snapshot of the
+  template's own tree (78 steering files, measured 2026-11-15).
 
   The fence checksums symlinks by their target, so swapping a file for a link, or retargeting one,
   counts as a change. A `.obsidian` or `.git` that is itself a symlink is fenced as a link as well,
@@ -2153,8 +2161,9 @@ Known limits, each failing in the quiet direction:
   reverted and the run still said OK. Now a HEAD that moved refuses the swap and nothing is
   undone. The run starts again from the HEAD that won, up to three tries, and only while that
   HEAD descends from where the run started and changed none of the files it moves; then it puts
-  the vault back and exits 4. A HEAD that changed one of those files is left alone, with a
-  recovery record and 71, because a commit built on it would delete that change. Moves another
+  the vault back and exits 4. A HEAD that changed one of those files, or no longer descends from
+  where the run started (an amend), is left alone, with a recovery record and 71, because a
+  commit built on it would delete that change or build on a history nobody judged. Moves another
   tool already committed get no commit of the run's, empty or otherwise. No commit hook runs, as
   before, and because `commit-tree` does not read `commit.gpgsign`, the run passes `-S` when that
   setting is true. It does not conclude a merge or anything else started while it ran: a merge,
@@ -2163,7 +2172,11 @@ Known limits, each failing in the quiet direction:
 - **Known limit of that commit.** The branch and the operation markers are checked again just
   before `update-ref`, and `update-ref` follows HEAD to whatever branch it names at that moment.
   A switch to another branch at the same commit in the instant between the check and the swap
-  would give that branch the archiving commit. The window is the start-up of one git process.
+  gives that branch the archiving commit; the window is the start of one watched git, which on
+  Windows is several processes. The branch is read again afterwards, so such a commit is never
+  reported OK: it is left alone, with a recovery record and 71 naming the branch it landed on.
+  The ref-lock wait assumes git's files ref backend; under reftable it sees no lock and the one
+  more try it buys is spent at once.
 - The two limits listed here until 1.7.0, a blob that did not survive the repository's
   end-of-line conversion and a source recreated between the check and the commit, described
   `git commit --only`, which this runner no longer uses: the commit is built from the index
@@ -2174,12 +2187,12 @@ Known limits, each failing in the quiet direction:
 | `0` | OK: the moves were committed, nothing was eligible, this was a dry run, or there is no `20-projects/_logs` folder. Its last printed line, and the log, say which |
 | `1` | setup failure, `20-projects/_logs` cannot be listed or entered, git cannot read the vault, the vault is not the top of its own repository, a shallow clone, `info/grafts`, or a sparse checkout, or, on Windows or wherever a `cygpath` is found on `PATH`, the vault's path holds a part ending in a dot, a colon that is not a drive letter's or a last part ending in a space ("the vault, ..., is spelled with a part that ends in a dot", before the state directory, the run lock or any git call), or the run's temporary folder is spelled with a `..` or a part ending in a dot, which git there would read as another folder ("is spelled with .. or with a part that ends in a dot", before any git call). Also, before any git call, when neither `$TMPDIR` nor `/tmp` can hold the run's folder ("could not create a temporary directory"; there is no last-resort folder), when that folder is not an absolute path ("is not an absolute path, so it was made inside the vault", which this runner cannot meet through `TMPDIR`, since it uses `TMPDIR` only when it starts with `/`), or when, on Windows or wherever a `cygpath` is found, it holds a colon that is not a drive letter's ("is spelled with a colon that is not a drive letter's"). Also, before any git call, when the run's folder, resolved, fails the checks every runner runs on it from 1.5.0 (§ 4.3, Known limits): the state directory's checks, inside the vault by file identity, or not the path it resolves to ("the runner's folder for the pass", then the check, then "and the runner keeps the pass's snapshots, its backup and git's hooks folder there"), not there as a folder, a folder above it that cannot be reached, a resolution that led to another folder, a walk that gave no answer or a vault that cannot be resolved; off Windows, a permission bit for its group or for others ("is open to other accounts (its mode is not 0700)") or a `find` that could not check it ("could not run (find failed)"); and, on Windows or wherever a `cygpath` is found, a `cygpath` that cannot convert the folder ("cygpath could not convert the runner's temporary folder"), gives a path that is not a drive path ("for the runner's temporary folder, which is not a Windows drive path") or gives another folder ("which is not the same folder"). The folder for the run's own copy of its log gets the same checks, and the copy goes into exactly the path they passed, but one that fails them is not a refusal: each line is logged as `WARNING: (the folder for this run's copy of its log) …`, ending "So this run keeps no copy of its log, which goes to the log alone.", or, when the check prints nothing, as "WARNING: the folder for this run's copy of its log could not be checked, …", and the run goes on. With 1.4.2's `lib/runner-common.sh` a 1.5.0 runner exits 1 before its first git call with `runner_folder_checked: command not found` on stderr, not in its log, and 1.4.2's runner with 1.5.0's library runs as 1.4.2 did, without the new checks (both reasoned, not measured). With 1.4.1's `lib/runner-common.sh` a 1.4.2 runner exits 1 with `git_env_warning: command not found` and `vault_root_spelling_ok: command not found` on stderr, not in its log, and with 1.4.0's a 1.4.1 runner exits 1 with `temp_dir_spelling_ok: command not found` there (both measured on Linux; older libraries are unmeasured). Also the script failing in itself, such as on an unset variable, which bash ends with `1`. A folder that cannot be listed is never read as an empty one, which is a clean `0` |
 | `2` | REPORT-REFUSED: the `--adopt-legacy` report was not written by this runner, or its list has changed since. Nothing moved |
-| `3` | PARTIAL: a move, or the check after the moves, failed, and every file was put back. Nothing is committed. Since 1.7.1 this holds also when HEAD moved meanwhile without touching any file this run moves; a HEAD that touched one leaves a recovery record and 71 instead. Also when the archive folders could not be made, or one turned out to be a link or not a folder just as the move was about to use it (the log says `ERROR:` or `PATH-BLOCKED:`), where nothing had moved to put back |
-| `4` | COMMIT-FAILED: the commit was not made and the moves were put back. Either HEAD did not move, or it moved without touching any file this run moves (every try lost the swap, a branch was switched or a git operation started meanwhile). The log carries the first lines git gave as its reason, such as a missing identity or a signature gpg could not make (1.7.1) |
+| `3` | PARTIAL: a move, or the check after the moves, failed, and every file was put back. Nothing is committed. Since 1.7.1 this holds also when HEAD moved meanwhile to a commit that descends from where the run started and touched no file this run moves; any other moved HEAD leaves a recovery record and 71 instead. Also when the archive folders could not be made, or one turned out to be a link or not a folder just as the move was about to use it (the log says `ERROR:` or `PATH-BLOCKED:`), where nothing had moved to put back |
+| `4` | COMMIT-FAILED: the commit was not made and the moves were put back. Either HEAD did not move, or it moved to a commit that descends from where the run started and touched no file this run moves (every try lost the swap, a branch was switched or a git operation started meanwhile). The log carries the first lines git gave as its reason, such as a missing identity or a signature gpg could not make (1.7.1) |
 | `6` | PATH-BLOCKED: `20-projects`, `20-projects/_logs` or one of the archive folders is a link, a junction, not a folder, or another entry differs from it only in case. Checked before anything is judged, so nothing moved |
 | `64` | usage error: an unknown option, or a report file that is missing or unreadable |
 | `70` | TRIPWIRE-ERROR, the same meaning as for the other runners |
-| `71` | RECOVERY-NEEDED: a put-back failed, or what a commit did cannot be determined, or a `git mv` was stopped and may still be running, in which case nothing is put back at all because whatever that git does next would land on top of the put-back. Also when HEAD could not be read to check a put-back, where the run says only that it cannot tell either way. `retention-inflight` in the state directory says what should be where, and later runs refuse until it checks out |
+| `71` | RECOVERY-NEEDED: a put-back failed, or what a commit did cannot be determined, or (1.7.1) HEAD moved mid-run to a commit that changed a file this run moves or does not descend from where the run started, such as an amend, or this run's commit landed on a branch other than the one it started on because the branch was switched at the swap, or a `git mv` was stopped and may still be running, in which case nothing is put back at all because whatever that git does next would land on top of the put-back. Also when HEAD could not be read to check a put-back, where the run says only that it cannot tell either way. `retention-inflight` in the state directory says what should be where, and later runs refuse until it checks out |
 | `75` | LOCKED: another runner's lock, git's `index.lock`, a git operation in progress, a detached HEAD, unmerged index entries, or a git read that did not finish within `RUNNER_GIT_TIMEOUT` |
 | `78` | TRIPWIRE ([`setup.md`, A tripwire is set](setup.md#a-tripwire-is-set)), or a recovery file from an earlier run that does not check out |
 | `127` | `vault-retention.cmd` found no Git Bash, so the runner never ran. The `.cmd` writes that to the log |

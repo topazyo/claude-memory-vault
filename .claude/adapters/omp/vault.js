@@ -31,7 +31,7 @@
 // cannot run, the extension says so once instead of going quiet.
 
 import { spawn } from "node:child_process"
-import { existsSync, lstatSync, readdirSync, readlinkSync, realpathSync } from "node:fs"
+import { existsSync, lstatSync, readdirSync, readlinkSync, realpathSync, statSync } from "node:fs"
 import { homedir } from "node:os"
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -803,15 +803,23 @@ function changedFiles(event, cwd) {
   const details = event.details ?? {}
   const input = event.input ?? {}
   const out = []
-  // Every spelling omp could have opened that is on disk now, because the first
-  // is the string as written: "@notes/x.md", ":notes/x.md" and "[notes/x.md#ABCD]"
-  // name notes/x.md, and linting the written form lints a file that is not
-  // there (1.7.1). When none is on disk the first is linted, so the lint still
+  // Every spelling omp could have opened that is a file on disk now, because
+  // the first is the string as written: "@notes/x.md", ":notes/x.md" and
+  // "[notes/x.md#ABCD]" name notes/x.md, and linting the written form lints a
+  // file that is not there (1.7.1). A folder is never a write's target, so only
+  // files count. When none is on disk the first is linted, so the lint still
   // says it could not read the file rather than nothing being said.
+  const isFile = (path) => {
+    try {
+      return statSync(path).isFile()
+    } catch {
+      return false
+    }
+  }
   const add = (value, base = cwd) => {
     if (typeof value !== "string" || value === "") return
     const forms = candidatesLikeOmp(value, base)
-    const present = forms.filter((path) => existsSync(path))
+    const present = forms.filter(isFile)
     out.push(...(present.length > 0 ? present : [forms[0]]))
   }
   // An applied ast_edit names the files it changed relative to the folder omp

@@ -641,9 +641,18 @@ else
     link_target_ok "$ROOT/$file" || refuse_link "$file" "$LINK_WHY"
   done < <(cd "$ROOT" && find "${TIER_NAMES[@]}" \( -path '*/templates' -o -path '*/templates/*' -o \( -type f -path '20-projects/_logs/compaction-*.md' ! -path '20-projects/_logs/*/*' \) \) -prune -o -type l -print0; printf '//find-status=%s\0' "$?")
   if [ "$FIND_RC1" != 0 ] || [ "$FIND_RC2" != 0 ]; then
-    UNREAD_WALK=1
-    printf 'vault-check: find could not read every content-tier folder (status %s and %s), so the notes in what it could not read were not checked. Its own message above names what it could not read.\n' \
-      "${FIND_RC1:-none}" "${FIND_RC2:-none}" >&2
+    # find also fails when a file vanishes between being listed and being
+    # read, which a sync client or an editor's temporary file does all the
+    # time, and that leaves no folder unread. One more walk, listing only,
+    # tells the two apart: a folder find cannot read fails it again (round 1
+    # of the 1.7.1 review).
+    if ( cd "$ROOT" && find "${TIER_NAMES[@]}" \( -path '*/templates' -o -path '*/templates/*' \) -prune -o -print ) >/dev/null 2>&1; then
+      printf 'vault-check: find reported an error and a second walk read every folder, so a file most likely vanished while it was read; the scan is taken as complete.\n' >&2
+    else
+      UNREAD_WALK=1
+      printf 'vault-check: find could not read every content-tier folder (status %s and %s), so the notes in what it could not read were not checked. Its own message above names what it could not read.\n' \
+        "${FIND_RC1:-none}" "${FIND_RC2:-none}" >&2
+    fi
   fi
 fi
 

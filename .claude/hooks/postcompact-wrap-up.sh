@@ -50,6 +50,13 @@ else
     "$ts" >> "$LOG_DIR/hook-events.log" 2>/dev/null
 fi
 
+# Control bytes out of the two values that are written as they are, into this
+# log line and into the stub (1.7.1). A line break in trigger used to start new
+# lines in both, a heading among them in the stub, and each entry is meant to
+# be one line.
+trigger="$(printf '%s' "$trigger" | LC_ALL=C tr -d '\000-\037\177')"
+transcript_path="$(printf '%s' "$transcript_path" | LC_ALL=C tr -d '\000-\037\177')"
+
 printf '%s  PostCompact (trigger=%s). Consider /wrap-up or /obsidian-save to capture this block into 20-projects/_logs/.\n' \
   "$ts" "$trigger" >> "$LOG_DIR/hook-events.log" 2>/dev/null
 
@@ -64,11 +71,6 @@ if [ -z "$session_id" ]; then
     "$ts" "compaction-$session_id.md" >> "$LOG_DIR/hook-events.log" 2>/dev/null
 fi
 [ -z "$transcript_path" ] && transcript_path="?"
-# Control bytes out of the two values that are written into the stub as they
-# are (1.7.1). A line break in trigger used to start new lines in the stub, a
-# heading among them, and each entry is meant to be one line.
-trigger="$(printf '%s' "$trigger" | LC_ALL=C tr -d '\000-\037\177')"
-transcript_path="$(printf '%s' "$transcript_path" | LC_ALL=C tr -d '\000-\037\177')"
 
 # Sanitize before the value ever reaches a filesystem path. A '/' or '..' in a
 # hook-supplied session_id would otherwise build a path outside 20-projects/_logs/,

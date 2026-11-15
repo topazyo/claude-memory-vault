@@ -822,10 +822,20 @@ EOF
 # of the template took 33 s on Windows against 7 s without these lines
 # (measured 2026-11-15), almost all of it process start-up. The answers are
 # matched back by name, never by order, so a file the tool could not read
-# shifts nothing. A name holding a backslash is escaped in the tool's output,
-# so it is digested on its own through standard input instead.
+# shifts nothing.
+#
+# It must never fail open. A file the batch did not answer for, because the
+# tool printed its name in another spelling or not at all, is digested again
+# on its own through standard input, and only a file that cannot be read there
+# either is "unreadable". A name holding a backslash or any control byte, a
+# tab included, is escaped or split by the batch's output, so it goes that way
+# from the start, and so does every file when the list cannot be written.
+# Before this, a mismatch gave every steering file the same "unreadable" line
+# before and after, which left only the CRC the line exists to back up (round
+# 1 of the 1.7.1 review).
 fence_strong() {
-  local snap="$1" root="$2" tool name path p f d dirs gd="" cdir="" list
+  local snap="$1" root="$2" tool name path p f d dirs gd="" cdir="" list ok_list=1 tab
+  tab="$(printf '\t')"
   tool="$(snap_tool)" || return 0
   name="${tool%% *}" path="${tool#* }"
   [ "$name" = cksum ] && return 0
@@ -834,7 +844,7 @@ fence_strong() {
     cdir="$(printf '%s\n' "$dirs" | sed -n 2p)"
   fi
   list="$snap.strong-list"
-  : > "$list" || return 0
+  : > "$list" 2>/dev/null || ok_list=0
   snapshot_paths "$snap" | steering_filter "$snap" | LC_ALL=C sort -u | while IFS= read -r p; do
     case "$p" in
       .git-common/worktree/*) [ -n "$gd" ] || continue; f="$gd/${p#.git-common/worktree/}" ;;
@@ -842,27 +852,47 @@ fence_strong() {
       *) f="$root/$p" ;;
     esac
     [ -f "$f" ] && [ ! -L "$f" ] || continue
-    case "$f" in
-      *\\*)
-        d="$(snap_digest "$f" "$name" "$path")" || d=unreadable
+    case "$ok_list:$f" in
+      0:*|*\\*|*[[:cntrl:]]*)
+        # The bare digest, as the batch gives it, so a file that goes one way
+        # in one snapshot and the other way in the next does not read as
+        # changed: snap_digest's answer ends ":-" or ":*-" after it.
+        d="$(snap_digest "$f" "$name" "$path")" && d="${d%%:*}" || d=unreadable
         printf 'S%s 0 ./%s\n' "$d" "$p"
         ;;
       *) printf '%s\t%s\n' "$p" "$f" >> "$list" ;;
     esac
   done
+  [ "$ok_list" = 1 ] || return 0
   [ -s "$list" ] || { rm -f "$list"; return 0; }
   # The digest is the first 64 characters of an answer, and the name follows
   # two characters later (two spaces, or a space and the * of binary mode).
+  # The list's path reaches awk through the environment, because -v would
+  # treat a backslash in it as an escape. A path the batch did not answer for
+  # is printed as "MISS <path> <file>" for the loop below.
   cut -f2- "$list" | tr '\n' '\0' | {
     if [ "$name" = shasum ]; then LC_ALL=C xargs -0 "$path" -a 256 --; else LC_ALL=C xargs -0 "$path" --; fi
-  } 2>/dev/null | LC_ALL=C awk -v lf="$list" '
+  } 2>/dev/null | FS_LIST="$list" LC_ALL=C awk '
     { if (length($0) > 66) sum[substr($0, 67)] = substr($0, 1, 64) }
     END {
+      lf = ENVIRON["FS_LIST"]
       while ((getline l < lf) > 0) {
         t = index(l, "\t"); p = substr(l, 1, t - 1); f = substr(l, t + 1)
-        printf "S%s 0 ./%s\n", ((f in sum) ? sum[f] : "unreadable"), p
+        if (f in sum) printf "S%s 0 ./%s\n", sum[f], p
+        else printf "MISS\t%s\t%s\n", p, f
       }
-    }'
+    }' | while IFS= read -r p; do
+      case "$p" in
+        "MISS$tab"*)
+          p="${p#MISS"$tab"}"
+          f="${p#*"$tab"}"
+          p="${p%%"$tab"*}"
+          d="$(snap_digest "$f" "$name" "$path")" && d="${d%%:*}" || d=unreadable
+          printf 'S%s 0 ./%s\n' "$d" "$p"
+          ;;
+        *) printf '%s\n' "$p" ;;
+      esac
+    done
   rm -f "$list"
 }
 

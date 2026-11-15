@@ -42,14 +42,19 @@ is_secret() {
   p=$(printf '%s\n' "$p" | LC_ALL=C awk -F/ '{
     for (i = 1; i <= NF; i++) {
       part = $i
+      # A drive-relative first part, c:.env, names .env in the current folder
+      # of that drive, so the drive is taken off before the stream suffix is.
+      if (i == 1 && part ~ /^[a-z]:./) part = substr(part, 3)
       sub(/:.*$/, "", part)
       sub(/[. ]+$/, "", part)
       printf "%s%s", (i > 1 ? "/" : ""), part
     }
   }')
   base="${p##*/}"
+  # env~1, or env~1.loc, is the 8.3 short name Windows gives .env or
+  # .env.local on a volume that keeps short names, and it opens the same file.
   case "$base" in
-    .env|.env.*) return 0 ;;
+    .env|.env.*|env~[0123456789]*) return 0 ;;
   esac
   case "/$p/" in
     */secrets/*) return 0 ;;

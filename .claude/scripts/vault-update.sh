@@ -882,8 +882,9 @@ load_rules() {
   # above still let through (C14, 1.7.1). Split on tabs its class is empty, so
   # every check below skipped it, and the parser's read drops a leading tab and
   # used it, so "<TAB>Owned<TAB>docs/*" reached the manifest as an Owned rule.
-  # A class is the first thing on its line, so such a line is refused here.
-  bad="$(LC_ALL=C awk '/^[\t ]/ && NF > 0 { print "line-" NR }' "$TMPD/rules.clean" | head -n 3 | tr '\n' ' ')"
+  # A class is the first thing on its line, so such a line is refused here. An
+  # indented comment is still a comment: the parser skips it, and so does this.
+  bad="$(LC_ALL=C awk '/^[\t ]/ && NF > 0 && $1 !~ /^#/ { print "line-" NR }' "$TMPD/rules.clean" | head -n 3 | tr '\n' ' ')"
   if [ -n "$bad" ]; then
     warn "RULE-CLASS - a rule's class has to be the first thing on its line, and these lines begin with a tab or a space: $bad"
     warn "Read as they are, the class would be skipped by every check here and then used anyway. Nothing was classified."
