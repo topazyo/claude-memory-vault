@@ -44,7 +44,7 @@ is_secret() {
       part = $i
       # A drive-relative first part, c:.env, names .env in the current folder
       # of that drive, so the drive is taken off before the stream suffix is.
-      if (i == 1 && part ~ /^[a-z]:./) part = substr(part, 3)
+      if (i == 1 && part ~ /^[abcdefghijklmnopqrstuvwxyz]:./) part = substr(part, 3)
       sub(/:.*$/, "", part)
       sub(/[. ]+$/, "", part)
       printf "%s%s", (i > 1 ? "/" : ""), part
