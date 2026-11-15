@@ -880,19 +880,41 @@ else
   # second walk then succeeds, and asking only whether it failed took the scan
   # as complete and exited 0 with the note never checked. A stand-in find makes
   # the folder unreadable for the first note walk and for nothing after it.
+  # Round 3: the same for the link walk alone, which the retry did not count,
+  # so a link in that folder was never checked and the run exited 0. The
+  # folder holds a link to its note for that arm.
+  ln -s fine.md "$C3U/31-standards/locked/alias.md" 2>/dev/null
+  c3t_probe=1
+  if ! is_windows_host && [ "$(id -u 2>/dev/null)" != 0 ]; then
+    chmod 000 "$C3U/31-standards/locked"
+    ls -A "$C3U/31-standards/locked" >/dev/null 2>&1 && c3t_probe=0
+    chmod 755 "$C3U/31-standards/locked"
+  fi
   if is_windows_host; then
     skip check-transient-unread-folder 'a tier folder unreadable for one walk: chmod 000 does not stop a listing on Windows'
   elif [ "$(id -u 2>/dev/null)" = 0 ]; then
     skip check-transient-unread-folder 'a tier folder unreadable for one walk: root can list any folder'
+  elif [ "$c3t_probe" = 0 ]; then
+    skip check-transient-unread-folder 'a tier folder unreadable for one walk: chmod 000 did not stop the listing here'
+  elif [ ! -L "$C3U/31-standards/locked/alias.md" ]; then
+    skip check-transient-unread-folder 'a tier folder unreadable for one walk: ln -s made no link here'
   else
     c3t_real="$(command -v find)"
     mkdir -p "$TMP/c3t-bin"
+    # C3T_WALK=md locks the folder for the first note walk, C3T_WALK=l for the
+    # link walk, which is the only walk with -type l and no *.md.
     cat > "$TMP/c3t-bin/find" <<C3T_EOF
 #!/usr/bin/env bash
 md=0
-for a in "\$@"; do [ "\$a" = '*.md' ] && md=1; done
-if [ "\$md" = 1 ] && [ ! -e "$TMP/c3t-bin/walked" ]; then
-  : > "$TMP/c3t-bin/walked"
+ln=0
+for a in "\$@"; do [ "\$a" = '*.md' ] && md=1; [ "\$a" = l ] && ln=1; done
+hit=0
+case "\$C3T_WALK" in
+  md) [ "\$md" = 1 ] && hit=1 ;;
+  l) [ "\$ln" = 1 ] && [ "\$md" = 0 ] && hit=1 ;;
+esac
+if [ "\$hit" = 1 ] && [ ! -e "$TMP/c3t-bin/walked-\$C3T_WALK" ]; then
+  : > "$TMP/c3t-bin/walked-\$C3T_WALK"
   chmod 000 "$C3U/31-standards/locked"
   "$c3t_real" "\$@"
   rc=\$?
@@ -903,22 +925,26 @@ exec "$c3t_real" "\$@"
 C3T_EOF
     chmod +x "$TMP/c3t-bin/find"
     RET_LOCKED_DIR="$C3U/31-standards/locked"
-    c3_out="$(PATH="$TMP/c3t-bin:$PATH" c3_run "$C3U")"
+    c3_out="$(C3T_WALK=md PATH="$TMP/c3t-bin:$PATH" c3_run "$C3U")"
+    c3_lout="$(C3T_WALK=l PATH="$TMP/c3t-bin:$PATH" c3_run "$C3U")"
     chmod 755 "$C3U/31-standards/locked"
     RET_LOCKED_DIR=
-    if [ ! -e "$TMP/c3t-bin/walked" ]; then
-      bad "the transient unreadable-folder control never reached the note walk, so it tested nothing"
+    if [ ! -e "$TMP/c3t-bin/walked-md" ] || [ ! -e "$TMP/c3t-bin/walked-l" ]; then
+      bad "the transient unreadable-folder control never reached the walk it locks, so it tested nothing"
     else
       ran check-transient-unread-folder
       if [ "$(c3_rc "$c3_out")" = 2 ] \
-         && printf '%s\n' "$c3_out" | grep -q 'find could not read every content-tier folder'; then
-        ok "a tier folder unreadable for the first walk only still makes the scan exit 2, rather than count it complete"
+         && printf '%s\n' "$c3_out" | grep -q 'find could not read every content-tier folder' \
+         && [ "$(c3_rc "$c3_lout")" = 2 ] \
+         && printf '%s\n' "$c3_lout" | grep -q 'find could not read every content-tier folder'; then
+        ok "a tier folder unreadable for the note walk only, or for the link walk only, still makes the scan exit 2, rather than count it complete"
       else
-        bad "a tier folder unreadable for one walk was taken as read -- got: $(printf '%s' "$c3_out" | tr '\n' '|' | cut -c1-400)"
+        bad "a tier folder unreadable for one walk was taken as read -- note walk: $(printf '%s' "$c3_out" | tr '\n' '|' | cut -c1-300) link walk: $(printf '%s' "$c3_lout" | tr '\n' '|' | cut -c1-300)"
       fi
     fi
     rm -rf "$TMP/c3t-bin"
   fi
+  rm -f "$C3U/31-standards/locked/alias.md"
 
   # Links. Git Bash's ln -s copies unless native links are switched on, so each
   # case first proves it made a link, and the cases are skipped by name where
@@ -2012,16 +2038,22 @@ else
   printf '#!/usr/bin/env bash\ncat >/dev/null\nexit 0\n' > "$TMP/rg-noawk/awk"
   rg_mute_rc="$(PATH="$TMP/rg-noawk:$PATH" guard_rc "$RG/.env")"
   rg_dot_rc="$(PATH="$TMP/rg-noawk:$PATH" guard_rc ".")"
+  # And a tr that fails while awk works (round 3).
+  mkdir -p "$TMP/rg-notr"
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$TMP/rg-notr/tr"
+  chmod +x "$TMP/rg-notr/tr"
+  rg_notr_rc="$(PATH="$TMP/rg-notr:$PATH" guard_rc "$RG/.env")"
   ran read-guard-awk-failure-refuses
-  if [ "$rg_noawk_rc:$rg_noawk_note:$rg_mute_rc" = 2:2:2 ] \
+  if [ "$rg_noawk_rc:$rg_noawk_note:$rg_mute_rc:$rg_notr_rc" = 2:2:2:2 ] \
      && grep -q 'DEGRADED: awk could not normalise' "$RG/.claude/logs/read-guard.log" 2>/dev/null \
      && grep -q 'DEGRADED: the path normalised to nothing' "$RG/.claude/logs/read-guard.log" 2>/dev/null \
+     && grep -q 'DEGRADED: tr could not normalise' "$RG/.claude/logs/read-guard.log" 2>/dev/null \
      && [ "$rg_dot_rc" = 0 ]; then
-    ok "a read guard whose awk fails or answers nothing refuses the read and logs DEGRADED, rather than letting .env through"
+    ok "a read guard whose tr or awk fails, or whose awk answers nothing, refuses the read and logs DEGRADED, rather than letting .env through"
   else
-    bad "a read guard whose awk fails let a read through -- .env rc $rg_noawk_rc, note rc $rg_noawk_note, silent awk rc $rg_mute_rc, . rc $rg_dot_rc, log: $(tr '\n' '|' < "$RG/.claude/logs/read-guard.log" 2>/dev/null | cut -c1-300)"
+    bad "a read guard whose tr or awk fails let a read through -- .env rc $rg_noawk_rc, note rc $rg_noawk_note, silent awk rc $rg_mute_rc, failing tr rc $rg_notr_rc, . rc $rg_dot_rc, log: $(tr '\n' '|' < "$RG/.claude/logs/read-guard.log" 2>/dev/null | cut -c1-300)"
   fi
-  rm -rf "$TMP/rg-noawk"
+  rm -rf "$TMP/rg-noawk" "$TMP/rg-notr"
 
   # The OpenCode plugin holds the same rule in JavaScript, so the same eight
   # spellings are put to its read hook. It is an ES module in a .js file with no
@@ -7535,8 +7567,10 @@ fs.writeFileSync(outF, B)
 SCR_FORGE_EOF
 if ! command -v node >/dev/null 2>&1; then
   skip fence-crc-forgery 'a steering file rewritten to the same size and cksum: node is not installed to forge one'
+  skip fence-crc-forgery-imported-note 'an imported note rewritten to the same size and cksum: node is not installed to forge one'
 elif ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then
   skip fence-crc-forgery 'a steering file rewritten to the same size and cksum: no sha256sum or shasum, so the fence has only cksum here, which is its documented limit'
+  skip fence-crc-forgery-imported-note 'an imported note rewritten to the same size and cksum: no sha256sum or shasum, so the fence has only cksum here'
 elif ! node "$SCR/forge.js" "$SCR/orig" "$SCR/draft" "$SCR/forged" 2>/dev/null \
      || [ "$(cksum < "$SCR/orig")" != "$(cksum < "$SCR/forged")" ] || cmp -s "$SCR/orig" "$SCR/forged"; then
   bad "the fence CRC control could not forge a same-size, same-cksum rewrite, so it tested nothing"
@@ -7589,7 +7623,9 @@ else
   case "$sst_real" in */shasum) sst_tool=shasum ;; esac
   cat > "$SST/bin/$sst_tool" <<SST_EOF
 #!/usr/bin/env bash
-if [ "\$#" -gt 0 ] && [ "\${@: -1}" != - ]; then
+dd=0
+for a in "\$@"; do [ "\$a" = -- ] && dd=1; done
+if [ "\$dd" = 1 ]; then
   : > "$SST/bin/used"
   "$sst_real" "\$@" | sed 's/\$/-misspelt/'
 else
@@ -7621,10 +7657,15 @@ SST_EOF
   # read as changed (round 2 of the 1.7.1 review).
   mkdir -p "$SST/odd"
   # The batch gets 64 characters that are not hex in a digest's place, so the
-  # batch's own check is held as well as the one for a file on its own.
+  # batch's own check is held as well as the one for a file on its own. The
+  # batch is told apart by its --, which a single file's call never passes:
+  # shasum's single-file call ends in 256, not -, so keying on the last
+  # argument sent macOS down the batch branch (round 3 of the 1.7.1 review).
   cat > "$SST/odd/$sst_tool" <<SST_ODD_EOF
 #!/usr/bin/env bash
-if [ "\$#" -gt 0 ] && [ "\${@: -1}" != - ]; then
+dd=0
+for a in "\$@"; do [ "\$a" = -- ] && dd=1; done
+if [ "\$dd" = 1 ]; then
   past=0
   for f in "\$@"; do
     if [ "\$past" = 0 ]; then [ "\$f" = -- ] && past=1; continue; fi
@@ -7638,10 +7679,17 @@ SST_ODD_EOF
   chmod +x "$SST/odd/$sst_tool"
   sst_odd="$( PATH="$SST/odd:$PATH"; . "$ROOT/.claude/scripts/lib/runner-common.sh" && snapshot_tree "$SST/vault" "$SST/odd1" \
     && snapshot_tree "$SST/vault" "$SST/odd2" && changed_paths "$SST/odd1" "$SST/odd2" | tr '\n' '|')"
+  # And a tool that answers nothing at all, for every file, which gave every
+  # file the same word, unreadable, before and after (round 3).
+  mkdir -p "$SST/mute"
+  printf '#!/usr/bin/env bash\ncat >/dev/null 2>&1\nexit 0\n' > "$SST/mute/$sst_tool"
+  chmod +x "$SST/mute/$sst_tool"
+  sst_mute="$( PATH="$SST/mute:$PATH"; . "$ROOT/.claude/scripts/lib/runner-common.sh" && snapshot_tree "$SST/vault" "$SST/mute1" \
+    && snapshot_tree "$SST/vault" "$SST/mute2" && changed_paths "$SST/mute1" "$SST/mute2" | tr '\n' '|')"
   ran fence-digest-shape-checked
-  case "$sst_odd" in
-    *'CLAUDE.md|'*) ok "a hash tool that answers in another format makes the files read as changed, rather than all alike" ;;
-    *) bad "a hash tool answering in another format left the SHA-256 lines alike before and after -- changed: [$sst_odd]" ;;
+  case "$sst_odd#$sst_mute" in
+    *'CLAUDE.md|'*'#'*'CLAUDE.md|'*) ok "a hash tool that answers in another format, or answers nothing, makes the files read as changed, rather than all alike" ;;
+    *) bad "a hash tool answering in another format or not at all left the SHA-256 lines alike before and after -- changed: [$sst_odd] silent: [$sst_mute]" ;;
   esac
 fi
 rm -rf "$SST"
@@ -15827,6 +15875,16 @@ case "${RET_GIT_MODE:-}:mk$mk:hm$hm" in
     "$RET_REAL_GIT" "$@" || sa_rc=$?
     env -u GIT_INDEX_FILE "$RET_REAL_GIT" -C "$RET_GIT_VAULT" checkout -q -b side HEAD^ >/dev/null 2>&1
     exit "$sa_rc" ;;
+  # Round 3: switched away just before the swap and back just after it, so the
+  # commit lands on a branch that is neither the start's nor HEAD's.
+  switch-there-and-back:*:hm1)
+    sb_ref="$("$RET_REAL_GIT" -C "$RET_GIT_VAULT" symbolic-ref -q HEAD)"
+    "$RET_REAL_GIT" -C "$RET_GIT_VAULT" branch -q elsewhere >/dev/null 2>&1
+    "$RET_REAL_GIT" -C "$RET_GIT_VAULT" symbolic-ref HEAD refs/heads/elsewhere
+    sa_rc=0
+    "$RET_REAL_GIT" "$@" || sa_rc=$?
+    "$RET_REAL_GIT" -C "$RET_GIT_VAULT" symbolic-ref HEAD "$sb_ref"
+    exit "$sa_rc" ;;
   commit-on-top-after-swap:*:hm1)
     sa_rc=0
     "$RET_REAL_GIT" "$@" || sa_rc=$?
@@ -16200,7 +16258,8 @@ fi
 # that returns when HEAD is already this run's commit: without it the next try
 # finds the moves in HEAD and returns quietly too, so every assertion here
 # still holds. The moves-hang control pins that line, where the timeout line
-# would otherwise be written (round 2 of the 1.7.1 review).
+# would otherwise be written, but only on a host where the stop is confirmed
+# and that run exits 0 (round 2 of the 1.7.1 review; round 3).
 c2_bad=''
 c2_rc="$(ret_case c2-then-fail commit-then-fail)"
 c2_v="$RET/c2-then-fail"
@@ -16349,6 +16408,26 @@ else
   bad "this run's commit with another on top was credited elsewhere --$c2_bad log: [$(re_log1 "$c2_v")]"
 fi
 
+# Round 3 of the 1.7.1 review. The branch is switched just before the swap and
+# back just after, so the commit is on neither the start's branch nor HEAD's,
+# and HEAD is where the run started. Asking only those two put the moves back
+# and said nothing was committed, while another branch held this run's commit.
+c2_bad=''
+c2_rc="$(ret_case c2-there-and-back switch-there-and-back)"
+c2_v="$RET/c2-there-and-back"
+[ "$c2_rc" = 71 ] || c2_bad="$c2_bad rc:$c2_rc"
+c2_n="$(git -C "$c2_v" log --format=%B --branches --not "$re_h0" 2>/dev/null | LC_ALL=C awk '/^Vault-Retention-Run: /{n++} END{print n+0}')"
+[ "$c2_n" = 1 ] || c2_bad="$c2_bad run-commits:$c2_n"
+ret_says "$c2_v" "is on a branch other than" || c2_bad="$c2_bad stray-not-named"
+ret_says "$c2_v" "nothing was committed" && c2_bad="$c2_bad said-nothing-committed"
+[ -e "$c2_v.state/retention-inflight" ] || c2_bad="$c2_bad no-record"
+ran c2-commit-on-neither-branch
+if [ -z "$c2_bad" ]; then
+  ok "a commit that landed on a branch HEAD has since left is found and left alone with 71, not reported as never made"
+else
+  bad "a commit on a branch HEAD has since left was reported as never made --$c2_bad log: [$(re_log1 "$c2_v")]"
+fi
+
 # This run's own commit lands on somebody else's, and then whether HEAD holds
 # the moves cannot be asked. It is still this run's commit: the run says it
 # could not establish what HEAD holds, not that somebody else's commit lacks
@@ -16361,7 +16440,7 @@ c2_rc="$(ret_case c2-own-commit-unknown other-first-catfile-after)"
 c2_v="$RET/c2-own-commit-unknown"
 [ "$c2_rc" = 71 ] || c2_bad="$c2_bad rc:$c2_rc"
 [ "$(re_nonce_commits "$c2_v")" = 1 ] || c2_bad="$c2_bad own-commit-never-landed"
-ret_says "$c2_v" "whether HEAD holds what was judged could not be established" || c2_bad="$c2_bad not-said-unknown"
+ret_says "$c2_v" "whether that commit holds what was judged could not be established" || c2_bad="$c2_bad not-said-unknown"
 ret_says "$c2_v" "HEAD moved to" && c2_bad="$c2_bad blamed-another-commit"
 ran c2-own-commit-recognised-on-moved-head
 if [ -z "$c2_bad" ]; then
@@ -16691,9 +16770,9 @@ re_v="$RET/moves-landed-later"
 # exist. The exit code is 71 either way, so only the words can carry it, and
 # the control that already uses this fixture asserts the code alone.
 hu_bad=''
-ret_says "$re_v" "whether HEAD holds what was judged could not be established" \
+ret_says "$re_v" "whether that commit holds what was judged could not be established" \
   || hu_bad="$hu_bad no-unknown-line"
-ret_says "$re_v" "but HEAD does not hold what was judged" \
+ret_says "$re_v" "but that commit does not hold what was judged" \
   && hu_bad="$hu_bad claimed-a-disagreement"
 ran head-holds-unknown
 if [ -z "$hu_bad" ]; then
@@ -16893,6 +16972,31 @@ if [ -n "$RET_REAL_PS" ]; then
   fi
 else
   skip putback-verify-kill-failed "a put-back check whose stop could not be confirmed: no ps on this machine to stand in for"
+fi
+# Round 3: the check after the moves times out and its stop cannot be
+# confirmed, and then the put-back runs. Its gate runs no watched git when HEAD
+# has not moved, and its first rename cleared the flag, so the vault was put
+# back over a git that may still be running and the run gave exit 3.
+if [ -n "$RET_REAL_PS" ]; then
+  re_bad=''
+  re_rc="$(ret_case verify-killfail verify-slow RET_GIT_TIMEOUT=3 RET_PS_BLIND=1)"
+  re_v="$RET/verify-killfail"
+  [ "$re_rc" = 71 ] || re_bad="$re_bad rc:$re_rc"
+  ret_says "$re_v" "PARTIAL: the check that the moved files match the index did not finish in time" \
+    || re_bad="$re_bad check-did-not-time-out"
+  ret_says "$re_v" "a git command of this run was stopped and may still be running, so nothing was put back" \
+    || re_bad="$re_bad no-reason"
+  grep -qx 'state kill-failed' "$re_v.state/retention-inflight" 2>/dev/null || re_bad="$re_bad no-record"
+  ret_at_archive "$re_v" "$RE_J1" || re_bad="$re_bad put-back-ran"
+  rm -rf "$re_v.state/run.lock"
+  ran verify-kill-failed-not-put-back
+  if [ -z "$re_bad" ]; then
+    ok "a timed-out check whose stop could not be confirmed stops the put-back with the kill-failed record"
+  else
+    bad "a put-back ran over a check whose stop could not be confirmed --$re_bad rc $re_rc log: [$(tr '\n' '|' < "$(ret_log "$re_v")" 2>/dev/null | cut -c1-500)]"
+  fi
+else
+  skip verify-kill-failed-not-put-back "a check whose stop could not be confirmed: no ps on this machine to stand in for"
 fi
 # A put-back that cannot read the index. index_of_moves used to end in an
 # unconditional return 0 with the error swallowed, so a read that failed was
@@ -23425,7 +23529,9 @@ if [ "$(uname -s 2>/dev/null)" = Linux ]; then
   # gate that dropped it altogether does not pass for one that ran it (round 2
   # of the 1.7.1 review).
   printf '%s\n' "$sf_on" | grep -q '^  SKIP  \[tmpl-class-table\] VAULT_TEMPLATE_MAINTAINER is not 1' && sf_bad="$sf_bad skipped-with-the-variable"
-  printf '%s\n' "$sf_on" | grep -q 'the shipped manifest classes every argued-over path\|the shipped classification has moved' || sf_bad="$sf_bad never-ran-with-the-variable"
+  # A vault with no shipped manifest skips it for that reason, which is an
+  # answer from past the gate too (round 3).
+  printf '%s\n' "$sf_on" | grep -q 'the shipped manifest classes every argued-over path\|the shipped classification has moved\|^  SKIP  \[tmpl-class-table\] the shipped manifest is not present' || sf_bad="$sf_bad never-ran-with-the-variable"
   ran c18-gate-holds-in-update
   if [ -z "$sf_bad" ]; then
     ok "the update section skips its template-only controls without VAULT_TEMPLATE_MAINTAINER=1 and runs them with it"
