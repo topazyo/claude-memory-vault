@@ -1843,9 +1843,12 @@ else
     compact '{"session_id":"s-ml","trigger":"auto\n## Injected heading\n- injected entry","transcript_path":"/t\r\nx"}'
     pc_ml="$PC/20-projects/_logs/compaction-s-ml.md"
     ran c11-trigger-one-line
+    # The hook's own log too, which the trigger reached before it was cleaned
+    # until round 1 of the 1.7.1 review.
     if [ -f "$pc_ml" ] && [ "$(entries "$pc_ml")" -eq 1 ] && ! grep -q '^## Injected' "$pc_ml" \
-       && [ "$(LC_ALL=C tr -dc '\r' < "$pc_ml" | wc -c | tr -d ' ')" = 0 ]; then
-      ok "C11: a trigger or transcript path holding line breaks adds exactly one line to the stub"
+       && [ "$(LC_ALL=C tr -dc '\r' < "$pc_ml" | wc -c | tr -d ' ')" = 0 ] \
+       && ! grep -q '^## Injected' "$PC/.claude/logs/hook-events.log" 2>/dev/null; then
+      ok "C11: a trigger or transcript path holding line breaks adds exactly one line to the stub and to the hook's log"
     else
       bad "C11: control bytes in the hook input reached the stub -- entries $(entries "$pc_ml"), lines: $(tr '\n' '|' < "$pc_ml" 2>/dev/null | tail -c 300)"
     fi
@@ -1941,6 +1944,13 @@ else
   expect_rc "C10: .env::\$DATA, an NTFS stream name, is blocked" 2 "$(guard_rc "$RG/.env::\$DATA")"
   expect_rc "C10: secrets::\$INDEX_ALLOCATION/x is blocked" 2 "$(guard_rc "$RG/secrets::\$INDEX_ALLOCATION/x")"
   expect_rc "C10: .envrc is still allowed"                  0 "$(guard_rc "$RG/.envrc")"
+  # Round 1 of the 1.7.1 review: a drive-relative path and the 8.3 short name
+  # Windows gives .env and .env.local.
+  expect_rc "C10: C:.env, drive-relative, is blocked"       2 "$(guard_rc 'C:.env')"
+  expect_rc "C10: C:secrets\\k, drive-relative, is blocked" 2 "$(guard_rc 'C:secrets\k')"
+  expect_rc "C10: ENV~1, the short name of .env, is blocked" 2 "$(guard_rc "$RG/ENV~1")"
+  expect_rc "C10: ENV~1.LOC, the short name of .env.local, is blocked" 2 "$(guard_rc "$RG/ENV~1.LOC")"
+  expect_rc "C10: C:notes.md, drive-relative, is still allowed" 0 "$(guard_rc 'C:notes.md')"
 
   # The OpenCode plugin holds the same rule in JavaScript, so the same eight
   # spellings are put to its read hook. It is an ES module in a .js file with no
@@ -1956,6 +1966,7 @@ const hooks = await mod.VaultPlugin({ $: null, worktree: "/v", directory: "/v" }
 const cases = [
   [".env ", true], [".env.", true], ["secrets./x", true], [".env::$DATA", true],
   ["secrets::$INDEX_ALLOCATION/x", true], ["Secrets\\k", true], [".envrc", false], ["notes/secrets.md", false],
+  ["C:.env", true], ["C:secrets\\k", true], ["ENV~1", true], ["ENV~1.LOC", true], ["C:notes.md", false],
 ]
 for (const [path, deny] of cases) {
   let denied = false
@@ -1966,8 +1977,8 @@ OC_DRIVER_EOF
     oc_out="$(node "$TMP/oc/driver.mjs" "$TMP/oc/vault.mjs" 2>&1)"
     oc_ok="$(printf '%s\n' "$oc_out" | grep -c '^ok ')"
     ran c10-opencode-normalised
-    if [ "$oc_ok" = 8 ] && ! printf '%s\n' "$oc_out" | grep -q '^bad '; then
-      ok "C10: the OpenCode plugin answers all eight spellings as the bash guard does: six denied, .envrc and secrets.md allowed"
+    if [ "$oc_ok" = 13 ] && ! printf '%s\n' "$oc_out" | grep -q '^bad '; then
+      ok "C10: the OpenCode plugin answers all thirteen spellings as the bash guard does: ten denied, three allowed"
     else
       bad "C10: the OpenCode plugin's secrets rule -- $(printf '%s' "$oc_out" | tr '\n' '|' | cut -c1-400)"
     fi
@@ -2915,6 +2926,9 @@ writeFileSync(join(vault, "31-standards", "c12.md"), "x\n")
 for (const spelling of ["@31-standards/c12.md", ":31-standards/c12.md", "[31-standards/c12.md#ABCD]"]) {
   await lintCase(`a write named ${spelling} lints the note omp wrote`, ["--", "31-standards/c12.md"], "write", { path: spelling, content: "x" }, false)
 }
+// A folder is never what a write wrote, so a spelling that names one is not
+// linted; the written form is, as when nothing is on disk.
+await lintCase("a write named @31-standards, a folder, lints no folder", ["--", "@31-standards"], "write", { path: "@31-standards", content: "x" }, false)
 say("ran c12-omp-lints-spelling-on-disk")
 
 const stubInput = join(vault, "stub-input")
@@ -7386,7 +7400,9 @@ rm -rf "$BSS" "$BSS-vault" "$BSS.snap"
 # member short, and every pass refused to start with "could not back up the
 # steering surfaces". tar now gets the list with ./ in front of each line, and
 # the plain list, which containment greps, is unchanged. The x folder beside it
-# is the half that shows the fixture backs up at all.
+# is the half that shows the fixture backs up at all. GNU tar is the one that
+# reads such a line as an option; macOS's bsdtar does not, so there this
+# control passes either way and the evidence comes from Linux and Windows.
 SND="$TMP/snap-dash"
 rm -rf "$SND"
 mkdir -p "$SND/vault/-x" "$SND/vault/x" "$SND/restore"
@@ -7464,6 +7480,52 @@ else
   fi
 fi
 rm -rf "$SCR"
+
+# The SHA-256 lines must never fail open (round 1 of the 1.7.1 review). Every
+# steering file gets a real digest, a name holding a backslash or a tab among
+# them where the file system allows one, and a tool that prints the batch's
+# names in another spelling changes nothing, because each file it did not
+# answer for is digested again on its own. A stand-in sha256sum on PATH does
+# that misspelling; on standard input it answers as the real one does.
+SST="$TMP/snap-strong"
+rm -rf "$SST"
+mkdir -p "$SST/vault/.claude" "$SST/bin"
+printf 'a\n' > "$SST/vault/CLAUDE.md"
+printf 'b\n' > "$SST/vault/.claude/x.md"
+if ! is_windows_host; then
+  printf 'c\n' > "$SST/vault/.claude/back\\slash.md"
+  printf 'd\n' > "$SST/vault/.claude/$(printf 'tab\there').md"
+fi
+sst_real="$(command -v sha256sum 2>/dev/null || command -v shasum 2>/dev/null)"
+if [ -z "$sst_real" ]; then
+  skip fence-strong-never-fails-open 'the SHA-256 fence lines: no sha256sum or shasum here'
+else
+  sst_tool=sha256sum
+  case "$sst_real" in */shasum) sst_tool=shasum ;; esac
+  cat > "$SST/bin/$sst_tool" <<SST_EOF
+#!/usr/bin/env bash
+if [ "\$#" -gt 0 ] && [ "\${@: -1}" != - ]; then
+  "$sst_real" "\$@" | sed 's/\$/-misspelt/'
+else
+  exec "$sst_real" "\$@"
+fi
+SST_EOF
+  chmod +x "$SST/bin/$sst_tool"
+  sst_bad=''
+  ( . "$ROOT/.claude/scripts/lib/runner-common.sh" && snapshot_tree "$SST/vault" "$SST/plain" )
+  ( PATH="$SST/bin:$PATH"; . "$ROOT/.claude/scripts/lib/runner-common.sh" && snapshot_tree "$SST/vault" "$SST/misspelt" )
+  grep -q '^Sunreadable' "$SST/plain" && sst_bad="$sst_bad unreadable-line"
+  sst_n="$(LC_ALL=C grep -cE '^S[0-9a-f]{64} 0 \./' "$SST/plain")"
+  if is_windows_host; then [ "$sst_n" = 2 ] || sst_bad="$sst_bad digests:$sst_n"; else [ "$sst_n" = 4 ] || sst_bad="$sst_bad digests:$sst_n"; fi
+  [ "$(grep '^S' "$SST/plain")" = "$(grep '^S' "$SST/misspelt")" ] || sst_bad="$sst_bad misspelt-batch-differs"
+  ran fence-strong-never-fails-open
+  if [ -z "$sst_bad" ]; then
+    ok "every steering file gets a SHA-256 fence line, odd names included, and a tool that misspells the batch changes none of them"
+  else
+    bad "the SHA-256 fence lines can fail open --$sst_bad lines: [$(grep '^S' "$SST/plain" | tr '\n' '|' | cut -c1-400)] misspelt: [$(grep '^S' "$SST/misspelt" | tr '\n' '|' | cut -c1-300)]"
+  fi
+fi
+rm -rf "$SST"
 
 # A .obsidian, a .git and a .git/info that are symlinks are fenced as links, and
 # the files below them are still fenced through them. The backup keeps those
@@ -15626,6 +15688,17 @@ case "${RET_GIT_MODE:-}:mk$mk:hm$hm" in
     "$RET_REAL_GIT" -C "$RET_GIT_VAULT" branch -q elsewhere >/dev/null 2>&1
     "$RET_REAL_GIT" -C "$RET_GIT_VAULT" symbolic-ref HEAD refs/heads/elsewhere
     exec "$RET_REAL_GIT" "$@" ;;
+  # The same switch at the very moment HEAD is moved, after the last check, so
+  # the swap follows HEAD onto the other branch.
+  switch-at-swap:*:hm1)
+    "$RET_REAL_GIT" -C "$RET_GIT_VAULT" branch -q elsewhere >/dev/null 2>&1
+    "$RET_REAL_GIT" -C "$RET_GIT_VAULT" symbolic-ref HEAD refs/heads/elsewhere
+    exec "$RET_REAL_GIT" "$@" ;;
+  # Somebody commits first, so this run's commit lands on theirs; then every
+  # object question asked after that commit lands fails (see the cat-file arm).
+  other-first-catfile-after:mk1:*)
+    other_commit other.md "unrelated"
+    exec "$RET_REAL_GIT" "$@" ;;
   # Stops at the step that moves HEAD for long enough to be signalled, after the
   # commit object exists and before HEAD has moved onto it.
   swap-slow:*:hm1) : > "$RET_GIT_MARK"; sleep 20; exec "$RET_REAL_GIT" "$@" ;;
@@ -15728,6 +15801,11 @@ case "${RET_GIT_MODE:-}:$sub:$n" in
     # commit having happened does.
     if [ -s "$RET_GIT_COUNT.hm" ]; then exit 1; fi
     exec "$RET_REAL_GIT" "$@" ;;
+  # The second move of HEAD is the one that lands, the first having lost to
+  # the other commit, and every object question after it fails.
+  other-first-catfile-after:cat-file:*)
+    if [ "$(cat "$RET_GIT_COUNT.hm" 2>/dev/null)" -ge 2 ] 2>/dev/null; then exit 1; fi
+    exec "$RET_REAL_GIT" "$@" ;;
 esac
 exec "$RET_REAL_GIT" "$@"
 GIT_EOF
@@ -15812,9 +15890,10 @@ fi
 # commit take the parent from HEAD again a moment later. A commit landing in
 # between was silently reverted, and the run reported OK. The commit is now
 # made with commit-tree on the one HEAD that was read, and HEAD is moved with
-# update-ref as a compare-and-swap that refuses when HEAD has moved since. Each
-# control below was run against the 1.7.0 runner and failed there for the
-# reason its comment gives.
+# update-ref as a compare-and-swap that refuses when HEAD has moved since. A
+# control whose comment says what the 1.7.0 runner did was run against it and
+# failed there for that reason. The rest guard a new path that 1.7.0 never had,
+# such as the no-empty-commit and landed-then-failed cases, and passed on it.
 re_h0="$(git -C "$RE0" rev-parse HEAD 2>/dev/null)"
 re_log1() {  # re_log1 <vault> - the run's log on one line, cut for a FAIL message
   tr '\n' '|' < "$(ret_log "$1")" 2>/dev/null | cut -c1-500
@@ -15918,6 +15997,9 @@ ret_moved "$c2_v" "$RE_J1" || c2_bad="$c2_bad not-moved"
 [ "$(git -C "$c2_v" log -1 --format=%s HEAD 2>/dev/null)" = "vault backup" ] || c2_bad="$c2_bad head-not-the-sync-commit"
 [ "$(re_nonce_commits "$c2_v")" = 0 ] || c2_bad="$c2_bad empty-run-commit"
 ret_says "$c2_v" "another tool committed the moves" || c2_bad="$c2_bad no-note"
+# A HEAD that already holds the moves is not a failed commit, and the log
+# must not say it was (round 1 of the 1.7.1 review).
+ret_says "$c2_v" "COMMIT-FAILED" && c2_bad="$c2_bad said-commit-failed"
 ran c2-no-empty-commit
 if [ -z "$c2_bad" ]; then
   ok "moves another tool already committed are left as its commit, with no empty commit of the runner's on top"
@@ -15925,14 +16007,16 @@ else
   bad "moves already committed elsewhere got a commit of the runner's on top --$c2_bad log: [$(re_log1 "$c2_v")]"
 fi
 
-# HEAD moves and then the step reports failure. Retrying on the exit code
-# would commit the same moves a second time.
+# HEAD moves and then the step reports failure. A retry that trusted the exit
+# code would rebuild on this run's own commit; the commit stays one, and the
+# log does not call it a failure.
 c2_bad=''
 c2_rc="$(ret_case c2-then-fail commit-then-fail)"
 c2_v="$RET/c2-then-fail"
 [ "$c2_rc" = 0 ] || c2_bad="$c2_bad rc:$c2_rc"
 ret_moved "$c2_v" "$RE_J1" || c2_bad="$c2_bad not-moved"
 [ "$(git -C "$c2_v" rev-list --count "$re_h0..HEAD" 2>/dev/null)" = 1 ] || c2_bad="$c2_bad commits:$(git -C "$c2_v" rev-list --count "$re_h0..HEAD" 2>/dev/null)"
+ret_says "$c2_v" "COMMIT-FAILED" && c2_bad="$c2_bad said-commit-failed"
 ran c2-landed-then-failed-once
 if [ -z "$c2_bad" ]; then
   ok "a commit that landed and then reported failure is kept and not made a second time"
@@ -15964,6 +16048,9 @@ c2_v="$RET/c2-ref-locked-briefly"
 [ "$c2_rc" = 0 ] || c2_bad="$c2_bad rc:$c2_rc"
 ret_moved "$c2_v" "$RE_J1" || c2_bad="$c2_bad not-moved"
 [ "$(re_nonce_commits "$c2_v")" = 1 ] || c2_bad="$c2_bad run-commits:$(re_nonce_commits "$c2_v")"
+# Two moves of HEAD, the first refused by the lock: otherwise the lock was gone
+# before the swap and nothing here waited for it.
+[ "$(cat "$RET/c2-ref-locked-briefly.count.update-ref" 2>/dev/null)" = 2 ] || c2_bad="$c2_bad swaps:$(cat "$RET/c2-ref-locked-briefly.count.update-ref" 2>/dev/null)"
 ran c2-ref-lock-waited-for
 if [ -z "$c2_bad" ]; then
   ok "a branch lock let go within the wait is waited for, and the commit is made"
@@ -15988,6 +16075,42 @@ if [ -z "$c2_bad" ]; then
   ok "a HEAD rewritten mid-run so it no longer descends from the start gets no commit on top, and the run stops with 71"
 else
   bad "a HEAD rewritten mid-run received the archiving commit or was put back over --$c2_bad log: [$(re_log1 "$c2_v")]"
+fi
+
+# Round 1 of the 1.7.1 review. The branch is switched at the moment of the
+# swap, after the last check, so this run's commit lands on the other branch.
+# That is never called OK: the commit is left alone and the run says where.
+c2_bad=''
+c2_rc="$(ret_case c2-switch-at-swap switch-at-swap)"
+c2_v="$RET/c2-switch-at-swap"
+[ "$c2_rc" = 71 ] || c2_bad="$c2_bad rc:$c2_rc"
+[ "$(re_nonce_commits "$c2_v")" = 1 ] || c2_bad="$c2_bad switch-did-not-catch-the-commit"
+ret_says "$c2_v" "not on refs/heads/" || c2_bad="$c2_bad branch-not-named"
+ret_says "$c2_v" "OK:" && c2_bad="$c2_bad called-ok"
+[ -e "$c2_v.state/retention-inflight" ] || c2_bad="$c2_bad no-record"
+ran c2-commit-on-switched-branch-not-ok
+if [ -z "$c2_bad" ]; then
+  ok "a commit that a branch switch at the swap put on another branch is left alone with 71, never called OK"
+else
+  bad "a commit that landed on a switched branch was called OK --$c2_bad log: [$(re_log1 "$c2_v")]"
+fi
+
+# This run's own commit lands on somebody else's, and then whether HEAD holds
+# the moves cannot be asked. It is still this run's commit: the run says it
+# could not establish what HEAD holds, not that somebody else's commit lacks
+# the moves, which is what the parent test alone used to make it say.
+c2_bad=''
+c2_rc="$(ret_case c2-own-commit-unknown other-first-catfile-after)"
+c2_v="$RET/c2-own-commit-unknown"
+[ "$c2_rc" = 71 ] || c2_bad="$c2_bad rc:$c2_rc"
+[ "$(re_nonce_commits "$c2_v")" = 1 ] || c2_bad="$c2_bad own-commit-never-landed"
+ret_says "$c2_v" "whether HEAD holds what was judged could not be established" || c2_bad="$c2_bad not-said-unknown"
+ret_says "$c2_v" "HEAD moved to" && c2_bad="$c2_bad blamed-another-commit"
+ran c2-own-commit-recognised-on-moved-head
+if [ -z "$c2_bad" ]; then
+  ok "this run's own commit on a moved HEAD is recognised as its own when what HEAD holds cannot be asked"
+else
+  bad "this run's own commit on a moved HEAD was mistaken for somebody else's --$c2_bad log: [$(re_log1 "$c2_v")]"
 fi
 
 # A merge started mid-run. The 1.7.0 runner's git commit read MERGE_HEAD and
@@ -16152,7 +16275,7 @@ git -C "$c2_v" config --unset-all user.email 2>/dev/null
 git -C "$c2_v" config user.useConfigOnly true
 : > "$RET/c8-empty-global"
 c2_rc="$( unset EMAIL GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL
-  GIT_CONFIG_GLOBAL="$RET/c8-empty-global" ret_run "$c2_v" )"
+  GIT_CONFIG_GLOBAL="$RET/c8-empty-global" GIT_CONFIG_SYSTEM="$RET/c8-empty-global" ret_run "$c2_v" )"
 [ "$c2_rc" = 4 ] || c2_bad="$c2_bad rc:$c2_rc"
 ret_case_check "$c2_v" stayed || c2_bad="$c2_bad not-put-back"
 grep -qE '    git: .*([Ii]dentity|user\.email|empty ident)' "$(ret_log "$c2_v")" 2>/dev/null || c2_bad="$c2_bad git-reason-not-logged"
@@ -16193,9 +16316,12 @@ else
   bad "the stalled work-tree check was mishandled --$rv_bad log: [$(tr '\n' '|' < "$(ret_log "$RET/moves-verify-slow")" 2>/dev/null | cut -c1-500)]"
 fi
 
-# A commit that lands and then hangs is stopped, and never put back.
+# A commit that lands and then hangs is stopped, and never put back. When the
+# run then says OK it must not also say the commit failed, which the timeout
+# line did for a move of HEAD that had landed (round 1 of the 1.7.1 review).
 re_rc="$(ret_case moves-hang commit-then-hang RET_GIT_TIMEOUT=3)"
-if { [ "$re_rc" = 0 ] || [ "$re_rc" = 71 ]; } && ret_moved "$RET/moves-hang" "$RE_J1" && ret_clean "$RET/moves-hang"; then
+if { [ "$re_rc" = 0 ] || [ "$re_rc" = 71 ]; } && ret_moved "$RET/moves-hang" "$RE_J1" && ret_clean "$RET/moves-hang" \
+   && { [ "$re_rc" != 0 ] || ! ret_says "$RET/moves-hang" "COMMIT-FAILED"; }; then
   ok "a commit that landed and then hung is stopped and kept, not put back (exit $re_rc)"
 else
   bad "a commit that landed and then hung was put back or lost -- rc $re_rc log: [$(tr '\n' '|' < "$(ret_log "$RET/moves-hang")" 2>/dev/null | cut -c1-500)]"
@@ -20606,22 +20732,35 @@ else
   vu_make "$vu_d" 1.0.0
   vu_rt_before="$(cksum < "$vu_d/.claude/template-manifest" | cut -d' ' -f1)"
   vu_bad=''
-  for vu_rt_cls in Owned owned; do
+  # Each case is "<lead>:<class>", the lead a tab or a space.
+  for vu_rt_case in "tab:Owned" "tab:owned" "space:owned"; do
+    vu_rt_cls="${vu_rt_case#*:}"
+    vu_rt_lead="$(printf '\t')"
+    [ "${vu_rt_case%%:*}" = space ] && vu_rt_lead=' '
     {
       printf 'excluded\t.claude/manifest-rules\n'
       printf 'excluded\t.claude/template-manifest\n'
-      printf '\t%s\tdocs/*\n' "$vu_rt_cls"
+      printf '%s%s\tdocs/*\n' "$vu_rt_lead" "$vu_rt_cls"
       printf 'owned\t.claude/hooks/*\nowned\tVERSION\nseed\tREADME.md\nseed\t31-standards/*\nseed\t31-Standards/*\n'
     } > "$vu_d/.claude/manifest-rules"
-    grep -qxF "$(printf '\t%s\tdocs/*' "$vu_rt_cls")" "$vu_d/.claude/manifest-rules" || vu_bad="$vu_bad [$vu_rt_cls]rule-not-planted"
+    grep -qxF "$(printf '%s%s\tdocs/*' "$vu_rt_lead" "$vu_rt_cls")" "$vu_d/.claude/manifest-rules" || vu_bad="$vu_bad [$vu_rt_case]rule-not-planted"
     vu_rc_rt="$( cd "$vu_d" && CLAUDE_PROJECT_DIR="$vu_d" VAULT_TEMPLATE_MAINTAINER=1 "$VU_BASH" "$VU_SH" --generate > "$VU_OUT" 2>&1; printf '%s' "$?" )"
-    [ "$vu_rc_rt" = 1 ] || vu_bad="$vu_bad [$vu_rt_cls]rc:$vu_rc_rt"
-    vu_says 'RULE-CLASS' || vu_bad="$vu_bad [$vu_rt_cls]no-reason"
-    [ "$(cksum < "$vu_d/.claude/template-manifest" | cut -d' ' -f1)" = "$vu_rt_before" ] || vu_bad="$vu_bad [$vu_rt_cls]manifest-rewritten"
+    [ "$vu_rc_rt" = 1 ] || vu_bad="$vu_bad [$vu_rt_case]rc:$vu_rc_rt"
+    vu_says 'RULE-CLASS' || vu_bad="$vu_bad [$vu_rt_case]no-reason"
+    [ "$(cksum < "$vu_d/.claude/template-manifest" | cut -d' ' -f1)" = "$vu_rt_before" ] || vu_bad="$vu_bad [$vu_rt_case]manifest-rewritten"
   done
+  # An indented comment is not a rule, and is still skipped rather than refused.
+  {
+    printf 'excluded\t.claude/manifest-rules\n'
+    printf 'excluded\t.claude/template-manifest\n'
+    printf '\t# a comment indented with a tab\n'
+    printf 'owned\t.claude/hooks/*\nowned\tdocs/*\nowned\tVERSION\nowned\t31-standards/templates/*\nseed\tREADME.md\nseed\t31-standards/*\nseed\t31-Standards/*\n'
+  } > "$vu_d/.claude/manifest-rules"
+  vu_rc_rt="$( cd "$vu_d" && CLAUDE_PROJECT_DIR="$vu_d" VAULT_TEMPLATE_MAINTAINER=1 "$VU_BASH" "$VU_SH" --generate > "$VU_OUT" 2>&1; printf '%s' "$?" )"
+  [ "$vu_rc_rt" = 0 ] || vu_bad="$vu_bad [indented-comment]rc:$vu_rc_rt"
   ran tmpl-c14-tab-led-rule
   if [ -z "$vu_bad" ]; then
-    ok "a rule line that starts with a tab is refused by RULE-CLASS whatever its class, and the manifest is untouched"
+    ok "a rule line that starts with a tab or a space is refused by RULE-CLASS and the manifest is untouched, while an indented comment is still skipped"
   else
     bad "a tab-led rule line was read past the validators --$vu_bad [$(vu_excerpt)]"
   fi
@@ -22989,6 +23128,26 @@ if [ -z "$sf_bad" ]; then
   ok "the template-only controls are on only with VAULT_TEMPLATE_MAINTAINER=1, whatever files the tree holds"
 else
   bad "the template-only controls were decided by something other than the variable --$sf_bad"
+fi
+
+# The banner is not the gate, so the gate is run too: the update section,
+# where the template-only controls live, nested without the variable and with
+# it. Linux only, because that section takes minutes elsewhere and the
+# decision it tests is the same one line on every platform.
+if [ "$(uname -s 2>/dev/null)" = Linux ]; then
+  sf_off="$(env -u RUN_TESTS_REQUIRED RUN_TESTS_NESTED=1 RUN_TESTS_ONLY=update "$BASH" "$SUITE_SELF" 2>&1)"
+  sf_on="$(env -u RUN_TESTS_REQUIRED RUN_TESTS_NESTED=1 RUN_TESTS_ONLY=update VAULT_TEMPLATE_MAINTAINER=1 "$BASH" "$SUITE_SELF" 2>&1)"
+  sf_bad=''
+  printf '%s\n' "$sf_off" | grep -q '^  SKIP  \[tmpl-class-table\] VAULT_TEMPLATE_MAINTAINER is not 1' || sf_bad="$sf_bad not-skipped-without-the-variable"
+  printf '%s\n' "$sf_on" | grep -q '^  SKIP  \[tmpl-class-table\]' && sf_bad="$sf_bad skipped-with-the-variable"
+  ran c18-gate-holds-in-update
+  if [ -z "$sf_bad" ]; then
+    ok "the update section skips its template-only controls without VAULT_TEMPLATE_MAINTAINER=1 and runs them with it"
+  else
+    bad "the update section's template-only controls are not gated by the variable --$sf_bad"
+  fi
+else
+  skip c18-gate-holds-in-update 'the template-only gate in the update section: run on Linux only, where that section takes under a minute'
 fi
 
 # A filter that reaches no guard must not end green: the renamed copy, asked
