@@ -801,6 +801,69 @@ EOF
       fi
     fi
   ) | LC_ALL=C sort >"$out"
+  # A second line for every steering file, with its SHA-256 (1.7.1). The line
+  # above is cksum, a CRC: for a file of a given size, four chosen bytes give
+  # any CRC wanted, and a rewritten CLAUDE.md of the same size and CRC passed
+  # the fence unseen (measured 2026-11-15). The notes keep the cheap CRC, which
+  # is enough to report an edit, and the files the fence exists to contain are
+  # held to a digest nobody can match by choosing bytes.
+  { cat "$out"; fence_strong "$out" "$root"; } | LC_ALL=C sort >"$out.strong" && mv -f "$out.strong" "$out"
+}
+
+# fence_strong <snapshot> <root>
+# Prints "S<digest> 0 ./<path>" for every regular file among the snapshot's
+# steering paths, the digest from snap_tool. Paths under .git-common/ are read
+# from the git directories they stand for. Prints nothing where snap_tool finds
+# only cksum, which would add nothing, and the known limit says so. A file the
+# tool did not answer for gets the word unreadable, so it reads as changed if it
+# was readable before.
+#
+# One run of the tool over all of them, not one per file: per file, a snapshot
+# of the template took 33 s on Windows against 7 s without these lines
+# (measured 2026-11-15), almost all of it process start-up. The answers are
+# matched back by name, never by order, so a file the tool could not read
+# shifts nothing. A name holding a backslash is escaped in the tool's output,
+# so it is digested on its own through standard input instead.
+fence_strong() {
+  local snap="$1" root="$2" tool name path p f d dirs gd="" cdir="" list
+  tool="$(snap_tool)" || return 0
+  name="${tool%% *}" path="${tool#* }"
+  [ "$name" = cksum ] && return 0
+  if [ -e "$root/.git" ] && [ ! -d "$root/.git" ] && dirs="$(git_dirs_of "$root")"; then
+    gd="$(printf '%s\n' "$dirs" | sed -n 1p)"
+    cdir="$(printf '%s\n' "$dirs" | sed -n 2p)"
+  fi
+  list="$snap.strong-list"
+  : > "$list" || return 0
+  snapshot_paths "$snap" | steering_filter "$snap" | LC_ALL=C sort -u | while IFS= read -r p; do
+    case "$p" in
+      .git-common/worktree/*) [ -n "$gd" ] || continue; f="$gd/${p#.git-common/worktree/}" ;;
+      .git-common/*) [ -n "$cdir" ] || continue; f="$cdir/${p#.git-common/}" ;;
+      *) f="$root/$p" ;;
+    esac
+    [ -f "$f" ] && [ ! -L "$f" ] || continue
+    case "$f" in
+      *\\*)
+        d="$(snap_digest "$f" "$name" "$path")" || d=unreadable
+        printf 'S%s 0 ./%s\n' "$d" "$p"
+        ;;
+      *) printf '%s\t%s\n' "$p" "$f" >> "$list" ;;
+    esac
+  done
+  [ -s "$list" ] || { rm -f "$list"; return 0; }
+  # The digest is the first 64 characters of an answer, and the name follows
+  # two characters later (two spaces, or a space and the * of binary mode).
+  cut -f2- "$list" | tr '\n' '\0' | {
+    if [ "$name" = shasum ]; then LC_ALL=C xargs -0 "$path" -a 256 --; else LC_ALL=C xargs -0 "$path" --; fi
+  } 2>/dev/null | LC_ALL=C awk -v lf="$list" '
+    { if (length($0) > 66) sum[substr($0, 67)] = substr($0, 1, 64) }
+    END {
+      while ((getline l < lf) > 0) {
+        t = index(l, "\t"); p = substr(l, 1, t - 1); f = substr(l, t + 1)
+        printf "S%s 0 ./%s\n", ((f in sum) ? sum[f] : "unreadable"), p
+      }
+    }'
+  rm -f "$list"
 }
 
 # changed_paths <before-snapshot> <after-snapshot>
@@ -937,6 +1000,28 @@ steering_filter() {
       }
       return 0
     }
+    # A file in a .claude/logs folder that a runner, a hook or a launchd job
+    # writes, which is never steering. <lp> is the lower-cased path; the last
+    # part of the line as written ($0) is used for the temporary names of the
+    # run log, matched as written because snapshot_tree leaves out that same
+    # name. A name whose fixed part differs in case belongs to no runner, and
+    # stays fenced. One function for the vault root and for a worktree, whose
+    # logs used to be left out whatever they held (1.7.1).
+    function logkept(lp,   n, part, base, m, opart, obase) {
+      n = split(lp, part, "/")
+      base = part[n]
+      m = split($0, opart, "/")
+      obase = opart[m]
+      return (base ~ /\.log$/ || base == "dream-pass.git-state.txt" || base == "promotion-pass.git-state.txt" \
+          || base == "dream-pass.prompt.md" || base == "promotion-pass.prompt.md" \
+          || base == "runner-tripwire" || base == "runner-inflight" \
+          || base ~ /^runner-tripwire\.tmp\./ || base ~ /^runner-inflight\.tmp\./ \
+          || obase ~ /^dream-agent\.run\.log\.runner-tmp\.[A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9]$/ \
+          || obase ~ /^promotion-agent\.run\.log\.runner-tmp\.[A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9]$/ \
+          || base == "dream-pass.launchd.out" || base == "dream-pass.launchd.err" \
+          || base == "promotion-pass.launchd.out" || base == "promotion-pass.launchd.err" \
+          || base == "vault-retention.launchd.out" || base == "vault-retention.launchd.err")
+    }
     # A snapshot line is "checksum size ./path", and a symlink checksum starts with L.
     phase == 1 {
       if ($0 ~ /^L/) {
@@ -955,25 +1040,10 @@ steering_filter() {
       # names left out are the ones snapshot_tree leaves out. snapshot_tree
       # matches them as written and this filter in any case, so a planted name
       # that differs only in case is listed and reported, and not contained. The
-      # temporary names of the run log match as written on both sides. The logs
-      # of a worktree belong to its session, and stay out.
+      # temporary names of the run log match as written on both sides. The
+      # .claude/logs of a worktree is held to the same rule below.
       if (lp ~ /^\.claude\/logs\//) {
-        n = split(lp, part, "/")
-        base = part[n]
-        # A temporary file of the run log is matched on the name as it stands,
-        # because snapshot_tree leaves out that same name. A name whose fixed
-        # part differs in case belongs to no runner, and stays fenced.
-        m = split($0, opart, "/")
-        obase = opart[m]
-        if (base ~ /\.log$/ || base == "dream-pass.git-state.txt" || base == "promotion-pass.git-state.txt" \
-            || base == "dream-pass.prompt.md" || base == "promotion-pass.prompt.md" \
-            || base == "runner-tripwire" || base == "runner-inflight" \
-            || base ~ /^runner-tripwire\.tmp\./ || base ~ /^runner-inflight\.tmp\./ \
-            || obase ~ /^dream-agent\.run\.log\.runner-tmp\.[A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9]$/ \
-            || obase ~ /^promotion-agent\.run\.log\.runner-tmp\.[A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9]$/ \
-            || base == "dream-pass.launchd.out" || base == "dream-pass.launchd.err" \
-            || base == "promotion-pass.launchd.out" || base == "promotion-pass.launchd.err" \
-            || base == "vault-retention.launchd.out" || base == "vault-retention.launchd.err") next
+        if (logkept(lp)) next
         print $0
         next
       }
@@ -994,6 +1064,15 @@ steering_filter() {
         if (wt != ".runner-line-break-names" && steer(wt, 0)) { print $0; next }
         sub(/^\.claude\/worktrees\/[^\/]+\//, "", lp)
         if (lp == ".runner-line-break-names") next
+        # The .claude/logs of a worktree gets the same rule as the root: what
+        # the hooks and runners of its session write stays out, and anything
+        # else is fenced. It used to be left out whatever it held, so a
+        # CLAUDE.md planted there passed (1.7.1).
+        if (lp ~ /^\.claude\/logs\//) {
+          if (logkept(lp)) next
+          print $0
+          next
+        }
       } else if (lp == ".claude/worktrees") {
         if (islink) print $0
         next
@@ -1052,7 +1131,13 @@ backup_steering() {
     : > "$tarball"
     return 0
   fi
-  ( cd "$root" && tar -cf "$tarball" -T "$tarball.list" ) 2>/dev/null
+  # tar is given its own copy of the list with ./ in front of every line, so a
+  # path such as -x/.gitignore is read as a name and not as an option (C7,
+  # 1.7.1). The plain list stays as it is, because containment greps it for the
+  # vault-relative path. Members are stored as ./path and extract to the same
+  # place.
+  sed 's|^|./|' "$tarball.list" > "$tarball.tarlist" || return 1
+  ( cd "$root" && tar -cf "$tarball" -T "$tarball.tarlist" ) 2>/dev/null
   want="$(awk 'END{print NR+0}' "$tarball.list")"
   have="$(tar -tf "$tarball" 2>/dev/null | awk 'END{print NR+0}')"
   [ "$have" -ge "$want" ] && [ "$want" -gt 0 ]
@@ -2120,6 +2205,12 @@ head_moved_backwards() {
 # after logging when a merge, rebase, cherry-pick, revert or bisect is in
 # progress, or HEAD is detached, because a commit would then land where the owner
 # did not choose.
+# What a git directory holds while an operation is in progress: a merge, a
+# rebase of either kind, a cherry-pick, a revert, a bisect, or a sequence of
+# them. One list, because git_preflight refuses to start on any of them and the
+# retention runner refuses to commit when one appears while it is running.
+GIT_OP_MARKERS="MERGE_HEAD rebase-merge rebase-apply CHERRY_PICK_HEAD REVERT_HEAD BISECT_LOG sequencer"
+
 git_preflight() {
   local root="$1" hooks="$2" log="$3" gd op top err="$2.rev-parse.err"
   VAULT_GIT=0
@@ -2148,7 +2239,7 @@ git_preflight() {
     printf '[%s] LOCKED: git did not name this vault'"'"'s git directory, so a git operation in progress cannot be ruled out. Not starting.\n' "$(ts)" >> "$log"
     return 75
   fi
-  for op in MERGE_HEAD rebase-merge rebase-apply CHERRY_PICK_HEAD REVERT_HEAD BISECT_LOG sequencer; do
+  for op in $GIT_OP_MARKERS; do
     if [ -e "$gd/$op" ]; then
       printf '[%s] LOCKED: a git operation is in progress in this vault (%s exists). Finish or abort it, then run again.\n' "$(ts)" "$gd/$op" >> "$log"
       return 75
