@@ -842,10 +842,20 @@ EOF
 # One file's fence digest on its own: the 64 hex digits, unreadable, or
 # malformed with a value from /dev/urandom. Not $RANDOM, which bash before 5.1
 # repeats in two subshells forked from the same parent, and the before and
-# after snapshots are exactly that.
+# after snapshots are exactly that. A file that can be read and that the tool
+# answered nothing for is malformed too, since a tool broken for every file
+# would otherwise give every file the same word before and after (round 3 of
+# the 1.7.1 review); only a file that cannot be read is unreadable.
 fence_digest() {
   local d
-  d="$(snap_digest "$1" "$2" "$3")" || { printf 'unreadable'; return 0; }
+  if ! d="$(snap_digest "$1" "$2" "$3")"; then
+    if [ -r "$1" ]; then
+      printf 'malformed-%s%s%s' "$(od -An -N8 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n')" "$$" "$(date +%s 2>/dev/null)"
+    else
+      printf 'unreadable'
+    fi
+    return 0
+  fi
   # The bare digest, as the batch gives it, so a file that goes one way in one
   # snapshot and the other way in the next does not read as changed:
   # snap_digest's answer ends ":-" or ":*-" after it.
@@ -856,7 +866,7 @@ fence_digest() {
   if [ "${#d}" -eq 64 ]; then
     printf '%s' "$d"
   else
-    printf 'malformed-%s%s' "$(od -An -N8 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n')" "$$"
+    printf 'malformed-%s%s%s' "$(od -An -N8 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n')" "$$" "$(date +%s 2>/dev/null)"
   fi
 }
 
@@ -897,7 +907,8 @@ fence_strong() {
   cut -f2- "$list" | tr '\n' '\0' | {
     if [ "$name" = shasum ]; then LC_ALL=C xargs -0 "$path" -a 256 --; else LC_ALL=C xargs -0 "$path" --; fi
   } 2>/dev/null | FS_LIST="$list" LC_ALL=C awk '
-    { h = substr($0, 1, 64)
+    { sub(/\r$/, "")
+      h = substr($0, 1, 64)
       if (length($0) > 66 && h !~ /[^0123456789abcdef]/) sum[substr($0, 67)] = h }
     END {
       lf = ENVIRON["FS_LIST"]

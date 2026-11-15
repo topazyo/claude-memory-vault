@@ -626,8 +626,10 @@ else
     WALK1_N=$((WALK1_N + 1))
     check_note "$ROOT/$file" "$file"
   done < <(cd "$ROOT" && find "${TIER_NAMES[@]}" \( -path '*/templates' -o -path '*/templates/*' -o \( -type f -path '20-projects/_logs/compaction-*.md' ! -path '20-projects/_logs/*/*' \) \) -prune -o -type f -name '*.md' -print0; printf '//find-status=%s\0' "$?")
+  WALK2_N=0
   while IFS= read -r -d '' file; do
     case "$file" in //find-status=*) FIND_RC2="${file#//find-status=}"; continue ;; esac
+    WALK2_N=$((WALK2_N + 1))
     case "$file" in
       *.md) ;;
       *)
@@ -645,27 +647,28 @@ else
   if [ "$FIND_RC1" != 0 ] || [ "$FIND_RC2" != 0 ]; then
     # find also fails when a file vanishes between being listed and being
     # read, which a sync client or an editor's temporary file does all the
-    # time, and that leaves no folder unread. One more walk, listing only,
-    # tells the two apart: a folder find cannot read fails it again (round 1
-    # of the 1.7.1 review). It counts the notes the first walk would have
-    # checked, too, because a folder that could not be read a moment ago and
-    # can now, such as a cloud placeholder or a network share, passes a walk
-    # that only asks whether it fails. More notes now than were checked means
-    # some were never read; a file that vanished only makes the count smaller
-    # (round 2). Known limit: files vanishing between the two walks can cancel
-    # out an unread folder's count.
+    # time, and that leaves no folder unread. One more walk tells the two
+    # apart: a folder find cannot read fails it again (round 1 of the 1.7.1
+    # review). It counts the notes and the links the two walks would have
+    # found, too, because a folder that could not be read a moment ago and can
+    # now, such as a cloud placeholder or a network share, passes a walk that
+    # only asks whether it fails. More now than the walks found means some were
+    # never read; a file that vanished only makes a count smaller (rounds 2 and
+    # 3). Known limits: files vanishing between the walks can cancel out an
+    # unread folder's count, and a note made between them reads as unread.
     RETRY_N=0
+    RETRY_L=0
     RETRY_RC=""
     while IFS= read -r -d '' file; do
       case "$file" in //find-status=*) RETRY_RC="${file#//find-status=}"; continue ;; esac
-      RETRY_N=$((RETRY_N + 1))
-    done < <(cd "$ROOT" && find "${TIER_NAMES[@]}" \( -path '*/templates' -o -path '*/templates/*' -o \( -type f -path '20-projects/_logs/compaction-*.md' ! -path '20-projects/_logs/*/*' \) \) -prune -o -type f -name '*.md' -print0 2>/dev/null; printf '//find-status=%s\0' "$?")
-    if [ "$RETRY_RC" = 0 ] && [ "$RETRY_N" -le "$WALK1_N" ]; then
+      if [ -L "$ROOT/$file" ]; then RETRY_L=$((RETRY_L + 1)); else RETRY_N=$((RETRY_N + 1)); fi
+    done < <(cd "$ROOT" && find "${TIER_NAMES[@]}" \( -path '*/templates' -o -path '*/templates/*' -o \( -type f -path '20-projects/_logs/compaction-*.md' ! -path '20-projects/_logs/*/*' \) \) -prune -o \( -type l -o -type f -name '*.md' \) -print0 2>/dev/null; printf '//find-status=%s\0' "$?")
+    if [ "$RETRY_RC" = 0 ] && [ "$RETRY_N" -le "$WALK1_N" ] && [ "$RETRY_L" -le "$WALK2_N" ]; then
       printf 'vault-check: find reported an error and a second walk read every folder, so a file most likely vanished while it was read; the scan is taken as complete.\n' >&2
     else
       UNREAD_WALK=1
-      printf 'vault-check: find could not read every content-tier folder (status %s and %s; a second walk gave status %s and found %s note(s) where %s were checked), so the notes in what it could not read were not checked. Its own message above names what it could not read.\n' \
-        "${FIND_RC1:-none}" "${FIND_RC2:-none}" "${RETRY_RC:-none}" "$RETRY_N" "$WALK1_N" >&2
+      printf 'vault-check: find could not read every content-tier folder (status %s and %s; a second walk gave status %s and found %s note(s) where %s were checked and %s link(s) where %s were), so the notes in what it could not read were not checked. Its own message above names what it could not read.\n' \
+        "${FIND_RC1:-none}" "${FIND_RC2:-none}" "${RETRY_RC:-none}" "$RETRY_N" "$WALK1_N" "$RETRY_L" "$WALK2_N" >&2
     fi
   fi
 fi

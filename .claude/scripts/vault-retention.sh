@@ -2616,20 +2616,27 @@ head_src_blob() {
 # far the run is thought to have got, because the two disagree exactly when this
 # is needed. True when every source is back where HEAD has it and no destination
 # is left.
-# put_back_killed <what that means for the put-back>
+# put_back_killed <whose git> <what that means for the put-back>
 # True, with the kill-failed mark, record and line written, when a watched git
-# of the put-back was stopped and may still be running.
+# was stopped and may still be running.
 put_back_killed() {
   [ "${RUN_KILL_FAILED:-0}" -eq 1 ] || return 1
   mark_kill_failed "$LIB_LOG" "${RUN_KILL_REPORT:-}"
   lib_logged
   write_recovery kill-failed
-  say "RECOVERY-NEEDED: a git command of the put-back was stopped and may still be running, so $1. $(shown_name "$STATE")/retention-inflight says where each file belongs."
+  say "RECOVERY-NEEDED: a git command of $1 was stopped and may still be running, so $2. $(shown_name "$STATE")/retention-inflight says where each file belongs."
   return 0
 }
 
 put_back() {
   local k=0 src dst ok=1 lock want pb_kill=0 line="" pb_head="" hs_rc=0
+  # A caller can arrive with a stop already unconfirmed: verify_moves' check
+  # timing out is one. The gate below may run no watched git of its own, and the
+  # first rename would clear the flag, so it is read here first (round 3 of the
+  # 1.7.1 review).
+  if put_back_killed "this run" "nothing was put back"; then
+    return 1
+  fi
   # Nothing is undone over a HEAD that moved and may hold the moves. A commit
   # made while this run was working may hold them, and taking them back would
   # undo whatever else that commit carried, which is a change of somebody
@@ -2652,7 +2659,7 @@ put_back() {
   if [ -z "$pb_head" ] || ! untouched_at "$pb_head"; then
     # The read untouched_at makes can itself be stopped and left running, and
     # that is the outcome to report, not a HEAD that moved.
-    if put_back_killed "nothing was put back"; then
+    if put_back_killed "the put-back" "nothing was put back"; then
       return 1
     fi
     write_recovery putback-head-moved
@@ -2746,7 +2753,7 @@ put_back() {
   # running; that is the outcome to report, not a HEAD that could not be read
   # (round 2 of the 1.7.1 review). index_of_moves asks through rgit, which
   # is not watched, so it cannot leave this flag set.
-  if put_back_killed "the put-back could not be checked"; then
+  if put_back_killed "the put-back" "the put-back could not be checked"; then
     return 1
   fi
   if [ "$hs_rc" -ne 0 ]; then
@@ -3198,6 +3205,14 @@ commit_loop() {
 # carries this run's nonce, or nothing. The whole range rather than the tip, as
 # recovery_check asks it, because a commit somebody makes on top of this run's
 # is not a reason to stop recognising this run's own.
+#
+# Round 1's is-ancestor test is not asked here on purpose, and --grep matches
+# the nonce anywhere in a message, so a rewritten copy of this run's commit
+# (an amend, a rebase, a cherry-pick -x that quotes the trailer) is found too.
+# That is safe because nothing is called OK on the strength of the nonce alone:
+# the commit found must also hold every judged blob and no source
+# (head_holds_moves). The walk covers only what is new since the start, which
+# is short except when the branch was moved onto other history.
 own_commit_in() {
   [ -n "$1" ] || return 0
   rgit log --format=%H --fixed-strings --grep="Vault-Retention-Run: $RETENTION_NONCE" "$HEAD_BEFORE..$1" 2>/dev/null \
@@ -3209,7 +3224,7 @@ own_commit_in() {
 # exit code of the last command. Also what a signal and a later run use, so
 # there is one answer to the question and not three.
 settle_outcome() {
-  local head_now parent ref_now start_tip own="" lock=""
+  local head_now parent ref_now start_tip own="" lock="" stray=""
   # do_commit clears this itself, but a signal can land between setting it and
   # clearing it, and this is the one place both the ordinary path and the
   # signal path come through. Everything below, the put-back included, must ask
@@ -3251,7 +3266,21 @@ settle_outcome() {
     # That is never called OK.
     if [ -n "$own" ] && [ "$ref_now" != "$START_REF" ]; then
       write_recovery other-branch
-      say "RECOVERY-NEEDED: this run's commit $own landed on ${ref_now:-a HEAD that names no branch it could read}, not on $START_REF, the branch this run started on, because the branch was switched while it committed. It is left alone. $(shown_name "$STATE")/retention-inflight says what was being moved."
+      say "RECOVERY-NEEDED: this run's commit $own landed on ${ref_now:-a HEAD that names no branch it could read}, not on $START_REF, the branch this run started on, because the branch was switched or renamed while it committed. It is left alone. $(shown_name "$STATE")/retention-inflight says what was being moved."
+      MOVING=0
+      return 71
+    fi
+  fi
+  # On neither: the branch was switched just before the swap and back again
+  # before this read, so the commit is on a branch that is neither. Putting
+  # the moves back would then report a commit that exists as one that does
+  # not, so every branch is asked before that (round 3 of the 1.7.1 review).
+  if [ -z "$own" ]; then
+    stray="$(rgit log --branches --format=%H --fixed-strings --grep="Vault-Retention-Run: $RETENTION_NONCE" --not "$HEAD_BEFORE" 2>/dev/null \
+      | LC_ALL=C awk 'NR == 1 { print; exit }')"
+    if [ -n "$stray" ]; then
+      write_recovery other-branch
+      say "RECOVERY-NEEDED: this run's commit $stray is on a branch other than $START_REF, the branch this run started on, because the branch was switched while it committed. It is left alone. $(shown_name "$STATE")/retention-inflight says what was being moved."
       MOVING=0
       return 71
     fi
@@ -3267,7 +3296,10 @@ settle_outcome() {
       else
         say "OK: $MOVED_N file(s) moved to $ARCH_REL and committed as $own. Something else committed while this run was working, so the commit sits on that rather than on the HEAD this run started from."
       fi
-      if [ "$own" != "$start_tip" ] && [ "$own" != "$head_now" ]; then
+      # The tip of the branch this run judged when it could be read, HEAD's
+      # otherwise, since HEAD can name another branch sitting at this commit.
+      if { [ -n "$start_tip" ] && [ "$own" != "$start_tip" ]; } \
+         || { [ -z "$start_tip" ] && [ "$own" != "$head_now" ]; }; then
         say "NOTE: something has been committed on top of this run's commit since. It is left as it is."
       fi
       if [ "$ref_now" != "$START_REF" ]; then
@@ -3286,9 +3318,9 @@ settle_outcome() {
     # the owner the first when it was the second sends them looking for a
     # disagreement that may not exist.
     if [ "$HEAD_HOLDS_UNKNOWN" -eq 1 ]; then
-      say "RECOVERY-NEEDED: the commit was made as $own and whether HEAD holds what was judged could not be established, so it is left alone. $(shown_name "$STATE")/retention-inflight says what was being moved."
+      say "RECOVERY-NEEDED: the commit was made as $own and whether that commit holds what was judged could not be established, so it is left alone. $(shown_name "$STATE")/retention-inflight says what was being moved."
     else
-      say "RECOVERY-NEEDED: the commit was made as $own but HEAD does not hold what was judged, so it is left alone. $(shown_name "$STATE")/retention-inflight says what was being moved."
+      say "RECOVERY-NEEDED: the commit was made as $own but that commit does not hold what was judged, so it is left alone. $(shown_name "$STATE")/retention-inflight says what was being moved."
     fi
     MOVING=0
     return 71

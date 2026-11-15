@@ -39,6 +39,11 @@ TS=$(date -Iseconds 2>/dev/null || date +%Y-%m-%dT%H:%M:%S%z 2>/dev/null || date
 is_secret() {
   local p base raw
   raw=$(printf '%s' "$1" | tr '\134' '/' | tr '[:upper:]' '[:lower:]')
+  # The same for tr, one step earlier (round 3 of the 1.7.1 review).
+  if [ -n "$1" ] && [ -z "$raw" ]; then
+    echo "[$TS] DEGRADED: tr could not normalise the path, so the read is refused: $1" >> "$LOG"
+    return 0
+  fi
   # An awk that fails or answers nothing would leave nothing to compare, and
   # nothing matches no secret, so the read is refused and logged instead
   # (round 2 of the 1.7.1 review). Only a path of dots, spaces and slashes
