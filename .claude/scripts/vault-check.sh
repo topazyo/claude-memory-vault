@@ -433,6 +433,8 @@ named_tier_rel() {
 
 # Links a scan refused, each one a note or folder of notes that was not read.
 refused=0
+# 1 when find could not read a content-tier folder in full (1.7.1).
+UNREAD_WALK=0
 refuse_link() {  # refuse_link <rel> <why>
   local shown_rel
   show "$1"; shown_rel="$SHOWN"
@@ -608,10 +610,22 @@ else
     { [ -d "$ROOT/$d" ] || [ -L "$ROOT/$d" ]; } && TIER_NAMES+=("$d")
   done
   # -print0 / read -d '': several vault notes have spaces in their filenames.
+  #
+  # find's own status comes back as a last record, //find-status=<n>, because
+  # a process substitution's status is lost and bash 3.2 cannot wait for one.
+  # No path find prints here can begin with //, since each begins with a tier
+  # name. A folder find could not read used to leave the scan short with exit
+  # 0 (1.7.1); now the run says so and exits 2 unless a note violates an
+  # invariant, as for a refused link. A walk that never reported is treated as
+  # one that failed.
+  FIND_RC1=""
+  FIND_RC2=""
   while IFS= read -r -d '' file; do
+    case "$file" in //find-status=*) FIND_RC1="${file#//find-status=}"; continue ;; esac
     check_note "$ROOT/$file" "$file"
-  done < <(cd "$ROOT" && find "${TIER_NAMES[@]}" \( -path '*/templates' -o -path '*/templates/*' -o \( -type f -path '20-projects/_logs/compaction-*.md' ! -path '20-projects/_logs/*/*' \) \) -prune -o -type f -name '*.md' -print0)
+  done < <(cd "$ROOT" && find "${TIER_NAMES[@]}" \( -path '*/templates' -o -path '*/templates/*' -o \( -type f -path '20-projects/_logs/compaction-*.md' ! -path '20-projects/_logs/*/*' \) \) -prune -o -type f -name '*.md' -print0; printf '//find-status=%s\0' "$?")
   while IFS= read -r -d '' file; do
+    case "$file" in //find-status=*) FIND_RC2="${file#//find-status=}"; continue ;; esac
     case "$file" in
       *.md) ;;
       *)
@@ -625,7 +639,12 @@ else
         ;;
     esac
     link_target_ok "$ROOT/$file" || refuse_link "$file" "$LINK_WHY"
-  done < <(cd "$ROOT" && find "${TIER_NAMES[@]}" \( -path '*/templates' -o -path '*/templates/*' -o \( -type f -path '20-projects/_logs/compaction-*.md' ! -path '20-projects/_logs/*/*' \) \) -prune -o -type l -print0)
+  done < <(cd "$ROOT" && find "${TIER_NAMES[@]}" \( -path '*/templates' -o -path '*/templates/*' -o \( -type f -path '20-projects/_logs/compaction-*.md' ! -path '20-projects/_logs/*/*' \) \) -prune -o -type l -print0; printf '//find-status=%s\0' "$?")
+  if [ "$FIND_RC1" != 0 ] || [ "$FIND_RC2" != 0 ]; then
+    UNREAD_WALK=1
+    printf 'vault-check: find could not read every content-tier folder (status %s and %s), so the notes in what it could not read were not checked. Its own message above names what it could not read.\n' \
+      "${FIND_RC1:-none}" "${FIND_RC2:-none}" >&2
+  fi
 fi
 
 printf 'vault-check: %s violation(s) across %s file(s) checked (as of %s).\n' \
@@ -636,6 +655,11 @@ printf 'vault-check: %s violation(s) across %s file(s) checked (as of %s).\n' \
 # caller that reads only the first.
 if [ "$refused" -gt 0 ]; then
   printf 'vault-check: %s link(s) refused, so what they hold was not checked; stderr names them, and the exit code is 2 unless a note violates an invariant.\n' "$refused"
+fi
+# The same for a folder find could not read, on stdout beside the count for
+# the same reason (1.7.1).
+if [ "$UNREAD_WALK" -eq 1 ]; then
+  printf 'vault-check: a content-tier folder could not be read in full, so the notes in it were not checked; stderr says which, and the exit code is 2 unless a note violates an invariant.\n'
 fi
 
 # The advisory findings, after the count line and apart from it, so a caller
@@ -742,4 +766,6 @@ fi
 # the full scan refused is the same kind of answer: notes it did not read.
 [ "$missing" -gt 0 ] && exit 2
 [ "$refused" -gt 0 ] && exit 2
+# And a content-tier folder find could not read in full (1.7.1).
+[ "$UNREAD_WALK" -eq 1 ] && exit 2
 exit 0
