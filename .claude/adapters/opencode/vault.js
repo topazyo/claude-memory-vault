@@ -15,9 +15,14 @@
 const EDIT_TOOLS = new Set(["write", "edit", "apply_patch"])
 
 // Case-insensitive: Windows and macOS file systems ignore case, so ".ENV" and
-// "Secrets/" open the same files as ".env" and "secrets/".
+// "Secrets/" open the same files as ".env" and "secrets/". Windows also opens
+// ".env ", ".env." and ".env::$DATA" as ".env", and "secrets./x" as secrets/x,
+// so each part loses an NTFS stream suffix and its trailing dots and spaces
+// before it is compared, as the Pi and omp guards do (1.7.1).
 function isSecret(path) {
-  const parts = String(path ?? "").toLowerCase().split(/[\\/]/)
+  const parts = String(path ?? "")
+    .split(/[\\/]/)
+    .map((part) => part.replace(/:.*$/s, "").replace(/[. ]+$/, "").toLowerCase())
   const base = parts[parts.length - 1]
   return base === ".env" || base.startsWith(".env.") || parts.includes("secrets")
 }

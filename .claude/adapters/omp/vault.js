@@ -803,8 +803,16 @@ function changedFiles(event, cwd) {
   const details = event.details ?? {}
   const input = event.input ?? {}
   const out = []
+  // Every spelling omp could have opened that is on disk now, because the first
+  // is the string as written: "@notes/x.md", ":notes/x.md" and "[notes/x.md#ABCD]"
+  // name notes/x.md, and linting the written form lints a file that is not
+  // there (1.7.1). When none is on disk the first is linted, so the lint still
+  // says it could not read the file rather than nothing being said.
   const add = (value, base = cwd) => {
-    if (typeof value === "string" && value !== "") out.push(candidatesLikeOmp(value, base)[0])
+    if (typeof value !== "string" || value === "") return
+    const forms = candidatesLikeOmp(value, base)
+    const present = forms.filter((path) => existsSync(path))
+    out.push(...(present.length > 0 ? present : [forms[0]]))
   }
   // An applied ast_edit names the files it changed relative to the folder omp
   // runs in (formatPathRelativeToCwd in omp's file-recorder.ts).

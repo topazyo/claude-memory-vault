@@ -30,9 +30,23 @@ TS=$(date -Iseconds 2>/dev/null || date +%Y-%m-%dT%H:%M:%S%z 2>/dev/null || date
 # Case matters because Windows and macOS file systems ignore it: .ENV and
 # Secrets/ open the same files. A directory read (Windsurf reports those too) of
 # secrets/ itself counts.
+#
+# Windows also opens ".env " and ".env." and ".env::$DATA" as .env, and
+# "secrets./x" as secrets/x, so each part of the path loses an NTFS stream
+# suffix (from the first colon) and then its trailing dots and spaces before it
+# is compared, as the Pi and omp guards do (C10, 1.7.1). A colon in a name on
+# another system cuts the part short as well, which can only refuse more.
 is_secret() {
   local p base
   p=$(printf '%s' "$1" | tr '\134' '/' | tr '[:upper:]' '[:lower:]')
+  p=$(printf '%s\n' "$p" | LC_ALL=C awk -F/ '{
+    for (i = 1; i <= NF; i++) {
+      part = $i
+      sub(/:.*$/, "", part)
+      sub(/[. ]+$/, "", part)
+      printf "%s%s", (i > 1 ? "/" : ""), part
+    }
+  }')
   base="${p##*/}"
   case "$base" in
     .env|.env.*) return 0 ;;

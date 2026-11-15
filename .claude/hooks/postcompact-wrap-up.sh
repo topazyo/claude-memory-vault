@@ -64,6 +64,11 @@ if [ -z "$session_id" ]; then
     "$ts" "compaction-$session_id.md" >> "$LOG_DIR/hook-events.log" 2>/dev/null
 fi
 [ -z "$transcript_path" ] && transcript_path="?"
+# Control bytes out of the two values that are written into the stub as they
+# are (1.7.1). A line break in trigger used to start new lines in the stub, a
+# heading among them, and each entry is meant to be one line.
+trigger="$(printf '%s' "$trigger" | LC_ALL=C tr -d '\000-\037\177')"
+transcript_path="$(printf '%s' "$transcript_path" | LC_ALL=C tr -d '\000-\037\177')"
 
 # Sanitize before the value ever reaches a filesystem path. A '/' or '..' in a
 # hook-supplied session_id would otherwise build a path outside 20-projects/_logs/,
@@ -76,14 +81,20 @@ raw_session_id="$session_id"
 session_id=$(printf '%s' "$session_id" | tr -c 'A-Za-z0-9._-' '_')
 session_id=$(printf '%s' "$session_id" | sed 's/^\.*//')
 [ -z "$session_id" ] && session_id="sanitized-$today"
+# Capped, because the file name has to fit in the 255 bytes a file system
+# allows a name (1.7.1). A 300-character id used to make a name too long to
+# create, so no stub was written and nothing said so. The checksum of the whole
+# id keeps two long ids that share their first 100 characters apart.
+if [ "${#session_id}" -gt 100 ]; then
+  session_id="${session_id:0:100}-$(printf '%s' "$raw_session_id" | cksum | cut -d' ' -f1)"
+fi
 [ "$session_id" != "$raw_session_id" ] && printf '%s  PostCompact: session_id sanitized (%s -> %s) before filename interpolation.\n' \
-  "$ts" "$raw_session_id" "$session_id" >> "$LOG_DIR/hook-events.log" 2>/dev/null
+  "$ts" "$(printf '%s' "$raw_session_id" | LC_ALL=C tr -d '\000-\037\177' | cut -c1-200)" "$session_id" >> "$LOG_DIR/hook-events.log" 2>/dev/null
 
 STUB="$LOGS_DIR/compaction-${session_id}.md"
 MAX_ENTRIES=50
 
-if [ ! -f "$STUB" ]; then
-  cat > "$STUB" <<EOF
+if [ ! -f "$STUB" ] && ! cat > "$STUB" 2>/dev/null <<EOF
 ---
 title: "Compaction stub — session ${session_id}"
 tier: medium
@@ -109,6 +120,11 @@ occurrence counting (see \`.claude/agents/dream-agent.md\`).
 ## Compactions
 
 EOF
+then
+  # Said rather than swallowed (1.7.1): a stub that could not be written is
+  # the one outcome this hook exists to prevent.
+  printf '%s  PostCompact: ERROR - the stub %s could not be written, so this compaction is not recorded there.\n' \
+    "$ts" "compaction-$session_id.md" >> "$LOG_DIR/hook-events.log" 2>/dev/null
 fi
 
 ENTRY_COUNT=$(awk '/^- /{n++} END{print n+0}' "$STUB" 2>/dev/null)
