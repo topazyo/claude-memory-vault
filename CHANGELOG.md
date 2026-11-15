@@ -50,7 +50,9 @@ can newly stop or change a run.
   commit is left alone with 71 and the branch it landed on named, never reported OK. Whether the
   commit landed is asked of the branch the run started on, across its history since the start,
   so a switch made just after the commit landed, or a commit somebody made on top of it, is OK
-  with a `NOTE:`, not a 71, an exit 4 or a commit credited to another tool.
+  with a `NOTE:`, not a 71, an exit 4 or a commit credited to another tool; and a commit left on
+  some other branch by a switch there and back is found and left alone with 71, never reported as
+  not made.
 - **A put-back over a HEAD that moved without touching this run's files now happens** (exit 3 or
   4), on all three paths that reach it, where it left a record and 71 for a vault one put-back
   from clean.
@@ -63,7 +65,8 @@ can newly stop or change a run.
   note that `CLAUDE.md` imports. Every file the fence covers now also has a SHA-256 fence line,
   where `sha256sum` or `shasum` is installed; a file the batched tool run does not answer for is
   digested on its own, so a tool that prints names another way cannot turn the line off; and an
-  answer that is not a SHA-256 reads as changed rather than as the same word every time.
+  answer that is not a SHA-256, or no answer for a file that can be read, reads as changed rather
+  than as the same word every time.
 - **A worktree's own `.claude/logs/` is fenced like the vault's**: what its session's hooks and
   runners write stays out, and a planted file, a `CLAUDE.md` say, is a steering change. Every file
   there was left out.
@@ -72,14 +75,15 @@ can newly stop or change a run.
   steering surfaces".
 - **`vault-check.sh` exits 2 when `find` cannot read a content-tier folder in full**, and says so
   after the count line. `find`'s status was thrown away and such a scan exited 0. A walk that
-  fails is repeated once, counting notes, so a file that vanished while it was read does not count
-  as a folder that could not be, and a folder that could not be read the first time and can the
-  second still does.
+  fails is repeated once, counting notes and links, so a file that vanished while it was read does
+  not count as a folder that could not be, and a folder that could not be read the first time and
+  can the second still does.
 - **`read-guard.sh` and the OpenCode plugin block `.env ` (a trailing space), `secrets./x`,
   `.env::$DATA`, the drive-relative `C:.env` and the short names `ENV~1` and `EN1A2B~1`**, which
   Windows opens as `.env` and `secrets/x`. Each path part now loses an NTFS stream suffix and
   trailing dots and spaces before it is compared, as the Pi and omp guards do. `read-guard.sh`
-  refuses the read, logged `DEGRADED:`, when `awk` fails on the path, where it let it through.
+  refuses the read, logged `DEGRADED:`, when `tr` or `awk` fails on the path, where it let it
+  through.
 - **`postcompact-wrap-up.sh`**: a line break in `trigger` or `transcript_path` no longer adds lines,
   a heading among them, to the stub; a session id over 100 characters is capped with a checksum, so
   a stub is written where the name was too long to create; a stub that cannot be written is logged.
@@ -125,9 +129,8 @@ can newly stop or change a run.
 3. **If you run `run-tests.sh` in the template project**, set `VAULT_TEMPLATE_MAINTAINER=1` first,
    or the template-only controls skip by name. In a vault, leave it unset.
 4. **Expect each scheduled pass's snapshots to take a little longer on Windows**, for the SHA-256
-   lines: about 3.5 seconds each for the template's own tree, and about 2 seconds for every
-   thousand files in a vault (measured 2026-11-15: 1.9 s to 5.5 s for 2,000 notes). A pass takes
-   two.
+   lines: about 3 seconds plus about 2 seconds per thousand files, each (measured 2026-11-15: from
+   1.9 s to 5.5 s per snapshot of a 2,000-note vault). A pass takes two.
 5. **If you kept the template's `.github/workflows/ci.yml`**, which no vault is ever offered, its
    suite steps export `VAULT_TEMPLATE_MAINTAINER=1` in the template's repository only, and its
    required lists gain this release's control ids. Nothing changes for a vault.
