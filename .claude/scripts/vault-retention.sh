@@ -159,6 +159,15 @@ HOOKS=""
 # 1 from the moment the recovery file is written until the outcome is settled.
 MOVING=0
 HEAD_BEFORE=""
+# The branch HEAD named when HEAD_BEFORE was read. git_preflight has refused a
+# detached HEAD by then, so this is always a full ref name. do_commit moves HEAD
+# only while it still names this branch, because a commit landing on whatever
+# branch somebody switched to is a commit on a branch nobody judged.
+START_REF=""
+# How many times do_commit builds its commit and tries to move HEAD onto it
+# before it gives up. Each try that loses starts again from the HEAD that won,
+# so this bounds a run that keeps meeting somebody else's commits.
+COMMIT_TRIES=3
 # The index do_commit builds its commit from, empty at every other moment. See
 # watched_git, which passes it to one call at a time.
 RETENTION_GIT_INDEX=""
@@ -2621,10 +2630,16 @@ put_back() {
   # already been reversed, so it could report the damage and never prevent it.
   # settle_outcome refuses for this reason before it calls here, and the other
   # two callers did not, so the refusal belongs here where all three meet it.
+  #
+  # Since 1.7.1 a HEAD that moved is accepted when it descends from where this
+  # run started, holds every source as judged and holds no destination
+  # (untouched_at). Such a commit holds none of the moves and changed none of
+  # the files, so there is nothing of anybody's to undo, and refusing there
+  # left a record and a tripwire for a vault that was one put-back from clean.
   pb_head="$(rgit rev-parse -q --verify 'HEAD^{commit}' 2>/dev/null)"
-  if [ -z "$pb_head" ] || [ "$pb_head" != "$HEAD_BEFORE" ]; then
+  if [ -z "$pb_head" ] || ! untouched_at "$pb_head"; then
     write_recovery putback-head-moved
-    say "RECOVERY-NEEDED: HEAD is not where this run started, so nothing is put back. A commit made while this run was working may hold the moves, and undoing them would undo whatever else it carried. $(shown_name "$STATE")/retention-inflight says where each file belongs."
+    say "RECOVERY-NEEDED: HEAD is not where this run started, so nothing is put back. A commit made while this run was working holds the moves, changes a file this run moves, or could not be read, and undoing the moves would undo whatever else it carried. $(shown_name "$STATE")/retention-inflight says where each file belongs."
     return 1
   fi
   index_lock_wait
@@ -2826,6 +2841,97 @@ head_holds_moves() {
   [ "$ok" -eq 1 ]
 }
 
+# git_reason
+# What git said on its last call, into the log: the first five non-blank lines
+# of $SNAP_DIR/git.err, each cut to 300 characters with control bytes removed.
+# Called the moment a step fails, because the next watched_git empties the file,
+# and the put-back that follows a failed commit makes several. Before 1.7.1 a
+# commit git refused left only "nothing was committed", and the reason, such as
+# a missing identity or a signing key gpg could not use, was gone.
+git_reason() {
+  local line
+  [ -s "$SNAP_DIR/git.err" ] || return 0
+  LC_ALL=C tr -d '\000-\010\013-\037\177' < "$SNAP_DIR/git.err" \
+    | LC_ALL=C awk 'NF { print substr($0, 1, 300); if (++n == 5) exit }' > "$SNAP_DIR/git.reason"
+  while IFS= read -r line; do say "    git: $line"; done < "$SNAP_DIR/git.reason"
+}
+
+# untouched_at <commit>
+# True when <commit> is the HEAD this run started at, or descends from it and
+# holds every source with the blob that was judged and no destination. Either
+# way nobody has touched a file this run moves: a commit built on <commit>
+# carries their work and this run's moves both, and putting the moves back
+# against it undoes nothing of theirs. False when any of it cannot be read.
+untouched_at() {
+  local c="$1" k=0
+  [ -n "$c" ] || return 1
+  [ "$c" = "$HEAD_BEFORE" ] && return 0
+  rgit merge-base --is-ancestor "$HEAD_BEFORE" "$c" >/dev/null 2>&1 || return 1
+  : > "$SNAP_DIR/untouched.in"
+  while [ "$k" -lt "${#SRCS[@]}" ]; do
+    printf '%s:%s\n%s:%s\n' "$c" "${SRCS[$k]}" "$c" "${DSTS[$k]}" >> "$SNAP_DIR/untouched.in"
+    k=$((k + 1))
+  done
+  # watched_git rather than rgit, for the reason head_holds_moves gives: a batch
+  # question asked with /dev/null for input comes back missing for everything,
+  # and "missing" is half of what this asks.
+  watched_git "$SNAP_DIR/untouched.out" "$SNAP_DIR/untouched.in" cat-file --batch-check || return 1
+  # Line pairs: the source must be the judged blob, the destination missing.
+  LC_ALL=C awk -v want="$(printf '%s ' ${MBLOBS[@]+"${MBLOBS[@]}"})" '
+    BEGIN { n = split(want, w, " ") }
+    { i++
+      k = int((i + 1) / 2)
+      if (i % 2 == 1) { if (!($2 == "blob" && $1 == w[k])) bad = 1 }
+      else if ($NF != "missing") bad = 1 }
+    END { exit (bad || i != 2 * n) ? 1 : 0 }' "$SNAP_DIR/untouched.out"
+}
+
+# commit_blocker
+# Prints why HEAD must not be moved now, or nothing. git_preflight refused all
+# of these before the run started, so meeting one here means somebody started
+# it while this run was working, and a commit then would land on a branch
+# nobody judged or conclude an operation that is not this run's.
+commit_blocker() {
+  local gd op ref
+  ref="$(rgit symbolic-ref -q HEAD 2>/dev/null)"
+  if [ "$ref" != "$START_REF" ]; then
+    printf 'HEAD no longer names %s' "$START_REF"
+    return 0
+  fi
+  gd="$(rgit rev-parse --absolute-git-dir 2>/dev/null)"
+  if [ -z "$gd" ]; then
+    printf 'git did not name the git directory, so an operation in progress cannot be ruled out'
+    return 0
+  fi
+  # The library's list, with the same list as a fallback. A 1.7.0 library does
+  # not define it, and under set -u the unset name would end this function's
+  # subshell with nothing printed, which reads as "nothing blocks the commit".
+  for op in ${GIT_OP_MARKERS:-MERGE_HEAD rebase-merge rebase-apply CHERRY_PICK_HEAD REVERT_HEAD BISECT_LOG sequencer}; do
+    if [ -e "$gd/$op" ]; then
+      printf 'a git operation was started while this run was working (%s exists)' "$op"
+      return 0
+    fi
+  done
+}
+
+# ref_lock_wait
+# Waits up to ten seconds for the branch's lock, or HEAD's, to go. A sync
+# client or an editor takes it for a moment when it commits. Returns 1 when one
+# is still there.
+ref_lock_wait() {
+  local l h i=0
+  l="$(rgit rev-parse --git-path "$START_REF.lock" 2>/dev/null)"
+  h="$(rgit rev-parse --git-path HEAD.lock 2>/dev/null)"
+  # Letters spelled out rather than a range, which a UTF-8 collation can widen.
+  case "$l" in /*|[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]:*) ;; ?*) l="$ROOT/$l" ;; esac
+  case "$h" in /*|[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]:*) ;; ?*) h="$ROOT/$h" ;; esac
+  while { { [ -n "$l" ] && [ -e "$l" ]; } || { [ -n "$h" ] && [ -e "$h" ]; }; } && [ "$i" -lt 10 ]; do
+    sleep 1
+    i=$((i + 1))
+  done
+  [ "$i" -lt 10 ]
+}
+
 # do_commit
 do_commit() {
   local k=0
@@ -2882,31 +2988,136 @@ do_commit() {
       say "COMMIT-FAILED: the index named ${idx_n:-0} of ${#DSTS[@]} moved file(s), so nothing was committed rather than commit a removal without its addition."
       return 0
     fi
+    commit_loop
+  fi
+  # Nothing is reported as the outcome from here either way. settle_outcome
+  # judges what this run did from the repository rather than from an exit
+  # code, and a commit that did not happen reaches it as a HEAD that did not
+  # move onto a commit of this run's.
+  return 0
+}
+
+# commit_loop
+# The commit, made so that it can only ever land on the commit its tree was
+# built from (1.7.1).
+#
+# Until 1.7.0 the runner read HEAD into its index and then let git commit take
+# the parent from HEAD again a moment later. A commit that landed between the
+# two, from a sync client or a pull, got this run's tree on top of it, which
+# took that commit's changes back out, and the run reported OK because
+# head_holds_moves only asks about this run's own files. Now HEAD is read once
+# as H, the tree is built from H, commit-tree makes a commit whose parent is H,
+# and update-ref moves HEAD to it only if HEAD is still H. When HEAD has moved,
+# the swap is refused and nothing of anybody's is undone; the run starts again
+# from the HEAD that won, as long as that HEAD left this run's files alone.
+#
+# What this changes besides the race. No commit hook runs, which was already
+# true because every git call here points core.hooksPath at an empty folder.
+# commit-tree reads no commit.gpgsign, so -S is passed when it is set (measured
+# on git 2.56: without it the commit is unsigned and gpg is never called).
+# commit-tree also ignores MERGE_HEAD, where git commit would have made a merge
+# commit, which commit_blocker now refuses before either could happen.
+commit_loop() {
+  local try=0 h tree htree new now sign="" moved=0 waited=0 subject why
+  if [ "$(rgit config --type=bool --get commit.gpgsign 2>/dev/null)" = true ]; then
+    sign="-S"
+  fi
+  subject="$(head -n 1 "$SNAP_DIR/commit-msg")"
+  while [ "$try" -lt "$COMMIT_TRIES" ]; do
+    try=$((try + 1))
+    # H, read once and used three times: for the tree, for the parent and as
+    # the value the swap expects. Reading HEAD again for any of them would let
+    # a commit landing in between put a tree from one HEAD on top of another,
+    # which is the revert this exists to stop.
+    h="$(rgit rev-parse -q --verify 'HEAD^{commit}' 2>/dev/null)"
+    if [ -z "$h" ]; then
+      say "COMMIT-FAILED: HEAD could not be read, so nothing was committed."
+      return 0
+    fi
+    why="$(commit_blocker)"
+    if [ -n "$why" ]; then
+      say "COMMIT-FAILED: $why, so nothing was committed."
+      return 0
+    fi
+    # A HEAD other than the one this run started at is built on only when its
+    # owner touched nothing this run moves. A commit that edited a source and
+    # was then built on would have that edit deleted by this run's removal of
+    # the source, and head_holds_moves would still say yes.
+    if ! untouched_at "$h"; then
+      # A HEAD that already holds the moves is not a failure: another tool
+      # committed them, and settle_outcome says so.
+      head_holds_moves && return 0
+      say "COMMIT-FAILED: HEAD moved to $h while this run was working and it changed a file this run moves, or could not be read, so nothing was committed on top of it."
+      return 0
+    fi
+    rm -f "$SNAP_DIR/commit-index"
     RETENTION_GIT_INDEX="$SNAP_DIR/commit-index"
-    # read-tree HEAD, not HEAD_BEFORE, and the difference is a lost commit.
-    #
-    # HEAD_BEFORE is read once at the start of the run, before the candidates
-    # are even judged. git commit takes its PARENT from HEAD as it is now but
-    # its TREE from this index, so seeding from HEAD_BEFORE builds a tree that
-    # never saw anything committed in between and lands it on top of that work,
-    # reverting it. `commit --only` could not do this, because it built from
-    # HEAD at commit time, and settle_outcome cannot see it either, because
-    # head_holds_moves only ever asks about this run's own sources and
-    # destinations. The run would report OK over somebody else's undone commit.
-    #
-    # Reading HEAD here reproduces --only exactly, including its own
-    # unavoidable and pre-existing race between reading HEAD and committing.
-    if watched_git "$SNAP_DIR/commit.out" /dev/null read-tree HEAD \
-       && watched_git "$SNAP_DIR/commit.out" "$SNAP_DIR/index-add" update-index -z --index-info \
-       && watched_git "$SNAP_DIR/commit.out" "$SNAP_DIR/index-rm" update-index --force-remove -z --stdin; then
-      watched_git "$SNAP_DIR/commit.out" /dev/null -c gc.auto=0 -c maintenance.auto=false \
-        commit -q --cleanup=verbatim -F "$SNAP_DIR/commit-msg"
+    if ! { watched_git "$SNAP_DIR/commit.out" /dev/null read-tree "$h" \
+           && watched_git "$SNAP_DIR/commit.out" "$SNAP_DIR/index-add" update-index -z --index-info \
+           && watched_git "$SNAP_DIR/commit.out" "$SNAP_DIR/index-rm" update-index --force-remove -z --stdin \
+           && watched_git "$SNAP_DIR/tree.out" /dev/null write-tree; }; then
+      RETENTION_GIT_INDEX=""
+      say "COMMIT-FAILED: the tree for the commit could not be built, so nothing was committed."
+      git_reason
+      return 0
     fi
     RETENTION_GIT_INDEX=""
-  fi
-  # Nothing is reported from here either way. settle_outcome judges what this
-  # run did from the repository rather than from an exit code, and a commit
-  # that did not happen reaches it as a HEAD that did not move.
+    tree="$(head -n 1 "$SNAP_DIR/tree.out")"
+    htree="$(rgit rev-parse -q --verify "$h^{tree}" 2>/dev/null)"
+    # H already holds exactly this tree, so another tool has committed the
+    # moves. git commit refused to make a commit that changes nothing, and
+    # commit-tree does not, so without this the run would add an empty commit
+    # whose trailers claim moves it did not make. settle_outcome finds the moves
+    # in HEAD and says who made them.
+    if [ -n "$tree" ] && [ "$tree" = "$htree" ]; then
+      return 0
+    fi
+    if ! watched_git "$SNAP_DIR/commit.out" "$SNAP_DIR/commit-msg" -c gc.auto=0 -c maintenance.auto=false \
+           commit-tree ${sign:+"$sign"} "$tree" -p "$h"; then
+      say "COMMIT-FAILED: git could not make the commit, so nothing was committed."
+      git_reason
+      return 0
+    fi
+    new="$(head -n 1 "$SNAP_DIR/commit.out")"
+    # Asked again as late as it can be. update-ref follows HEAD to whatever
+    # branch it names at that moment, and the compare is only of the commit, so
+    # a branch switched to another branch at the same commit would pass the swap
+    # and take this run's commit. What is left is the start-up of one git.
+    why="$(commit_blocker)"
+    if [ -n "$why" ]; then
+      say "COMMIT-FAILED: $why, so nothing was committed."
+      return 0
+    fi
+    if watched_git "$SNAP_DIR/swap.out" /dev/null update-ref -m "commit: $subject" HEAD "$new" "$h"; then
+      return 0
+    fi
+    # Whether HEAD moved is read from the repository, never from git's words,
+    # which are translated.
+    now="$(rgit rev-parse -q --verify 'HEAD^{commit}' 2>/dev/null)"
+    # The swap happened and git reported failure or was stopped anyway. Trying
+    # again would find this run's own commit at HEAD and have nothing to do.
+    [ -n "$now" ] && [ "$now" = "$new" ] && return 0
+    # A git that was stopped may still be running, and a second writer is the
+    # one thing worse than not knowing. settle_outcome reads what happened.
+    if [ "$RUN_TIMED_OUT" -ne 0 ] || [ "${RUN_KILL_FAILED:-0}" -eq 1 ]; then
+      say "COMMIT-FAILED: moving HEAD did not finish in time, so this run does not try again. A lock file git left may need removing."
+      return 0
+    fi
+    if [ -n "$now" ] && [ "$now" != "$h" ]; then
+      moved=$((moved + 1))
+      continue
+    fi
+    # HEAD did not move, so this was not a lost race: a lock somebody holds, or
+    # another refusal. One wait for the lock, then one more try.
+    if [ "$waited" -eq 0 ] && ref_lock_wait; then
+      waited=1
+      continue
+    fi
+    say "COMMIT-FAILED: git refused to move HEAD and HEAD had not moved, so nothing was committed."
+    git_reason
+    return 0
+  done
+  say "COMMIT-FAILED: HEAD moved before each of $moved attempts to move it onto this run's commit, so this run stops trying."
   return 0
 }
 
@@ -2977,20 +3188,49 @@ settle_outcome() {
     MOVING=0
     MOVED_N="${#SRCS[@]}"
     # HEAD_BEFORE is read at the start of the run, so an owner commit made while
-    # the candidates were still being judged puts this run's own commit here.
-    # The nonce is what tells the two apart, and without asking for it the log
-    # credited a stranger with work this run had just done.
+    # the candidates were still being judged puts this run's own commit here,
+    # and so does one that won a swap and was built on (commit_loop). The nonce
+    # is what tells the two apart, and without asking for it the log credited a
+    # stranger with work this run had just done.
     if printf '%s\n' "$msg" | LC_ALL=C grep -qxF "Vault-Retention-Run: $RETENTION_NONCE"; then
-      say "OK: $MOVED_N file(s) moved to $ARCH_REL and committed as $head_now. Something else committed while this run was judging, so the commit sits on that rather than on the HEAD this run started from."
+      say "OK: $MOVED_N file(s) moved to $ARCH_REL and committed as $head_now. Something else committed while this run was working, so the commit sits on that rather than on the HEAD this run started from."
       return 0
     fi
     say "NOTE: another tool committed the moves before this run could, so they are left as they are. HEAD is $head_now."
     return 0
   fi
+  # HEAD moved without touching anything this run moves, and this run's commit
+  # did not land: every swap lost, or one was stopped, or the branch or an
+  # operation changed under it. Putting the moves back undoes nothing of
+  # anybody else's, so the vault goes back to HEAD as it does when HEAD has not
+  # moved at all. Before 1.7.1 this was a record and exit 71 every time.
+  if untouched_at "$head_now"; then
+    say "COMMIT-FAILED: nothing of this run's was committed and HEAD moved to $head_now without touching the files this run moves, so the vault is being put back to what HEAD holds."
+    if put_back; then
+      MOVING=0
+      return 4
+    fi
+    MOVING=0
+    return 71
+  fi
   write_recovery head-moved
   say "RECOVERY-NEEDED: HEAD moved to $head_now while this run was working and it does not hold the moves, so nothing is put back. $(shown_name "$STATE")/retention-inflight says what was being moved."
   MOVING=0
   return 71
+}
+
+# clear_record <what the record was>
+# Removes the record recovery_check has found settled, except in a dry run,
+# which reports that a real run would clear it and leaves it where it is. A dry
+# run used to delete it and then print that nothing was written (C9, 1.7.1).
+# One helper for the three places a record is cleared, so one guard holds all.
+clear_record() {
+  if [ "$DRY_RUN" -eq 1 ]; then
+    say "An earlier run left a record of $1. This is a dry run, so the record is left in place; a real run would clear it."
+    return 0
+  fi
+  rm -f "$STATE/retention-inflight" 2>/dev/null
+  say "An earlier run left a record of $1. The record is cleared and this run goes on."
 }
 
 # recovery_check
@@ -3051,8 +3291,7 @@ recovery_check() {
   if [ -n "$rnonce" ] \
      && rgit log --format=%B "$rhead..$headnow" 2>/dev/null | LC_ALL=C grep -qxF "Vault-Retention-Run: $rnonce" \
      && head_holds_moves; then
-    rm -f "$f" 2>/dev/null
-    say "An earlier run left a record of moves that did land, and HEAD holds them. The record is cleared and this run goes on."
+    clear_record "moves that did land, and HEAD holds them"
     return 0
   fi
   # Or somebody else committed the moves, which the run that met them could not
@@ -3073,8 +3312,7 @@ recovery_check() {
   # gone, so a half moved vault, a partial commit or a commit of some other
   # content all fail it and still stop here.
   if rgit merge-base --is-ancestor "$rhead" "$headnow" >/dev/null 2>&1 && head_holds_moves; then
-    rm -f "$f" 2>/dev/null
-    say "An earlier run left a record of moves that another tool committed, and HEAD holds them. The record is cleared and this run goes on."
+    clear_record "moves that another tool committed, and HEAD holds them"
     return 0
   fi
   # Or nothing moved and every source is back where HEAD holds it.
@@ -3115,8 +3353,7 @@ recovery_check() {
     undone=0
   fi
   if [ "$undone" -eq 1 ]; then
-    rm -f "$f" 2>/dev/null
-    say "An earlier run left a record of moves that did not happen, and the vault is back where it started. The record is cleared and this run goes on."
+    clear_record "moves that did not happen, and the vault is back where it started"
     return 0
   fi
   say "TRIPWIRE: an earlier run could not say what its moves did, and the vault does not yet show either outcome. Nothing is moved until this is settled."
@@ -3392,6 +3629,11 @@ COPYEOF
   HEAD_BEFORE="$(rgit rev-parse -q --verify 'HEAD^{commit}' 2>/dev/null)"
   if [ -z "$HEAD_BEFORE" ]; then
     say "ERROR: HEAD names no commit, so there is no history to judge against. Refusing to run."
+    return 1
+  fi
+  START_REF="$(rgit symbolic-ref -q HEAD 2>/dev/null)"
+  if [ -z "$START_REF" ]; then
+    say "ERROR: HEAD names no branch, so a commit would land on no branch. Refusing to run."
     return 1
   fi
 
