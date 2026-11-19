@@ -745,6 +745,15 @@ load_manifest() {  # load_manifest <file> <tag> <out> <meta>
   bad="$(name_a_few "$TMPD/lm.list")"
   if [ -n "$bad" ]; then
     warn "MANIFEST-MALFORMED - $file holds entries this cannot read: $bad"
+    # The two manifests answer different questions, so a broken one leaves by
+    # different doors (C15, 1.7.1). The vault's own is a problem with this
+    # vault, exit 1. The source's belongs to the template copy named by --from,
+    # which says nothing about this vault, so it is "could not look", exit 2,
+    # the code a cut download or a half-copied folder should give.
+    if [ "$tag" = S ]; then
+      warn "That is the template copy's manifest, not this vault's, so nothing was compared and nothing here is wrong. Fetch the template again, then run this again."
+      exit 2
+    fi
     warn "Nothing was compared, because a manifest that cannot be parsed says nothing about the vault."
     exit 1
   fi
@@ -869,6 +878,18 @@ load_rules() {
   # So the selection here is now the same one the parser uses, a line that is
   # neither blank nor a comment, and the field count is checked rather than
   # assumed.
+  # A line that starts with a tab or a space is the one shape the selection
+  # above still let through (C14, 1.7.1). Split on tabs its class is empty, so
+  # every check below skipped it, and the parser's read drops a leading tab and
+  # used it, so "<TAB>Owned<TAB>docs/*" reached the manifest as an Owned rule.
+  # A class is the first thing on its line, so such a line is refused here. An
+  # indented comment is still a comment: the parser skips it, and so does this.
+  bad="$(LC_ALL=C awk '/^[\t ]/ && NF > 0 && $1 !~ /^#/ { print "line-" NR }' "$TMPD/rules.clean" | head -n 3 | tr '\n' ' ')"
+  if [ -n "$bad" ]; then
+    warn "RULE-CLASS - a rule's class has to be the first thing on its line, and these lines begin with a tab or a space: $bad"
+    warn "Read as they are, the class would be skipped by every check here and then used anyway. Nothing was classified."
+    exit 1
+  fi
   bad="$(LC_ALL=C awk -F'\t' '!/^#/ && NF > 0 && length($1) && NF != 2 { print "line-" NR }' "$TMPD/rules.clean" | head -n 3 | tr '\n' ' ')"
   if [ -n "$bad" ]; then
     warn "RULE-FIELDS - a rule is exactly two tab-separated fields, a class and a pattern, and these lines are not: $bad"
@@ -943,8 +964,22 @@ tracked_files() {
   # core.quotepath off, because it defaults on and turns a non-ASCII name into a
   # quoted octal escape. The path would then be reported missing from disk,
   # which is loud but names a reason that is not the reason.
-  ( cd "$ROOT" && GIT_TERMINAL_PROMPT=0 git -c core.quotepath=false ls-files 2>/dev/null ) \
-    | LC_ALL=C awk '{ sub(/\r$/, ""); if (length($0)) print }' | LC_ALL=C sort
+  #
+  # git's answer goes to a file so that its status is git's own. In a pipe the
+  # status was sort's, which is always 0, so a tree git could not list gave an
+  # empty list, --generate wrote a manifest of nothing but its header and
+  # exited 0, and --verify-manifest called the real one stale (C13, 1.7.1). An
+  # empty answer is refused the same way, because the template always tracks
+  # at least this script, so nothing tracked means nothing was looked at.
+  if ! ( cd "$ROOT" && GIT_TERMINAL_PROMPT=0 git -c core.quotepath=false ls-files ) > "$TMPD/ls-files.raw" 2>/dev/null; then
+    warn "NO-TRACKED - git could not list the tracked files here, so the manifest could not be built and nothing was compared or written."
+    return 1
+  fi
+  LC_ALL=C awk '{ sub(/\r$/, ""); if (length($0)) print }' "$TMPD/ls-files.raw" | LC_ALL=C sort
+  if ! LC_ALL=C awk '{ sub(/\r$/, ""); if (length($0)) { found = 1; exit } } END { exit !found }' "$TMPD/ls-files.raw"; then
+    warn "NO-TRACKED - git lists no tracked files here, so the manifest could not be built and nothing was compared or written."
+    return 1
+  fi
 }
 
 # The same rules read_manifest applies when it reads a manifest, applied here
@@ -2037,7 +2072,10 @@ do_adopt() {  # do_adopt <dir>
   done < "$TMPD/adopt.owned"
 
   say "recorded $SOURCE_VERSION as this vault's baseline, from $dir. Only the manifest was written and no other file was touched."
-  say "READ THIS. Every template file you had already changed before now is recorded as though the template shipped it that way, so from here on it reads as untouched."
+  # 1.7.1: this line used to say those files would read as untouched, which
+  # was never what happened. The baseline holds the template's own hashes, not
+  # this vault's, so a file changed here keeps differing from it.
+  say "READ THIS. The baseline is the template's own record of $SOURCE_VERSION, not a reading of your files, so every template file you had already changed keeps showing as changed in --status. So does a file still as an older release shipped it: compare those with that release before treating them as edits of yours."
   if [ "$adopt_absent" -gt 0 ]; then
     say "$adopt_absent template file(s) named by that baseline are not in this vault, so --status will report them as deleted until you either add them or accept the count. VERSION is normally one of them, because this does not write it for you."
   fi
@@ -2114,6 +2152,17 @@ case "$MODE" in
   --check|--diff|--adopt)
     [ -n "$FROM" ] || die_usage "$MODE needs --from <dir>, a template copy you fetched yourself."
     from_is_printable "$FROM" || die_usage "the folder named by --from holds a character this will not print. A quote or a control byte there would land in the copy commands this prints for you to run, so move the folder somewhere plainly named and try again."
+    # The copy plan is run from the vault root, so a folder given relative to
+    # wherever this was typed would not be found from there (C16, 1.7.1). It is
+    # written out in full from $PWD, the folder as the person typed it, rather
+    # than pwd -P, which can swap in a short or resolved name. The full form is
+    # checked again, because the folder it was typed in can hold a quote even
+    # when what was typed does not.
+    case "$FROM" in
+      /*|[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]:[\\/]*) ;;
+      *) FROM="${PWD%/}/$FROM" ;;
+    esac
+    from_is_printable "$FROM" || die_usage "the folder named by --from, written out in full from the folder this was run in, holds a character this will not print. A quote or a control byte there would land in the copy commands this prints for you to run, so run this from a plainly named folder or give --from in full."
     case "$MODE" in
       --check) do_check "$FROM"; exit $? ;;
       --diff)  do_diff  "$FROM"; exit $? ;;

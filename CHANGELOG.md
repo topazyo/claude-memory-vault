@@ -25,6 +25,125 @@ bash .claude/scripts/vault-update.sh --check --from ../template-new
 
 ---
 
+## 1.7.1 — 2026-11-15
+
+A patch release for the reproduced minors of the 1.6.0 review, led by a race in the retention
+runner that could silently revert somebody else's commit. Item 2 of the Adopting note lists what
+can newly stop or change a run.
+
+### Fixed
+
+- **The retention commit can no longer revert a commit that lands while it runs.** It read HEAD
+  into an index, built its tree, and let `git commit` take the parent from HEAD again a moment
+  later, so a commit from a sync client or a pull that landed in between was undone by the
+  archiving commit and the run still said OK. HEAD is now read once, the tree is built from it,
+  `git commit-tree` makes the commit with that HEAD as its parent, and `git update-ref` moves HEAD
+  only if HEAD is still that commit. A lost swap starts again from the HEAD that won, up to three
+  tries, while that HEAD descends from where the run started and changed none of the files it
+  moves; then the moves are put back (exit 4). A HEAD that changed one of them, or that no longer
+  descends from where the run started, such as an amend, is left alone with a recovery record
+  (71), because a commit on top would delete that change or build on a history nobody judged.
+  Moves another tool already committed get no empty commit of the runner's. A merge, rebase,
+  cherry-pick, revert or bisect started mid-run, or a branch switch, stops the commit: before,
+  `git commit` read `MERGE_HEAD` and concluded the owner's merge with the archiving commit
+  (measured). A branch switched in the instant of the swap itself is caught afterwards: the
+  commit is left alone with 71 and the branch it landed on named, never reported OK. Whether the
+  commit landed is asked of the branch the run started on, across its history since the start,
+  so a switch made just after the commit landed, or a commit somebody made on top of it, is OK
+  with a `NOTE:`, not a 71, an exit 4 or a commit credited to another tool; and a commit left on
+  some other branch by a switch there and back is found and left alone with 71, never reported as
+  not made.
+- **A put-back over a HEAD that moved without touching this run's files now happens** (exit 3 or
+  4), on all three paths that reach it, where it left a record and 71 for a vault one put-back
+  from clean.
+- **The retention log says why a commit was not made**, with the first lines git gave, such as a
+  missing identity or a signature gpg could not make. It said only that nothing was committed.
+- **`vault-retention.sh --dry-run` leaves a recovery record it would clear**, and says a real run
+  would clear it. It deleted the record and then printed that nothing was written.
+- **A file rewritten to the same size and `cksum` is seen by the fence.** `cksum` is a CRC that
+  four chosen bytes can match, and a forged `CLAUDE.md` passed unseen (measured), as did a forged
+  note that `CLAUDE.md` imports. Every file the fence covers now also has a SHA-256 fence line,
+  where `sha256sum` or `shasum` is installed; a file the batched tool run does not answer for is
+  digested on its own, so a tool that prints names another way cannot turn the line off; and an
+  answer that is not a SHA-256, or no answer for a file that can be read, reads as changed rather
+  than as the same word every time.
+- **A worktree's own `.claude/logs/` is fenced like the vault's**: what its session's hooks and
+  runners write stays out, and a planted file, a `CLAUDE.md` say, is a steering change. Every file
+  there was left out.
+- **A folder whose name starts with a dash no longer stops every pass.** The backup handed tar a
+  list where `-x/.gitignore` read as an option, and the pass refused with "could not back up the
+  steering surfaces".
+- **`vault-check.sh` exits 2 when `find` cannot read a content-tier folder in full**, and says so
+  after the count line. `find`'s status was thrown away and such a scan exited 0. A walk that
+  fails is repeated once, counting notes and links, so a file that vanished while it was read does
+  not count as a folder that could not be, and a folder that could not be read the first time and
+  can the second still does.
+- **`read-guard.sh` and the OpenCode plugin block `.env ` (a trailing space), `secrets./x`,
+  `.env::$DATA`, the drive-relative `C:.env` and the short names `ENV~1` and `EN1A2B~1`**, which
+  Windows opens as `.env` and `secrets/x`. Each path part now loses an NTFS stream suffix and
+  trailing dots and spaces before it is compared, as the Pi and omp guards do. `read-guard.sh`
+  refuses the read, logged `DEGRADED:`, when `tr` or `awk` fails on the path, where it let it
+  through.
+- **`postcompact-wrap-up.sh`**: a line break in `trigger` or `transcript_path` no longer adds lines,
+  a heading among them, to the stub; a session id over 100 characters is capped with a checksum, so
+  a stub is written where the name was too long to create; a stub that cannot be written is logged.
+- **The omp extension lints the note omp wrote** for a path written `@x`, `:x` or `[x#TAG]`, where
+  it linted the spelling as written, which names no file.
+- **`vault-update.sh`**: `--generate` and `--verify-manifest` in a tree git cannot list, or that
+  tracks nothing, exit 2 (`NO-TRACKED`) and write nothing, where `--generate` cut the manifest down
+  to its header with exit 0; a rule line that starts with a tab or a space is refused
+  (`RULE-CLASS`) rather than used past every check, while an indented comment is still skipped; a malformed manifest in the copy named by `--from` exits 2 and says
+  whose it is, where it gave 1, the code for a problem with this vault; a relative `--from` is
+  written out in full, so the copy plan works when pasted at the vault root, and a quote in the
+  folder it was typed in is refused; and `--adopt` no longer says that files you had changed will
+  read as untouched, which never happened: they keep showing as changed.
+
+### Changed
+
+- **`run-tests.sh` runs its template-only controls only with `VAULT_TEMPLATE_MAINTAINER=1`**, which
+  the template's CI sets for its own repository. It decided from three files every vault also has,
+  so in an owner's vault those controls ran and failed. It now prints which it took, and unsets
+  the variable before running anything else.
+
+### Adopting this
+
+1. **Take `.claude/scripts/vault-retention.sh` and `.claude/scripts/lib/runner-common.sh`
+   together**, with `.claude/scripts/run-tests.sh`. The library carries the operation list the
+   retention commit checks and the stronger fence. A 1.7.1 retention runner with a 1.7.0 library
+   still checks the same list, from a copy of its own.
+2. **What can newly stop or change a run:**
+   - The retention runner's commit is still signed when `commit.gpgsign` is true, now by passing
+     `-S` to `git commit-tree`, which does not read that setting itself. With no working key the
+     run exits 4 as before, now with git's reason in the log. It runs no commit hook, as before.
+   - `vault-check.sh` exits 2 for a content-tier folder it cannot read, which reaches the opt-in
+     commit gate. Give the folder back its read rights, or move it out of the tier.
+   - `read-guard.sh` and the OpenCode plugin refuse the spellings above. A file you meant to read
+     whose name only ends in a space or a dot is refused if it then reads as `.env` or `secrets`,
+     and so, on macOS or Linux, is a path with a part such as `Secrets: plan.md`, cut at its colon.
+   - The retention runner leaves a commit alone with 71 when HEAD was amended or otherwise
+     rewritten mid-run, or when its own commit landed on a branch switched at that moment.
+   - A pass that meets a change in a worktree's `.claude/logs/` other than a log, a tripwire or
+     the other left-out names now contains it and sets the tripwire.
+   - `vault-update.sh` gives 2 rather than 1 for a malformed template copy, and refuses a
+     `--from` whose full path holds a quote (exit 64).
+3. **If you run `run-tests.sh` in the template project**, set `VAULT_TEMPLATE_MAINTAINER=1` first,
+   or the template-only controls skip by name. In a vault, leave it unset.
+4. **Expect each scheduled pass's snapshots to take a little longer on Windows**, for the SHA-256
+   lines: about 3 seconds plus about 2 seconds per thousand files, each (measured 2026-11-15: from
+   1.9 s to 5.5 s per snapshot of a 2,000-note vault). A pass takes two.
+5. **If you kept the template's `.github/workflows/ci.yml`**, which no vault is ever offered, its
+   suite steps export `VAULT_TEMPLATE_MAINTAINER=1` in the template's repository only, and its
+   required lists gain this release's control ids. Nothing changes for a vault.
+6. The shipped files this release touches are `.claude/scripts/vault-retention.sh`,
+   `.claude/scripts/lib/runner-common.sh`, `.claude/scripts/vault-check.sh`,
+   `.claude/scripts/vault-update.sh`, `.claude/scripts/run-tests.sh`,
+   `.claude/hooks/read-guard.sh`, `.claude/hooks/postcompact-wrap-up.sh`,
+   `.claude/adapters/opencode/vault.js`, `.claude/adapters/omp/vault.js`, `docs/reference.md`,
+   `docs/updating.md` and `AGENTS.md`, plus `VERSION`, this file and `.claude/template-manifest`.
+   `.github/workflows/ci.yml` and `CONTRIBUTING.md` changed as well; a vault is offered neither.
+
+---
+
 ## 1.7.0 — 2026-11-14
 
 A minor release for checks that reported clean over files they did not read. It closes the gaps a

@@ -93,6 +93,12 @@ A release zip works just as well. Point `--from` at the folder that **contains `
 for a zip is the folder inside the archive rather than the folder you unpacked into. Pointing it
 one level too high gives `NOT-A-TEMPLATE` and says nothing about why.
 
+`--from` may be relative to wherever you run the command. Since 1.7.1 it is written out in full
+from that folder before anything else, so the copy plan it prints names the copy by its full path
+and works when pasted at the vault root, where a relative path would not. The full path must
+hold no single quote or control byte, or the run refuses (exit `64`), because the plan quotes it;
+run from a plainly named folder, or give `--from` in full.
+
 `--check` compares three things. What the template shipped at your version, what is on your disk
 now, and what the newer copy ships. That gives nine answers.
 
@@ -167,11 +173,14 @@ It writes `.claude/template-manifest` and touches nothing else. It needs a worki
 though it writes a single file, because a baseline you cannot then compare against is not worth
 recording, and finding that out now is kinder than finding it out on the first `--status`.
 
-Be clear about what it costs: **every template file you had already changed is recorded as though
-the template shipped it that way**, so from then on it reads as untouched. There is no way around
-that — the hashes were never written down, and no design recovers information that does not exist.
-Adopt against the oldest release you might plausibly have started from, so the tool over-reports
-what you changed rather than under-reporting it.
+Be clear about what it records: **the template's own hashes for the release you adopt against, not
+your files' hashes.** Every template file you had already changed therefore keeps showing as changed
+in `--status`, which is the safe direction. So does a file that is still as an older release
+shipped it, because the baseline is the release you named, not the one you started from: compare
+each such file with that release's tag before treating it as an edit of yours. (Before 1.7.1 this
+section and `--adopt` itself said the opposite, that changed files would read as untouched. That
+was never what happened.) Adopt against the oldest release you might plausibly have started from,
+so the tool over-reports what you changed rather than under-reporting it.
 
 It does **not** copy that folder's manifest. It writes a new one out of the entries this run read
 and accepted, after the path validation and after the narrowing. That distinction is worth the
@@ -331,8 +340,8 @@ timer precisely what the runners' snapshot fence exists to catch.
 | --- | --- |
 | `0` | It could look, and there is nothing to adopt. |
 | `10` | It could look, and there **is** something to adopt, or `--status` found local drift. |
-| `2` | It could **not** look, so it is saying nothing about the template. No manifest (`NO-MANIFEST`), no working hash tool (`HASH-UNAVAILABLE`), a hash tool named by `VAULT_HASH_TOOL` that is not one of the four (`HASH-TOOL-UNKNOWN`), an unreadable or non-template source (`NO-SOURCE`, `NOT-A-TEMPLATE`), a hash algorithm it does not know (`UNKNOWN-ALGORITHM`), a source older than this vault (`SOURCE-IS-OLDER`), a comparison of zero files on either side (`VACUOUS`, `SOURCE-VACUOUS`), a source that disagrees with its own manifest (`SOURCE-DISAGREES`), a source reaching an entry through a symbolic link below the folder you pointed at or naming one it cannot open (`SOURCE-SYMLINK`, `SOURCE-UNREADABLE`), a file of your own this could not open (`UNREADABLE`), a rules file that is not readable or that holds no rules (`NO-RULES`), or two copies that both claim one version and differ (`SAME-VERSION-DISAGREES`). |
-| `1` | This vault has a problem. The manifest cannot be parsed (`MANIFEST-MALFORMED`), `--verify-manifest` found it stale (`MANIFEST-STALE`), or the rules file cannot be used (`RULE-FIELDS`, `RULE-CLASS`, `RULE-DOUBLE-STAR`, `RULE-CHARACTER`). `--generate` also answers 1 when it refuses to write (`UNCLASSIFIED`, `BINARY`, `MISSING-TRACKED`, `UNWRITABLE-PATH`, `CASE-COLLISION`, `NO-VERSION`). |
+| `2` | It could **not** look, so it is saying nothing about the template. No manifest (`NO-MANIFEST`), no working hash tool (`HASH-UNAVAILABLE`), a hash tool named by `VAULT_HASH_TOOL` that is not one of the four (`HASH-TOOL-UNKNOWN`), an unreadable or non-template source (`NO-SOURCE`, `NOT-A-TEMPLATE`), a hash algorithm it does not know (`UNKNOWN-ALGORITHM`), a source older than this vault (`SOURCE-IS-OLDER`), a comparison of zero files on either side (`VACUOUS`, `SOURCE-VACUOUS`), a source that disagrees with its own manifest (`SOURCE-DISAGREES`), a source reaching an entry through a symbolic link below the folder you pointed at or naming one it cannot open (`SOURCE-SYMLINK`, `SOURCE-UNREADABLE`), a file of your own this could not open (`UNREADABLE`), a rules file that is not readable or that holds no rules (`NO-RULES`), two copies that both claim one version and differ (`SAME-VERSION-DISAGREES`), the template copy's own manifest cannot be parsed (`MANIFEST-MALFORMED`, naming the copy; `1` before 1.7.1), or, for `--generate` and `--verify-manifest`, git could not list the tracked files or lists none (`NO-TRACKED`, 1.7.1; nothing is written). |
+| `1` | This vault has a problem. The vault's own manifest cannot be parsed (`MANIFEST-MALFORMED`), `--verify-manifest` found it stale (`MANIFEST-STALE`), or the rules file cannot be used (`RULE-FIELDS`, `RULE-CLASS`, `RULE-DOUBLE-STAR`, `RULE-CHARACTER`; since 1.7.1 `RULE-CLASS` also refuses a rule line that starts with a tab or a space). `--generate` also answers 1 when it refuses to write (`UNCLASSIFIED`, `BINARY`, `MISSING-TRACKED`, `UNWRITABLE-PATH`, `CASE-COLLISION`, `NO-VERSION`). |
 | `11` | Refused because of the state of the vault rather than the command line. `--adopt` where a baseline already exists (`ALREADY-ADOPTED`). To adopt a different baseline on purpose, delete `.claude/template-manifest` and run it again. It is `11` rather than `3` because the retention runner already answers `3` for a partial pass, and the numbering [`reference.md` §10](reference.md#10-exit-codes-and-log-locations) publishes is one numbering across all four scripts, so that a caller reading a code does not have to know which of them it ran. |
 | `6` | A manifest entry named a path outside the vault (`PATH-BLOCKED`). |
 | `64` | The command line was wrong, or `--generate` was run without `VAULT_TEMPLATE_MAINTAINER=1` (`NOT-THE-TEMPLATE`). |

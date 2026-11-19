@@ -27,9 +27,13 @@ names, hostnames, and absolute paths containing a username.
 Run both checkers:
 
 ```bash
-bash .claude/scripts/run-tests.sh     # control suite for the hooks
-bash .claude/scripts/vault-check.sh   # frontmatter invariants
+VAULT_TEMPLATE_MAINTAINER=1 bash .claude/scripts/run-tests.sh   # control suite, template controls on
+bash .claude/scripts/vault-check.sh                              # frontmatter invariants
 ```
+
+Since 1.7.1 the suite's template-only controls, the ones that read this repository's own manifest,
+changelog and release script, run only with `VAULT_TEMPLATE_MAINTAINER=1`, which `ci.yml` sets for
+this repository. Without it they skip by name, which is what a vault made from the template wants.
 
 Both must pass. For `vault-check.sh`, read the file count as well as the violation count:
 `0 violations across 0 files` means it scanned nothing, which is a broken invocation, not a pass.
@@ -258,9 +262,10 @@ In a pull request that changes a shipped file, or that changes which files are s
    ```
    The environment variable is explained under *Adding or removing a file* above, and without it
    this refuses with exit 64.
-4. **Run `bash .claude/scripts/run-tests.sh`.** `tmpl-version-agrees` fails a release whose three
-   statements of the version disagree, and `tmpl-changelog-adopting` fails one whose newest entry
-   carries no adopting note. Neither fires unless somebody runs the suite.
+4. **Run `VAULT_TEMPLATE_MAINTAINER=1 bash .claude/scripts/run-tests.sh`.** `tmpl-version-agrees`
+   fails a release whose three statements of the version disagree, and `tmpl-changelog-adopting`
+   fails one whose newest entry carries no adopting note. Neither fires unless somebody runs the
+   suite with that variable set: without it both skip by name (1.7.1).
 
 After it merges, `main` carries a version that names no tag, and the repository hygiene job goes
 red saying so. Clearing that red takes the four steps below and then a re-run of that job.
