@@ -14950,19 +14950,38 @@ chmod +x "$TMP/ac-shape-nul"
 ac_got="$(ac_decide "$TMP/ac-shape-nul")"
 [ "$ac_got" = 'rc=127 ran=1 exit=79 log=1' ] || ac_bad="$ac_bad [nul: $ac_got]"
 # An interpreter named env that is not the system's, which may find its
-# command some other way than PATH. Its path goes in the #! line, so only
-# where the temp path has no blank in it.
-case "$TMP" in
-  *[[:space:]]*) : ;;
-  *)
-    mkdir -p "$TMP/ac-bin"
-    printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/ac-bin/env"
-    printf '#!%s no-such-command-for-vault-tests\nexit 127\n' "$TMP/ac-bin/env" > "$TMP/ac-shape-otherenv"
-    chmod +x "$TMP/ac-bin/env" "$TMP/ac-shape-otherenv"
-    ac_got="$(ac_decide "$TMP/ac-shape-otherenv")"
-    [ "$ac_got" = 'rc=127 ran=1 exit=79 log=1' ] || ac_bad="$ac_bad [another env: $ac_got]"
-    ;;
-esac
+# command some other way than PATH. Its path goes in the #! line, so it is
+# made under a short folder of its own rather than $TMP, which can be long
+# enough to reach the length cap first and then this would test nothing.
+ac_envdir="$(mktemp -d /tmp/ae.XXXXXX 2>/dev/null)"
+if [ -n "$ac_envdir" ] && [ -d "$ac_envdir" ]; then
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$ac_envdir/env"
+  printf '#!%s no-such-command-for-vault-tests\nexit 127\n' "$ac_envdir/env" > "$TMP/ac-shape-otherenv"
+  chmod +x "$ac_envdir/env" "$TMP/ac-shape-otherenv"
+  ac_otherenv_line="$(head -n 1 "$TMP/ac-shape-otherenv")"
+  case "$ac_otherenv_line" in
+    *[[:space:]]*[[:space:]]*) ac_bad="$ac_bad [fixture: the other env's #! line holds a blank in its path: $ac_otherenv_line]" ;;
+  esac
+  [ "${#ac_otherenv_line}" -lt 127 ] || ac_bad="$ac_bad [fixture: the other env's #! line is ${#ac_otherenv_line} bytes, past the cap]"
+  ac_got="$(ac_decide "$TMP/ac-shape-otherenv")"
+  [ "$ac_got" = 'rc=127 ran=1 exit=79 log=1' ] || ac_bad="$ac_bad [another env: $ac_got]"
+  rm -f "$ac_envdir/env"
+  rmdir "$ac_envdir" 2>/dev/null
+else
+  ac_bad="$ac_bad [fixture: no folder could be made under /tmp for the other env]"
+fi
+# The length cap at both ends: a 150-byte line is past it, and a line of
+# about 100 bytes naming a missing command is read and passes 127 through.
+ac_mid="$(printf '%135s' '' | tr ' ' a)"
+printf '#!/usr/bin/env %s\nexit 127\n' "$ac_mid" > "$TMP/ac-shape-mid"
+chmod +x "$TMP/ac-shape-mid"
+ac_got="$(ac_decide "$TMP/ac-shape-mid")"
+[ "$ac_got" = 'rc=127 ran=1 exit=79 log=1' ] || ac_bad="$ac_bad [150-byte line: $ac_got]"
+ac_short="$(printf '%85s' '' | tr ' ' b)"
+printf '#!/usr/bin/env %s\nexit 127\n' "$ac_short" > "$TMP/ac-shape-short"
+chmod +x "$TMP/ac-shape-short"
+ac_got="$(ac_decide "$TMP/ac-shape-short")"
+[ "$ac_got" = 'rc=127 ran=1 exit=127 log=0' ] || ac_bad="$ac_bad [100-byte line, read as missing: $ac_got]"
 printf '#! /no/such/interpreter\nexit 127\n' > "$TMP/ac-shape-blank"
 chmod +x "$TMP/ac-shape-blank"
 ac_got="$(ac_decide "$TMP/ac-shape-blank")"
@@ -24417,8 +24436,10 @@ if [ "$SUITE_IS_TEMPLATE" != 1 ]; then
 else
 sf_doc="$ROOT/docs/updating.md"
 # The whole token after the =, up to white space or shell punctuation, so a
-# name such as update2 or Update is judged as itself and not as a prefix.
-sf_named="$(LC_ALL=C grep -o 'RUN_TESTS_ONLY=[^][:space:]`"'"'"'|;)(<>&]*' "$sf_doc" 2>/dev/null | LC_ALL=C sed 's/^RUN_TESTS_ONLY=//' | LC_ALL=C sort -u | tr '\n' ' ')"
+# name such as update2 or Update is judged as itself and not as a prefix. A
+# full stop, comma or colon ends it too, since no section name holds one and
+# prose may put one after the name.
+sf_named="$(LC_ALL=C grep -o 'RUN_TESTS_ONLY=[^][:space:]`"'"'"'|;)(<>&.,:]*' "$sf_doc" 2>/dev/null | LC_ALL=C sed 's/^RUN_TESTS_ONLY=//' | LC_ALL=C sort -u | tr '\n' ' ')"
 sf_bad=''
 [ -f "$sf_doc" ] || sf_bad="$sf_bad fixture:no-docs/updating.md"
 case " $sf_named " in *" update "*) : ;; *) sf_bad="$sf_bad updating.md-names-no-update-section-run" ;; esac

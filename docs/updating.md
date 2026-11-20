@@ -47,7 +47,7 @@ with every other script here.
 No network, no git, no second copy of the template. It reads
 `.claude/template-manifest` — which shipped with your vault and records what the template's files
 looked like at the version you have — hashes your copies, and tells you which of them you have
-changed.
+changed. Its output begins like this, and goes on to list the files it counted:
 
 ```
 vault-update: this vault records template version X.Y.Z.
@@ -200,7 +200,9 @@ releases is one comparison, not one per release:
    in between, because it compares your record, your disk and that copy rather than version numbers.
    Do not step through the releases in between with `--check`: each step would report the files the
    previous one moved as changed here.
-2. **Read every CHANGELOG section newer than your recorded version**, and apply their **Adopting
+2. **Read every CHANGELOG section newer than the last release whose notes you applied**, which is
+   your recorded version unless you have taken an update before without `--adopt`, and apply their
+   **Adopting
    this** notes the way the top of [`CHANGELOG.md`](../CHANGELOG.md) says: in release order. The
    notes carry what no copy plan can, such as a line to add to a file you customized.
 3. **Before you paste any `cp` line**, settle the two buckets nothing will copy for you: *Moved

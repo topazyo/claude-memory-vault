@@ -65,7 +65,7 @@ adopter's machine for a reason that turned out to be the runners'.
   cause, notes written by a harness that runs no lint after a write.
 - **`docs/updating.md`** says where to find the template's address, how to catch up across several
   releases in one comparison, which section of the control suite to run first after an update and
-  how long the whole suite takes to finish, and that the files the template keeps for itself make no
+  how to run the whole suite so that it is not cut short, and that the files the template keeps for itself make no
   difference to a vault.
 
 ### Adopting this
@@ -77,7 +77,9 @@ adopter's machine for a reason that turned out to be the runners'.
    runner needs the newer library, nor the library a newer runner.
 2. **What can newly change a run:** a dream or promotion pass whose agent cannot start for the reason
    above leaves with 127 where it left with 79. A scheduler or script that treated 79 as "the agent
-   failed" and 127 as "not installed" now gets the second, which is what happened.
+   failed" and 127 as "not installed" now gets the second, which is what happened. The other way
+   round, a wrapper that deletes itself and then leaves with 127 now leaves as 79 where it left
+   with 127.
 3. **If you run passes through a wrapper**, check its first line: an interpreter given by absolute
    path, or `#!/usr/bin/env <command>`, is what the runner can read. A `#!` line ending in a carriage
    return starts on Git Bash and fails on Linux and macOS, so save wrappers with LF line endings.

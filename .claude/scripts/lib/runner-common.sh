@@ -4461,8 +4461,8 @@ AGENT_RESERVED_STATUSES="2 3 4 5 64 70 75 78 79 124 125 127 129 130 143"
 # agent_interpreter_missing <bin>
 # Returns 0 only when <bin> cannot start because its #! line names something
 # that is not there, in one of two shapes: an absolute interpreter that is not
-# an executable file, or an absolute env followed by a plain command name that
-# is not on PATH. bash 5.2 gives 127 for the first ("cannot execute: required
+# an executable file, or /usr/bin/env or /bin/env followed by a plain command
+# name that is not on PATH. bash 5.2 gives 127 for the first ("cannot execute: required
 # file not found"; 5.3 and 3.2 give 126) and env gives 127 for the second, and
 # neither code means the agent ran. Returns 1 for everything else, including
 # what it cannot read or parse (a relative interpreter, an env other than
@@ -4482,6 +4482,7 @@ agent_interpreter_missing() {
   [ -f "$p" ] && [ -r "$p" ] || return 1
   line=''
   IFS= read -r -n 256 line 2>/dev/null < "$p"
+  # Bytes, as the kernel counts them, under the runners' LC_ALL=C.
   [ "${#line}" -lt 127 ] || return 1
   case "$line" in '#!'*) ;; *) return 1 ;; esac
   case "$line" in *$'\r'*) return 1 ;; esac
