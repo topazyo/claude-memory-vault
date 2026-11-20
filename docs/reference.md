@@ -97,15 +97,10 @@ plugin accepts exactly one template folder, while this layout co-locates a `temp
 inside each tier, so any single value would point somewhere wrong. Set the folder yourself, or use
 Templater.
 
-**Renaming a tier folder is a multi-file edit.** The folder names are hardcoded independently in,
-**at minimum**: `AGENTS.md`, `.claude/hooks/vault-lint.sh`, `.claude/scripts/vault-check.sh` (its
-`TIERS=` line), `.claude/hooks/postcompact-wrap-up.sh`, `.claude/agents/dream-agent.md`,
-`.claude/agents/promotion-agent.md`, all four `.claude/rules/*.md`, all five skills,
-`30-knowledge/moc/VAULT-INDEX.md` (every Dataview query names folders), `dream-pass.sh` and
-`promotion-pass.sh` (their write fences name folders), `vault-retention.sh` (it names both
-`20-projects/_logs` and `99-archive/20-projects/_logs`), the fixtures in
-`.claude/scripts/run-tests.sh`, `.obsidian/daily-notes.json`, and `.gitignore`. Treat that as a floor, not an inventory. Grep the whole repo for the old name
-before you believe you are done. See [`customizing.md`](customizing.md) § 2 for the procedure.
+**Renaming a tier folder is a multi-file edit.** The folder names are hardcoded independently in
+many files. The one complete list of them, held by a control in the template's own CI, is the
+table in [`customizing.md`, section 2](customizing.md#2-renaming-or-adding-a-tier-folder), with
+the procedure and the grep that finds your own files.
 
 ---
 

@@ -356,6 +356,7 @@ tmpl-release-uncommitted ubuntu macos windows
 tmpl-release-unwritten-not-empty ubuntu macos windows
 tmpl-release-vacuous ubuntu macos windows
 tmpl-release-version-spelling ubuntu macos windows
+tmpl-rename-table ubuntu macos windows
 tmpl-retired-listed ubuntu macos windows
 tmpl-rules-character ubuntu macos windows
 tmpl-rules-refused ubuntu macos windows

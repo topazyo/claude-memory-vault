@@ -579,16 +579,12 @@ that means before adopting it.
 - **Promotion is manual by design, which means it can simply not happen.** The medium tier will
   fill with promotion candidates that nobody promotes. The dream-agent surfaces them; it cannot
   make you act.
-- **The tier folder names are hardcoded in many places.** Renaming a tier touches, at minimum,
-  `AGENTS.md`, `.claude/hooks/vault-lint.sh`, `.claude/scripts/vault-check.sh` (its `TIERS=`
-  line), `.claude/hooks/postcompact-wrap-up.sh`, both agents, all four files in
-  `.claude/rules/`, all five skills, `30-knowledge/moc/VAULT-INDEX.md` (every Dataview query
-  names folders), `dream-pass.sh`, `promotion-pass.sh`, `vault-retention.sh` and
-  `lib/runner-common.sh`, the `run-tests.sh` fixtures,
-  `.obsidian/daily-notes.json`, and `.gitignore`. Treat that list as a floor, not an inventory,
-  and grep for the old folder name before you declare the rename done. It is the template's
-  largest customization cost, and it is worth deciding on the folder names before you have a
-  thousand notes rather than after.
+- **The tier folder names are hardcoded in many places.** The one complete list of the files a
+  rename touches is the table in
+  [`customizing.md`, section 2](customizing.md#2-renaming-or-adding-a-tier-folder), and grep
+  for the old folder name in your own files before you declare the rename done. It is the
+  template's largest customization cost, and it is worth deciding on the folder names before you
+  have a thousand notes rather than after.
 - **Some of the value depends on Obsidian.** Dataview is required for the dashboards; without it
   the vault is still a perfectly good directory of markdown, but the queries render as inert
   code blocks. Obsidian also opens an unfamiliar vault in Restricted Mode, where community

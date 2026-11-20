@@ -23511,6 +23511,60 @@ else
   fi
 fi
 
+# Release C (M3): the list of files a tier rename has to reach is one table,
+# in docs/customizing.md section 2, and it is complete. It was kept in five
+# places that disagreed, and every copy missed files. Every tracked file that
+# names a tier folder must be covered by a row of the table (the row names
+# the file, or a folder holding it, written with its trailing /), and every
+# row must name something tracked. Left out, each for its reason: the prose
+# documents, which link to the table instead (docs/, README.md, CHANGELOG.md,
+# CONTRIBUTING.md); the notes in the content tiers, which are the vault and
+# not its machinery (VAULT-INDEX.md is in the table all the same, for its
+# queries); and .github/, which never reaches a vault. Deleting a row from a
+# copy of the table must make the check name that row's files.
+rt_rows() {  # rt_rows <customizing.md> - the paths in the first cell of each row of the table
+  awk '/^### The high-risk subset/ { s = 1 }
+    s && /^\| File \|/ { t = 1; next }
+    t && /^\|---/ { next }
+    t && /^\|/ { c = $0; sub(/^\| */, "", c); sub(/ *\|.*$/, "", c)
+      while (match(c, /`[^`]+`/)) { print substr(c, RSTART + 1, RLENGTH - 2); c = substr(c, RSTART + RLENGTH) }
+      next }
+    t { exit }' "$1"
+}
+rt_check() {  # rt_check <customizing.md> - prints "missing <file>" and "stale <row>" lines
+  local rows
+  rows="$(rt_rows "$1")"
+  git -C "$ROOT" grep -lIE '01-inbox|10-daily|20-projects|30-knowledge|31-standards|40-llm-wiki|90-auto-memory|99-archive' -- . \
+    | LC_ALL=C grep -vE '^(docs/|README\.md$|CHANGELOG\.md$|CONTRIBUTING\.md$|\.github/|01-inbox/|10-daily/|20-projects/|30-knowledge/|31-standards/|40-llm-wiki/|90-auto-memory/|99-archive/)' \
+    | while IFS= read -r f; do
+        printf '%s\n' "$rows" | awk -v f="$f" '$0 == f || (substr($0, length($0)) == "/" && index(f, $0) == 1) { hit = 1 } END { exit !hit }' \
+          || printf 'missing %s\n' "$f"
+      done
+  printf '%s\n' "$rows" | while IFS= read -r r; do
+    [ -n "$r" ] || continue
+    [ -n "$(git -C "$ROOT" ls-files -- "$r" | head -n 1)" ] || printf 'stale %s\n' "$r"
+  done
+}
+if [ "$VU_IS_TEMPLATE" != 1 ]; then
+  skip tmpl-rename-table "VAULT_TEMPLATE_MAINTAINER is not 1, so this is taken to be a vault, whose own files are its owner's to list"
+elif ! command -v git >/dev/null 2>&1; then
+  skip tmpl-rename-table "the rename table is held against the tracked files, and git is not installed"
+else
+  ran tmpl-rename-table
+  rt_doc="$ROOT/docs/customizing.md"
+  rt_n="$(rt_rows "$rt_doc" | awk 'END { print NR + 0 }')"
+  rt_out="$(rt_check "$rt_doc")"
+  # A copy without the row for vault-retention.sh must name that file.
+  awk '!/^\| `\.claude\/scripts\/vault-retention\.sh` \|/' "$rt_doc" > "$VU/rt-copy.md"
+  rt_cut="$(rt_check "$VU/rt-copy.md")"
+  if [ "$rt_n" -ge 20 ] && [ -z "$rt_out" ] && printf '%s\n' "$rt_cut" | grep -qx 'missing .claude/scripts/vault-retention.sh' \
+     && ! cmp -s "$rt_doc" "$VU/rt-copy.md"; then
+    ok "the tier-rename table in docs/customizing.md covers every tracked file that names a tier folder ($rt_n rows), and a row taken out is missed"
+  else
+    bad "the tier-rename table -- $rt_n row path(s); problems: [$(printf '%s' "$rt_out" | tr '\n' ' ')]; with the vault-retention.sh row cut: [$(printf '%s' "$rt_cut" | tr '\n' ' ')]"
+  fi
+fi
+
 # The provenance line vault-check.sh now prints. It goes into the command people
 # run most often and its exact wording is published in three documents, so a
 # wrong but plausible string there is invisible. Three texts, and the exit code

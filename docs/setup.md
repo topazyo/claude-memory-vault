@@ -1062,17 +1062,8 @@ not a tripwire; follow "When a move goes wrong" in [`reference.md` §4.3.1](refe
 ### One more, because it is the template's biggest customization cost
 
 **Renaming a tier folder is a multi-file edit, not a rename.** The folder names are independently
-hardcoded in at least these files (`docs/customizing.md` § 2 has the full procedure):
-
-- `CLAUDE.md`
-- `.claude/hooks/vault-lint.sh`
-- `.claude/hooks/postcompact-wrap-up.sh`
-- `.claude/scripts/vault-check.sh`
-- `.claude/scripts/vault-retention.sh` (it names `20-projects/_logs` and the archive path it moves to)
-- `.claude/agents/dream-agent.md`
-- `.claude/rules/vault-notes.md`, `.claude/rules/verification.md`,
-  `.claude/rules/untrusted-captures.md`
-- `.obsidian/daily-notes.json`
+hardcoded in many files. The one complete list of them, and the full procedure, is the table in
+[`customizing.md`, section 2](customizing.md#2-renaming-or-adding-a-tier-folder).
 
 Miss one and the failure is quiet in the worst direction: the lint hook stops recognising the
 folder as a content tier and skips it, and `vault-check.sh` drops it from the scan list, so both
