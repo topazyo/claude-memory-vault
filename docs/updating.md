@@ -201,10 +201,10 @@ releases is one comparison, not one per release:
    Do not step through the releases in between with `--check`: each step would report the files the
    previous one moved as changed here.
 2. **Read every CHANGELOG section newer than the last release whose notes you applied**, which is
-   your recorded version unless you have taken an update before without `--adopt`, and apply their
-   **Adopting
-   this** notes the way the top of [`CHANGELOG.md`](../CHANGELOG.md) says: in release order. The
-   notes carry what no copy plan can, such as a line to add to a file you customized.
+   your recorded version unless you have taken an update before without `--adopt`, and apply
+   their **Adopting this** notes the way the top of [`CHANGELOG.md`](../CHANGELOG.md) says: in
+   release order. The notes carry what no copy plan can, such as a line to add to a file you
+   customized.
 3. **Before you paste any `cp` line**, settle the two buckets nothing will copy for you: *Moved
    upstream and changed here* and *Already yours, and now shipped too*. Then take the safe copies,
    and do the rest of each Adopting note's steps after its copies, in the notes' order.

@@ -14790,7 +14790,8 @@ cp "$ROOT/.claude/scripts/lib/runner-common.sh" "$ac_lib"
 # set to it after run_agent, standing in for a shell that gives that code.
 ac_try() {
   : > "$TMP/ac-try.log"
-  ( . "$ROOT/.claude/scripts/lib/runner-common.sh"
+  ( export LC_ALL=C
+    . "$ROOT/.claude/scripts/lib/runner-common.sh"
     WATCHDOG_POLL=1
     WATCHDOG_GRACE=2
     AGENT_KIND=command
@@ -14915,7 +14916,8 @@ fi
 # env is this shell, by absolute path, so no temp path has to fit in a #! line.
 ac_decide() {
   : > "$TMP/ac-try.log"
-  ( . "$ROOT/.claude/scripts/lib/runner-common.sh"
+  ( export LC_ALL=C
+    . "$ROOT/.claude/scripts/lib/runner-common.sh"
     run_with_watchdog() { RUN_RC=127; RUN_TIMED_OUT=0; RUN_STALLED=0; RUN_KILL_FAILED=0; RUN_KILL_REPORT=""; return 0; }
     AGENT_KIND=command
     AGENT_BIN="$1"
@@ -14928,6 +14930,9 @@ ac_decide() {
 ac_bash="$(command -v bash 2>/dev/null)"
 ac_bad=''
 case "$ac_bash" in /*) : ;; *) ac_bad="$ac_bad [fixture: no absolute bash: $ac_bash]" ;; esac
+# Past the length cap the check would refuse the line before it reached the
+# interpreter's name, and the shape would test nothing.
+[ "${#ac_bash}" -lt 80 ] || ac_bad="$ac_bad [fixture: this bash's path is ${#ac_bash} bytes, too long for the other-interpreter #! line]"
 ac_long="$(printf '%300s' '' | tr ' ' a)"
 ac_n=0
 for ac_shape in \

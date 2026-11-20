@@ -65,8 +65,8 @@ adopter's machine for a reason that turned out to be the runners'.
   cause, notes written by a harness that runs no lint after a write.
 - **`docs/updating.md`** says where to find the template's address, how to catch up across several
   releases in one comparison, which section of the control suite to run first after an update and
-  how to run the whole suite so that it is not cut short, and that the files the template keeps for itself make no
-  difference to a vault.
+  how to run the whole suite so that it is not cut short, and that the files the template keeps
+  for itself make no difference to a vault.
 
 ### Adopting this
 
