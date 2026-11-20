@@ -793,6 +793,28 @@ else
   fi
   rm -f "$C3C/31-standards/notes.markdown"
 
+  # Release C: a backslash in a named path separates folders only on Windows,
+  # where tab completion names 31-standards\x.md. Elsewhere it is a character
+  # a name may hold, and a note named a\b.md was reported as a/b.md, a path
+  # that does not exist.
+  if is_windows_host; then
+    printf 'no fence\n' > "$C3C/31-standards/nofence.md"
+    c3_out="$(c3_run "$C3C" -- '31-standards\nofence.md')"
+    c3_want='31-standards/nofence.md — C1'
+    rm -f "$C3C/31-standards/nofence.md"
+  else
+    printf 'no fence\n' > "$C3C/31-standards/a\\b.md"
+    c3_out="$(c3_run "$C3C" -- '31-standards/a\b.md')"
+    c3_want='31-standards/a\\b.md — C1'
+    rm -f "$C3C/31-standards/a\\b.md"
+  fi
+  ran check-backslash-name
+  if [ "$(c3_rc "$c3_out")" = 1 ] && printf '%s\n' "$c3_out" | grep -q "^$c3_want" && [ "$(sentinel_files "$c3_out")" = 1 ]; then
+    ok "a backslash in a named path is a folder separator on Windows and part of the name elsewhere"
+  else
+    bad "a named path with a backslash -- expected exit 1 and the line [$c3_want] -- got: $(printf '%s' "$c3_out" | tr '\n' '|' | cut -c1-400)"
+  fi
+
   # The stub prune is for the stubs directly in 20-projects/_logs. find's *
   # crosses a /, so a folder there named like a stub must still be read.
   mkdir -p "$C3C/20-projects/_logs/compaction-notes"

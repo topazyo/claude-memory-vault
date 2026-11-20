@@ -152,6 +152,7 @@ c4-templates-dot ubuntu macos
 c7-dash-folder-backup ubuntu macos windows
 c8-commit-reason-logged ubuntu macos windows
 c9-dry-run-keeps-record ubuntu macos windows
+check-backslash-name ubuntu macos windows
 check-one-walk ubuntu macos windows
 check-transient-unread-folder ubuntu macos
 check-unreadable-note ubuntu macos

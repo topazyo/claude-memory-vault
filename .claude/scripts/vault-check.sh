@@ -351,7 +351,7 @@ link_target_ok() {
       # A target spelled with a drive letter is absolute too: Git Bash's
       # readlink can give C:/... for a link Windows made.
       case "$t" in
-        /*|[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]:[\\/]*) p="${t//\\//}" ;;
+        /*|[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]:[\\/]*) slashed "$t"; p="$SLASHED" ;;
         *) p="${p%/*}/$t" ;;
       esac
       n=$((n + 1))
@@ -407,6 +407,17 @@ link_target_ok() {
   return 1
 }
 
+# A backslash separates folders only on Windows (Git Bash, MSYS, Cygwin), where
+# tab completion names 31-standards\x.md and a link Windows made can give
+# C:\... as its target. Elsewhere it is a character a name may hold, so a path
+# keeps it (Release C; a\b.md was reported as a/b.md, which is not there).
+case "$(uname -s 2>/dev/null)" in MINGW*|MSYS*|CYGWIN*) BACKSLASH_SEP=1 ;; *) BACKSLASH_SEP=0 ;; esac
+# slashed <path> - sets SLASHED to the path with each backslash as a slash on
+# Windows, and to the path unchanged elsewhere.
+slashed() {
+  if [ "$BACKSLASH_SEP" -eq 1 ]; then SLASHED="${1//\\//}"; else SLASHED="$1"; fi
+}
+
 # named_tier_rel <absolute path> - true when the path lies in one of this
 # vault's content-tier folders, by identity rather than by spelling, so
 # ./31-standards/x.md, a doubled slash or the other Windows spelling of the
@@ -415,7 +426,8 @@ link_target_ok() {
 # that folder included, is a link. Only then does the link rule apply: a note
 # named plainly is checked whatever its name, as named mode always did.
 named_tier_rel() {
-  local f="${1//\\//}" d sub="" t prev=""
+  local f d sub="" t prev=""
+  slashed "$1"; f="$SLASHED"
   d="${f%/*}"
   NAMED_REL=""
   NAMED_VIA_LINK=0
@@ -574,9 +586,10 @@ if [ "${#NAMED[@]}" -gt 0 ]; then
     # it always was.
     if named_tier_rel "$file"; then
       # Backslashes as slashes for the link walk, which splits on /: Windows
-      # tab completion names 31-standards\x.md.
+      # tab completion names 31-standards\x.md. Only there (Release C).
       LINK_REL=""
-      if [ "$NAMED_VIA_LINK" -eq 1 ] && ! link_target_ok "${file//\\//}"; then
+      slashed "$file"
+      if [ "$NAMED_VIA_LINK" -eq 1 ] && ! link_target_ok "$SLASHED"; then
         show "$file $LINK_WHY"
         printf 'vault-check: %s, so it was not checked.\n' "$SHOWN" >&2
         refused=$((refused + 1))
