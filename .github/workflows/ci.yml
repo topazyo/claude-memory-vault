@@ -251,28 +251,39 @@ jobs:
       # github.repository_id, because the id survives a rename and a guard by
       # name went false after one, silently skipping every guarded step. An id
       # typed wrong would skip them just as silently, so this step, guarded by
-      # nothing, checks the id against the name: in the repository of that
-      # name, every comparison with an id anywhere in this file must be well
-      # formed and hold this repository's id, since each guard is a copy of its
-      # own; and the id with any other name says the repository was renamed.
+      # nothing, checks every copy: each guard is a copy of its own. Wherever
+      # the name or the id says this is the template repository (a rename
+      # keeps the id), every line of this file that names the id, in any case,
+      # outside a comment, must be an if: or an env value holding exactly
+      # github.repository_id == '<digits>', and every such id must be this
+      # repository's. That one shape leaves no room for a guard that negates
+      # the comparison or adds a condition of its own, or that spells the
+      # property in other letters, which Actions would read the same. The id
+      # with any other name says the repository was renamed.
       - name: The repository guard holds this repository's id
         env:
           BY_ID: ${{ github.repository_id == '1368450026' }}
           BY_NAME: ${{ github.repository == 'topazyo/claude-memory-vault' }}
         run: |
           echo "repository $GITHUB_REPOSITORY, id ${GITHUB_REPOSITORY_ID:-unknown}: guarded steps run: $BY_ID"
-          if [ "$BY_NAME" = true ]; then
-            # The word is split here so that this line is not one of the
-            # matches; comment lines are left out, since they guard nothing.
+          if [ "$BY_NAME" = true ] || [ "$BY_ID" = true ]; then
+            # The word is split here so that this step's own lines are not
+            # among the matches. The runner's variable GITHUB_REPOSITORY_ID is
+            # taken out first, since a match that ignores case would find it.
             q='repository''_id'
-            grep -v '^[[:space:]]*#' .github/workflows/ci.yml > "$RUNNER_TEMP/ci.code"
-            all=$(grep -o "$q" "$RUNNER_TEMP/ci.code" | wc -l)
-            grep -o "$q == '[0-9]*'" "$RUNNER_TEMP/ci.code" | sed "s/^.*== '//; s/'\$//" | sort | uniq -c > "$RUNNER_TEMP/ids"
-            formed=$(awk '{ n += $1 } END { print n + 0 }' "$RUNNER_TEMP/ids")
-            echo "ci.yml compares an id $all time(s), $formed of them as $q == '<digits>': $(awk '{ printf "%s x%s ", $2, $1 }' "$RUNNER_TEMP/ids")"
-            if [ "$all" -eq 0 ] || [ "$formed" -ne "$all" ] || [ "$(wc -l < "$RUNNER_TEMP/ids")" -ne 1 ] \
+            grep -v '^[[:space:]]*#' .github/workflows/ci.yml | sed 's/GITHUB_REPOSITORY_ID//g' | grep -i -- "$q" > "$RUNNER_TEMP/id.lines" || true
+            # The comparison alone: the if: or env key, then a ${{ }} around it, taken off.
+            sed -E 's/^[[:space:]]*(if|[A-Z_]+):[[:space:]]+//; s/^\$\{\{ (.*) \}\}[[:space:]]*$/\1/; s/[[:space:]]+$//' "$RUNNER_TEMP/id.lines" > "$RUNNER_TEMP/id.bodies"
+            all=$(wc -l < "$RUNNER_TEMP/id.lines")
+            bad=$(grep -cEv "^github\.$q == '[0-9]+'\$" "$RUNNER_TEMP/id.bodies" || true)
+            sed "s/^.*== '//; s/'\$//" "$RUNNER_TEMP/id.bodies" | sort | uniq -c > "$RUNNER_TEMP/ids"
+            echo "ci.yml names the id on $all line(s), $bad of another shape; ids: $(awk '{ printf "%s x%s ", $2, $1 }' "$RUNNER_TEMP/ids")"
+            if [ "$bad" -ne 0 ]; then
+              grep -nEv "^github\.$q == '[0-9]+'\$" "$RUNNER_TEMP/id.bodies" | sed 's/^/  another shape: /'
+            fi
+            if [ "$all" -eq 0 ] || [ "$bad" -ne 0 ] || [ "$(wc -l < "$RUNNER_TEMP/ids")" -ne 1 ] \
               || [ "$(awk '{ print $2 }' "$RUNNER_TEMP/ids")" != "${GITHUB_REPOSITORY_ID:-}" ]; then
-              echo "::error title=A repository guard holds the wrong id::This is the template repository by name, and its id is ${GITHUB_REPOSITORY_ID:-unknown}, but not every comparison with an id in ci.yml is $q == '${GITHUB_REPOSITORY_ID:-<id>}' (counts above), so the steps a wrong one guards skip without a word."
+              echo "::error title=A repository guard is wrong::This is the template repository, id ${GITHUB_REPOSITORY_ID:-unknown}, but not every line of ci.yml that names the id is an if: or env value holding exactly github.$q == '${GITHUB_REPOSITORY_ID:-<id>}' (see above), so a step guarded by a wrong one skips without a word."
               exit 1
             fi
           fi
@@ -380,7 +391,10 @@ jobs:
           # arms <ci.yml> <required-controls.txt> <reader> - one line per list:
           # its position (list1 windows-latest, list2 ubuntu-latest, list3
           # macos-latest, list4 bash 3.2), then its ids. An empty list file
-          # means the base predates it, so ci.yml's own lines are read.
+          # means the base predates it, so ci.yml's own lines are read. The
+          # base's reader is called as this side calls it, so -v want=lists and
+          # that output are an interface: a change to them lands in two steps,
+          # a reader that still answers the old call first.
           arms() {
             if [ -s "$2" ]; then
               awk -v want=lists -f "$3" "$2"
@@ -399,6 +413,16 @@ jobs:
             || { echo "::error title=The lists could not be read::required-controls.txt was refused; the line above says why."; exit 1; }
           [ "$(wc -l < /tmp/arms.base)" -eq 4 ] && [ "$(wc -l < /tmp/arms.head)" -eq 4 ] \
             || { echo "::error title=The lists could not be read::Expected four lists on each side, found $(wc -l < /tmp/arms.base) at $base and $(wc -l < /tmp/arms.head) here."; exit 1; }
+          # The jobs ask the reader for one platform's ids, not for the lists,
+          # so each of those answers must be its list's ids here, or a reader
+          # that answered the two calls differently would drop ids unseen.
+          for p in windows:list1 ubuntu:list2 macos:list3; do
+            got=$(awk -v want="${p%%:*}" -f .github/workflows/required-controls.awk .github/workflows/required-controls.txt) \
+              || { echo "::error title=The lists could not be read::required-controls.txt was refused for ${p%%:*}."; exit 1; }
+            line=$(awk -v a="${p#*:}" '$1 == a { $1 = ""; sub(/^ /, ""); print }' /tmp/arms.head)
+            [ "$got" = "$line" ] \
+              || { echo "::error title=The reader answers a job differently::The ids it gives ${p%%:*} are not the ids of ${p#*:}, which this step compares."; exit 1; }
+          done
           total=0; lost=0
           while read -r arm ids; do
             here=" $(awk -v a="$arm" '$1 == a { $1 = ""; print }' /tmp/arms.head) "

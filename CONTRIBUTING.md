@@ -335,9 +335,10 @@ checks list cannot tell a skip from a pass. This one runs on every pull request 
 `main` here, including pull requests from forks, because `github.repository_id` is still this
 repository's for those. The guards hold the repository's numeric id rather than its name, so a
 rename does not turn them off. Each guard is its own copy of the id, so an unguarded hygiene step
-fails, in the repository of this name, when any comparison with an id in `ci.yml` is not
-`repository_id == '<this repository's id>'`, and a copy typed wrong cannot turn its step off
-silently either.
+fails, here and after a rename, unless every line of `ci.yml` outside a comment that names the id
+is an `if:` or an env value holding exactly `github.repository_id == '<this repository's id>'`.
+A copy typed wrong, negated, combined with another condition or spelled in other letters cannot
+turn its step off silently either.
 
 It skips everywhere else, and that includes **pushes to your own fork** as well as a repository
 made with "Use this template". This is the same wrinkle the manifest step has above, and it has the
