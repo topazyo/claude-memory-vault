@@ -1085,6 +1085,19 @@ C3V_EOF
     else
       bad "a dangling link named *.MD -- expected exit 2 and its refusal -- got: $(printf '%s' "$c3_out" | tr '\n' '|' | cut -c1-400)"
     fi
+    # And a link to a note named *.Md is a link to a note, in both modes
+    # (mutants of 1.7.2: the target's own name test had no control).
+    rm -f "$C3M/31-standards/gone.MD"
+    ln -s Clean.Md "$C3M/31-standards/alias.md" 2>/dev/null
+    c3_out="$(c3_run "$C3M")"
+    c3_nout="$(c3_run "$C3M" -- 31-standards/alias.md)"
+    rm -f "$C3M/31-standards/alias.md"
+    if [ "$(c3_rc "$c3_out")" = 0 ] && ! printf '%s\n' "$c3_out" | grep -q 'is a link that' && [ "$(sentinel_files "$c3_out")" = 2 ] \
+       && [ "$(c3_rc "$c3_nout")" = 0 ] && ! printf '%s\n' "$c3_nout" | grep -q 'is a link that' && [ "$(sentinel_files "$c3_nout")" = 1 ]; then
+      ok "a link to a note named *.Md is accepted as a note's link in the full scan and in named mode"
+    else
+      bad "a link to a note named *.Md -- expected exit 0 and no refusal in both modes, 2 files and 1 -- full: $(printf '%s' "$c3_out" | tr '\n' '|' | cut -c1-250) named: $(printf '%s' "$c3_nout" | tr '\n' '|' | cut -c1-250)"
+    fi
   else
     skip check-upper-md-link 'a dangling link named *.MD: ln -s made no link here'
   fi
