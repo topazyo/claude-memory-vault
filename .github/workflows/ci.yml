@@ -258,8 +258,13 @@ jobs:
       # github.repository_id == '<digits>', and every such id must be this
       # repository's. That one shape leaves no room for a guard that negates
       # the comparison or adds a condition of its own, or that spells the
-      # property in other letters, which Actions would read the same. The id
-      # with any other name says the repository was renamed.
+      # property in other letters, which Actions would read the same. And no
+      # line but BY_NAME below compares github.repository, the guard by name
+      # this file gave up. Other guards (github.event.repository.id, a test in
+      # a run: script) are not looked for, and nothing checks how a step uses
+      # an env value such as TEMPLATE_REPO. If every copy of the id and the
+      # name went wrong at once, this step would not know the repository. The
+      # id with any other name says the repository was renamed.
       - name: The repository guard holds this repository's id
         env:
           BY_ID: ${{ github.repository_id == '1368450026' }}
@@ -267,23 +272,32 @@ jobs:
         run: |
           echo "repository $GITHUB_REPOSITORY, id ${GITHUB_REPOSITORY_ID:-unknown}: guarded steps run: $BY_ID"
           if [ "$BY_NAME" = true ] || [ "$BY_ID" = true ]; then
-            # The word is split here so that this step's own lines are not
-            # among the matches. The runner's variable GITHUB_REPOSITORY_ID is
-            # taken out first, since a match that ignores case would find it.
+            # Words are split here so that this step's own lines are not among
+            # the matches. A shell's $GITHUB_REPOSITORY_ID or ${...} is taken
+            # out first, since a match that ignores case would find it; any
+            # other spelling of it stays and is judged by its shape.
             q='repository''_id'
-            grep -v '^[[:space:]]*#' .github/workflows/ci.yml | sed 's/GITHUB_REPOSITORY_ID//g' | grep -i -- "$q" > "$RUNNER_TEMP/id.lines" || true
+            grep -n '' .github/workflows/ci.yml | grep -vE '^[0-9]+:[[:space:]]*#' > "$RUNNER_TEMP/ci.code"
+            sed -E 's/\$\{?GITHUB_REPOSITORY''_ID//g' "$RUNNER_TEMP/ci.code" | grep -i -- "$q" > "$RUNNER_TEMP/id.lines" || true
+            cut -d: -f1 "$RUNNER_TEMP/id.lines" > "$RUNNER_TEMP/id.nums"
             # The comparison alone: the if: or env key, then a ${{ }} around it, taken off.
-            sed -E 's/^[[:space:]]*(if|[A-Z_]+):[[:space:]]+//; s/^\$\{\{ (.*) \}\}[[:space:]]*$/\1/; s/[[:space:]]+$//' "$RUNNER_TEMP/id.lines" > "$RUNNER_TEMP/id.bodies"
+            cut -d: -f2- "$RUNNER_TEMP/id.lines" \
+              | sed -E 's/^[[:space:]]*(if|[A-Z_]+):[[:space:]]+//; s/^\$\{\{ (.*) \}\}[[:space:]]*$/\1/; s/[[:space:]]+$//' > "$RUNNER_TEMP/id.bodies"
             all=$(wc -l < "$RUNNER_TEMP/id.lines")
             bad=$(grep -cEv "^github\.$q == '[0-9]+'\$" "$RUNNER_TEMP/id.bodies" || true)
             sed "s/^.*== '//; s/'\$//" "$RUNNER_TEMP/id.bodies" | sort | uniq -c > "$RUNNER_TEMP/ids"
             echo "ci.yml names the id on $all line(s), $bad of another shape; ids: $(awk '{ printf "%s x%s ", $2, $1 }' "$RUNNER_TEMP/ids")"
             if [ "$bad" -ne 0 ]; then
-              grep -nEv "^github\.$q == '[0-9]+'\$" "$RUNNER_TEMP/id.bodies" | sed 's/^/  another shape: /'
+              paste -d: "$RUNNER_TEMP/id.nums" "$RUNNER_TEMP/id.bodies" | grep -Ev "^[0-9]+:github\.$q == '[0-9]+'\$" | sed 's/^/  another shape at ci.yml line /'
+            fi
+            r='github\.repository''[[:space:]]*=='
+            grep -Ei -- "$r" "$RUNNER_TEMP/ci.code" | grep -vE '^[0-9]+:[[:space:]]*BY_NAME: ' > "$RUNNER_TEMP/by.name" || true
+            if [ -s "$RUNNER_TEMP/by.name" ]; then
+              sed 's/^/  a guard by name at ci.yml line /' "$RUNNER_TEMP/by.name"
             fi
             if [ "$all" -eq 0 ] || [ "$bad" -ne 0 ] || [ "$(wc -l < "$RUNNER_TEMP/ids")" -ne 1 ] \
-              || [ "$(awk '{ print $2 }' "$RUNNER_TEMP/ids")" != "${GITHUB_REPOSITORY_ID:-}" ]; then
-              echo "::error title=A repository guard is wrong::This is the template repository, id ${GITHUB_REPOSITORY_ID:-unknown}, but not every line of ci.yml that names the id is an if: or env value holding exactly github.$q == '${GITHUB_REPOSITORY_ID:-<id>}' (see above), so a step guarded by a wrong one skips without a word."
+              || [ "$(awk '{ print $2 }' "$RUNNER_TEMP/ids")" != "${GITHUB_REPOSITORY_ID:-}" ] || [ -s "$RUNNER_TEMP/by.name" ]; then
+              echo "::error title=A repository guard is wrong::This is the template repository, id ${GITHUB_REPOSITORY_ID:-unknown}, but not every line of ci.yml that names the id is an if: or env value holding exactly github.$q == '${GITHUB_REPOSITORY_ID:-<id>}', or a step is guarded by name (see above), so a step guarded by a wrong one skips without a word."
               exit 1
             fi
           fi
@@ -415,8 +429,11 @@ jobs:
             || { echo "::error title=The lists could not be read::Expected four lists on each side, found $(wc -l < /tmp/arms.base) at $base and $(wc -l < /tmp/arms.head) here."; exit 1; }
           # The jobs ask the reader for one platform's ids, not for the lists,
           # so each of those answers must be its list's ids here, or a reader
-          # that answered the two calls differently would drop ids unseen.
-          for p in windows:list1 ubuntu:list2 macos:list3; do
+          # that answered the two calls differently would drop ids unseen. The
+          # bash 3.2 job asks for macos, so list4 is held to that answer too.
+          # This runs under this job's awk and environment, not each job's, so
+          # a reader that depends on either is for review to catch.
+          for p in windows:list1 ubuntu:list2 macos:list3 macos:list4; do
             got=$(awk -v want="${p%%:*}" -f .github/workflows/required-controls.awk .github/workflows/required-controls.txt) \
               || { echo "::error title=The lists could not be read::required-controls.txt was refused for ${p%%:*}."; exit 1; }
             line=$(awk -v a="${p#*:}" '$1 == a { $1 = ""; sub(/^ /, ""); print }' /tmp/arms.head)
