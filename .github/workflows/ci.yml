@@ -280,7 +280,9 @@ jobs:
             grep -n '' .github/workflows/ci.yml | grep -vE '^[0-9]+:[[:space:]]*#' > "$RUNNER_TEMP/ci.code"
             sed -E 's/\$\{?GITHUB_REPOSITORY''_ID//g' "$RUNNER_TEMP/ci.code" | grep -i -- "$q" > "$RUNNER_TEMP/id.lines" || true
             cut -d: -f1 "$RUNNER_TEMP/id.lines" > "$RUNNER_TEMP/id.nums"
-            # The comparison alone: the if: or env key, then a ${{ }} around it, taken off.
+            # The comparison alone: the if: or env key, then the expression
+            # braces around it, taken off. (Braces written out in a comment
+            # here would be read by Actions as an expression and void the file.)
             cut -d: -f2- "$RUNNER_TEMP/id.lines" \
               | sed -E 's/^[[:space:]]*(if|[A-Z_]+):[[:space:]]+//; s/^\$\{\{ (.*) \}\}[[:space:]]*$/\1/; s/[[:space:]]+$//' > "$RUNNER_TEMP/id.bodies"
             all=$(wc -l < "$RUNNER_TEMP/id.lines")
