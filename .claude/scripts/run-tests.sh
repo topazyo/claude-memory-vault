@@ -14817,7 +14817,8 @@ fi
 
 # A wrapper that is there but cannot start, its #! naming an interpreter that
 # does not exist. bash 5.2 gives 127 for it ("cannot execute: required file
-# not found", read from its execute_cmd.c), bash 5.3 and 3.2 give 126 ("bad
+# not found"; measured with 5.2.21 on Ubuntu 24.04, where the 1.7.2 library
+# turned it into the agent's 79), bash 5.3 and 3.2 give 126 ("bad
 # interpreter", measured). Either way the agent never ran, so the code passes
 # through as the shell gave it, with no AGENT-STATUS line.
 printf '#!/no/such/interpreter\necho ran\n' > "$TMP/ac-badinterp"
@@ -14832,8 +14833,8 @@ case "$ac_got" in
 esac
 # The 127 case is held on every platform by standing in for such a bash: the
 # same wrapper, then RUN_RC=127. Measured 126 on Git Bash 5.3.15 and WSL bash
-# 5.3.9; CI's ubuntu-latest was ubuntu-26.04 when this was written. The PASS
-# line above prints the code each platform gave.
+# 5.3.9; CI's ubuntu-latest was ubuntu-26.04 when this was written, so no CI
+# job runs bash 5.2. The PASS line above prints the code each platform gave.
 ac_got="$(ac_try "$TMP/ac-badinterp" 127)"
 ran agent-status-badinterp-127
 if [ "$ac_got" = 'rc=127 ran=1 exit=127 log=0' ]; then
