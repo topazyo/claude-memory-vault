@@ -50,6 +50,13 @@ separate job that runs them under macOS's system `/bin/bash` 3.2. It deliberatel
 install `jq`, because `jq` is absent by default on macOS and in Git for Windows and the hooks are
 written to degrade loudly without it, and installing it in CI would hide the case most users hit.
 
+A control you add records itself with `ran <id>`, and CI fails until the id is on a line of
+`.github/workflows/required-controls.txt` with each platform whose job must run it (`ubuntu`,
+`macos`, `windows`; `macos` covers both macOS jobs), or is named in `ci.yml`'s `NOT_REQUIRED`
+with a reason. Name a platform only where the control can run: the suite fails a required id that
+printed `SKIP`. Dropping an id or a platform from that file fails CI against `main` unless
+`ci.yml`'s `RETIRED` names the id.
+
 ## Changing a shell script
 
 The hooks run on macOS, Linux, and Windows via Git Bash, and the differences bite in ways that
@@ -325,8 +332,14 @@ document rather than against a memory of one. Four of those names also appear in
 **The CI step is guarded by repository and is not path filtered.** A path filtered step shows as
 skipped on a pull request that touches nothing matching the filter, and a reviewer reading the
 checks list cannot tell a skip from a pass. This one runs on every pull request and every push to
-`main` here, including pull requests from forks, because `github.repository` is still this
-repository for those.
+`main` here, including pull requests from forks, because `github.repository_id` is still this
+repository's for those. The guards hold the repository's numeric id rather than its name, so a
+rename does not turn them off. Each guard is its own copy of the id, so an unguarded hygiene step
+fails, here and after a rename, unless every line of `ci.yml` outside a comment that names the id
+is an `if:` or an env value holding exactly `github.repository_id == '<this repository's id>'`,
+and when a step is guarded by name again. So a guard's copy of the id typed wrong, negated,
+combined with another condition or spelled in other letters fails CI rather than skipping its
+step. How a step then uses an env value such as `TEMPLATE_REPO` is for review: nothing checks it.
 
 It skips everywhere else, and that includes **pushes to your own fork** as well as a repository
 made with "Use this template". This is the same wrinkle the manifest step has above, and it has the

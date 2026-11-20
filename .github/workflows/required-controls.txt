@@ -1,0 +1,395 @@
+# Control ids CI requires to run, read by ci.yml through required-controls.awk.
+#
+# One id per line, then each platform whose suite run must run it: ubuntu,
+# macos, windows. macos holds both macOS jobs, macos-latest and the bash 3.2
+# job, which run on the same image. The suite fails an id listed here that did
+# not run on that platform, and says nothing about an id missing from here, so
+# CI also fails an id the suite records with ran that is on no line (unless
+# ci.yml's NOT_REQUIRED names it) and an id main requires that a change drops
+# (unless ci.yml's RETIRED names it).
+#
+# Name a platform only where the control can run there. A control that
+# legitimately skips on a platform fails that job for the wrong reason. Keep
+# the lines in byte order (LC_ALL=C sort), so two changes that add ids rarely
+# touch the same line. That is a convention, not checked: the reader takes the
+# lines in any order.
+#
+# This file belongs to the template repository. It is excluded from the
+# template manifest, and ci.yml drops these requirements outside it.
+#
+# Why some ids are off a platform, moved here from ci.yml with the lists
+# themselves (Release C). "The macOS lists" and "all four" are the two
+# macOS jobs and every job, which this file's macos covers as one.
+#
+# Three lists, not two, because the controls added with the fence,
+# retention and hook-cost changes do not all reach every platform.
+# Windows reads a backslash in a name as a folder separator, so the
+# two that need such a name skip there, only this ubuntu job has
+# strace for the process budget, and only its filesystem keeps two
+# names that differ in case apart, which promo-create-only-twinguards
+# needs. pi-extension-symlink needs a file symlink, which Windows lets
+# only a privileged or developer-mode user make; GitHub's Windows
+# runners can, so it is required on every job, while a developer's
+# machine without the privilege skips it. pi-extension-dirlink uses
+# junctions on Windows. retention-unlistable is left off Windows
+# because the job's account can list a folder whose listing is denied
+# to it, so the case skips there, and retention-posix-mode is left off
+# both macOS lists because their bash is 3.2, which cannot parse the
+# runner in POSIX mode. mem-override-sink-unreadable and
+# mem-override-sink-filelink are left off Windows for the same kind of
+# reason: chmod 000 does not stop a listing there, and Git Bash's
+# ln -s makes a file link only with a privilege and MSYS=winsymlinks
+# set, copying the file otherwise. mem-override-file-mode is left off
+# it too, because Git Bash's mode bits are not Windows permissions, and
+# so are mem-override-winbin and mem-override-winbin-unreadable (which
+# skips under root), because there a claude.exe is the binary
+# the runner should start, and mem-override-stray-cygpath and
+# mem-override-no-cygpath, because there cygpath is the real one.
+# mem-override-mixed-release runs everywhere.
+# mem-override-path-refused runs everywhere: on Windows Git Bash keeps
+# a double quote or a tab in a name as U+F022 or U+F009 and the pass,
+# started as dream-pass.cmd starts it, runs; elsewhere it refuses.
+# mem-override-utf8-refused is left off
+# Windows, where Git Bash reads a lone byte 0xFF as U+00FF; where the
+# file system refuses such a name, as macOS's does, it calls
+# memory_override directly. mem-override-utf8-lax-host is recorded
+# only where iconv -t UTF-8 lets a sequence above U+10FFFF through, as
+# glibc's does, so it is on the ubuntu list only, where it shows that
+# job's twins can tell the round trip from a check to UTF-8 alone.
+# mem-override-utf16-lax-host is recorded only where iconv -t UTF-16LE
+# takes that sequence without an error under LC_ALL=C, the runners'
+# locale, as macOS's does, so it is on
+# the two macOS lists only, where it shows those twins can tell the
+# round trip from a check to UTF-16LE alone. mem-override-unc-refused
+# runs everywhere: a cygpath stand-in gives a network path.
+# mem-override-work-refused runs everywhere too: a pass with TMPDIR
+# inside the vault refuses where mktemp takes TMPDIR, and
+# memory_override, called with a folder there, refuses on every
+# platform, macOS's among them. mem-override-work-open is off Windows,
+# where Git Bash mode bits are not permissions, and so are 1.5.0's
+# rf-mode, rf-world, rf-owner and rf-findfail (the runner's own
+# folder: its mode, its owner, and a find that cannot check it);
+# rf-gone is off Windows too, where the drive path's map-back
+# refuses a folder that is not there first;
+# rf-owner needs sudo -n, which the hosted runners give. mem-override-work-case
+# runs where the file system ignores case, Windows and macOS, so it is
+# off the ubuntu list. mem-override-work-root runs everywhere: a
+# vault at the root of the temporary folder's file system or drive.
+# mem-override-work-resolved runs where mktemp
+# takes TMPDIR, so it is off the two macOS lists, and
+# mem-override-work-made, a missing folder spelled through a
+# link, which must be refused and not made, and a folder for the
+# pass that is a link itself, which must be refused, runs wherever
+# a link can be made, so it is on all four.
+# mem-override-no-iconv
+# runs everywhere: a failing iconv stand-in comes first on PATH, and,
+# off Windows, a pass also runs with a PATH that holds no iconv.
+# mem-override-sink-link uses
+# junctions on Windows and runs everywhere.
+# mem-override-cygpath-refused needs cygpath, so it is on the Windows
+# list only. mem-override-work-colon, mem-override-work-gone,
+# mem-override-work-names and mem-override-settings-space run
+# everywhere: each calls the library directly, with folders the twin
+# makes itself (work-names' two legs with a line break in a folder
+# name off Windows only, an INFO line there).
+# mem-override-work-root-drive is on the Windows list
+# only, because the drive-path walk it holds runs only there.
+# mem-override-work-dotdot, mem-override-state-copy and
+# mem-override-walk-status run everywhere: each calls the library
+# directly (the first through a junction on Windows); work-dotdot's
+# dream-pass leg runs where mktemp takes TMPDIR and prints an INFO
+# line on macOS. mem-override-work-space is a whole pass with a
+# TMPDIR holding a space, so it is off the two macOS lists, whose
+# mktemp ignores TMPDIR. mem-override-work-backstop runs everywhere,
+# its legs with a folder name ending in a line break and its
+# dangling-link legs off Windows only (an INFO line there).
+# mem-override-work-unreachable (a folder this
+# account cannot enter) and mem-override-vault-unresolved (a vault
+# that is not there, which cygpath's round trip refuses first on
+# Windows) are off the Windows list: Git Bash's mode bits are not
+# Windows permissions, and there an account may by default pass
+# through a folder it cannot enter. temp-dir-spelling runs
+# everywhere: its runner legs hand each runner the spelling through
+# a mktemp stand-in, so macOS's mktemp does not matter, and off
+# Windows a cygpath stand-in makes the platform read as Windows; its
+# leg where the check must do nothing runs off Windows only, with no
+# cygpath on PATH.
+c10-opencode-normalised ubuntu macos windows
+c11-failed-write-logged ubuntu macos windows
+c11-long-session-id ubuntu macos windows
+c11-trigger-one-line ubuntu macos windows
+c12-omp-lints-spelling-on-disk ubuntu macos windows
+c18-gate-holds-in-update ubuntu
+c18-template-decided-by-variable ubuntu macos windows
+c2-after-read-tree ubuntu macos windows
+c2-branch-switched-mid-run ubuntu macos windows
+c2-commit-on-neither-branch ubuntu macos windows
+c2-commit-on-switched-branch-not-ok ubuntu macos windows
+c2-destination-taken-kept ubuntu macos windows
+c2-gpg-failure-put-back ubuntu macos windows
+c2-history-rewritten-mid-run ubuntu macos windows
+c2-landed-then-failed-once ubuntu macos windows
+c2-merge-started-mid-run ubuntu macos windows
+c2-no-empty-commit ubuntu macos windows
+c2-no-sign-without-gpgsign ubuntu macos windows
+c2-other-first-kept ubuntu macos windows
+c2-own-commit-recognised-on-moved-head ubuntu macos windows
+c2-own-commit-under-another ubuntu macos windows
+c2-ref-lock-waited-for ubuntu macos windows
+c2-ref-locked ubuntu macos windows
+c2-signal-before-swap ubuntu macos windows
+c2-signal-put-back-over-other ubuntu macos windows
+c2-signs-when-gpgsign ubuntu macos windows
+c2-source-edit-kept ubuntu macos windows
+c2-swap-exhausted ubuntu macos windows
+c2-switch-after-commit-ok ubuntu macos windows
+c2-switch-back-after-commit-ok ubuntu macos windows
+c2-verify-put-back-over-other ubuntu macos windows
+c3-junction windows
+c3-links ubuntu macos
+c4-drive-spelling windows
+c4-templates-dot ubuntu macos
+c7-dash-folder-backup ubuntu macos windows
+c8-commit-reason-logged ubuntu macos windows
+c9-dry-run-keeps-record ubuntu macos windows
+check-transient-unread-folder ubuntu macos
+check-unreadable-tier-folder ubuntu macos
+cntrl-name-log ubuntu macos windows
+collating-range-probe ubuntu macos windows
+collating-range-scan ubuntu macos windows
+commit-window-not-reverted ubuntu macos windows
+crlf-blob-preserved ubuntu macos windows
+destination-staged-only ubuntu macos windows
+dream-agent-tools ubuntu macos windows
+exit-codes-dream-pass ubuntu macos windows
+exit-codes-promotion-pass ubuntu macos windows
+fence-backslash-name ubuntu macos
+fence-cksum-unescape ubuntu macos windows
+fence-crc-forgery ubuntu macos windows
+fence-crc-forgery-imported-note ubuntu macos windows
+fence-digest-shape-checked ubuntu macos windows
+fence-strong-never-fails-open ubuntu macos windows
+fence-wiring-escaped ubuntu
+git-dir-pass ubuntu macos windows
+git-env-cleared ubuntu macos windows
+groupkill ubuntu macos
+head-holds-unknown ubuntu macos windows
+hup-dream-pass ubuntu macos windows
+hup-group-dream-pass ubuntu
+hup-promotion-pass ubuntu macos windows
+jq-crlf-output ubuntu macos windows
+keep-output-dirlink ubuntu macos
+keep-output-fifo ubuntu macos
+legacy-asks-the-adding-commit ubuntu macos windows
+line-break-name ubuntu macos
+lint-spawn-budget ubuntu
+locale-collation-verdicts macos
+logger-crlf ubuntu macos windows
+logger-not-registered ubuntu macos windows
+logger-optin-snippet ubuntu macos windows
+logger-records-session-start ubuntu macos windows
+mem-override-cygpath-refused windows
+mem-override-drive-walk ubuntu macos windows
+mem-override-file-mode ubuntu macos
+mem-override-flag ubuntu macos windows
+mem-override-folder-above ubuntu macos windows
+mem-override-mixed-release ubuntu macos windows
+mem-override-no-cygpath ubuntu macos
+mem-override-no-iconv ubuntu macos windows
+mem-override-nonascii ubuntu macos windows
+mem-override-order ubuntu macos windows
+mem-override-path-refused ubuntu macos windows
+mem-override-settings-space ubuntu macos windows
+mem-override-sink-contained ubuntu macos windows
+mem-override-sink-fifo ubuntu macos windows
+mem-override-sink-filelink ubuntu macos
+mem-override-sink-hardlink ubuntu macos windows
+mem-override-sink-link ubuntu macos windows
+mem-override-sink-refused ubuntu macos windows
+mem-override-sink-unreadable ubuntu macos
+mem-override-state-copy ubuntu macos windows
+mem-override-stray-cygpath ubuntu macos
+mem-override-unc-refused ubuntu macos windows
+mem-override-utf16-lax-host macos
+mem-override-utf8-lax-host ubuntu
+mem-override-utf8-refused ubuntu macos
+mem-override-vault-unresolved ubuntu macos
+mem-override-walk-status ubuntu macos windows
+mem-override-winbin ubuntu macos
+mem-override-winbin-unreadable ubuntu macos
+mem-override-work-backstop ubuntu macos windows
+mem-override-work-case macos windows
+mem-override-work-colon ubuntu macos windows
+mem-override-work-dotdot ubuntu macos windows
+mem-override-work-gone ubuntu macos windows
+mem-override-work-made ubuntu macos windows
+mem-override-work-names ubuntu macos windows
+mem-override-work-open ubuntu macos
+mem-override-work-refused ubuntu macos windows
+mem-override-work-resolved ubuntu windows
+mem-override-work-root ubuntu macos windows
+mem-override-work-root-drive windows
+mem-override-work-space ubuntu windows
+mem-override-work-unreachable ubuntu macos
+msys-conv-pass windows
+noncesweep windows
+omp-extension-behaviour ubuntu macos windows
+pi-extension-behaviour ubuntu macos windows
+pi-extension-dirlink ubuntu macos windows
+pi-extension-symlink ubuntu macos windows
+promo-create-only-arms ubuntu macos windows
+promo-create-only-casetwin ubuntu macos windows
+promo-create-only-contained ubuntu macos windows
+promo-create-only-edit ubuntu macos windows
+promo-create-only-failpath ubuntu macos windows
+promo-create-only-globnew ubuntu macos windows
+promo-create-only-hangoutside ubuntu macos windows
+promo-create-only-ignored ubuntu macos windows
+promo-create-only-leftover ubuntu macos windows
+promo-create-only-outside ubuntu macos windows
+promo-create-only-passnote ubuntu macos windows
+promo-create-only-reverse ubuntu macos windows
+promo-create-only-stamp ubuntu macos windows
+promo-create-only-supersede ubuntu macos windows
+promo-create-only-syncnew ubuntu macos windows
+promo-create-only-timeout ubuntu macos windows
+promo-create-only-twinguards ubuntu
+promo-create-only-wiki ubuntu macos windows
+putback-verify-kill-failed ubuntu macos windows
+read-guard-awk-failure-refuses ubuntu macos windows
+reaped-group ubuntu macos
+resume-skips-pass-output ubuntu macos windows
+retention-inherited-nonce windows
+retention-junction windows
+retention-posix-mode ubuntu windows
+retention-stalled-reader ubuntu macos windows
+retention-stdout ubuntu macos windows
+retention-stdout-escape ubuntu macos windows
+retention-symlink ubuntu macos
+retention-tmp ubuntu macos windows
+retention-unlistable ubuntu macos
+rf-findfail ubuntu macos
+rf-gone ubuntu macos
+rf-mode ubuntu macos
+rf-owner ubuntu macos
+rf-world ubuntu macos
+run-log-dirlink ubuntu macos
+run-log-link ubuntu macos
+runlog-tmp-case ubuntu macos windows
+runner-folder ubuntu macos windows
+scan-case-not-widened ubuntu macos windows
+scan-trailing-dot ubuntu macos
+scan-upper-case ubuntu macos windows
+settings-hooks-present ubuntu macos windows
+shown-name-c1 ubuntu macos windows
+sig-reentry-dream-pass ubuntu macos windows
+sig-reentry-promotion-pass ubuntu macos windows
+signal-scope ubuntu macos windows
+snapshot-sealed ubuntu macos windows
+state-shown ubuntu macos windows
+steering-locale-fold windows
+stub-nul-refused ubuntu macos windows
+symlink ubuntu macos
+temp-dir-spelling ubuntu macos windows
+tmpl-adopt-edits-stay-visible ubuntu macos windows
+tmpl-adopt-names-what-is-absent ubuntu macos windows
+tmpl-adopt-rebuilds-manifest ubuntu macos windows
+tmpl-adopt-writes-one-file ubuntu macos windows
+tmpl-already-adopted ubuntu macos windows
+tmpl-binary-refused ubuntu macos windows
+tmpl-c13-no-git ubuntu macos windows
+tmpl-c13-nothing-tracked ubuntu macos windows
+tmpl-c14-tab-led-rule ubuntu macos windows
+tmpl-c15-source-manifest-malformed ubuntu macos windows
+tmpl-c16-relative-from ubuntu macos windows
+tmpl-case-collision ubuntu macos windows
+tmpl-changelog-adopting ubuntu macos windows
+tmpl-claims-your-folder ubuntu macos windows
+tmpl-class-table ubuntu macos windows
+tmpl-collision-not-safe ubuntu macos windows
+tmpl-converged-not-a-merge ubuntu macos windows
+tmpl-crlf-agrees ubuntu macos windows
+tmpl-exempt-set-is-behavioural ubuntu macos windows
+tmpl-exempt-set-matches-the-tree ubuntu macos windows
+tmpl-fixtures-built ubuntu macos windows
+tmpl-generate-guarded ubuntu macos windows
+tmpl-generate-needs-a-version ubuntu macos windows
+tmpl-generate-under-tripwire ubuntu macos windows
+tmpl-hash-count ubuntu macos
+tmpl-hash-tool-misbehaves ubuntu macos windows
+tmpl-hash-tool-named ubuntu macos windows
+tmpl-hostile-manifest-narrows ubuntu macos windows
+tmpl-in-flight-state-copy ubuntu macos windows
+tmpl-lone-cr-modified ubuntu macos windows
+tmpl-manifest-stale ubuntu macos windows
+tmpl-merge-not-safe ubuntu macos windows
+tmpl-missing-tracked ubuntu macos windows
+tmpl-narrowing-vectors ubuntu macos windows
+tmpl-no-diff-tool ubuntu macos windows
+tmpl-no-execution-from-source ubuntu macos windows
+tmpl-no-hash-tool ubuntu macos windows
+tmpl-no-source ubuntu macos windows
+tmpl-offered-is-a-plan ubuntu macos windows
+tmpl-pass-in-flight ubuntu macos windows
+tmpl-path-escape ubuntu macos windows
+tmpl-plan-digests ubuntu macos windows
+tmpl-plan-quoting ubuntu macos windows
+tmpl-release-cannot-look ubuntu macos windows
+tmpl-release-comparators-agree ubuntu macos windows
+tmpl-release-cut ubuntu macos windows
+tmpl-release-ignores-git-dir ubuntu macos windows
+tmpl-release-in-preparation ubuntu macos windows
+tmpl-release-owed ubuntu macos windows
+tmpl-release-reclassified ubuntu macos windows
+tmpl-release-scratch-survivor ubuntu macos windows
+tmpl-release-shipped-unknown-sides ubuntu macos windows
+tmpl-release-tag-failed ubuntu macos windows
+tmpl-release-tag-spelling ubuntu macos windows
+tmpl-release-tag-without-manifest ubuntu macos windows
+tmpl-release-uncommitted ubuntu macos windows
+tmpl-release-unwritten-not-empty ubuntu macos windows
+tmpl-release-vacuous ubuntu macos windows
+tmpl-release-version-spelling ubuntu macos windows
+tmpl-retired-listed ubuntu macos windows
+tmpl-rules-character ubuntu macos windows
+tmpl-rules-refused ubuntu macos windows
+tmpl-same-version-disagrees ubuntu macos windows
+tmpl-same-version-equivalent ubuntu macos windows
+tmpl-same-version-local-drift ubuntu macos windows
+tmpl-same-version-manifest-legs ubuntu macos windows
+tmpl-seed-verdicts-counted ubuntu macos windows
+tmpl-shipped-rules-have-no-catchall ubuntu macos windows
+tmpl-source-dir-symlink ubuntu macos
+tmpl-source-disagrees ubuntu macos windows
+tmpl-source-not-a-template ubuntu macos windows
+tmpl-source-older ubuntu macos windows
+tmpl-source-symlink ubuntu macos
+tmpl-source-unreadable ubuntu macos
+tmpl-source-vacuous ubuntu macos windows
+tmpl-status-unknown ubuntu macos windows
+tmpl-three-answers ubuntu macos windows
+tmpl-tripwire-refused ubuntu macos windows
+tmpl-tripwire-state-copy ubuntu macos windows
+tmpl-unclassified-fails ubuntu macos windows
+tmpl-unknown-algorithm ubuntu macos windows
+tmpl-unreadable-not-deleted ubuntu macos
+tmpl-unwritable-name ubuntu macos windows
+tmpl-user-note-untouched ubuntu macos windows
+tmpl-vacuous ubuntu macos windows
+tmpl-vault-check-line ubuntu macos windows
+tmpl-verify-manifest-guarded ubuntu macos windows
+tmpl-version-agrees ubuntu macos windows
+tmpl-version-filtered ubuntu macos windows
+trailer-path-set ubuntu macos windows
+tripwire-name ubuntu macos
+tripwire-says-rename-outcome ubuntu macos windows
+vault-root-spelling ubuntu macos windows
+verify-diff-watchdog ubuntu macos windows
+verify-kill-failed-not-put-back ubuntu macos windows
+vtab-fence-agrees ubuntu macos windows
+win-fork-stop windows
+win-native-tree windows
+win-orphan-stop windows
+win-sweep-report windows
+windows-process-id-checks-against-powershell windows
+worktree-logs-held-to-root-rule ubuntu macos windows
