@@ -376,8 +376,9 @@ link_target_ok() {
           */templates/*) LINK_WHY="points into a templates folder, which the scan does not read"; return 1 ;;
         esac
         if [ "$isdir" -eq 0 ]; then
+          # A note is *.md in any case (Release C), as the scan reads it.
           case "$base" in
-            *.md) ;;
+            *.[mM][dD]) ;;
             *) LINK_WHY="points to $base, which is not a .md note"; return 1 ;;
           esac
           if [ "$t/$sub" = "20-projects/_logs/" ]; then
@@ -435,6 +436,8 @@ named_tier_rel() {
 refused=0
 # 1 when find could not read a content-tier folder in full (1.7.1).
 UNREAD_WALK=0
+# Notes the full scan listed and could not read (Release C).
+unreadable=0
 refuse_link() {  # refuse_link <rel> <why>
   local shown_rel
   show "$1"; shown_rel="$SHOWN"
@@ -604,12 +607,17 @@ else
   # a /, so the pattern alone would also prune a folder named compaction-*.
   # A templates entry is pruned by its own name too, so one that is a link (a
   # shared templates folder) is skipped as a real one is, not refused: the scan
-  # reads neither. Both walks keep the same prune, so they agree on scope.
+  # reads neither. The retry below keeps the same prune, so they agree on scope.
   TIER_NAMES=()
   for d in $TIERS; do
     { [ -d "$ROOT/$d" ] || [ -L "$ROOT/$d" ]; } && TIER_NAMES+=("$d")
   done
   # -print0 / read -d '': several vault notes have spaces in their filenames.
+  #
+  # One walk lists the notes and the links together (Release C). There were
+  # two, one for each, which read a large vault twice and could disagree about
+  # a note made or removed between them. A note is a file named *.md in any
+  # case, as the lint takes it, so X.MD is read too (it was passed over).
   #
   # find's own status comes back as a last record, //find-status=<n>, because
   # a process substitution's status is lost and bash 3.2 cannot wait for one.
@@ -618,41 +626,50 @@ else
   # 0 (1.7.1); now the run says so and exits 2 unless a note violates an
   # invariant, as for a refused link. A walk that never reported is treated as
   # one that failed.
-  FIND_RC1=""
-  FIND_RC2=""
-  WALK1_N=0
+  FIND_RC=""
+  WALK_N=0
+  WALK_L=0
   while IFS= read -r -d '' file; do
-    case "$file" in //find-status=*) FIND_RC1="${file#//find-status=}"; continue ;; esac
-    WALK1_N=$((WALK1_N + 1))
+    case "$file" in //find-status=*) FIND_RC="${file#//find-status=}"; continue ;; esac
+    if [ -L "$ROOT/$file" ]; then
+      WALK_L=$((WALK_L + 1))
+      case "$file" in
+        *.[mM][dD]) ;;
+        *)
+          if [ -d "$ROOT/$file" ]; then
+            :
+          elif [ -e "$ROOT/$file" ]; then
+            continue
+          else
+            case "${file##*/}" in *.*) continue ;; esac
+          fi
+          ;;
+      esac
+      link_target_ok "$ROOT/$file" || refuse_link "$file" "$LINK_WHY"
+      continue
+    fi
+    WALK_N=$((WALK_N + 1))
+    # A note the walk lists and this account cannot read is not a note with
+    # no fence: nothing in it was checked, so the run says so and exits 2
+    # unless a note violates an invariant, as named mode does for the same
+    # note (Release C; it was reported as a C1).
+    if [ ! -r "$ROOT/$file" ]; then
+      show "$file"
+      printf 'vault-check: %s is not a readable file, so it was not checked.\n' "$SHOWN" >&2
+      unreadable=$((unreadable + 1))
+      continue
+    fi
     check_note "$ROOT/$file" "$file"
-  done < <(cd "$ROOT" && find "${TIER_NAMES[@]}" \( -path '*/templates' -o -path '*/templates/*' -o \( -type f -path '20-projects/_logs/compaction-*.md' ! -path '20-projects/_logs/*/*' \) \) -prune -o -type f -name '*.md' -print0; printf '//find-status=%s\0' "$?")
-  WALK2_N=0
-  while IFS= read -r -d '' file; do
-    case "$file" in //find-status=*) FIND_RC2="${file#//find-status=}"; continue ;; esac
-    WALK2_N=$((WALK2_N + 1))
-    case "$file" in
-      *.md) ;;
-      *)
-        if [ -d "$ROOT/$file" ]; then
-          :
-        elif [ -e "$ROOT/$file" ]; then
-          continue
-        else
-          case "${file##*/}" in *.*) continue ;; esac
-        fi
-        ;;
-    esac
-    link_target_ok "$ROOT/$file" || refuse_link "$file" "$LINK_WHY"
-  done < <(cd "$ROOT" && find "${TIER_NAMES[@]}" \( -path '*/templates' -o -path '*/templates/*' -o \( -type f -path '20-projects/_logs/compaction-*.md' ! -path '20-projects/_logs/*/*' \) \) -prune -o -type l -print0; printf '//find-status=%s\0' "$?")
-  if [ "$FIND_RC1" != 0 ] || [ "$FIND_RC2" != 0 ]; then
+  done < <(cd "$ROOT" && find "${TIER_NAMES[@]}" \( -path '*/templates' -o -path '*/templates/*' -o \( -type f -path '20-projects/_logs/compaction-*.md' ! -path '20-projects/_logs/*/*' \) \) -prune -o \( -type l -o -type f -iname '*.md' \) -print0; printf '//find-status=%s\0' "$?")
+  if [ "$FIND_RC" != 0 ]; then
     # find also fails when a file vanishes between being listed and being
     # read, which a sync client or an editor's temporary file does all the
     # time, and that leaves no folder unread. One more walk tells the two
     # apart: a folder find cannot read fails it again (round 1 of the 1.7.1
-    # review). It counts the notes and the links the two walks would have
-    # found, too, because a folder that could not be read a moment ago and can
-    # now, such as a cloud placeholder or a network share, passes a walk that
-    # only asks whether it fails. More now than the walks found means some were
+    # review). It counts the notes and the links the walk would have found,
+    # too, because a folder that could not be read a moment ago and can now,
+    # such as a cloud placeholder or a network share, passes a walk that only
+    # asks whether it fails. More now than the walk found means some were
     # never read; a file that vanished only makes a count smaller (rounds 2 and
     # 3). Known limits: files vanishing between the walks can cancel out an
     # unread folder's count, and a note made between them reads as unread.
@@ -662,13 +679,13 @@ else
     while IFS= read -r -d '' file; do
       case "$file" in //find-status=*) RETRY_RC="${file#//find-status=}"; continue ;; esac
       if [ -L "$ROOT/$file" ]; then RETRY_L=$((RETRY_L + 1)); else RETRY_N=$((RETRY_N + 1)); fi
-    done < <(cd "$ROOT" && find "${TIER_NAMES[@]}" \( -path '*/templates' -o -path '*/templates/*' -o \( -type f -path '20-projects/_logs/compaction-*.md' ! -path '20-projects/_logs/*/*' \) \) -prune -o \( -type l -o -type f -name '*.md' \) -print0 2>/dev/null; printf '//find-status=%s\0' "$?")
-    if [ "$RETRY_RC" = 0 ] && [ "$RETRY_N" -le "$WALK1_N" ] && [ "$RETRY_L" -le "$WALK2_N" ]; then
+    done < <(cd "$ROOT" && find "${TIER_NAMES[@]}" \( -path '*/templates' -o -path '*/templates/*' -o \( -type f -path '20-projects/_logs/compaction-*.md' ! -path '20-projects/_logs/*/*' \) \) -prune -o \( -type l -o -type f -iname '*.md' \) -print0 2>/dev/null; printf '//find-status=%s\0' "$?")
+    if [ "$RETRY_RC" = 0 ] && [ "$RETRY_N" -le "$WALK_N" ] && [ "$RETRY_L" -le "$WALK_L" ]; then
       printf 'vault-check: find reported an error and a second walk read every folder, so a file most likely vanished while it was read; the scan is taken as complete.\n' >&2
     else
       UNREAD_WALK=1
-      printf 'vault-check: find could not read every content-tier folder (status %s and %s; a second walk gave status %s and found %s note(s) where %s were checked and %s link(s) where %s were), so the notes in what it could not read were not checked. Its own message above names what it could not read.\n' \
-        "${FIND_RC1:-none}" "${FIND_RC2:-none}" "${RETRY_RC:-none}" "$RETRY_N" "$WALK1_N" "$RETRY_L" "$WALK2_N" >&2
+      printf 'vault-check: find could not read every content-tier folder (status %s; a second walk gave status %s and found %s note(s) where %s were listed and %s link(s) where %s were), so the notes in what it could not read were not checked. Its own message above names what it could not read.\n' \
+        "${FIND_RC:-none}" "${RETRY_RC:-none}" "$RETRY_N" "$WALK_N" "$RETRY_L" "$WALK_L" >&2
     fi
   fi
 fi
@@ -681,6 +698,10 @@ printf 'vault-check: %s violation(s) across %s file(s) checked (as of %s).\n' \
 # caller that reads only the first.
 if [ "$refused" -gt 0 ]; then
   printf 'vault-check: %s link(s) refused, so what they hold was not checked; stderr names them, and the exit code is 2 unless a note violates an invariant.\n' "$refused"
+fi
+# The same for a note the full scan could not read (Release C).
+if [ "$unreadable" -gt 0 ]; then
+  printf 'vault-check: %s note(s) could not be read, so they were not checked; stderr names them, and the exit code is 2 unless a note violates an invariant.\n' "$unreadable"
 fi
 # The same for a folder find could not read, on stdout beside the count for
 # the same reason (1.7.1).
@@ -792,6 +813,8 @@ fi
 # the full scan refused is the same kind of answer: notes it did not read.
 [ "$missing" -gt 0 ] && exit 2
 [ "$refused" -gt 0 ] && exit 2
+# And a note the full scan listed and could not read (Release C).
+[ "$unreadable" -gt 0 ] && exit 2
 # And a content-tier folder find could not read in full (1.7.1).
 [ "$UNREAD_WALK" -eq 1 ] && exit 2
 exit 0

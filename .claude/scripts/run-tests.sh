@@ -879,11 +879,13 @@ else
   # first walk runs, as a cloud placeholder or a network share can be. The
   # second walk then succeeds, and asking only whether it failed took the scan
   # as complete and exited 0 with the note never checked. A stand-in find makes
-  # the folder unreadable for the first note walk and for nothing after it.
-  # Round 3: the same for the link walk alone, which the retry did not count,
-  # so a link in that folder was never checked and the run exited 0. The
-  # folder holds a link to its note for that arm.
-  ln -s fine.md "$C3U/31-standards/locked/alias.md" 2>/dev/null
+  # the folder unreadable for the first walk and for nothing after it.
+  # Round 3: the same for a link alone, which the retry did not count, so a
+  # link in that folder was never checked and the run exited 0. Since Release
+  # C one walk lists the notes and the links, so the two arms differ in what
+  # the folder holds: its note (md), or only a link to a note outside it (l),
+  # so that each of the retry's two counts has an arm only it can catch.
+  ln -s ../good.md "$C3U/31-standards/locked/alias.md" 2>/dev/null
   c3t_probe=1
   if ! is_windows_host && [ "$(id -u 2>/dev/null)" != 0 ]; then
     chmod 000 "$C3U/31-standards/locked"
@@ -901,19 +903,13 @@ else
   else
     c3t_real="$(command -v find)"
     mkdir -p "$TMP/c3t-bin"
-    # C3T_WALK=md locks the folder for the first note walk, C3T_WALK=l for the
-    # link walk, which is the only walk with -type l and no *.md.
+    # The first walk of a tier, the one with *.md among its arguments, runs
+    # with the folder locked, once per arm (C3T_WALK names the arm).
     cat > "$TMP/c3t-bin/find" <<C3T_EOF
 #!/usr/bin/env bash
 md=0
-ln=0
-for a in "\$@"; do [ "\$a" = '*.md' ] && md=1; [ "\$a" = l ] && ln=1; done
-hit=0
-case "\$C3T_WALK" in
-  md) [ "\$md" = 1 ] && hit=1 ;;
-  l) [ "\$ln" = 1 ] && [ "\$md" = 0 ] && hit=1 ;;
-esac
-if [ "\$hit" = 1 ] && [ ! -e "$TMP/c3t-bin/walked-\$C3T_WALK" ]; then
+for a in "\$@"; do [ "\$a" = '*.md' ] && md=1; done
+if [ "\$md" = 1 ] && [ ! -e "$TMP/c3t-bin/walked-\$C3T_WALK" ]; then
   : > "$TMP/c3t-bin/walked-\$C3T_WALK"
   chmod 000 "$C3U/31-standards/locked"
   "$c3t_real" "\$@"
@@ -925,8 +921,12 @@ exec "$c3t_real" "\$@"
 C3T_EOF
     chmod +x "$TMP/c3t-bin/find"
     RET_LOCKED_DIR="$C3U/31-standards/locked"
+    mv "$C3U/31-standards/locked/alias.md" "$TMP/c3t-bin/alias.md"
     c3_out="$(C3T_WALK=md PATH="$TMP/c3t-bin:$PATH" c3_run "$C3U")"
+    mv "$C3U/31-standards/locked/fine.md" "$TMP/c3t-bin/fine.md"
+    mv "$TMP/c3t-bin/alias.md" "$C3U/31-standards/locked/alias.md"
     c3_lout="$(C3T_WALK=l PATH="$TMP/c3t-bin:$PATH" c3_run "$C3U")"
+    mv "$TMP/c3t-bin/fine.md" "$C3U/31-standards/locked/fine.md"
     chmod 755 "$C3U/31-standards/locked"
     RET_LOCKED_DIR=
     if [ ! -e "$TMP/c3t-bin/walked-md" ] || [ ! -e "$TMP/c3t-bin/walked-l" ]; then
@@ -937,14 +937,107 @@ C3T_EOF
          && printf '%s\n' "$c3_out" | grep -q 'find could not read every content-tier folder' \
          && [ "$(c3_rc "$c3_lout")" = 2 ] \
          && printf '%s\n' "$c3_lout" | grep -q 'find could not read every content-tier folder'; then
-        ok "a tier folder unreadable for the note walk only, or for the link walk only, still makes the scan exit 2, rather than count it complete"
+        ok "a tier folder unreadable for the first walk only still makes the scan exit 2, whether it holds a note or only a link, rather than count it complete"
       else
-        bad "a tier folder unreadable for one walk was taken as read -- note walk: $(printf '%s' "$c3_out" | tr '\n' '|' | cut -c1-300) link walk: $(printf '%s' "$c3_lout" | tr '\n' '|' | cut -c1-300)"
+        bad "a tier folder unreadable for the first walk was taken as read -- holding a note: $(printf '%s' "$c3_out" | tr '\n' '|' | cut -c1-300) holding a link: $(printf '%s' "$c3_lout" | tr '\n' '|' | cut -c1-300)"
       fi
     fi
     rm -rf "$TMP/c3t-bin"
   fi
   rm -f "$C3U/31-standards/locked/alias.md"
+
+  # Release C: a note is a file named *.md in any case, as the lint takes it,
+  # so the full scan reads UPPER.MD and Clean.Md too. Before, a note whose
+  # name ended in .MD was never read and the scan said 0 violations.
+  C3M="$TMP/c3-upper"
+  c3_vault "$C3M"
+  printf 'no fence\n' > "$C3M/31-standards/UPPER.MD"
+  printf -- '---\ntier: long\ntype: standard\n---\n\nSee [[ARCH-INDEX]].\n' > "$C3M/31-standards/Clean.Md"
+  c3_out="$(c3_run "$C3M")"
+  ran check-upper-md
+  if [ "$(c3_rc "$c3_out")" = 1 ] && printf '%s\n' "$c3_out" | grep -q '^31-standards/UPPER.MD — C1' \
+     && ! printf '%s\n' "$c3_out" | grep -q 'Clean\.Md' && [ "$(sentinel_files "$c3_out")" = 3 ]; then
+    ok "the full scan reads a note named *.MD or *.Md, reports the one that violates and counts all three"
+  else
+    bad "notes named *.MD and *.Md -- expected exit 1, UPPER.MD's C1 line, no line for Clean.Md and 3 files -- got: $(printf '%s' "$c3_out" | tr '\n' '|' | cut -c1-400)"
+  fi
+  rm -f "$C3M/31-standards/UPPER.MD"
+  # And a link named so is judged as a note's: one that dangles is refused,
+  # where before it was taken for a file of another kind and passed over.
+  ln -s no-such-note.md "$C3M/31-standards/gone.MD" 2>/dev/null
+  if [ -L "$C3M/31-standards/gone.MD" ]; then
+    c3_out="$(c3_run "$C3M")"
+    ran check-upper-md-link
+    if [ "$(c3_rc "$c3_out")" = 2 ] && printf '%s\n' "$c3_out" | grep -q '31-standards/gone.MD is a link that' \
+       && printf '%s\n' "$c3_out" | grep -q '^vault-check: 1 link(s) refused'; then
+      ok "a dangling link named *.MD is refused as a note's link, and the scan exits 2"
+    else
+      bad "a dangling link named *.MD -- expected exit 2 and its refusal -- got: $(printf '%s' "$c3_out" | tr '\n' '|' | cut -c1-400)"
+    fi
+    rm -f "$C3M/31-standards/gone.MD"
+  else
+    skip check-upper-md-link 'a dangling link named *.MD: ln -s made no link here'
+  fi
+
+  # Release C: one walk lists the notes and the links of every tier. Two
+  # walks read a large vault twice, and a note made or removed between them
+  # made them disagree. A stand-in find counts the walks: those that print
+  # with -print0, which only the walks of the tiers do.
+  mkdir -p "$TMP/c3w-bin"
+  c3w_real="$(command -v find)"
+  cat > "$TMP/c3w-bin/find" <<C3W_EOF
+#!/usr/bin/env bash
+for a in "\$@"; do [ "\$a" = -print0 ] && { printf 'w\n' >> "$TMP/c3w-bin/walks"; break; }; done
+exec "$c3w_real" "\$@"
+C3W_EOF
+  chmod +x "$TMP/c3w-bin/find"
+  : > "$TMP/c3w-bin/walks"
+  c3_out="$(PATH="$TMP/c3w-bin:$PATH" c3_run "$C3M")"
+  c3w_n="$(awk 'END { print NR + 0 }' "$TMP/c3w-bin/walks")"
+  ran check-one-walk
+  if [ "$c3w_n" = 1 ] && [ "$(c3_rc "$c3_out")" = 0 ] && [ "$(sentinel_files "$c3_out")" = 2 ]; then
+    ok "a clean vault is read in one walk of its tiers"
+  else
+    bad "the walks of a clean vault -- expected 1 walk, exit 0 and 2 files -- got $c3w_n walk(s): $(printf '%s' "$c3_out" | tr '\n' '|' | cut -c1-300)"
+  fi
+  rm -rf "$TMP/c3w-bin"
+
+  # Release C: a note the scan lists but cannot read is not a note with no
+  # fence. Nothing was checked, so the scan says so and exits 2, as named mode
+  # does for the same note; before it reported a C1 and exited 1.
+  printf -- '---\ntier: long\ntype: standard\n---\n\nSee [[ARCH-INDEX]].\n' > "$C3M/31-standards/secret.md"
+  if is_windows_host; then
+    skip check-unreadable-note 'a note the scan cannot read: chmod 000 does not stop a read on Windows'
+  elif [ "$(id -u 2>/dev/null)" = 0 ]; then
+    skip check-unreadable-note 'a note the scan cannot read: root can read any file'
+  else
+    chmod 000 "$C3M/31-standards/secret.md"
+    if ! cat "$C3M/31-standards/secret.md" >/dev/null 2>&1; then
+      c3_out="$(c3_run "$C3M")"
+      ran check-unreadable-note
+      if [ "$(c3_rc "$c3_out")" = 2 ] \
+         && printf '%s\n' "$c3_out" | grep -q '31-standards/secret.md is not a readable file, so it was not checked' \
+         && printf '%s\n' "$c3_out" | grep -q '^vault-check: 1 note(s) could not be read' \
+         && ! printf '%s\n' "$c3_out" | grep -q 'secret.md — C1' && [ "$(sentinel_files "$c3_out")" = 2 ]; then
+        ok "a note the full scan cannot read is said and exits 2, not reported as a C1"
+      else
+        bad "an unreadable note in the full scan -- expected exit 2, both lines, no C1 and 2 files -- got: $(printf '%s' "$c3_out" | tr '\n' '|' | cut -c1-400)"
+      fi
+      # A note that does violate still makes it a 1, as for a refused link.
+      printf 'no fence\n' > "$C3M/31-standards/nofence.md"
+      c3_out="$(c3_run "$C3M")"
+      if [ "$(c3_rc "$c3_out")" = 1 ] && printf '%s\n' "$c3_out" | grep -q '^vault-check: 1 note(s) could not be read'; then
+        ok "an unreadable note beside a violation: the violation's 1, and the unreadable note still said"
+      else
+        bad "an unreadable note beside a violation -- expected exit 1 and the unreadable line -- got: $(printf '%s' "$c3_out" | tr '\n' '|' | cut -c1-400)"
+      fi
+      rm -f "$C3M/31-standards/nofence.md"
+    else
+      skip check-unreadable-note 'a note the scan cannot read: chmod 000 did not stop a read here'
+    fi
+    chmod 644 "$C3M/31-standards/secret.md"
+  fi
+  rm -f "$C3M/31-standards/secret.md"
 
   # Links. Git Bash's ln -s copies unless native links are switched on, so each
   # case first proves it made a link, and the cases are skipped by name where
