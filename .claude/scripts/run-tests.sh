@@ -14780,39 +14780,161 @@ else
 fi
 cp "$ROOT/.claude/scripts/lib/runner-common.sh" "$ac_lib"
 
+# A wrapper that could not start, against one that started and left with 127.
+# Function level, in the shape a runner has: agent_preflight leaves AGENT_BIN
+# set for the whole run, so it is assigned here, not passed as a prefix to
+# run_agent. As a prefix it was unset again when agent_status_exit ran, and
+# every 127 read as "not found" whatever the wrapper did (an adopter's update
+# report, 1.7.3: the control passed through a 127 no runner passes through).
+# ac_try <wrapper> [<code>] prints rc= ran= exit= log=. With <code>, RUN_RC is
+# set to it after run_agent, standing in for a shell that gives that code.
+ac_try() {
+  : > "$TMP/ac-try.log"
+  ( . "$ROOT/.claude/scripts/lib/runner-common.sh"
+    WATCHDOG_POLL=1
+    WATCHDOG_GRACE=2
+    AGENT_KIND=command
+    AGENT_BIN="$1"
+    SNAP_SEALS=x
+    run_agent 30 "$TMP/ac-try.out" dream-agent task prompt.md >/dev/null 2>&1
+    [ -z "${2:-}" ] || RUN_RC="$2"
+    printf 'rc=%s ran=%s ' "$RUN_RC" "${AGENT_RAN:-}"
+    agent_status_exit dream-agent "$TMP/ac-try.log"
+    printf 'exit=%s log=%s' "$?" "$(awk 'END { print NR + 0 }' "$TMP/ac-try.log" 2>/dev/null)" )
+}
+
 # 127 from a wrapper that was gone when the watchdog came to start it is the
 # shell's, so it keeps its meaning, not found, rather than reading as the
 # agent's own 127 and leaving as 79. Function level, because preflight finds
 # a missing wrapper first and only a race gets one this far.
-: > "$TMP/ac-missing.log"
-ac_got="$( . "$ROOT/.claude/scripts/lib/runner-common.sh" && WATCHDOG_POLL=1 WATCHDOG_GRACE=2 \
-  AGENT_KIND=command AGENT_BIN="$TMP/no-such-wrapper" SNAP_SEALS=x \
-  run_agent 30 "$TMP/ac-missing.out" dream-agent task prompt.md >/dev/null 2>&1
-  printf 'rc=%s ran=%s ' "$RUN_RC" "${AGENT_RAN:-}"
-  agent_status_exit dream-agent "$TMP/ac-missing.log"
-  printf 'exit=%s log=%s' "$?" "$(awk 'END { print NR + 0 }' "$TMP/ac-missing.log" 2>/dev/null)" )"
+ac_got="$(ac_try "$TMP/no-such-wrapper")"
+ran agent-status-gone
 if [ "$ac_got" = 'rc=127 ran=1 exit=127 log=0' ]; then
   ok "a wrapper that was gone when the watchdog started it leaves as 127, not found, not as the agent's own 127"
 else
   bad "a wrapper gone at launch -- expected rc=127 ran=1 exit=127 log=0, got: $ac_got"
 fi
+
 # A wrapper that is there but cannot start, its #! naming an interpreter that
-# does not exist, gets 126 from bash (measured on Linux and Git Bash), which no
-# runner uses for itself, so it passes through with no AGENT-STATUS line.
+# does not exist. bash 5.2 gives 127 for it ("cannot execute: required file
+# not found", read from its execute_cmd.c), bash 5.3 and 3.2 give 126 ("bad
+# interpreter", measured). Either way the agent never ran, so the code passes
+# through as the shell gave it, with no AGENT-STATUS line.
 printf '#!/no/such/interpreter\necho ran\n' > "$TMP/ac-badinterp"
 chmod +x "$TMP/ac-badinterp"
-: > "$TMP/ac-badinterp.log"
-ac_got="$( . "$ROOT/.claude/scripts/lib/runner-common.sh" && WATCHDOG_POLL=1 WATCHDOG_GRACE=2 \
-  AGENT_KIND=command AGENT_BIN="$TMP/ac-badinterp" SNAP_SEALS=x \
-  run_agent 30 "$TMP/ac-badinterp.out" dream-agent task prompt.md >/dev/null 2>&1
-  printf 'rc=%s ran=%s ' "$RUN_RC" "${AGENT_RAN:-}"
-  agent_status_exit dream-agent "$TMP/ac-badinterp.log"
-  printf 'exit=%s log=%s' "$?" "$(awk 'END { print NR + 0 }' "$TMP/ac-badinterp.log" 2>/dev/null)" )"
-if [ "$ac_got" = 'rc=126 ran=1 exit=126 log=0' ]; then
-  ok "a wrapper whose interpreter is missing leaves as 126, cannot execute, with no AGENT-STATUS line"
+ac_got="$(ac_try "$TMP/ac-badinterp")"
+ran agent-status-badinterp
+case "$ac_got" in
+  'rc=126 ran=1 exit=126 log=0'|'rc=127 ran=1 exit=127 log=0')
+    ok "a wrapper whose interpreter is missing leaves with the shell's own code, 126 or 127, with no AGENT-STATUS line" ;;
+  *)
+    bad "a wrapper whose interpreter is missing -- expected rc=126 or 127, exit the same, log=0, got: $ac_got" ;;
+esac
+# No platform CI runs has a bash that gives 127 there, so the 127 case is held
+# by standing in for one: the same wrapper, then RUN_RC=127.
+ac_got="$(ac_try "$TMP/ac-badinterp" 127)"
+ran agent-status-badinterp-127
+if [ "$ac_got" = 'rc=127 ran=1 exit=127 log=0' ]; then
+  ok "a 127 from a wrapper whose #! interpreter is missing passes through as 127, not found, as bash 5.2 gives it"
 else
-  bad "a wrapper whose interpreter is missing -- expected rc=126 ran=1 exit=126 log=0, got: $ac_got"
+  bad "a 127 from a wrapper whose interpreter is missing -- expected rc=127 ran=1 exit=127 log=0, got: $ac_got"
 fi
+
+# The same through env: the wrapper starts env, and env gives 127 for a
+# command it cannot find, on every platform.
+printf '#!/usr/bin/env no-such-interpreter-for-vault-tests\necho ran\n' > "$TMP/ac-envmissing"
+chmod +x "$TMP/ac-envmissing"
+ac_got="$(ac_try "$TMP/ac-envmissing")"
+ran agent-status-env-missing
+if [ "$ac_got" = 'rc=127 ran=1 exit=127 log=0' ]; then
+  ok "a wrapper whose #!/usr/bin/env command is missing leaves as 127, not found, with no AGENT-STATUS line"
+else
+  bad "a wrapper whose env command is missing -- expected rc=127 ran=1 exit=127 log=0, got: $ac_got"
+fi
+
+# And the other side, so the pass-through cannot widen to every 127: wrappers
+# that start and leave with 127 themselves still leave as 79. Each writes a
+# marker when it runs, so the 79 is shown to come from a wrapper that ran.
+# The -S and CR cases are the shapes the interpreter check must not read as
+# missing: env -S takes an option first, and Git Bash strips a CR from a #!
+# line and starts the wrapper, while Linux and macOS do not, so a line with a
+# CR is never taken as proof that nothing ran.
+printf '#!/usr/bin/env bash\n: > "%s"\nexit 127\n' "$TMP/ac-own127.ran" > "$TMP/ac-own127"
+printf '#!/usr/bin/env -S bash\n: > "%s"\nexit 127\n' "$TMP/ac-envS127.ran" > "$TMP/ac-envS127"
+printf '#!/usr/bin/env bash\r\nexit 127 #\r\n' > "$TMP/ac-crlf127"
+chmod +x "$TMP/ac-own127" "$TMP/ac-envS127" "$TMP/ac-crlf127"
+rm -f "$TMP/ac-own127.ran" "$TMP/ac-envS127.ran"
+ac_bad=''
+ac_got="$(ac_try "$TMP/ac-own127")"
+[ -e "$TMP/ac-own127.ran" ] || ac_bad="$ac_bad [own: fixture, the wrapper never ran: $ac_got]"
+[ "$ac_got" = 'rc=127 ran=1 exit=79 log=1' ] || ac_bad="$ac_bad [own: $ac_got]"
+ac_got="$(ac_try "$TMP/ac-envS127")"
+[ -e "$TMP/ac-envS127.ran" ] || ac_bad="$ac_bad [env -S: fixture, the wrapper never ran: $ac_got]"
+[ "$ac_got" = 'rc=127 ran=1 exit=79 log=1' ] || ac_bad="$ac_bad [env -S: $ac_got]"
+ac_got="$(ac_try "$TMP/ac-crlf127")"
+[ "$ac_got" = 'rc=127 ran=1 exit=79 log=1' ] || ac_bad="$ac_bad [crlf: $ac_got]"
+# The #! line is read before the agent starts, because a pass can rewrite its
+# wrapper. This one starts, rewrites its own first line to name a missing
+# interpreter, and leaves with 127. The rewrite and the exit share one line,
+# which bash has read in full before it runs either.
+printf '#!/usr/bin/env bash\n: > "%s"\nprintf '"'"'#!/no/such/interpreter\\nexit 127\\n'"'"' > "$0"; exit 127\n' "$TMP/ac-rewrite.ran" > "$TMP/ac-rewrite"
+chmod +x "$TMP/ac-rewrite"
+rm -f "$TMP/ac-rewrite.ran"
+ac_got="$(ac_try "$TMP/ac-rewrite")"
+[ -e "$TMP/ac-rewrite.ran" ] || ac_bad="$ac_bad [rewrite: fixture, the wrapper never ran: $ac_got]"
+LC_ALL=C grep -q '^#!/no/such/interpreter$' "$TMP/ac-rewrite" 2>/dev/null || ac_bad="$ac_bad [rewrite: fixture, the wrapper did not rewrite itself]"
+[ "$ac_got" = 'rc=127 ran=1 exit=79 log=1' ] || ac_bad="$ac_bad [rewrite: $ac_got]"
+# And one that deletes itself before leaving with 127. Whether the wrapper was
+# there is decided before it starts too, so its own 127 is not passed off as
+# never found (until 1.7.3 it was looked for after the pass).
+printf '#!/usr/bin/env bash\n: > "%s"\nrm -f "$0"; exit 127\n' "$TMP/ac-selfdelete.ran" > "$TMP/ac-selfdelete"
+chmod +x "$TMP/ac-selfdelete"
+rm -f "$TMP/ac-selfdelete.ran"
+ac_got="$(ac_try "$TMP/ac-selfdelete")"
+[ -e "$TMP/ac-selfdelete.ran" ] || ac_bad="$ac_bad [self-delete: fixture, the wrapper never ran: $ac_got]"
+[ -e "$TMP/ac-selfdelete" ] && ac_bad="$ac_bad [self-delete: fixture, the wrapper is still there]"
+[ "$ac_got" = 'rc=127 ran=1 exit=79 log=1' ] || ac_bad="$ac_bad [self-delete: $ac_got]"
+# Only env's word is looked up on PATH. An interpreter of any other name takes
+# a plain word that is not a command, here an interpreter of the suite's own
+# that drops it and runs the wrapper with bash. Where a script cannot be an
+# interpreter (macOS), bash runs the wrapper itself, which starts it all the
+# same.
+printf '#!/usr/bin/env bash\nshift\nexec bash "$@"\n' > "$TMP/ac-interp"
+printf '#!%s plainword-not-a-command\n: > "%s"\nexit 127\n' "$TMP/ac-interp" "$TMP/ac-otherinterp.ran" > "$TMP/ac-otherinterp"
+chmod +x "$TMP/ac-interp" "$TMP/ac-otherinterp"
+rm -f "$TMP/ac-otherinterp.ran"
+ac_got="$(ac_try "$TMP/ac-otherinterp")"
+[ -e "$TMP/ac-otherinterp.ran" ] || ac_bad="$ac_bad [other interpreter: fixture, the wrapper never ran: $ac_got]"
+[ "$ac_got" = 'rc=127 ran=1 exit=79 log=1' ] || ac_bad="$ac_bad [other interpreter: $ac_got]"
+ran agent-status-own-127
+if [ -z "$ac_bad" ]; then
+  ok "a wrapper that starts and leaves with 127 itself still leaves as 79 with an AGENT-STATUS line, through env -S, with a CR in its #! line, after rewriting its own #! line or deleting itself, and under an interpreter that is not env"
+else
+  bad "a wrapper's own 127 did not leave as 79 --$ac_bad"
+fi
+
+# The env case through a whole runner in command mode, the shape a scheduler
+# sees: the pass leaves as 127 and the log says nothing about the agent's code.
+for ac_script in dream-pass.sh promotion-pass.sh; do
+  ac_agent=dream-agent
+  [ "$ac_script" = promotion-pass.sh ] && ac_agent=promotion-agent
+  ac_log="$RV/.claude/logs/$ac_agent.log"
+  new_case_state "agentstatus-$ac_agent-envmissing"
+  ac_before="$(awk 'END { print NR + 0 }' "$ac_log" 2>/dev/null)"
+  ac_rc="$(runner "$ac_script" exitstatus VAULT_AGENT=command VAULT_AGENT_CMD="$TMP/ac-envmissing" VAULT_ALLOW_UNENFORCED_TOOLS=1)"
+  ac_new="$(awk -v n="${ac_before:-0}" 'NR > n' "$ac_log" 2>/dev/null)"
+  case "$ac_script" in
+    dream-pass.sh) ran agent-status-env-missing-runner-dream ;;
+    promotion-pass.sh) ran agent-status-env-missing-runner-promotion ;;
+  esac
+  if [ "$ac_rc" = 127 ] && printf '%s\n' "$ac_new" | grep -q "$ac_agent exited with code 127\$" \
+     && ! printf '%s\n' "$ac_new" | grep -q 'AGENT-STATUS'; then
+    ok "$ac_script: a wrapper whose #!/usr/bin/env command is missing makes the pass leave as 127, not as the agent's 79"
+  else
+    bad "$ac_script: a wrapper whose env command is missing -- expected 127, an 'exited with code 127' line and no AGENT-STATUS, got $ac_rc: $(printf '%s' "$ac_new" | tail -n 4 | tr '\n' '|')"
+  fi
+  tripwire_clear
+done
 
 # A signal inside the runner's own reporting. Two hooks, each on only when its
 # variable is set, are added to the vault's copy of the library for these cases
@@ -19028,6 +19150,16 @@ else
   else
     bad "the gate refused for a violation without saying a note is wrong -- [$(printf '%s' "$out_gate" | tr '\n' '|')]"
   fi
+  # The note that refuses a commit is most often one nobody staged: notes
+  # written by a harness with no lint after the write sit in the working tree,
+  # and every commit is refused until they are fixed (an adopter's update
+  # report, 1.7.3). The gate reads the working tree on purpose, so it says so
+  # where the refusal is read, not only in its header comment.
+  if printf '%s' "$out_gate" | grep -q 'reads the working tree, not what you staged, so a note you have not staged, or one git does not track, refuses the commit too'; then
+    ok "the gate's exit-1 sentence says an unstaged or untracked note refuses the commit too"
+  else
+    bad "the gate's exit-1 sentence does not say an unstaged note refuses the commit -- [$(printf '%s' "$out_gate" | tr '\n' '|')]"
+  fi
 
   # And the gate over a checker that could not run. The code and the sentence
   # both have to change, because the old gate said "fix the notes it names
@@ -20216,6 +20348,12 @@ else
   # is meant to reach, and the question asked is the one that matters: does an
   # unclassified file still fail generation by name. A catch-all of any spelling
   # classifies the probe, generation succeeds, and this fails.
+  #
+  # The rules are the template project's and classed excluded, so a vault holds
+  # whatever copy it was generated with, or none. Template-only, as C18's are.
+  if [ "$VU_IS_TEMPLATE" != 1 ]; then
+  skip tmpl-shipped-rules-have-no-catchall "VAULT_TEMPLATE_MAINTAINER is not 1, so this is taken to be a vault rather than the template project, and a copy of the template's manifest rules in a vault is not its to answer for"
+  else
   vu_d="$VU/realrules"
   rm -rf "$vu_d"
   mkdir -p "$vu_d/.claude"
@@ -20257,6 +20395,7 @@ else
     ok "the $vu_rulecount shipped rules leave both an unclassified root file and an unclassified nested one failing generation by name, so no rule among them reaches everything"
   else
     bad "the shipped $VU_RULES_REL classified a file nothing should have classified --$vu_bad [$(vu_excerpt)]"
+  fi
   fi
 
   # A file the template starts shipping at a path the user already occupies is
@@ -22076,11 +22215,24 @@ else
 
   # -- the release has to advance with the repository ----------------------
 
-  # These four read .github/release-check.sh, which is classed excluded and so
-  # is absent from a vault on purpose. A vault has no releases to cut, and a
-  # control reporting on a file that was never meant to be there would be
-  # reporting a defect in a vault that is working perfectly.
-  if [ ! -f "$VU_REL" ]; then
+  # These read .github/release-check.sh, which belongs to the template project.
+  # A vault has no releases to cut. The file is classed excluded, so --check
+  # never reports it, and a vault generated from an older release can still
+  # hold that release's copy. Gated on the file being there, these controls ran
+  # the template's checks against that stale copy and failed in a vault that
+  # was working perfectly (an adopter's update report, 1.7.3). So the variable
+  # decides, as for the other template-only controls, and the file's absence
+  # is only the reason a template tree without it gives.
+  if [ "$VU_IS_TEMPLATE" != 1 ]; then
+    for vu_rel_id in tmpl-release-owed tmpl-release-in-preparation tmpl-release-tag-spelling \
+      tmpl-release-cut tmpl-release-uncommitted tmpl-release-version-spelling \
+      tmpl-release-comparators-agree tmpl-release-cannot-look tmpl-release-ignores-git-dir \
+      tmpl-release-vacuous tmpl-release-tag-without-manifest tmpl-release-reclassified \
+      tmpl-release-tag-failed tmpl-release-scratch-survivor tmpl-release-shipped-unknown-sides \
+      tmpl-release-unwritten-not-empty; do
+      skip "$vu_rel_id" "VAULT_TEMPLATE_MAINTAINER is not 1, so this is taken to be a vault rather than the template project, and a copy of the release check in a vault is not its to answer for"
+    done
+  elif [ ! -f "$VU_REL" ]; then
     skip tmpl-release-owed "$VU_REL is not present, so this is a vault rather than the template project and there is no release to keep up with"
     skip tmpl-release-in-preparation "$VU_REL is not present, so this is a vault rather than the template project and there is no release to keep up with"
     skip tmpl-release-tag-spelling "$VU_REL is not present, so this is a vault rather than the template project and there is no release to keep up with"
@@ -24120,6 +24272,37 @@ else
   bad "the provenance line in vault-check did not report what it should --$vu_bad"
 fi
 
+# Where to fetch a newer copy from. An adopter's update began by asking the
+# owner for the template's address, because nothing they ran said where to
+# look (1.7.3). Both tools that name the recorded version now point at the
+# section that says how to find it, and neither prints an address: one in a
+# file the tools read would be a place an agent fetches code from, and the
+# manifest is the one file no hash reaches. The fixture is the version 9.9.9
+# vault the control above left behind.
+vu_rc_fp="$(vu_rc "$vu_d" --status)"
+vu_bad=''
+vu_says 'records template version 9.9.9' || vu_bad="$vu_bad fixture:status-named-no-version:rc-$vu_rc_fp"
+vu_says 'docs/updating.md section 3 says how to find' || vu_bad="$vu_bad status-has-no-pointer"
+grep -q '://' "$VU_OUT" && vu_bad="$vu_bad status-printed-an-address"
+printf '%s' "$vu_vc_with" | grep -q 'records template version 9\.9\.9\..*docs/updating\.md' || vu_bad="$vu_bad version-line-has-no-pointer"
+printf '%s' "$vu_vc_with" | grep -q '://' && vu_bad="$vu_bad version-line-printed-an-address"
+# The line is quoted in three docs as what a passing run prints, so in the
+# template each quote must be the line vault-check prints, version aside. Not
+# in a vault, whose owner may have rewritten those docs.
+if [ "$VU_IS_TEMPLATE" = 1 ]; then
+  vu_fp_line="$(printf '%s\n' "$vu_vc_with" | LC_ALL=C sed -n 's/^\(vault-check: This vault records template version \)9\.9\.9\./\1X.Y.Z./p' | head -n 1)"
+  [ -n "$vu_fp_line" ] || vu_bad="$vu_bad fixture:no-version-line-to-compare"
+  for vu_fp_doc in AGENTS.md docs/reference.md docs/setup.md; do
+    [ -n "$vu_fp_line" ] && ! grep -qxF -- "$vu_fp_line" "$ROOT/$vu_fp_doc" 2>/dev/null && vu_bad="$vu_bad $vu_fp_doc-quotes-another-line"
+  done
+fi
+ran tmpl-fetch-pointer
+if [ -z "$vu_bad" ]; then
+  ok "--status and vault-check's version line point at docs/updating.md for where to fetch a newer copy, and print no address"
+else
+  bad "the tools that name the recorded version do not point at where to fetch a newer copy --$vu_bad [$(vu_excerpt)]"
+fi
+
 fi  # section update
 
 # --------------------------------------------- RUN_TESTS_ONLY, this suite --
@@ -24155,6 +24338,25 @@ elif [ "$sf_have" = "$sf_list" ]; then
   ok "every section in SUITE_SECTIONS has a guard in the suite, in the same order, and a renamed guard is seen as a disagreement"
 else
   bad "SUITE_SECTIONS and the suite's guards disagree -- list: $sf_list -- guards: $sf_have"
+fi
+
+# docs/updating.md tells an owner which section to run after an update, before
+# the full suite (an adopter's update report: a full run outlived two agent
+# deadlines, 1.7.3). A section renamed here would leave that advice naming a
+# run that refuses with 64, so every RUN_TESTS_ONLY=<name> the page names must
+# be a section, and it must name the update section.
+sf_doc="$ROOT/docs/updating.md"
+sf_named="$(LC_ALL=C grep -o 'RUN_TESTS_ONLY=[a-z-]*' "$sf_doc" 2>/dev/null | LC_ALL=C sed 's/^RUN_TESTS_ONLY=//' | LC_ALL=C sort -u | tr '\n' ' ')"
+sf_bad=''
+case " $sf_named " in *" update "*) : ;; *) sf_bad="$sf_bad updating.md-names-no-update-section-run" ;; esac
+for sf_n in $sf_named; do
+  case " $sf_list " in *" $sf_n "*) : ;; *) sf_bad="$sf_bad $sf_n:not-a-section" ;; esac
+done
+ran updating-doc-names-sections
+if [ -z "$sf_bad" ]; then
+  ok "docs/updating.md names the update section's run, and every section it names is one this suite has"
+else
+  bad "docs/updating.md names a section run this suite does not have --$sf_bad (named: $sf_named; sections: $sf_list)"
 fi
 
 # A name that is not a section is refused before anything runs, so a typo is
@@ -24230,8 +24432,40 @@ if [ "$(uname -s 2>/dev/null)" = Linux ]; then
   else
     bad "the update section's template-only controls are not gated by the variable --$sf_bad"
   fi
+  # The release controls read .github/release-check.sh, which a vault can hold
+  # as a stale copy from the release it was generated from, because the file
+  # is excluded from the manifest and --check never reports it. Gated on the
+  # file being there, they ran template-only checks against that stale copy
+  # and failed in a vault that was working perfectly (an adopter's update
+  # report, 1.7.3). This run is in the template tree, where the file exists,
+  # so a gate that still asks whether it exists runs them without the
+  # variable. The ids come from this file's own skip lines, so one added there
+  # is held here without a second list.
+  sf_rel_ids="$(LC_ALL=C sed -n 's/^ *skip \(tmpl-release-[a-z0-9-]*\) .*/\1/p' "$SUITE_SELF" | LC_ALL=C sort -u)"
+  sf_bad=''
+  sf_rel_n=0
+  for sf_id in $sf_rel_ids; do
+    sf_rel_n=$((sf_rel_n + 1))
+    printf '%s\n' "$sf_off" | grep -q "^  SKIP  \\[$sf_id\\] VAULT_TEMPLATE_MAINTAINER is not 1" || sf_bad="$sf_bad $sf_id:not-skipped-without-the-variable"
+    printf '%s\n' "$sf_on" | grep -q "^  SKIP  \\[$sf_id\\] VAULT_TEMPLATE_MAINTAINER is not 1" && sf_bad="$sf_bad $sf_id:skipped-with-the-variable"
+  done
+  [ "$sf_rel_n" -ge 10 ] || sf_bad="$sf_bad fixture:only-$sf_rel_n-release-ids-found"
+  # With the variable the controls must have answered, pass or fail, so a gate
+  # that dropped them altogether does not pass for one that ran them.
+  printf '%s\n' "$sf_on" | grep -q 'a tree matching its tag is owed nothing\|the release check did not tell a shipped change from an unshipped one' || sf_bad="$sf_bad never-ran-with-the-variable"
+  # The shipped manifest rules are excluded the same way, and the control that
+  # reads them ran ungated until 1.7.3, so a vault that deleted its copy failed.
+  printf '%s\n' "$sf_off" | grep -q '^  SKIP  \[tmpl-shipped-rules-have-no-catchall\] VAULT_TEMPLATE_MAINTAINER is not 1' || sf_bad="$sf_bad rules:not-skipped-without-the-variable"
+  printf '%s\n' "$sf_on" | grep -q 'shipped rules leave both an unclassified root file\|classified a file nothing should have classified' || sf_bad="$sf_bad rules:never-ran-with-the-variable"
+  ran c18-release-gate
+  if [ -z "$sf_bad" ]; then
+    ok "the release controls and the shipped-rules control skip without VAULT_TEMPLATE_MAINTAINER=1 even where the template's own files exist, and run with it"
+  else
+    bad "the release controls are gated by something other than the variable --$sf_bad"
+  fi
 else
   skip c18-gate-holds-in-update 'the template-only gate in the update section: run on Linux only, where that section takes under a minute'
+  skip c18-release-gate 'the release controls'"'"' gate in the update section: run on Linux only, where that section takes under a minute'
 fi
 
 # A filter that reaches no guard must not end green: the renamed copy, asked

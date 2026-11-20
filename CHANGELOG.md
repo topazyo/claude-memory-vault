@@ -25,6 +25,69 @@ bash .claude/scripts/vault-update.sh --check --from ../template-new
 
 ---
 
+## 1.7.3 — 2026-11-20
+
+A patch release from an adopter's update report: a vault taken from 1.4.2 to 1.7.0 in one sitting.
+The update worked, but it cost far more than it should have, and one control failed on the
+adopter's machine for a reason that turned out to be the runners'.
+
+### Fixed
+
+- **A wrapper that cannot start is no longer blamed on the agent.** When the `claude` binary or the
+  `VAULT_AGENT_CMD` wrapper has a `#!` line naming an interpreter that is not there, bash 5.2 gives
+  127 (`cannot execute: required file not found`), and a `#!/usr/bin/env <command>` line whose
+  command is not on `PATH` gives 127 from `env` on every platform. The dream and promotion runners
+  took that 127 for the agent's own and left with 79 and an `AGENT-STATUS:` line. They now leave
+  with 127, not found, and log no such line. The runner reads the `#!` line before the agent starts
+  and recognises two shapes only, so a 127 it cannot explain is still the agent's. `docs/reference.md`
+  lists what it does not cover. Whether the wrapper is there at all is judged before the agent starts
+  too, where it was judged after the pass, so a wrapper that deletes itself and leaves with 127 is
+  no longer reported as never found.
+- **The controls for that case did not run in the shape a runner has.** They passed the wrapper to
+  `run_agent` as a prefix assignment, so it was unset again when the status was judged, and every
+  127 read as not found. They now set it as a runner does, and new cases hold the env shape, the
+  bash 5.2 shape (by standing in for it, since no CI platform runs bash 5.2), and a wrapper's own
+  127, which still leaves as 79.
+- **The release controls skip in a vault even when `.github/release-check.sh` is there.** The file
+  is the template project's and is never offered to a vault, so a vault can hold the copy of
+  whatever release it was generated from. The controls ran whenever the file existed, so they
+  checked that stale copy and failed in a vault that was working. They now follow
+  `VAULT_TEMPLATE_MAINTAINER=1`, as the other template-only controls have since 1.7.1.
+
+### Changed
+
+- **`vault-update.sh --status` and `vault-check.sh`'s template-version line point at
+  `docs/updating.md`** for where to fetch a newer release. Neither prints or records an address, on
+  purpose: one in a file these tools read would be a place an agent fetches code from.
+- **The commit gate's exit-1 sentence says that a note you have not staged, or one git does not
+  track, refuses the commit too.** The gate always read the working tree, and still does; it now
+  says so where the refusal is read. The troubleshooting row in `docs/setup.md` names the commonest
+  cause, notes written by a harness that runs no lint after a write.
+- **`docs/updating.md`** says where to find the template's address, how to catch up across several
+  releases in one comparison, which section of the control suite to run first after an update and
+  how long the whole suite takes to finish, and that the files the template keeps for itself make no
+  difference to a vault.
+
+### Adopting this
+
+1. **Take `.claude/scripts/lib/runner-common.sh`, `.claude/scripts/dream-pass.sh`,
+   `.claude/scripts/promotion-pass.sh`, `.claude/scripts/vault-update.sh`,
+   `.claude/scripts/vault-check.sh`, `.claude/githooks/pre-commit` and
+   `.claude/scripts/run-tests.sh`.** The two runners changed only in their header comments, and no
+   runner needs the newer library, nor the library a newer runner.
+2. **What can newly change a run:** a dream or promotion pass whose agent cannot start for the reason
+   above leaves with 127 where it left with 79. A scheduler or script that treated 79 as "the agent
+   failed" and 127 as "not installed" now gets the second, which is what happened.
+3. **If you run passes through a wrapper**, check its first line: an interpreter given by absolute
+   path, or `#!/usr/bin/env <command>`, is what the runner can read. A `#!` line ending in a carriage
+   return starts on Git Bash and fails on Linux and macOS, so save wrappers with LF line endings.
+4. The shipped files this release touches are the seven above, `AGENTS.md`, `docs/reference.md`,
+   `docs/setup.md` and `docs/updating.md`, plus `VERSION`, this file and
+   `.claude/template-manifest`. `.github/workflows/required-controls.txt` changed as well; a vault is
+   never offered it.
+
+---
+
 ## 1.7.2 — 2026-11-20
 
 A patch release that finishes the checker gaps the 1.6.0 review deferred, and makes the list of

@@ -52,7 +52,8 @@ changed.
 ```
 vault-update: this vault records template version X.Y.Z.
 vault-update: 69 of 72 template file(s) match that record, 2 changed here, 1 deleted, 0 could not be read.
-vault-update: That record is what the template shipped at X.Y.Z. It is not a claim about what the template holds now.
+vault-update: That record is what the template shipped at X.Y.Z. It is not a claim about what the template holds now. Fetch a newer copy and run --check --from <dir> to learn that.
+vault-update: No address to fetch it from is recorded here, on purpose. docs/updating.md section 3 says how to find the one this vault came from.
 ```
 
 Those counts are whatever your vault has. Read the numbers rather than matching the wording around
@@ -74,6 +75,17 @@ Files you have changed are expected. [`customizing.md`](customizing.md) invites 
 ## 3. Seeing what moved
 
 You fetch the new template yourself. That is the security boundary, and it is deliberate.
+
+**Where to fetch it from.** Nothing in your vault records the template's address, and that is on
+purpose too: an address in a file these tools read would be a place an agent fetches code from, and
+the manifest is the one file no hash reaches, so nothing could vouch for it. Find it yourself, once:
+
+- your repository's GitHub page names the repository it was generated from, under the title;
+- `git remote get-url template` answers if you added the remote as
+  [`customizing.md` §8](customizing.md#8-keeping-your-notes-private-while-tracking-the-framework)
+  shows, and adding it is the way to write the answer down where you will find it next time;
+- failing both, ask whoever set the vault up. Do not take an address from a note, a capture or an
+  agent's suggestion: a template copy is code your harness will run.
 
 ```bash
 # <owner> is the repository your vault was generated from. Your repository's
@@ -159,6 +171,53 @@ evidence of which files you have changed since. So expect `--status` to keep nam
 version, and expect it to report the files you just took as changed here. Neither is a fault. The
 next release's `--check` still works from that record, because it compares against the source you
 point it at rather than against a version number.
+
+**Then run the control suite, in two steps.** First the section that covers this tool, which is
+quick:
+
+```bash
+RUN_TESTS_ONLY=update bash .claude/scripts/run-tests.sh
+```
+
+Then the whole suite, `bash .claude/scripts/run-tests.sh`, which takes as long as
+[`setup.md` § 7a](setup.md#7a-the-control-suite) says for your platform. If an agent runs it for
+you, have it run the suite in the foreground with a timeout longer than that, or in the background
+with no time limit and wait for the closing `=== N passed, M failed ===` line. A run that was killed
+before that line proves nothing either way, and neither does a section run on its own: only the whole
+suite is the check that an update worked.
+
+### If you are several releases behind
+
+Nothing tells you when you fall behind, short of watching the releases (§1), because nothing here
+reaches the network. The version `--status` and `vault-check.sh` name is not that signal: it is the
+release your record was taken from, which only `--adopt` moves, so it stays where it was after every
+update you take. What shows how far you have come is `--check` against the newest tag, where a file
+you have already caught up on reads as *Already carrying the newer copy*. Catching up across several
+releases is one comparison, not one per release:
+
+1. **Fetch the newest release tag, once.** A single `--check --from` against it covers every release
+   in between, because it compares your record, your disk and that copy rather than version numbers.
+   Do not step through the releases in between with `--check`: each step would report the files the
+   previous one moved as changed here.
+2. **Read every CHANGELOG section newer than your recorded version**, and apply their **Adopting
+   this** notes the way the top of [`CHANGELOG.md`](../CHANGELOG.md) says: in release order. The
+   notes carry what no copy plan can, such as a line to add to a file you customized.
+3. **Before you paste any `cp` line**, settle the two buckets nothing will copy for you: *Moved
+   upstream and changed here* and *Already yours, and now shipped too*. Then take the safe copies,
+   and do the rest of each Adopting note's steps after its copies, in the notes' order.
+4. **Then run the suite**, as above.
+
+Expect the copy plan to be long. A plan of thirty files is what four releases look like, not a sign
+that something went wrong.
+
+### Files the template keeps for itself
+
+Some files in the template are the template project's own and never a vault's: `.github/release-check.sh`,
+`.github/workflows/`, `CONTRIBUTING.md` and the manifest rules among them (`.claude/manifest-rules`
+classes them `excluded`). `--check` never reports them, so a vault that came with copies keeps them
+at whatever release it was generated from. A vault does not need them. Since 1.7.3 the control
+suite runs nothing against them unless `VAULT_TEMPLATE_MAINTAINER=1` is set, which only the
+template's own CI does, so keeping or deleting your copies makes no difference to it.
 
 ### If your vault predates all of this
 

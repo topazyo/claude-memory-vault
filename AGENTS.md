@@ -159,7 +159,7 @@ A passing run looks like this, with a **non-zero** file count (on the vault as s
 vault-check: 0 violation(s) across 9 file(s) checked (as of 2026-01-15).
 vault-check: 99-archive/ holds 0 note(s) on disk.
 vault-check: No retention pass is in this repository's history.
-vault-check: This vault records template version X.Y.Z. Run bash .claude/scripts/vault-update.sh --status for what has changed since.
+vault-check: This vault records template version X.Y.Z. Run bash .claude/scripts/vault-update.sh --status for what has changed since, and see docs/updating.md for where to fetch a newer release.
 ```
 
 The three lines after the count report rather than judge, and none of them changes a count or the

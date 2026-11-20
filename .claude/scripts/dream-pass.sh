@@ -102,7 +102,8 @@
 #        in this list other than 0 and 1 (2, 3, 4, 5, 64, 70, 75, 78, 79, 124,
 #        125, 127, 129, 130 or 143), so the runner does not repeat a code that
 #        would mean something else, and logs an AGENT-STATUS line. A wrapper
-#        that was gone when the watchdog came to start it stays 127. The log's "dream-agent exited with code" line
+#        that was gone when the watchdog came to start it, or that cannot start
+#        because its #! line names what is not there, stays 127. The log's "dream-agent exited with code" line
 #        holds the agent's own status
 #   124  TIMEOUT: the watchdog killed a run that exceeded DREAM_PASS_TIMEOUT, and
 #        everything it started
@@ -111,7 +112,8 @@
 #        set), and everything it started. After 124 or 125, KILL_FAILED in the
 #        log means a process may still be running. The run lock is kept, so later
 #        runs exit 75, and the tripwire is set
-#   127  the claude binary or the VAULT_AGENT_CMD wrapper was not found
+#   127  the claude binary or the VAULT_AGENT_CMD wrapper was not found, or
+#        cannot start because its #! line names what is not there
 #   129  stopped by HUP, 130 by INT, 143 by TERM. The agent's tree is stopped,
 #        and a pass stopped before containment sets the tripwire
 #   130  see 129
