@@ -83,8 +83,10 @@ grep -rIl -E '01-inbox|10-daily|20-projects|30-knowledge|31-standards|40-llm-wik
 
 ### The high-risk subset
 
-This is the **minimum** — the files where a miss fails silently rather than loudly. The grep above
-is the authoritative list.
+This is **every file the template ships, outside the prose documents and the notes, that names a
+tier folder**, and a control in `run-tests.sh` fails the template's own CI when one is missing from
+it. It is the one copy of this list: the other documents link here. The grep above also finds your
+own notes and any file you added, which only you can list.
 
 | File | What is hardcoded, and what to change |
 |---|---|
@@ -100,8 +102,12 @@ is the authoritative list.
 | `.claude/rules/untrusted-captures.md` | The rule's `paths:` frontmatter scope — `01-inbox/**/*.md` and `40-llm-wiki/raw/**/*.md` only. This one is a **security boundary**: if the scope no longer matches the folder holding captured content, the prompt-injection rule stops loading for exactly the notes that need it. |
 | `.claude/rules/security.md` | Names folders in its body. (It has no `paths:` frontmatter — it is global and always loads.) |
 | `30-knowledge/moc/VAULT-INDEX.md` | Every Dataview dashboard names its folders in a `from` clause. Miss this and each dashboard quietly returns an empty table. |
-| The five skills in `.claude/skills/` | `obsidian-save`, `wrap-up`, `resume`, `preserve` and `onboard-project` all name tier folders in their filing and reading instructions. |
-| `.claude/scripts/dream-pass.sh`, `promotion-pass.sh` | The write fences and artifact assertions name `20-projects/_logs/`, `31-standards/` and `40-llm-wiki/wiki/`. Miss these and every run exits 2 (VIOLATION) or 1 (NO-ARTIFACT). The `.cmd` wrappers name no tier folder. |
+| The five skills in `.claude/skills/` and their copies in `.agents/skills/` | `obsidian-save`, `wrap-up`, `resume`, `preserve` and `onboard-project` all name tier folders in their filing and reading instructions. Change both copies alike: `run-tests.sh` fails when they differ, and harnesses other than Claude Code read only `.agents/skills/`. |
+| `.claude/scripts/dream-pass.sh`, `.claude/scripts/promotion-pass.sh`, `.claude/scripts/promotion-pass.cmd` | The write fences and artifact assertions name `20-projects/_logs/`, `31-standards/` and `40-llm-wiki/wiki/`. Miss these and every run exits 2 (VIOLATION) or 1 (NO-ARTIFACT). `promotion-pass.cmd` names the long tier only in a comment; the `.cmd` wrappers run no tier folder. |
+| `.claude/scripts/vault-retention.sh` | `LOGS_REL` and `ARCH_REL` name `20-projects/_logs` and `99-archive/20-projects/_logs`, and its folder checks walk `20-projects` and `99-archive`. Miss them and the retention pass finds no `_logs` folder, says so, and archives nothing. |
+| `.claude/scripts/vault-update.sh` | `may_be_machinery()` names, whole, the five files the template ships inside content tiers (`VAULT-INDEX.md` and the four tier templates). A renamed one is no longer recognised as machinery, so `--check` no longer offers it to you as one. |
+| `.claude/manifest-rules` | The list deciding which files the template owns and which it hands over, by path: the tier templates and `VAULT-INDEX.md` among them. A renamed tier no rule names fails `vault-update.sh --verify-manifest`, loudly, the one place in this table where a miss is caught for you. |
+| `.claude/template-manifest` | The template's own record of the files it shipped, by path. Leave it as it is: it describes the template, not your layout, so after a rename `vault-update.sh --status` lists the moved files as changed or missing here. |
 | `.claude/scripts/lib/runner-common.sh` | The create-only check names `31-standards/` and `40-llm-wiki/wiki/` in a `case` pattern in `long_tier_existing` and another in `check_leftovers`, and `long_tier_existing` lists them for `git ls-tree`, and `REVERT_KEEP_DIRS` names the folders a put-back never removes. Miss the patterns and a promotion pass may change an existing long-tier note again, committed with exit 0 and nothing logged. `promotion-pass.sh` also names them in the grep that lists the long-tier notes a contained pass changed; miss that and a contained pass names none of the notes it left. `memory_override` names `90-auto-memory/.pass-agent`, the folder a claude-mode pass points Claude Code's memory at, in its checks and in the settings file it writes, and the fence's steering list names `90-auto-memory/`. Rename the folder in both together: miss them and a pass checks, and points memory at, a folder that is no longer your memory tier. |
 | `.claude/scripts/run-tests.sh` | Its synthetic fixture paths. These are *not* your vault, but leaving them stale means the suite stops testing the paths you actually use. |
 | `.obsidian/daily-notes.json` | The daily-note folder and template path (vault-root-relative). Obsidian will happily create daily notes in a folder that no longer matches your tier layout. |

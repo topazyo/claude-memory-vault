@@ -166,10 +166,19 @@ lint_file() {
   # letter beside the letter it is built from and so inside the range, and this
   # hook carries no locale pin of its own because every harness calls it
   # directly. Four defects of this family have already reached main here.
+  #
+  # SCOPE_NAME is the name the scope is decided on. A relative path that does
+  # name a file from the current directory is judged from there, so lintme.md
+  # given from inside 31-standards/ is that tier's note (Release C; it was taken
+  # for a file at the root, in no tier, and passed without a word). The name
+  # read and printed stays the one given.
+  local SCOPE_NAME="$NORM"
   case "$NORM" in
     /*|[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]:/*) ;;
     *)
-      if [ ! -e "$NORM" ]; then
+      if [ -e "$NORM" ]; then
+        SCOPE_NAME="$PWD/$NORM"
+      else
         local base_cwd
         base_cwd="${HOOK_CWD:-}"
         base_cwd="${base_cwd//\\//}"
@@ -178,6 +187,7 @@ lint_file() {
         elif [ -e "$ROOT/$NORM" ]; then
           NORM="$ROOT/$NORM"
         fi
+        SCOPE_NAME="$NORM"
       fi
       ;;
   esac
@@ -202,7 +212,7 @@ lint_file() {
   # mode, because MATCHN is also what scope_path reads, and its templates skip
   # must see a folder named `templates.` as spelled: stripping here would hand
   # it `templates` and skip a note that is no template on Linux and macOS.
-  norm_slashes "$NORM" keep
+  norm_slashes "$SCOPE_NAME" keep
   MATCHN="$NORM_OUT"
   while :; do
     case "$MATCHN" in
@@ -447,7 +457,7 @@ lint_file() {
     # the read is tested by asking whether the file opens at all. grep -P is
     # the fallback for a machine with no perl, and it gets the weaker check.
     if HITS=$(grep -noP '[\x{200B}-\x{200D}\x{FEFF}\x{202A}-\x{202E}\x{2066}-\x{2069}]' "$NORM" 2>/dev/null; [ "$?" -le 1 ] || exit 1) \
-       && { : < "$NORM"; } 2>/dev/null; then
+       && { true < "$NORM"; } 2>/dev/null; then
       SCAN_RAN=1
       HITS=$(printf '%s' "$HITS" | head -n 5)
       [ -n "$HITS" ] && HITS_FMT=$(printf '%s\n' "$HITS" | sed 's/:.*/: (invisible codepoint)/')

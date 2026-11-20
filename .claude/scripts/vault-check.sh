@@ -192,6 +192,11 @@ note_facts() {
         k = keys[i]
         if ($0 ~ ("^" k ":")) {
           n[k]++
+          # tier:long - a value straight after the colon (Release C). These
+          # checks read the key; a YAML reader takes the line for text.
+          rest = substr(s, length(k) + 2)
+          gsub(/\r/, "", rest)
+          if (rest != "" && rest !~ /^[ \t]/) nospace[k] = 1
           if (n[k] == 1) {
             v = $0
             sub(/^[^:]*:[ \t]*/, "", v)
@@ -224,6 +229,7 @@ note_facts() {
         printf "n_%s%s%d\n", k, us, n[k] + 0
         if (n[k] > 0) printf "r_%s%s%s\n", k, us, raw[k]
         if (k in odd) printf "spell%sthe key %s is also written as %s, which these checks do not read\n", us, k, odd[k]
+        if (k in nospace) printf "spell%sthe key %s has no space after its colon, so a YAML reader takes the line for text or rejects the whole block\n", us, k
         if (n[k] > 1) printf "spell%sthe key %s appears %d times; these checks read the first, a YAML reader the last\n", us, k, n[k]
       }
     }' "$1"
@@ -346,7 +352,7 @@ link_target_ok() {
       # A target spelled with a drive letter is absolute too: Git Bash's
       # readlink can give C:/... for a link Windows made.
       case "$t" in
-        /*|[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]:[\\/]*) p="${t//\\//}" ;;
+        /*|[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]:[\\/]*) slashed "$t"; p="$SLASHED" ;;
         *) p="${p%/*}/$t" ;;
       esac
       n=$((n + 1))
@@ -376,8 +382,9 @@ link_target_ok() {
           */templates/*) LINK_WHY="points into a templates folder, which the scan does not read"; return 1 ;;
         esac
         if [ "$isdir" -eq 0 ]; then
+          # A note is *.md in any case (Release C), as the scan reads it.
           case "$base" in
-            *.md) ;;
+            *.[mM][dD]) ;;
             *) LINK_WHY="points to $base, which is not a .md note"; return 1 ;;
           esac
           if [ "$t/$sub" = "20-projects/_logs/" ]; then
@@ -401,6 +408,27 @@ link_target_ok() {
   return 1
 }
 
+# A backslash separates folders only on Windows (Git Bash, MSYS, Cygwin), where
+# tab completion names 31-standards\x.md and a link Windows made can give
+# C:\... as its target. Elsewhere it is a character a name may hold, so a path
+# keeps it (Release C; a\b.md was reported as a/b.md, which is not there).
+# bash's own machine type says msys or cygwin under every MSYS2 shell, Git
+# Bash's included, at no cost. It is read from BASH_VERSINFO, which is read-only,
+# not from OSTYPE, which bash takes from the environment when one is exported
+# there (round 2 of the 1.7.2 review). uname covers a bash built otherwise, and
+# its *_NT-* the MSYS2 shells (UCRT64_NT-..., CLANG64_NT-...) that do not start
+# MINGW.
+BACKSLASH_SEP=0
+case "${BASH_VERSINFO[5]:-}" in *-msys*|*-cygwin*) BACKSLASH_SEP=1 ;; esac
+if [ "$BACKSLASH_SEP" -eq 0 ]; then
+  case "$(uname -s 2>/dev/null)" in MINGW*|MSYS*|CYGWIN*|*_NT-*) BACKSLASH_SEP=1 ;; esac
+fi
+# slashed <path> - sets SLASHED to the path with each backslash as a slash on
+# Windows, and to the path unchanged elsewhere.
+slashed() {
+  if [ "$BACKSLASH_SEP" -eq 1 ]; then SLASHED="${1//\\//}"; else SLASHED="$1"; fi
+}
+
 # named_tier_rel <absolute path> - true when the path lies in one of this
 # vault's content-tier folders, by identity rather than by spelling, so
 # ./31-standards/x.md, a doubled slash or the other Windows spelling of the
@@ -409,7 +437,8 @@ link_target_ok() {
 # that folder included, is a link. Only then does the link rule apply: a note
 # named plainly is checked whatever its name, as named mode always did.
 named_tier_rel() {
-  local f="${1//\\//}" d sub="" t prev=""
+  local f d sub="" t prev=""
+  slashed "$1"; f="$SLASHED"
   d="${f%/*}"
   NAMED_REL=""
   NAMED_VIA_LINK=0
@@ -435,6 +464,8 @@ named_tier_rel() {
 refused=0
 # 1 when find could not read a content-tier folder in full (1.7.1).
 UNREAD_WALK=0
+# Notes the full scan listed and could not read (Release C).
+unreadable=0
 refuse_link() {  # refuse_link <rel> <why>
   local shown_rel
   show "$1"; shown_rel="$SHOWN"
@@ -551,7 +582,12 @@ if [ "${#NAMED[@]}" -gt 0 ]; then
     # would read a relative name beginning with such a letter and a colon as an
     # absolute path on one platform and not on another.
     case "$file" in /*|[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]:[\\/]*) ;; *) file="$ROOT/$file" ;; esac
-    if [ ! -f "$file" ] || [ ! -r "$file" ]; then
+    # Opened, not asked about: Git Bash answers [ -r ] from mode bits, so a
+    # note whose Windows ACL denies reading passed it and was reported as a C1
+    # (round 1 of the 1.7.2 review). The -f first keeps a FIFO from blocking.
+    # true, not ":": a failed redirection on a special builtin such as ":"
+    # ends a shell in POSIX mode, and with it the run, with 1 (round 3).
+    if [ ! -f "$file" ] || ! { true < "$file"; } 2>/dev/null; then
       show "$file"
       printf 'vault-check: %s is not a readable file, so it was not checked.\n' "$SHOWN" >&2
       missing=$((missing + 1))
@@ -566,9 +602,10 @@ if [ "${#NAMED[@]}" -gt 0 ]; then
     # it always was.
     if named_tier_rel "$file"; then
       # Backslashes as slashes for the link walk, which splits on /: Windows
-      # tab completion names 31-standards\x.md.
+      # tab completion names 31-standards\x.md. Only there (Release C).
       LINK_REL=""
-      if [ "$NAMED_VIA_LINK" -eq 1 ] && ! link_target_ok "${file//\\//}"; then
+      slashed "$file"
+      if [ "$NAMED_VIA_LINK" -eq 1 ] && ! link_target_ok "$SLASHED"; then
         show "$file $LINK_WHY"
         printf 'vault-check: %s, so it was not checked.\n' "$SHOWN" >&2
         refused=$((refused + 1))
@@ -604,12 +641,17 @@ else
   # a /, so the pattern alone would also prune a folder named compaction-*.
   # A templates entry is pruned by its own name too, so one that is a link (a
   # shared templates folder) is skipped as a real one is, not refused: the scan
-  # reads neither. Both walks keep the same prune, so they agree on scope.
+  # reads neither. The retry below keeps the same prune, so they agree on scope.
   TIER_NAMES=()
   for d in $TIERS; do
     { [ -d "$ROOT/$d" ] || [ -L "$ROOT/$d" ]; } && TIER_NAMES+=("$d")
   done
   # -print0 / read -d '': several vault notes have spaces in their filenames.
+  #
+  # One walk lists the notes and the links together (Release C). There were
+  # two, one for each, which read a large vault twice and could disagree about
+  # a note made or removed between them. A note is a file named *.md in any
+  # case, as the lint takes it, so X.MD is read too (it was passed over).
   #
   # find's own status comes back as a last record, //find-status=<n>, because
   # a process substitution's status is lost and bash 3.2 cannot wait for one.
@@ -618,41 +660,57 @@ else
   # 0 (1.7.1); now the run says so and exits 2 unless a note violates an
   # invariant, as for a refused link. A walk that never reported is treated as
   # one that failed.
-  FIND_RC1=""
-  FIND_RC2=""
-  WALK1_N=0
+  FIND_RC=""
+  WALK_N=0
+  WALK_L=0
   while IFS= read -r -d '' file; do
-    case "$file" in //find-status=*) FIND_RC1="${file#//find-status=}"; continue ;; esac
-    WALK1_N=$((WALK1_N + 1))
+    case "$file" in //find-status=*) FIND_RC="${file#//find-status=}"; continue ;; esac
+    if [ -L "$ROOT/$file" ]; then
+      WALK_L=$((WALK_L + 1))
+      case "$file" in
+        *.[mM][dD]) ;;
+        *)
+          if [ -d "$ROOT/$file" ]; then
+            :
+          elif [ -e "$ROOT/$file" ]; then
+            continue
+          else
+            case "${file##*/}" in *.*) continue ;; esac
+          fi
+          ;;
+      esac
+      link_target_ok "$ROOT/$file" || refuse_link "$file" "$LINK_WHY"
+      continue
+    fi
+    # Only a note's name can be a note: an entry the walk listed as a link and
+    # that was replaced or removed before the test above is no note unless so
+    # named.
+    case "$file" in *.[mM][dD]) ;; *) continue ;; esac
+    WALK_N=$((WALK_N + 1))
+    # A note the walk lists and this account cannot read is not a note with
+    # no fence: nothing in it was checked, so the run says so and exits 2
+    # unless a note violates an invariant, as named mode does for the same
+    # note (Release C; it was reported as a C1). Opened rather than asked
+    # about with [ -r ], which Git Bash answers from mode bits alone. The -f
+    # first, as in named mode: a FIFO put where the walk listed a note blocked
+    # the scan on the open (round 2 of the 1.7.2 review).
+    if [ ! -f "$ROOT/$file" ] || ! { true < "$ROOT/$file"; } 2>/dev/null; then
+      show "$file"
+      printf 'vault-check: %s is not a readable file, so it was not checked.\n' "$SHOWN" >&2
+      unreadable=$((unreadable + 1))
+      continue
+    fi
     check_note "$ROOT/$file" "$file"
-  done < <(cd "$ROOT" && find "${TIER_NAMES[@]}" \( -path '*/templates' -o -path '*/templates/*' -o \( -type f -path '20-projects/_logs/compaction-*.md' ! -path '20-projects/_logs/*/*' \) \) -prune -o -type f -name '*.md' -print0; printf '//find-status=%s\0' "$?")
-  WALK2_N=0
-  while IFS= read -r -d '' file; do
-    case "$file" in //find-status=*) FIND_RC2="${file#//find-status=}"; continue ;; esac
-    WALK2_N=$((WALK2_N + 1))
-    case "$file" in
-      *.md) ;;
-      *)
-        if [ -d "$ROOT/$file" ]; then
-          :
-        elif [ -e "$ROOT/$file" ]; then
-          continue
-        else
-          case "${file##*/}" in *.*) continue ;; esac
-        fi
-        ;;
-    esac
-    link_target_ok "$ROOT/$file" || refuse_link "$file" "$LINK_WHY"
-  done < <(cd "$ROOT" && find "${TIER_NAMES[@]}" \( -path '*/templates' -o -path '*/templates/*' -o \( -type f -path '20-projects/_logs/compaction-*.md' ! -path '20-projects/_logs/*/*' \) \) -prune -o -type l -print0; printf '//find-status=%s\0' "$?")
-  if [ "$FIND_RC1" != 0 ] || [ "$FIND_RC2" != 0 ]; then
+  done < <(cd "$ROOT" && find "${TIER_NAMES[@]}" \( -path '*/templates' -o -path '*/templates/*' -o \( -type f -path '20-projects/_logs/compaction-*.md' ! -path '20-projects/_logs/*/*' \) \) -prune -o \( -type l -o -type f -iname '*.md' \) -print0; printf '//find-status=%s\0' "$?")
+  if [ "$FIND_RC" != 0 ]; then
     # find also fails when a file vanishes between being listed and being
     # read, which a sync client or an editor's temporary file does all the
     # time, and that leaves no folder unread. One more walk tells the two
     # apart: a folder find cannot read fails it again (round 1 of the 1.7.1
-    # review). It counts the notes and the links the two walks would have
-    # found, too, because a folder that could not be read a moment ago and can
-    # now, such as a cloud placeholder or a network share, passes a walk that
-    # only asks whether it fails. More now than the walks found means some were
+    # review). It counts the notes and the links the walk would have found,
+    # too, because a folder that could not be read a moment ago and can now,
+    # such as a cloud placeholder or a network share, passes a walk that only
+    # asks whether it fails. More now than the walk found means some were
     # never read; a file that vanished only makes a count smaller (rounds 2 and
     # 3). Known limits: files vanishing between the walks can cancel out an
     # unread folder's count, and a note made between them reads as unread.
@@ -662,13 +720,13 @@ else
     while IFS= read -r -d '' file; do
       case "$file" in //find-status=*) RETRY_RC="${file#//find-status=}"; continue ;; esac
       if [ -L "$ROOT/$file" ]; then RETRY_L=$((RETRY_L + 1)); else RETRY_N=$((RETRY_N + 1)); fi
-    done < <(cd "$ROOT" && find "${TIER_NAMES[@]}" \( -path '*/templates' -o -path '*/templates/*' -o \( -type f -path '20-projects/_logs/compaction-*.md' ! -path '20-projects/_logs/*/*' \) \) -prune -o \( -type l -o -type f -name '*.md' \) -print0 2>/dev/null; printf '//find-status=%s\0' "$?")
-    if [ "$RETRY_RC" = 0 ] && [ "$RETRY_N" -le "$WALK1_N" ] && [ "$RETRY_L" -le "$WALK2_N" ]; then
+    done < <(cd "$ROOT" && find "${TIER_NAMES[@]}" \( -path '*/templates' -o -path '*/templates/*' -o \( -type f -path '20-projects/_logs/compaction-*.md' ! -path '20-projects/_logs/*/*' \) \) -prune -o \( -type l -o -type f -iname '*.md' \) -print0 2>/dev/null; printf '//find-status=%s\0' "$?")
+    if [ "$RETRY_RC" = 0 ] && [ "$RETRY_N" -le "$WALK_N" ] && [ "$RETRY_L" -le "$WALK_L" ]; then
       printf 'vault-check: find reported an error and a second walk read every folder, so a file most likely vanished while it was read; the scan is taken as complete.\n' >&2
     else
       UNREAD_WALK=1
-      printf 'vault-check: find could not read every content-tier folder (status %s and %s; a second walk gave status %s and found %s note(s) where %s were checked and %s link(s) where %s were), so the notes in what it could not read were not checked. Its own message above names what it could not read.\n' \
-        "${FIND_RC1:-none}" "${FIND_RC2:-none}" "${RETRY_RC:-none}" "$RETRY_N" "$WALK1_N" "$RETRY_L" "$WALK2_N" >&2
+      printf 'vault-check: find could not read every content-tier folder (status %s; a second walk gave status %s and found %s note(s) where %s were listed and %s link(s) where %s were), so the notes in what it could not read were not checked. Its own message above names what it could not read.\n' \
+        "${FIND_RC:-none}" "${RETRY_RC:-none}" "$RETRY_N" "$WALK_N" "$RETRY_L" "$WALK_L" >&2
     fi
   fi
 fi
@@ -681,6 +739,10 @@ printf 'vault-check: %s violation(s) across %s file(s) checked (as of %s).\n' \
 # caller that reads only the first.
 if [ "$refused" -gt 0 ]; then
   printf 'vault-check: %s link(s) refused, so what they hold was not checked; stderr names them, and the exit code is 2 unless a note violates an invariant.\n' "$refused"
+fi
+# The same for a note the full scan could not read (Release C).
+if [ "$unreadable" -gt 0 ]; then
+  printf 'vault-check: %s note(s) could not be read, so they were not checked; stderr names them, and the exit code is 2 unless a note violates an invariant.\n' "$unreadable"
 fi
 # The same for a folder find could not read, on stdout beside the count for
 # the same reason (1.7.1).
@@ -700,7 +762,20 @@ fi
 # reads the exit code - a CI step, a pre-commit hook, an agent - cannot mistake
 # a path or folder-name problem for a clean vault.
 if [ "$files" -eq 0 ]; then
-  printf 'vault-check: VACUOUS - no notes were scanned, so this is not a pass. Check CLAUDE_PROJECT_DIR and the TIERS list.\n' >&2
+  if [ "$refused" -gt 0 ]; then
+    # Some were refused as links, and any others could not be read, each said
+    # above; the root is not the cause (round 3 of the 1.7.2 review).
+    printf 'vault-check: VACUOUS - no notes were scanned, so this is not a pass: every note was refused as a link or could not be read, as said above. Check where each link leads, and the paths and permissions of the rest.\n' >&2
+  elif [ "$unreadable" -gt 0 ]; then
+    # The notes are there; none of them could be opened, as said above.
+    printf 'vault-check: VACUOUS - no notes were scanned, so this is not a pass: every note the scan found could not be read. Check their permissions.\n' >&2
+  elif [ "$missing" -gt 0 ]; then
+    # Named mode: the lines above name each note that could not be read, which
+    # may be there and closed to this account (round 2 of the 1.7.2 review).
+    printf 'vault-check: VACUOUS - no notes were scanned, so this is not a pass: no note named could be read, as said above. Check each path and its permissions, and CLAUDE_PROJECT_DIR for a path relative to the root.\n' >&2
+  else
+    printf 'vault-check: VACUOUS - no notes were scanned, so this is not a pass. Check CLAUDE_PROJECT_DIR and the TIERS list.\n' >&2
+  fi
   exit 2
 fi
 
@@ -713,7 +788,7 @@ fi
 if [ "${#NAMED[@]}" -eq 0 ]; then
   archived=0
   if [ -d "$ROOT/99-archive" ]; then
-    archived="$(find "$ROOT/99-archive" -type f -name '*.md' 2>/dev/null | awk 'END { print NR + 0 }')"
+    archived="$(find "$ROOT/99-archive" -type f -iname '*.md' 2>/dev/null | awk 'END { print NR + 0 }')"
   fi
   printf 'vault-check: 99-archive/ holds %s note(s) on disk.\n' "$archived"
   # Replace refs off and hooks and fsmonitor out of the way, for the same reason
@@ -792,6 +867,8 @@ fi
 # the full scan refused is the same kind of answer: notes it did not read.
 [ "$missing" -gt 0 ] && exit 2
 [ "$refused" -gt 0 ] && exit 2
+# And a note the full scan listed and could not read (Release C).
+[ "$unreadable" -gt 0 ] && exit 2
 # And a content-tier folder find could not read in full (1.7.1).
 [ "$UNREAD_WALK" -eq 1 ] && exit 2
 exit 0

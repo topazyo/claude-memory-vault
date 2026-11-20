@@ -533,25 +533,15 @@ the template's biggest customization cost:
 
 > **Renaming a tier folder is a multi-file edit, not a rename.** The folder names
 > (`01-inbox/`, `10-daily/`, `20-projects/_logs/`, `31-standards/`, `40-llm-wiki/`, …) are
-> hardcoded independently across the repo. The *minimum* set is `AGENTS.md`,
-> `.claude/hooks/vault-lint.sh`, `.claude/scripts/vault-check.sh` (its `TIERS=` line),
-> `.claude/hooks/postcompact-wrap-up.sh`, both files in `.claude/agents/`, all four
-> `.claude/rules/*.md`, all five skills, `30-knowledge/moc/VAULT-INDEX.md` (every Dataview query
-> names folders), `dream-pass.sh`, `promotion-pass.sh` and `vault-retention.sh`, the fixtures in `.claude/scripts/run-tests.sh`,
-> `.obsidian/daily-notes.json`, and `.gitignore`. Treat that list as a floor, not an inventory:
-> grep for the old name across the whole repo and fix every hit. A missed one turns into a hook
-> that silently stops matching, which looks like a hook that found nothing wrong. And
-> `run-tests.sh` will not catch it, because it tests against its own temp-directory fixtures
-> rather than your folder layout.
+> hardcoded independently across the repo. A missed one turns into a hook that silently stops
+> matching, which looks like a hook that found nothing wrong, and `run-tests.sh` will not catch
+> it, because it tests its own temp-directory fixtures rather than your folder layout. The one
+> complete list of the files to change, and the grep that finds your own, is the table in
+> [`docs/customizing.md`, section 2](docs/customizing.md#2-renaming-or-adding-a-tier-folder).
 
 The numeric prefixes exist to keep the tiers in reading order in Obsidian's file explorer. If you
 do not care about that ordering, changing them is the least valuable customization available and
 the most expensive.
-
-Renaming a tier also reaches `.claude/manifest-rules`, which is the list deciding which files this
-template owns and which it hands over. A renamed tier that no rule names fails
-`vault-update.sh --verify-manifest`, loudly, which is the one place in that list where a miss is
-caught for you rather than by you.
 
 ---
 

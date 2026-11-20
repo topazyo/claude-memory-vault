@@ -138,6 +138,8 @@ WORK="$TMP/some one/my vault"
 MO_RB_TMP=
 # The background job mo_bounded is polling, if any, for cleanup to stop.
 MO_BOUNDED_PID=
+# The writer check-walk-fifo keeps on its FIFO, if any, for cleanup to stop.
+C3F_WRITER_PID=
 # The state folder of the case running now (new_case_state); until the first
 # case it is $TMP/state, never one named in the environment, which the memory
 # override's controls would remove a settings file from.
@@ -163,6 +165,12 @@ cleanup() {
   if [ -n "${MO_BOUNDED_PID:-}" ]; then
     [ -e "${TMP:-}/mo-bounded.done" ] || kill -KILL "$MO_BOUNDED_PID" 2>/dev/null
     MO_BOUNDED_PID=
+  fi
+  # The same for the writer check-walk-fifo keeps on its FIFO (round 3 of the
+  # 1.7.2 review), which would otherwise wait on a FIFO no one can reach.
+  if [ -n "${C3F_WRITER_PID:-}" ]; then
+    kill -KILL "$C3F_WRITER_PID" 2>/dev/null
+    C3F_WRITER_PID=
   fi
   [ -n "${MO_RB_TMP:-}" ] && rm -rf "$MO_RB_TMP" 2>/dev/null
   [ -n "${TMP:-}" ] && rm -rf "$TMP" 2>/dev/null
@@ -604,6 +612,28 @@ else
     skip c4-templates-dot "lint and a folder named templates.: the file system takes it for templates here"
   fi
 
+  # Release C: a relative path that names a file from a folder inside the
+  # vault is judged by where the file is in the vault. It stayed relative, so
+  # lintme.md from 31-standards/ looked like a file at the root, in no tier,
+  # and the lint said nothing about its missing tier.
+  printf -- '---\ntier: long\ntype: standard\n---\n\nSee [[ARCH-INDEX]].\n' > "$C4V/31-standards/fine.md"
+  c4s_out="$(cd "$C4V/31-standards" && CLAUDE_PROJECT_DIR="$C4V" bash "$HOOK" -- lintme.md </dev/null 2>&1 | strip_notices)"
+  c4s_up="$(cd "$C4V/10-daily" && CLAUDE_PROJECT_DIR="$C4V" bash "$HOOK" -- ../31-standards/lintme.md </dev/null 2>&1 | strip_notices)"
+  c4s_ok="$(cd "$C4V/31-standards" && CLAUDE_PROJECT_DIR="$C4V" bash "$HOOK" -- fine.md </dev/null 2>&1 | strip_notices)"
+  # A path given from the vault's root, from a folder where it names nothing,
+  # is still found from the root, as before (round 1 of the 1.7.2 review).
+  c4s_root="$(cd "$C4V/10-daily" && CLAUDE_PROJECT_DIR="$C4V" bash "$HOOK" -- 31-standards/lintme.md </dev/null 2>&1 | strip_notices)"
+  ran lint-subfolder-relative
+  if printf '%s' "$c4s_out" | grep -q "^vault-lint: lintme.md — .*missing 'tier'" \
+     && printf '%s' "$c4s_up" | grep -q "^vault-lint: ../31-standards/lintme.md — .*missing 'tier'" \
+     && printf '%s' "$c4s_root" | grep -q "missing 'tier'" \
+     && [ -z "$c4s_ok" ]; then
+    ok "a relative path from a folder inside the vault is linted by where the file is, and a clean note there stays silent"
+  else
+    bad "lint of a relative path from a vault subfolder -- got: [$(printf '%s' "$c4s_out" | tr '\n' ' ')] [$(printf '%s' "$c4s_up" | tr '\n' ' ')] from the root: [$(printf '%s' "$c4s_root" | tr '\n' ' ')] clean: [$(printf '%s' "$c4s_ok" | tr '\n' ' ')]"
+  fi
+  rm -f "$C4V/31-standards/fine.md"
+
   if [ -f "$WORK/.claude/logs/vault-lint.log" ]; then
     ok "audit log written to .claude/logs/vault-lint.log"
   else
@@ -793,6 +823,44 @@ else
   fi
   rm -f "$C3C/31-standards/notes.markdown"
 
+  # Release C: a backslash in a named path separates folders only on Windows,
+  # where tab completion names 31-standards\x.md. Elsewhere it is a character
+  # a name may hold, and a note named a\b.md was reported as a/b.md, a path
+  # that does not exist.
+  if is_windows_host; then
+    printf 'no fence\n' > "$C3C/31-standards/nofence.md"
+    c3_out="$(c3_run "$C3C" -- '31-standards\nofence.md')"
+    c3_want='31-standards/nofence.md — C1'
+    rm -f "$C3C/31-standards/nofence.md"
+  else
+    printf 'no fence\n' > "$C3C/31-standards/a\\b.md"
+    c3_out="$(c3_run "$C3C" -- '31-standards/a\b.md')"
+    c3_want='31-standards/a\\b.md — C1'
+    # Round 1 of the 1.7.2 review: MSYS2's UCRT64 and CLANG64 shells name
+    # themselves UCRT64_NT-... and CLANG64_NT-..., not MINGW. A stand-in uname
+    # saying so must make the same name read as a Windows one, a/b.md.
+    mkdir -p "$TMP/c3u-bin"
+    printf '#!/bin/sh\necho UCRT64_NT-10.0-22631\n' > "$TMP/c3u-bin/uname"
+    chmod +x "$TMP/c3u-bin/uname"
+    c3_uout="$(PATH="$TMP/c3u-bin:$PATH" c3_run "$C3C" -- '31-standards/a\b.md')"
+    rm -rf "$TMP/c3u-bin"
+    printf '%s\n' "$c3_uout" | grep -q '^31-standards/a/b.md — C1' \
+      || c3_ubad="under a UCRT64 uname it was not read as a Windows path: $(printf '%s' "$c3_uout" | tr '\n' '|' | cut -c1-200)"
+    # Round 2 of the 1.7.2 review: bash keeps an OSTYPE it inherits, so one
+    # exported from a shared profile must not make Linux read a\b.md as a/b.md.
+    c3_oout="$(export OSTYPE=cygwin; c3_run "$C3C" -- '31-standards/a\b.md')"
+    printf '%s\n' "$c3_oout" | grep -q "^$c3_want" \
+      || c3_ubad="${c3_ubad:+$c3_ubad; }with OSTYPE=cygwin exported it was read as a Windows path: $(printf '%s' "$c3_oout" | tr '\n' '|' | cut -c1-200)"
+    rm -f "$C3C/31-standards/a\\b.md"
+  fi
+  ran check-backslash-name
+  if [ "$(c3_rc "$c3_out")" = 1 ] && printf '%s\n' "$c3_out" | grep -q "^$c3_want" && [ "$(sentinel_files "$c3_out")" = 1 ] \
+     && [ -z "${c3_ubad:-}" ]; then
+    ok "a backslash in a named path is a folder separator on Windows and part of the name elsewhere"
+  else
+    bad "a named path with a backslash -- expected exit 1 and the line [$c3_want] -- ${c3_ubad:-} got: $(printf '%s' "$c3_out" | tr '\n' '|' | cut -c1-400)"
+  fi
+
   # The stub prune is for the stubs directly in 20-projects/_logs. find's *
   # crosses a /, so a folder there named like a stub must still be read.
   mkdir -p "$C3C/20-projects/_logs/compaction-notes"
@@ -850,7 +918,7 @@ else
   C3U="$TMP/c3-unreadable"
   c3_vault "$C3U"
   mkdir -p "$C3U/31-standards/locked"
-  printf -- '---\ntier: long\ntype: standard\n---\n[[ARCH-INDEX]]\n' > "$C3U/31-standards/locked/fine.md"
+  printf -- '---\ntier: long\ntype: standard\n---\n[[ARCH-INDEX]]\n' > "$C3U/31-standards/locked/FINE.MD"
   if is_windows_host; then
     skip check-unreadable-tier-folder 'a tier folder find cannot read: chmod 000 does not stop a listing on Windows'
   elif [ "$(id -u 2>/dev/null)" = 0 ]; then
@@ -879,11 +947,13 @@ else
   # first walk runs, as a cloud placeholder or a network share can be. The
   # second walk then succeeds, and asking only whether it failed took the scan
   # as complete and exited 0 with the note never checked. A stand-in find makes
-  # the folder unreadable for the first note walk and for nothing after it.
-  # Round 3: the same for the link walk alone, which the retry did not count,
-  # so a link in that folder was never checked and the run exited 0. The
-  # folder holds a link to its note for that arm.
-  ln -s fine.md "$C3U/31-standards/locked/alias.md" 2>/dev/null
+  # the folder unreadable for the first walk and for nothing after it.
+  # Round 3: the same for a link alone, which the retry did not count, so a
+  # link in that folder was never checked and the run exited 0. Since Release
+  # C one walk lists the notes and the links, so the two arms differ in what
+  # the folder holds: its note (md), or only a link to a note outside it (l),
+  # so that each of the retry's two counts has an arm only it can catch.
+  ln -s ../good.md "$C3U/31-standards/locked/alias.md" 2>/dev/null
   c3t_probe=1
   if ! is_windows_host && [ "$(id -u 2>/dev/null)" != 0 ]; then
     chmod 000 "$C3U/31-standards/locked"
@@ -901,19 +971,13 @@ else
   else
     c3t_real="$(command -v find)"
     mkdir -p "$TMP/c3t-bin"
-    # C3T_WALK=md locks the folder for the first note walk, C3T_WALK=l for the
-    # link walk, which is the only walk with -type l and no *.md.
+    # The first walk of a tier, the one with *.md among its arguments, runs
+    # with the folder locked, once per arm (C3T_WALK names the arm).
     cat > "$TMP/c3t-bin/find" <<C3T_EOF
 #!/usr/bin/env bash
 md=0
-ln=0
-for a in "\$@"; do [ "\$a" = '*.md' ] && md=1; [ "\$a" = l ] && ln=1; done
-hit=0
-case "\$C3T_WALK" in
-  md) [ "\$md" = 1 ] && hit=1 ;;
-  l) [ "\$ln" = 1 ] && [ "\$md" = 0 ] && hit=1 ;;
-esac
-if [ "\$hit" = 1 ] && [ ! -e "$TMP/c3t-bin/walked-\$C3T_WALK" ]; then
+for a in "\$@"; do [ "\$a" = '*.md' ] && md=1; done
+if [ "\$md" = 1 ] && [ ! -e "$TMP/c3t-bin/walked-\$C3T_WALK" ]; then
   : > "$TMP/c3t-bin/walked-\$C3T_WALK"
   chmod 000 "$C3U/31-standards/locked"
   "$c3t_real" "\$@"
@@ -925,8 +989,12 @@ exec "$c3t_real" "\$@"
 C3T_EOF
     chmod +x "$TMP/c3t-bin/find"
     RET_LOCKED_DIR="$C3U/31-standards/locked"
+    mv "$C3U/31-standards/locked/alias.md" "$TMP/c3t-bin/alias.md"
     c3_out="$(C3T_WALK=md PATH="$TMP/c3t-bin:$PATH" c3_run "$C3U")"
+    mv "$C3U/31-standards/locked/FINE.MD" "$TMP/c3t-bin/FINE.MD"
+    mv "$TMP/c3t-bin/alias.md" "$C3U/31-standards/locked/alias.md"
     c3_lout="$(C3T_WALK=l PATH="$TMP/c3t-bin:$PATH" c3_run "$C3U")"
+    mv "$TMP/c3t-bin/FINE.MD" "$C3U/31-standards/locked/FINE.MD"
     chmod 755 "$C3U/31-standards/locked"
     RET_LOCKED_DIR=
     if [ ! -e "$TMP/c3t-bin/walked-md" ] || [ ! -e "$TMP/c3t-bin/walked-l" ]; then
@@ -937,14 +1005,314 @@ C3T_EOF
          && printf '%s\n' "$c3_out" | grep -q 'find could not read every content-tier folder' \
          && [ "$(c3_rc "$c3_lout")" = 2 ] \
          && printf '%s\n' "$c3_lout" | grep -q 'find could not read every content-tier folder'; then
-        ok "a tier folder unreadable for the note walk only, or for the link walk only, still makes the scan exit 2, rather than count it complete"
+        ok "a tier folder unreadable for the first walk only still makes the scan exit 2, whether it holds a note or only a link, rather than count it complete"
       else
-        bad "a tier folder unreadable for one walk was taken as read -- note walk: $(printf '%s' "$c3_out" | tr '\n' '|' | cut -c1-300) link walk: $(printf '%s' "$c3_lout" | tr '\n' '|' | cut -c1-300)"
+        bad "a tier folder unreadable for the first walk was taken as read -- holding a note: $(printf '%s' "$c3_out" | tr '\n' '|' | cut -c1-300) holding a link: $(printf '%s' "$c3_lout" | tr '\n' '|' | cut -c1-300)"
       fi
     fi
     rm -rf "$TMP/c3t-bin"
   fi
   rm -f "$C3U/31-standards/locked/alias.md"
+
+  # Round 1 of the 1.7.2 review: the other side of the retry. find fails when a
+  # file vanishes while it reads, which a sync client does all the time, and
+  # then a second walk that reads every folder and finds no more notes and no
+  # more links than the first must let the scan stand, exit 0. A stand-in find
+  # prints the whole first walk and then fails it, as such a file does. Where
+  # ln -s makes a link the vault holds one, so the link count is compared as
+  # well as the notes'; elsewhere (Windows without native links) it runs with
+  # none, so the branch is run on every platform (round 2 of the review).
+  C3V="$TMP/c3-vanish"
+  c3_vault "$C3V"
+  ln -s good.md "$C3V/31-standards/alias.md" 2>/dev/null
+  c3v_link="with a link"
+  if [ ! -L "$C3V/31-standards/alias.md" ]; then
+    rm -f "$C3V/31-standards/alias.md"
+    c3v_link="with no link (ln -s made none here)"
+  fi
+  mkdir -p "$TMP/c3v-bin"
+  c3v_real="$(command -v find)"
+  cat > "$TMP/c3v-bin/find" <<C3V_EOF
+#!/usr/bin/env bash
+"$c3v_real" "\$@"
+rc=\$?
+for a in "\$@"; do
+  if [ "\$a" = -print0 ] && [ ! -e "$TMP/c3v-bin/walked" ]; then
+    : > "$TMP/c3v-bin/walked"
+    echo "find: a file vanished" >&2
+    exit 1
+  fi
+done
+exit "\$rc"
+C3V_EOF
+  chmod +x "$TMP/c3v-bin/find"
+  c3_out="$(PATH="$TMP/c3v-bin:$PATH" c3_run "$C3V")"
+  ran check-retry-vanished
+  if [ -e "$TMP/c3v-bin/walked" ] && [ "$(c3_rc "$c3_out")" = 0 ] \
+     && printf '%s\n' "$c3_out" | grep -q 'the scan is taken as complete' \
+     && ! printf '%s\n' "$c3_out" | grep -q 'could not be read in full' && [ "$(sentinel_files "$c3_out")" = 1 ]; then
+    ok "a walk that failed but whose retry reads every folder and finds no more notes or links lets the scan stand ($c3v_link)"
+  else
+    bad "a walk that failed for a vanished file ($c3v_link) -- expected exit 0 and the taken-as-complete line -- got: $(printf '%s' "$c3_out" | tr '\n' '|' | cut -c1-400)"
+  fi
+  rm -rf "$TMP/c3v-bin"
+
+  # Release C: a note is a file named *.md in any case, as the lint takes it,
+  # so the full scan reads UPPER.MD and Clean.Md too. Before, a note whose
+  # name ended in .MD was never read and the scan said 0 violations.
+  C3M="$TMP/c3-upper"
+  c3_vault "$C3M"
+  printf 'no fence\n' > "$C3M/31-standards/UPPER.MD"
+  printf -- '---\ntier: long\ntype: standard\n---\n\nSee [[ARCH-INDEX]].\n' > "$C3M/31-standards/Clean.Md"
+  c3_out="$(c3_run "$C3M")"
+  ran check-upper-md
+  if [ "$(c3_rc "$c3_out")" = 1 ] && printf '%s\n' "$c3_out" | grep -q '^31-standards/UPPER.MD — C1' \
+     && ! printf '%s\n' "$c3_out" | grep -q 'Clean\.Md' && [ "$(sentinel_files "$c3_out")" = 3 ]; then
+    ok "the full scan reads a note named *.MD or *.Md, reports the one that violates and counts all three"
+  else
+    bad "notes named *.MD and *.Md -- expected exit 1, UPPER.MD's C1 line, no line for Clean.Md and 3 files -- got: $(printf '%s' "$c3_out" | tr '\n' '|' | cut -c1-400)"
+  fi
+  rm -f "$C3M/31-standards/UPPER.MD"
+  # And a link named so is judged as a note's: one that dangles is refused,
+  # where before it was taken for a file of another kind and passed over.
+  ln -s no-such-note.md "$C3M/31-standards/gone.MD" 2>/dev/null
+  if [ -L "$C3M/31-standards/gone.MD" ]; then
+    c3_out="$(c3_run "$C3M")"
+    ran check-upper-md-link
+    if [ "$(c3_rc "$c3_out")" = 2 ] && printf '%s\n' "$c3_out" | grep -q '31-standards/gone.MD is a link that' \
+       && printf '%s\n' "$c3_out" | grep -q '^vault-check: 1 link(s) refused'; then
+      ok "a dangling link named *.MD is refused as a note's link, and the scan exits 2"
+    else
+      bad "a dangling link named *.MD -- expected exit 2 and its refusal -- got: $(printf '%s' "$c3_out" | tr '\n' '|' | cut -c1-400)"
+    fi
+    # And a link to a note named *.Md is a link to a note, in both modes
+    # (mutants of 1.7.2: the target's own name test had no control).
+    rm -f "$C3M/31-standards/gone.MD"
+    ln -s Clean.Md "$C3M/31-standards/alias.md" 2>/dev/null
+    c3_out="$(c3_run "$C3M")"
+    c3_nout="$(c3_run "$C3M" -- 31-standards/alias.md)"
+    rm -f "$C3M/31-standards/alias.md"
+    if [ "$(c3_rc "$c3_out")" = 0 ] && ! printf '%s\n' "$c3_out" | grep -q 'is a link that' && [ "$(sentinel_files "$c3_out")" = 2 ] \
+       && [ "$(c3_rc "$c3_nout")" = 0 ] && ! printf '%s\n' "$c3_nout" | grep -q 'is a link that' && [ "$(sentinel_files "$c3_nout")" = 1 ]; then
+      ok "a link to a note named *.Md is accepted as a note's link in the full scan and in named mode"
+    else
+      bad "a link to a note named *.Md -- expected exit 0 and no refusal in both modes, 2 files and 1 -- full: $(printf '%s' "$c3_out" | tr '\n' '|' | cut -c1-250) named: $(printf '%s' "$c3_nout" | tr '\n' '|' | cut -c1-250)"
+    fi
+  else
+    skip check-upper-md-link 'a dangling link named *.MD: ln -s made no link here'
+  fi
+  # Whatever ln left, a file where it could not make a link included, so the
+  # controls below count the same notes everywhere.
+  rm -f "$C3M/31-standards/gone.MD"
+
+  # Release C: one walk lists the notes and the links of every tier. Two
+  # walks read a large vault twice, and a note made or removed between them
+  # made them disagree. A stand-in find counts the walks: those that print
+  # with -print0, which only the walks of the tiers do.
+  mkdir -p "$TMP/c3w-bin"
+  c3w_real="$(command -v find)"
+  cat > "$TMP/c3w-bin/find" <<C3W_EOF
+#!/usr/bin/env bash
+for a in "\$@"; do [ "\$a" = -print0 ] && { printf 'w\n' >> "$TMP/c3w-bin/walks"; break; }; done
+exec "$c3w_real" "\$@"
+C3W_EOF
+  chmod +x "$TMP/c3w-bin/find"
+  : > "$TMP/c3w-bin/walks"
+  c3_out="$(PATH="$TMP/c3w-bin:$PATH" c3_run "$C3M")"
+  c3w_n="$(awk 'END { print NR + 0 }' "$TMP/c3w-bin/walks")"
+  ran check-one-walk
+  if [ "$c3w_n" = 1 ] && [ "$(c3_rc "$c3_out")" = 0 ] && [ "$(sentinel_files "$c3_out")" = 2 ]; then
+    ok "a clean vault is read in one walk of its tiers"
+  else
+    bad "the walks of a clean vault -- expected 1 walk, exit 0 and 2 files -- got $c3w_n walk(s): $(printf '%s' "$c3_out" | tr '\n' '|' | cut -c1-300)"
+  fi
+  rm -rf "$TMP/c3w-bin"
+
+  # Release C: a note the scan lists but cannot read is not a note with no
+  # fence. Nothing was checked, so the scan says so and exits 2, as named mode
+  # does for the same note; before it reported a C1 and exited 1.
+  printf -- '---\ntier: long\ntype: standard\n---\n\nSee [[ARCH-INDEX]].\n' > "$C3M/31-standards/secret.md"
+  if is_windows_host; then
+    skip check-unreadable-note 'a note the scan cannot read: chmod 000 does not stop a read on Windows'
+  elif [ "$(id -u 2>/dev/null)" = 0 ]; then
+    skip check-unreadable-note 'a note the scan cannot read: root can read any file'
+  else
+    chmod 000 "$C3M/31-standards/secret.md"
+    if ! cat "$C3M/31-standards/secret.md" >/dev/null 2>&1; then
+      c3_out="$(c3_run "$C3M")"
+      ran check-unreadable-note
+      if [ "$(c3_rc "$c3_out")" = 2 ] \
+         && printf '%s\n' "$c3_out" | grep -q '31-standards/secret.md is not a readable file, so it was not checked' \
+         && printf '%s\n' "$c3_out" | grep -q '^vault-check: 1 note(s) could not be read' \
+         && ! printf '%s\n' "$c3_out" | grep -q 'secret.md — C1' && [ "$(sentinel_files "$c3_out")" = 2 ]; then
+        ok "a note the full scan cannot read is said and exits 2, not reported as a C1"
+      else
+        bad "an unreadable note in the full scan -- expected exit 2, both lines, no C1 and 2 files -- got: $(printf '%s' "$c3_out" | tr '\n' '|' | cut -c1-400)"
+      fi
+      # Round 3 of the 1.7.2 review: the same in POSIX mode, which
+      # POSIXLY_CORRECT turns on, where a failed redirection on a special
+      # builtin such as ":" ends the shell: the probe that opens the note ended
+      # the checker with exit 1 and no count line, in both modes. Through env to
+      # the checker alone, as retention-posix-mode does; bash before 5.1 cannot
+      # parse the checker in POSIX mode (process substitution).
+      c3p_bv="$(bash -c 'echo "${BASH_VERSINFO[0]}${BASH_VERSINFO[1]}"' 2>/dev/null)"
+      if [ "${c3p_bv:-0}" -lt 51 ] 2>/dev/null; then
+        skip check-unreadable-posix "an unreadable note in POSIX mode: bash ${c3p_bv:-of unknown version} is older than 5.1, which cannot parse the checker in POSIX mode"
+      else
+        c3p_out="$(CLAUDE_PROJECT_DIR="$C3M" env POSIXLY_CORRECT=1 bash "$CHECK" 2>&1; echo "RC=$?")"
+        c3p_nout="$(CLAUDE_PROJECT_DIR="$C3M" env POSIXLY_CORRECT=1 bash "$CHECK" -- 31-standards/secret.md 2>&1; echo "RC=$?")"
+        ran check-unreadable-posix
+        if [ "$(c3_rc "$c3p_out")" = 2 ] && printf '%s\n' "$c3p_out" | grep -q '31-standards/secret.md is not a readable file' \
+           && [ "$(sentinel_files "$c3p_out")" = 2 ] \
+           && [ "$(c3_rc "$c3p_nout")" = 2 ] && printf '%s\n' "$c3p_nout" | grep -q 'secret.md is not a readable file'; then
+          ok "in POSIX mode an unreadable note is still said and exits 2, in both modes, rather than ending the checker with 1"
+        else
+          bad "an unreadable note in POSIX mode -- expected exit 2 and its line in both modes -- full: $(printf '%s' "$c3p_out" | tr '\n' '|' | cut -c1-250) named: $(printf '%s' "$c3p_nout" | tr '\n' '|' | cut -c1-250)"
+        fi
+      fi
+      # A note that does violate still makes it a 1, as for a refused link.
+      printf 'no fence\n' > "$C3M/31-standards/nofence.md"
+      c3_out="$(c3_run "$C3M")"
+      if [ "$(c3_rc "$c3_out")" = 1 ] && printf '%s\n' "$c3_out" | grep -q '^vault-check: 1 note(s) could not be read'; then
+        ok "an unreadable note beside a violation: the violation's 1, and the unreadable note still said"
+      else
+        bad "an unreadable note beside a violation -- expected exit 1 and the unreadable line -- got: $(printf '%s' "$c3_out" | tr '\n' '|' | cut -c1-400)"
+      fi
+      rm -f "$C3M/31-standards/nofence.md"
+      # Every note unreadable: VACUOUS, and its hint is the notes' permissions,
+      # not the root (round 1 of the 1.7.2 review).
+      chmod 000 "$C3M/31-standards/good.md" "$C3M/31-standards/Clean.Md"
+      c3_out="$(c3_run "$C3M")"
+      chmod 644 "$C3M/31-standards/good.md" "$C3M/31-standards/Clean.Md"
+      if [ "$(c3_rc "$c3_out")" = 2 ] && printf '%s\n' "$c3_out" | grep -q 'VACUOUS.*every note the scan found could not be read' \
+         && ! printf '%s\n' "$c3_out" | grep -q 'Check CLAUDE_PROJECT_DIR'; then
+        ok "a scan whose every note is unreadable is VACUOUS and points at their permissions, not at the root"
+      else
+        bad "every note unreadable -- expected exit 2 and the permissions hint -- got: $(printf '%s' "$c3_out" | tr '\n' '|' | cut -c1-400)"
+      fi
+      # The same in named mode (round 2): the note named is there and could
+      # not be opened, which the root hint alone does not say.
+      c3_out="$(c3_run "$C3M" -- 31-standards/secret.md)"
+      if [ "$(c3_rc "$c3_out")" = 2 ] && printf '%s\n' "$c3_out" | grep -q 'VACUOUS.*no note named could be read.*permissions' \
+         && printf '%s\n' "$c3_out" | grep -q 'secret.md is not a readable file'; then
+        ok "named mode with its only note unreadable names it, and is VACUOUS with a hint about paths and permissions"
+      else
+        bad "named mode, its note unreadable -- expected exit 2 and the named-note hint -- got: $(printf '%s' "$c3_out" | tr '\n' '|' | cut -c1-400)"
+      fi
+    else
+      skip check-unreadable-note 'a note the scan cannot read: chmod 000 did not stop a read here'
+    fi
+    chmod 644 "$C3M/31-standards/secret.md"
+  fi
+  rm -f "$C3M/31-standards/secret.md"
+
+  # Round 1 of the 1.7.2 review: Git Bash answers [ -r ] from mode bits, so a
+  # note whose Windows ACL denies reading passed it, and awk's failure to open
+  # it was reported as a C1 with exit 1, in both modes. The scan now opens the
+  # note to find out. An ACL deny on a file of one's own needs no privilege.
+  if is_windows_host && command -v icacls >/dev/null 2>&1 && command -v cygpath >/dev/null 2>&1; then
+    printf -- '---\ntier: long\ntype: standard\n---\n\nSee [[ARCH-INDEX]].\n' > "$C3M/31-standards/denied.md"
+    c3_w="$(cygpath -w "$C3M/31-standards/denied.md")"
+    if MSYS_NO_PATHCONV=1 icacls "$c3_w" /deny "${USERNAME:-$(id -un)}:(R)" >/dev/null 2>&1 \
+       && ! { : < "$C3M/31-standards/denied.md"; } 2>/dev/null; then
+      c3_out="$(c3_run "$C3M")"
+      c3_nout="$(c3_run "$C3M" -- 31-standards/denied.md)"
+      ran check-unreadable-note-acl
+      if [ "$(c3_rc "$c3_out")" = 2 ] && printf '%s\n' "$c3_out" | grep -q '31-standards/denied.md is not a readable file' \
+         && ! printf '%s\n' "$c3_out" | grep -q 'denied.md — C1' \
+         && ! printf '%s\n' "$c3_out" | grep -q 'could not read every content-tier folder' \
+         && [ "$(c3_rc "$c3_nout")" = 2 ] && ! printf '%s\n' "$c3_nout" | grep -q 'denied.md — C1' \
+         && printf '%s\n' "$c3_nout" | grep -q 'denied.md is not a readable file' \
+         && printf '%s\n' "$c3_nout" | grep -q 'VACUOUS.*no note named could be read'; then
+        ok "a note whose Windows ACL denies reading is not checked and exits 2 in both modes, rather than a C1"
+      else
+        bad "an ACL-denied note -- expected exit 2 and no C1 in both modes -- full: $(printf '%s' "$c3_out" | tr '\n' '|' | cut -c1-250) named: $(printf '%s' "$c3_nout" | tr '\n' '|' | cut -c1-250)"
+      fi
+    else
+      skip check-unreadable-note-acl 'a note whose Windows ACL denies reading: icacls could not deny the read here'
+    fi
+    MSYS_NO_PATHCONV=1 icacls "$c3_w" /remove:d "${USERNAME:-$(id -un)}" >/dev/null 2>&1
+    rm -f "$C3M/31-standards/denied.md"
+  else
+    skip check-unreadable-note-acl 'a note whose Windows ACL denies reading: not Git Bash on Windows'
+  fi
+
+  # Round 1 of the 1.7.2 review: an entry the walk lists as a link and that is
+  # a plain file by the time it is looked at, an image say, is no note. A
+  # stand-in find adds such an entry to the real walk's list, the shape that
+  # race leaves.
+  printf 'not a note\n' > "$C3M/31-standards/img.png"
+  mkdir -p "$TMP/c3r-bin"
+  c3r_real="$(command -v find)"
+  cat > "$TMP/c3r-bin/find" <<C3R_EOF
+#!/usr/bin/env bash
+"$c3r_real" "\$@"
+rc=\$?
+for a in "\$@"; do [ "\$a" = -print0 ] && { printf '31-standards/img.png\0'; : > "$TMP/c3r-bin/injected"; break; }; done
+exit "\$rc"
+C3R_EOF
+  chmod +x "$TMP/c3r-bin/find"
+  c3_out="$(PATH="$TMP/c3r-bin:$PATH" c3_run "$C3M")"
+  # The stand-in must have been the walk's find (round 2 of the 1.7.2 review),
+  # or the entry under test was never listed.
+  c3r_ran=0
+  [ -f "$TMP/c3r-bin/injected" ] && c3r_ran=1
+  rm -rf "$TMP/c3r-bin" "$C3M/31-standards/img.png"
+  ran check-walk-non-note
+  if [ "$c3r_ran" = 1 ] && [ "$(c3_rc "$c3_out")" = 0 ] && ! printf '%s\n' "$c3_out" | grep -q 'img.png' && [ "$(sentinel_files "$c3_out")" = 2 ]; then
+    ok "a plain file the walk listed that is not named *.md is not read as a note"
+  else
+    bad "a non-note entry from the walk -- expected the stand-in find to run ($c3r_ran), exit 0, no line for img.png and 2 files -- got: $(printf '%s' "$c3_out" | tr '\n' '|' | cut -c1-400)"
+  fi
+
+  # Round 2 of the 1.7.2 review: a note the walk listed and that is a FIFO by
+  # the time the scan opens it blocked the scan (and the commit gate) on the
+  # open, as named mode's -f test already prevents. A stand-in find lists the
+  # FIFO, the shape that race leaves. A writer that keeps reopening it, with
+  # SIGPIPE ignored, lets a scan that opens it finish rather than hang the suite,
+  # and leaves a marker each time its open returns, which only a reader's open
+  # allows: the fixed scan never opens the FIFO, so no marker may appear (round
+  # 3; a scan that opened it before testing its type passed). The writer stops
+  # after 200 opens, and cleanup stops it if the suite is interrupted.
+  if ! is_windows_host && mkfifo "$C3M/31-standards/pipe.md" 2>/dev/null && [ -p "$C3M/31-standards/pipe.md" ]; then
+    rm -f "$TMP/c3f-opened"
+    ( trap '' PIPE; c3f_i=0
+      while [ "$c3f_i" -lt 200 ]; do
+        printf 'x\n' > "$C3M/31-standards/pipe.md" 2>/dev/null
+        : > "$TMP/c3f-opened"
+        c3f_i=$((c3f_i + 1))
+      done ) &
+    c3f_writer=$!
+    C3F_WRITER_PID=$c3f_writer
+    mkdir -p "$TMP/c3f-bin"
+    cat > "$TMP/c3f-bin/find" <<C3F_EOF
+#!/usr/bin/env bash
+"$c3r_real" "\$@"
+rc=\$?
+for a in "\$@"; do [ "\$a" = -print0 ] && { printf '31-standards/pipe.md\0'; : > "$TMP/c3f-bin/injected"; break; }; done
+exit "\$rc"
+C3F_EOF
+    chmod +x "$TMP/c3f-bin/find"
+    c3_out="$(PATH="$TMP/c3f-bin:$PATH" c3_run "$C3M")"
+    kill "$c3f_writer" 2>/dev/null
+    wait "$c3f_writer" 2>/dev/null
+    C3F_WRITER_PID=
+    c3f_ran=0
+    [ -f "$TMP/c3f-bin/injected" ] && c3f_ran=1
+    c3f_open=0
+    [ -e "$TMP/c3f-opened" ] && c3f_open=1
+    rm -rf "$TMP/c3f-bin" "$C3M/31-standards/pipe.md" "$TMP/c3f-opened"
+    ran check-walk-fifo
+    if [ "$c3f_ran" = 1 ] && [ "$c3f_open" = 0 ] && [ "$(c3_rc "$c3_out")" = 2 ] && printf '%s\n' "$c3_out" | grep -q '31-standards/pipe.md is not a readable file' \
+       && ! printf '%s\n' "$c3_out" | grep -q 'pipe.md — C1' && [ "$(sentinel_files "$c3_out")" = 2 ]; then
+      ok "a FIFO the walk listed is not opened as a note: it is said and the run exits 2"
+    else
+      bad "a FIFO from the walk -- expected the stand-in find to run ($c3f_ran), the FIFO never opened (opened: $c3f_open), exit 2, its unreadable line, no C1 and 2 files -- got: $(printf '%s' "$c3_out" | tr '\n' '|' | cut -c1-400)"
+    fi
+  else
+    rm -f "$C3M/31-standards/pipe.md"
+    skip check-walk-fifo 'a FIFO the walk listed: no mkfifo here, or Windows'
+  fi
 
   # Links. Git Bash's ln -s copies unless native links are switched on, so each
   # case first proves it made a link, and the cases are skipped by name where
@@ -1068,6 +1436,8 @@ C3T_EOF
     # Named through a folder link that points outside, a note is refused too.
     c3_out2="$(c3_run "$C3L" -- 31-standards/to-outside/bad.md)"
     [ "$(c3_rc "$c3_out2")" = 2 ] || c3_bad="$c3_bad named-through-folder-link:rc$(c3_rc "$c3_out2")"
+    # Every named note refused: the VACUOUS hint says so, not the root (round 3).
+    printf '%s\n' "$c3_out2" | grep -q 'VACUOUS.*every note was refused as a link' || c3_bad="$c3_bad named-refused-hint"
     if [ -z "$c3_bad" ]; then
       ok "a link to a template, a stub, a file that is no note, a templates folder or a folder outside the vault is refused, and a linked image is left alone"
     else
@@ -1237,6 +1607,16 @@ C3T_EOF
   # Every key the checks read is held to its spellings, created and tier too.
   d3_note 31-standards/w-created.md 'tier: long\ntype: standard\n"created": "2026-01-01"\n'
   d3_note 31-standards/w-duptier.md 'tier: long\ntier: long\ntype: standard\n'
+  # Release C: a key with its value straight after the colon. These checks
+  # read tier:long as the key, and a YAML reader takes the whole line for
+  # text, so the two disagree about whether the note has a tier at all. An
+  # empty value (w-empty.md's tier:) is no such line and stays unwarned, which
+  # the warning count below holds.
+  d3_note 31-standards/w-nospace.md 'tier:long\ntype: standard\n'
+  d3_note 31-standards/w-nospace-type.md 'tier: long\ntype:standard\n'
+  # A tab after the colon is a separator YAML accepts, so it is no such line
+  # (round 1 of the 1.7.2 review): the warning count below holds it.
+  d3_note 31-standards/tab-ok.md 'tier:\tlong\ntype:\tstandard\n'
   d3_note 10-daily/w-daily.md 'tier: long\ntype: daily\n' 'a daily note'
   # A note at the wrong tier in every other folder the tier table names, so
   # each entry of that table is held by a warning.
@@ -1249,7 +1629,7 @@ C3T_EOF
   d3_out="$(c3_run "$D3V")"
   d3_bad=''
   [ "$(c3_rc "$d3_out")" = 0 ] || d3_bad="$d3_bad rc:$(c3_rc "$d3_out")"
-  [ "$(sentinel_violations "$d3_out")" = 0 ] && [ "$(sentinel_files "$d3_out")" = 20 ] || d3_bad="$d3_bad count-line"
+  [ "$(sentinel_violations "$d3_out")" = 0 ] && [ "$(sentinel_files "$d3_out")" = 23 ] || d3_bad="$d3_bad count-line"
   for d3_want in "31-standards/w-tier.md — tier 'banana' is not short, medium or long" \
                  "31-standards/w-empty.md — tier '' is not short, medium or long" \
                  "31-standards/w-folder.md — tier is short, but the folder it is in holds long-tier notes" \
@@ -1261,6 +1641,8 @@ C3T_EOF
                  "31-standards/w-squote.md — the key last_verified is also written as 'last_verified':" \
                  "31-standards/w-created.md — the key created is also written as \"created\":" \
                  "31-standards/w-duptier.md — the key tier appears 2 times" \
+                 "31-standards/w-nospace.md — the key tier has no space after its colon, so a YAML reader takes the line for text or rejects the whole block" \
+                 "31-standards/w-nospace-type.md — the key type has no space after its colon, so a YAML reader takes the line for text or rejects the whole block" \
                  "10-daily/w-daily.md — tier is long, but the folder it is in holds short-tier notes" \
                  "01-inbox/w-inbox.md — tier is long, but the folder it is in holds short-tier notes" \
                  "40-llm-wiki/raw/w-raw.md — tier is long, but the folder it is in holds short-tier notes" \
@@ -1272,7 +1654,7 @@ C3T_EOF
   printf '%s\n' "$d3_out" | grep -q '^vault-check: WARNING: 31-standards/good.md' && d3_bad="$d3_bad good-note-warned"
   printf '%s\n' "$d3_out" | grep -q '^vault-check: WARNING: 31-standards/commented.md' && d3_bad="$d3_bad inline-comment-warned"
   printf '%s\n' "$d3_out" | grep -q '^vault-check: WARNING: 31-standards/commented-quoted.md' && d3_bad="$d3_bad quoted-comment-warned"
-  printf '%s\n' "$d3_out" | grep -q '^vault-check: 17 warning(s)\. They change neither the count above nor the exit code' || d3_bad="$d3_bad no-summary"
+  printf '%s\n' "$d3_out" | grep -q '^vault-check: 19 warning(s)\. They change neither the count above nor the exit code' || d3_bad="$d3_bad no-summary"
   # The warnings come after the count line, never before it.
   d3_first="$(printf '%s\n' "$d3_out" | awk '/^vault-check: WARNING/ { print NR; exit }')"
   d3_count="$(printf '%s\n' "$d3_out" | awk '/ violation\(s\) across / { print NR; exit }')"
@@ -1297,7 +1679,7 @@ C3T_EOF
   # A vault with nothing to warn about prints no WARNING line at all. One note
   # in every folder the tier table names, at that folder's tier, and every
   # allowed type, so each entry of both lists is held by a note.
-  rm -f "$D3V"/31-standards/w-*.md "$D3V"/10-daily/w-*.md "$D3V"/01-inbox/w-*.md "$D3V"/40-llm-wiki/raw/w-*.md \
+  rm -f "$D3V"/31-standards/w-*.md "$D3V"/31-standards/tab-ok.md "$D3V"/10-daily/w-*.md "$D3V"/01-inbox/w-*.md "$D3V"/40-llm-wiki/raw/w-*.md \
     "$D3V"/20-projects/_logs/w-*.md "$D3V"/30-knowledge/w-*.md "$D3V"/40-llm-wiki/wiki/w-*.md
   mkdir -p "$D3V/01-inbox" "$D3V/20-projects/_logs" "$D3V/30-knowledge/moc" "$D3V/40-llm-wiki/raw" "$D3V/40-llm-wiki/wiki"
   d3_note 01-inbox/capture.md 'tier: short\ntype: reference\n'
@@ -2769,38 +3151,85 @@ if suite_section omp; then
 
 printf '\n=== omp extension (.claude/adapters/omp/vault.js) ===\n'
 
-OMP_SHARED="realPath isInside below rootsFor findRoots namesSecret braceAlternatives classAt sameLetter globMatches slashSets globParts partsMaySeeSecret globMaySeeSecret isWslLauncher runHook"
-omp_fn() {  # omp_fn <file> <name> - the function's lines, from its header to the first closing brace at column 0
-  awk -v want="function $2(" 'index($0, want) == 1 { on = 1 } on { print } on && /^}/ { exit }' "$1"
+#
+# Release C (M5): the names compared are derived, not listed. Every function and
+# every const declared at column 0 in both adapters is compared, so a function
+# added to both, or renamed in both, is held without anyone remembering to list
+# it; the hand-kept lists had left three shared ones uncompared. OMP_DIFFERS
+# names the shared ones meant to differ, each for its reason:
+#   findBash - Pi's reads Pi's own shell-path setting first, which omp has not.
+#   isSecret - omp decodes a URL's path and tries each path omp itself would open.
+#   NO_PATH  - the refusal names its harness.
+# A name OMP_DIFFERS lists must still be in both, or the list is stale. And
+# each is pinned, <name>:<cksum of Pi's text>:<cksum of omp's>, because being
+# allowed to differ must not let a fix to one copy, a secrets fix to isSecret
+# say, go unported to the other (round 1 of the 1.7.2 review): a change to
+# either copy fails here until someone has read both and moved the pin. The
+# entry point, export default function vaultExtension, is each harness's own
+# glue and is not among the names.
+OMP_DIFFERS="findBash:4277481906:2905226105 isSecret:3778174405:4059625916 NO_PATH:3291396821:2473859557"
+omp_differs_names() { local e; for e in $OMP_DIFFERS; do printf '%s ' "${e%%:*}"; done; }
+omp_names() {  # omp_names <file> <fn|const> - the names declared at column 0, sorted
+  awk -v kind="$2" '
+    kind == "fn" && match($0, /^(async )?function [A-Za-z0-9_$]+\(/) { s = substr($0, 1, RLENGTH - 1); sub(/^(async )?function /, "", s); print s }
+    kind == "const" && match($0, /^const [A-Za-z0-9_$]+ = /) { print substr($0, 7, RLENGTH - 9) }' "$1" | LC_ALL=C sort -u
 }
-omp_shared_bad="" omp_shared_found=0
-for omp_name in $OMP_SHARED; do
-  omp_a=$(omp_fn "$ROOT/.claude/adapters/pi/vault.js" "$omp_name")
-  omp_b=$(omp_fn "$ROOT/.claude/adapters/omp/vault.js" "$omp_name")
-  if [ -z "$omp_a" ] || [ -z "$omp_b" ]; then omp_shared_bad="$omp_shared_bad missing:$omp_name"; continue; fi
-  omp_shared_found=$((omp_shared_found + 1))
-  [ "$omp_a" = "$omp_b" ] || omp_shared_bad="$omp_shared_bad differs:$omp_name"
-done
-# The constants those functions read, each a one-line const at column 0.
-omp_const_found=0
-for omp_name in SECRET_NAMES MAX_GLOB MAX_ALTERNATIVES MAX_SLASH_SETS HOOK_TIMEOUT_MS REPORT_LIMIT WINDOWS UNICODE_SPACES LINT STUB CHECK DENIED; do
-  omp_a=$(grep "^const $omp_name = " "$ROOT/.claude/adapters/pi/vault.js")
-  omp_b=$(grep "^const $omp_name = " "$ROOT/.claude/adapters/omp/vault.js")
-  if [ -z "$omp_a" ] || [ -z "$omp_b" ]; then omp_shared_bad="$omp_shared_bad missing-const:$omp_name"; continue; fi
-  omp_const_found=$((omp_const_found + 1))
-  [ "$omp_a" = "$omp_b" ] || omp_shared_bad="$omp_shared_bad differs-const:$omp_name"
-done
-[ "$omp_const_found" -eq 12 ] || omp_shared_bad="$omp_shared_bad (found $omp_const_found of 12 constants)"
-printf 'function namesSecret(path) {\n  return false\n}\n' > "$TMP/omp-fake-shared.js"
-if [ "$(omp_fn "$TMP/omp-fake-shared.js" namesSecret)" != "$(omp_fn "$ROOT/.claude/adapters/pi/vault.js" namesSecret)" ] \
-   && [ -n "$(omp_fn "$TMP/omp-fake-shared.js" namesSecret)" ]; then
-  if [ -z "$omp_shared_bad" ] && [ "$omp_shared_found" -eq 16 ]; then
-    ok "the omp adapter's path, glob and hook-running code is the Pi adapter's, function for function and constant for constant ($omp_shared_found functions, $omp_const_found constants)"
+omp_fn() {  # omp_fn <file> <name> - the function's lines, from its header to the first closing brace at column 0
+  awk -v a="function $2(" -v b="async function $2(" 'index($0, a) == 1 || index($0, b) == 1 { on = 1 } on { print } on && /^}/ { exit }' "$1"
+}
+omp_compare() {  # omp_compare <pi.js> <omp.js> <out> - one problem per line in <out>; sets OMP_NF, OMP_NC
+  local k n a b e pin listed
+  OMP_NF=0 OMP_NC=0
+  listed=" $(omp_differs_names)"
+  : > "$3"
+  for k in fn const; do
+    omp_names "$1" "$k" > "$3.a"
+    omp_names "$2" "$k" > "$3.b"
+    while IFS= read -r n; do
+      if [ "$k" = fn ]; then
+        a="$(omp_fn "$1" "$n")"; b="$(omp_fn "$2" "$n")"; OMP_NF=$((OMP_NF + 1))
+      else
+        a="$(grep "^const $n = " "$1")"; b="$(grep "^const $n = " "$2")"; OMP_NC=$((OMP_NC + 1))
+      fi
+      case "$listed" in
+        *" $n "*)
+          for e in $OMP_DIFFERS; do [ "${e%%:*}" = "$n" ] && pin="${e#*:}"; done
+          e="$(printf '%s\n' "$a" | cksum | cut -d' ' -f1):$(printf '%s\n' "$b" | cksum | cut -d' ' -f1)"
+          [ "$e" = "$pin" ] || printf 'pinned-changed:%s:%s\n' "$n" "$e" >> "$3" ;;
+        *) [ "$a" = "$b" ] || printf 'differs:%s\n' "$n" >> "$3" ;;
+      esac
+    done < <(LC_ALL=C comm -12 "$3.a" "$3.b")
+  done
+  for n in $(omp_differs_names); do
+    { omp_names "$1" fn; omp_names "$1" const; } | grep -qx -- "$n" \
+      && { omp_names "$2" fn; omp_names "$2" const; } | grep -qx -- "$n" \
+      || printf 'listed-but-not-shared:%s\n' "$n" >> "$3"
+  done
+}
+omp_compare "$ROOT/.claude/adapters/pi/vault.js" "$ROOT/.claude/adapters/omp/vault.js" "$TMP/omp-shared.txt"
+omp_shared_nf="$OMP_NF" omp_shared_nc="$OMP_NC"
+# The probe: a function and a const of one name added to both copies, unlike.
+cp "$ROOT/.claude/adapters/pi/vault.js" "$TMP/omp-probe-pi.js"
+cp "$ROOT/.claude/adapters/omp/vault.js" "$TMP/omp-probe-omp.js"
+printf '\nfunction rcSharedProbe() {\n  return 1\n}\nconst RC_PROBE = 1\n' >> "$TMP/omp-probe-pi.js"
+printf '\nfunction rcSharedProbe() {\n  return 2\n}\nconst RC_PROBE = 2\n' >> "$TMP/omp-probe-omp.js"
+# And one of the names allowed to differ, changed in one copy only.
+sed 's/^const NO_PATH = "vault:/const NO_PATH = "vault!:/' "$TMP/omp-probe-omp.js" > "$TMP/omp-probe-omp.js.new" \
+  && mv "$TMP/omp-probe-omp.js.new" "$TMP/omp-probe-omp.js"
+omp_compare "$TMP/omp-probe-pi.js" "$TMP/omp-probe-omp.js" "$TMP/omp-probe.txt"
+# The same name changed in Pi's copy only, so neither half of the pin goes
+# unread (round 2 of the 1.7.2 review).
+sed 's/^const NO_PATH = "vault:/const NO_PATH = "vault!:/' "$ROOT/.claude/adapters/pi/vault.js" > "$TMP/omp-probe-pi2.js"
+omp_compare "$TMP/omp-probe-pi2.js" "$ROOT/.claude/adapters/omp/vault.js" "$TMP/omp-probe2.txt"
+if grep -qx 'differs:rcSharedProbe' "$TMP/omp-probe.txt" && grep -qx 'differs:RC_PROBE' "$TMP/omp-probe.txt" \
+   && grep -q '^pinned-changed:NO_PATH:' "$TMP/omp-probe.txt" && grep -q '^pinned-changed:NO_PATH:' "$TMP/omp-probe2.txt"; then
+  if [ ! -s "$TMP/omp-shared.txt" ] && [ "$omp_shared_nf" -ge 20 ] && [ "$omp_shared_nc" -ge 14 ]; then
+    ok "the omp adapter's shared code is the Pi adapter's, for every function and const both declare ($omp_shared_nf functions, $omp_shared_nc constants), apart from the three meant to differ"
   else
-    bad "the omp and Pi adapters' shared code has drifted --$omp_shared_bad (found $omp_shared_found of 16)"
+    bad "the omp and Pi adapters' shared code has drifted -- [$(tr '\n' ' ' < "$TMP/omp-shared.txt")] (shared: $omp_shared_nf functions of at least 20, $omp_shared_nc constants of at least 14). A differs: line wants the two copies made the same. A pinned-changed:<name>:<Pi cksum>:<omp cksum> line is a name allowed to differ whose text moved: read both copies, port the change to the other if it belongs there, then set that pair in OMP_DIFFERS in run-tests.sh"
   fi
 else
-  bad "positive control: a changed copy of namesSecret was not told apart from the Pi adapter's"
+  bad "positive control: a function and a const added to both adapters unlike, and NO_PATH changed in each copy alone, were not all reported -- [$(tr '\n' ' ' < "$TMP/omp-probe.txt")] [$(tr '\n' ' ' < "$TMP/omp-probe2.txt")]"
 fi
 
 if [ "$pi_node_major" -lt 18 ]; then
@@ -7568,9 +7997,13 @@ SCR_FORGE_EOF
 if ! command -v node >/dev/null 2>&1; then
   skip fence-crc-forgery 'a steering file rewritten to the same size and cksum: node is not installed to forge one'
   skip fence-crc-forgery-imported-note 'an imported note rewritten to the same size and cksum: node is not installed to forge one'
+  skip fence-crc-forgery-existing-note 'a long-tier note rewritten to the same size and cksum during a pass: node is not installed to forge one'
+  skip fence-crc-forgery-leftover 'a file rewritten to the same size and cksum after a pass: node is not installed to forge one'
 elif ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then
   skip fence-crc-forgery 'a steering file rewritten to the same size and cksum: no sha256sum or shasum, so the fence has only cksum here, which is its documented limit'
   skip fence-crc-forgery-imported-note 'an imported note rewritten to the same size and cksum: no sha256sum or shasum, so the fence has only cksum here'
+  skip fence-crc-forgery-existing-note 'a long-tier note rewritten to the same size and cksum during a pass: no sha256sum or shasum, so the fence has only cksum here'
+  skip fence-crc-forgery-leftover 'a file rewritten to the same size and cksum after a pass: no sha256sum or shasum, so the fence has only cksum here'
 elif ! node "$SCR/forge.js" "$SCR/orig" "$SCR/draft" "$SCR/forged" 2>/dev/null \
      || [ "$(cksum < "$SCR/orig")" != "$(cksum < "$SCR/forged")" ] || cmp -s "$SCR/orig" "$SCR/forged"; then
   bad "the fence CRC control could not forge a same-size, same-cksum rewrite, so it tested nothing"
@@ -7597,8 +8030,210 @@ else
   else
     bad "a same-size, same-cksum rewrite of an imported note passed the fence -- changed: [$scr_note]"
   fi
+  # Release C (H9): the checks that ask whether a file is still as a snapshot
+  # saw it compared the CRC alone. A long-tier note rewritten to the same size
+  # and cksum during a pass was left off the log's list of long-tier notes that
+  # changed, and a file rewritten so after a pass was recorded as the runner's
+  # own leftover, to be adopted by the next run. Both now read the SHA-256 line
+  # too.
+  SCV="$SCR/gvault"
+  mkdir -p "$SCV/31-standards" "$SCR/s9" "$SCR/s10" "$SCR/state" "$SCR/hooks"
+  cp "$SCR/orig" "$SCV/31-standards/x.md"
+  ( cd "$SCV" && git init -q && git add -A && git -c user.name=t -c user.email=t@example.invalid commit -qm base ) >/dev/null 2>&1
+  : > "$SCR/s9/predirty"
+  printf '31-standards/x.md\n' > "$SCR/s9/list"
+  ( . "$ROOT/.claude/scripts/lib/runner-common.sh" && VAULT_GIT=1 && snapshot_tree "$SCV" "$SCR/s9/before" \
+    && report_existing_left "$SCV" "$SCR/s9/list" "$SCR/s9" "$SCR/s9/log0" \
+    && cp "$SCR/forged" "$SCV/31-standards/x.md" \
+    && report_existing_left "$SCV" "$SCR/s9/list" "$SCR/s9" "$SCR/s9/log" ) >/dev/null 2>&1
+  ran fence-crc-forgery-existing-note
+  # The same note unchanged is named nowhere, so the digest is not taken as a
+  # change on its own.
+  if [ -s "$SCV/.git/HEAD" ] && grep -q '31-standards/x.md' "$SCR/s9/log" 2>/dev/null \
+     && ! grep -q '31-standards/x.md' "$SCR/s9/log0" 2>/dev/null; then
+    ok "a long-tier note rewritten to the same size and cksum during a pass is named among the long-tier notes that changed"
+  else
+    bad "a same-size, same-cksum rewrite of a long-tier note was left off the changed-notes list -- log: [$(tr '\n' '|' < "$SCR/s9/log" 2>/dev/null | cut -c1-400)]"
+  fi
+  cp "$SCR/orig" "$SCV/31-standards/x.md"
+  # The same file unchanged since the snapshot is recorded as the runner's
+  # own, with no NOT-RECORDED line, so the digest is not taken as a change on
+  # its own. It must differ from the commit, as a pass's leftover does, or git
+  # has nothing to record (CI found this arm could never pass: node, which the
+  # forgery needs, is not on the WSL the round-1 runs used).
+  mkdir -p "$SCR/s11" "$SCR/state0"
+  : > "$SCR/s11/predirty"
+  printf '31-standards/x.md\n' > "$SCR/s11/owned"
+  printf 'left by the pass\n' >> "$SCV/31-standards/x.md"
+  ( . "$ROOT/.claude/scripts/lib/runner-common.sh" && VAULT_GIT=1 && snapshot_tree "$SCV" "$SCR/s11/after" \
+    && record_leftovers "$SCV" "$SCR/hooks" "$SCR/state0" dream "$SCR/s11" "$SCR/s11/log" ) >/dev/null 2>&1
+  cp "$SCR/orig" "$SCV/31-standards/x.md"
+  : > "$SCR/s10/predirty"
+  printf '31-standards/x.md\n' > "$SCR/s10/owned"
+  ( . "$ROOT/.claude/scripts/lib/runner-common.sh" && VAULT_GIT=1 && snapshot_tree "$SCV" "$SCR/s10/after" \
+    && cp "$SCR/forged" "$SCV/31-standards/x.md" \
+    && record_leftovers "$SCV" "$SCR/hooks" "$SCR/state" dream "$SCR/s10" "$SCR/s10/log" ) >/dev/null 2>&1
+  ran fence-crc-forgery-leftover
+  # Round 2 of the 1.7.2 review: the forged file is not recorded either, and
+  # its line gives no could-not-be-taken reason, since both digests were taken.
+  if grep -q 'NOT-RECORDED' "$SCR/s10/log" 2>/dev/null && grep -qx '    31-standards/x.md' "$SCR/s10/log" 2>/dev/null \
+     && ! grep -q 'not known to be unchanged' "$SCR/s10/log" 2>/dev/null \
+     && ! grep -qF '31-standards/x.md' "$SCR/state/dream.uncommitted" 2>/dev/null \
+     && ! grep -q 'NOT-RECORDED' "$SCR/s11/log" 2>/dev/null && grep -qF '31-standards/x.md' "$SCR/state0/dream.uncommitted" 2>/dev/null; then
+    ok "a file rewritten to the same size and cksum after a pass is not recorded as the runner's own leftover"
+  else
+    bad "a same-size, same-cksum rewrite after a pass -- expected it listed bare and not recorded, and the unchanged file recorded with no NOT-RECORDED -- forged log: [$(tr '\n' '|' 2>/dev/null < "$SCR/s10/log" | cut -c1-300)] forged record: [$(tr '\n' '|' 2>/dev/null < "$SCR/state/dream.uncommitted" | cut -c1-120)] unchanged log: [$(tr '\n' '|' 2>/dev/null < "$SCR/s11/log" | cut -c1-200)] unchanged record: [$(tr '\n' '|' 2>/dev/null < "$SCR/state0/dream.uncommitted" | cut -c1-120)]"
+  fi
 fi
 rm -rf "$SCR"
+
+# Release C (H11): .git-common/ is how a snapshot names a worktree vault's git
+# folders. In any other vault a real folder of that name is the vault's own,
+# and its files were skipped by the SHA-256 lines, so only their CRC held them.
+SGC="$TMP/snap-git-common"
+rm -rf "$SGC"
+mkdir -p "$SGC/v/.git-common/hooks" "$SGC/v/.git-common/worktree" "$SGC/v/31-standards"
+printf '#!/bin/sh\necho hi\n' > "$SGC/v/.git-common/hooks/post-commit"
+printf 'x\n' > "$SGC/v/.git-common/worktree/x"
+printf -- '---\ntier: long\ntype: standard\n---\n[[ARCH-INDEX]]\n' > "$SGC/v/31-standards/x.md"
+( cd "$SGC/v" && git init -q ) >/dev/null 2>&1
+if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then
+  skip fence-git-common-plain 'a folder named .git-common in a vault that is no worktree: no sha256sum or shasum, so the fence has only cksum here'
+else
+  ( . "$ROOT/.claude/scripts/lib/runner-common.sh" && snapshot_tree "$SGC/v" "$SGC/snap" ) >/dev/null 2>&1
+  ran fence-git-common-plain
+  if [ -d "$SGC/v/.git" ] && grep -qE '^S[0-9a-f]{64} 0 \./\.git-common/hooks/post-commit$' "$SGC/snap" 2>/dev/null \
+     && grep -qE '^S[0-9a-f]{64} 0 \./\.git-common/worktree/x$' "$SGC/snap" 2>/dev/null \
+     && grep -qE '^S[0-9a-f]{64} 0 \./31-standards/x\.md$' "$SGC/snap" 2>/dev/null; then
+    ok "a folder named .git-common in a vault that is no worktree has its files' SHA-256 lines, as any other folder does"
+  else
+    bad "a plain vault's .git-common folder -- expected an S line for its file and for the note -- got: [$(grep -E 'git-common|x\.md' "$SGC/snap" 2>/dev/null | tr '\n' '|' | cut -c1-400)]"
+  fi
+fi
+rm -rf "$SGC"
+
+# Round 1 of the 1.7.2 review: and in a linked worktree vault the same name
+# stands for git's own folders, whose files' SHA-256 lines must be the
+# digests of those files: the shared config, and the worktree's commondir.
+SGW="$TMP/snap-git-worktree"
+rm -rf "$SGW"
+mkdir -p "$SGW/main/31-standards"
+printf -- '---\ntier: long\ntype: standard\n---\n[[ARCH-INDEX]]\n' > "$SGW/main/31-standards/x.md"
+( cd "$SGW/main" && git init -q && git add -A && git -c user.name=t -c user.email=t@example.invalid commit -qm base \
+  && git worktree add -q "$SGW/wt" ) >/dev/null 2>&1
+sgw_tool=""
+command -v sha256sum >/dev/null 2>&1 && sgw_tool=sha256sum
+[ -z "$sgw_tool" ] && command -v shasum >/dev/null 2>&1 && sgw_tool=shasum
+if [ -z "$sgw_tool" ]; then
+  skip fence-git-common-worktree 'the git folders of a linked worktree vault: no sha256sum or shasum, so the fence has only cksum here'
+elif [ ! -f "$SGW/wt/.git" ] || [ ! -f "$SGW/main/.git/config" ]; then
+  bad "the worktree fence control could not make a linked worktree, so it tested nothing"
+else
+  ( . "$ROOT/.claude/scripts/lib/runner-common.sh" && snapshot_tree "$SGW/wt" "$SGW/snap" ) >/dev/null 2>&1
+  sgw_dig() { if [ "$sgw_tool" = shasum ]; then shasum -a 256 < "$1"; else sha256sum < "$1"; fi | cut -c1-64; }
+  sgw_gd="$(git -C "$SGW/wt" rev-parse --absolute-git-dir 2>/dev/null)"
+  sgw_cfg="S$(sgw_dig "$SGW/main/.git/config") 0 ./.git-common/config"
+  sgw_cd="S$(sgw_dig "$sgw_gd/commondir") 0 ./.git-common/worktree/commondir"
+  ran fence-git-common-worktree
+  if grep -qxF -- "$sgw_cfg" "$SGW/snap" 2>/dev/null && [ -f "$sgw_gd/commondir" ] && grep -qxF -- "$sgw_cd" "$SGW/snap" 2>/dev/null; then
+    ok "in a linked worktree vault the shared config and the worktree's commondir have SHA-256 lines that are their digests"
+  else
+    bad "a worktree vault's git folders -- expected [$sgw_cfg] and [$sgw_cd] -- got: [$(grep 'git-common' "$SGW/snap" 2>/dev/null | grep '^S' | tr '\n' '|' | cut -c1-400)]"
+  fi
+fi
+rm -rf "$SGW"
+
+# Round 1 of the 1.7.2 review: a leftover whose SHA-256 cannot be taken after
+# the pass, its tool failing or the file locked, is not known to be unchanged,
+# so it is not recorded; but the log must not say it changed. Stand-ins for
+# both tools fail once the snapshot is taken.
+# Round 2: the same for a file whose CRC cannot be taken now, and for a
+# snapshot whose own SHA-256 line holds no digest (unreadable, malformed); a
+# file that really changed is listed with no such reason; and a filter that
+# cannot write its list records nothing. One leg left unchanged, which must be
+# recorded, shows the fixture can record at all.
+# Round 3: a file the snapshot could not checksum and still cannot (it compared
+# equal and was kept); no SHA-256 tool after the pass; a leftover deleted after
+# the pass (listed bare); a failing mv, with and without a commit-mismatch list;
+# and the commit-mismatch filter itself.
+SND2="$TMP/snap-nodigest"
+SND2_NOTE='---\ntier: long\ntype: standard\n---\n[[ARCH-INDEX]]\n'
+rm -rf "$SND2"
+mkdir -p "$SND2/v/31-standards" "$SND2/hooks" "$SND2/bin" "$SND2/cbin" "$SND2/mbin"
+printf -- "$SND2_NOTE" > "$SND2/v/31-standards/x.md"
+( cd "$SND2/v" && git init -q ) >/dev/null 2>&1
+printf '#!/bin/sh\nexit 1\n' > "$SND2/bin/sha256sum"
+cp "$SND2/bin/sha256sum" "$SND2/bin/shasum"
+cp "$SND2/bin/sha256sum" "$SND2/cbin/cksum"
+cp "$SND2/bin/sha256sum" "$SND2/mbin/mv"
+chmod +x "$SND2/bin/sha256sum" "$SND2/bin/shasum" "$SND2/cbin/cksum" "$SND2/mbin/mv"
+# snd_leg <leg> <bin dir first on PATH, or -> <S value for x.md's line, drop for no lines, or -> <x.md after the snapshot: 0 as is|1 rewritten|gone> <folder at leftover.kept: 0|1> [<commit-mismatch line>] [<SAME_TOOL preset>]
+snd_leg() {
+  local s="$SND2/$1"
+  mkdir -p "$s/s" "$s/state"
+  : > "$s/s/predirty"
+  printf '31-standards/x.md\n' > "$s/s/owned"
+  ( . "$ROOT/.claude/scripts/lib/runner-common.sh" && VAULT_GIT=1 && snapshot_tree "$SND2/v" "$s/s/after" ) >/dev/null 2>&1
+  case "$3" in
+    -) ;;
+    drop) LC_ALL=C awk '$NF != "./31-standards/x.md"' "$s/s/after" > "$s/s/after.new" ;;
+    *) SV="S$3" LC_ALL=C awk '$NF == "./31-standards/x.md" && /^S/ { $1 = ENVIRON["SV"] } { print }' "$s/s/after" > "$s/s/after.new" ;;
+  esac
+  [ "$3" = - ] || mv -f "$s/s/after.new" "$s/s/after"
+  case "$4" in
+    1) printf 'changed after the pass\n' >> "$SND2/v/31-standards/x.md" ;;
+    gone) rm -f "$SND2/v/31-standards/x.md" ;;
+  esac
+  [ "$5" = 1 ] && mkdir -p "$s/s/leftover.kept"
+  [ -n "${6:-}" ] && printf '%s\n' "$6" > "$s/s/commit-mismatch"
+  ( . "$ROOT/.claude/scripts/lib/runner-common.sh" && VAULT_GIT=1 && { [ "$2" = - ] || PATH="$2:$PATH"; } \
+    && { [ -z "${7:-}" ] || SAME_TOOL="$7"; } \
+    && record_leftovers "$SND2/v" "$SND2/hooks" "$s/state" dream "$s/s" "$s/log" ) >/dev/null 2>&1
+  printf -- "$SND2_NOTE" > "$SND2/v/31-standards/x.md"
+}
+snd_why() { grep -qF '31-standards/x.md (its checksum or SHA-256 could not be taken, so it is not known to be unchanged)' "$SND2/$1/log" 2>/dev/null; }
+snd_kept() { grep -qF '31-standards/x.md' "$SND2/$1/state/dream.uncommitted" 2>/dev/null; }
+snd_bare() { grep -qx '    31-standards/x.md' "$SND2/$1/log" 2>/dev/null; }
+snd_unfiltered() { grep -q 'NOT-RECORDED: the list of files this pass left could not be written' "$SND2/$1/log" 2>/dev/null; }
+if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then
+  skip fence-leftover-nodigest 'a leftover whose SHA-256 cannot be taken: no sha256sum or shasum, so the snapshot has no SHA-256 line either'
+else
+  snd_bad=""
+  snd_leg same - - 0 0
+  { snd_kept same && ! grep -q 'NOT-RECORDED' "$SND2/same/log" 2>/dev/null; } || snd_bad="$snd_bad unchanged-not-recorded"
+  grep -qE '^S[0-9a-f]{64} 0 \./31-standards/x\.md$' "$SND2/same/s/after" 2>/dev/null || snd_bad="$snd_bad no-S-line"
+  snd_leg tool "$SND2/bin" - 0 0
+  { snd_why tool && ! snd_kept tool; } || snd_bad="$snd_bad sha-tool-fails"
+  snd_leg crc "$SND2/cbin" - 0 0
+  { snd_why crc && ! snd_kept crc; } || snd_bad="$snd_bad cksum-fails"
+  snd_leg crcboth "$SND2/cbin" drop 0 0
+  { ! grep -q 'x\.md$' "$SND2/crcboth/s/after" && snd_why crcboth && ! snd_kept crcboth; } || snd_bad="$snd_bad cksum-fails-both-times"
+  snd_leg snapun - unreadable 0 0
+  { snd_why snapun && ! snd_kept snapun; } || snd_bad="$snd_bad snapshot-unreadable"
+  snd_leg snapmal - malformed-0123abcd 0 0
+  { snd_why snapmal && ! snd_kept snapmal; } || snd_bad="$snd_bad snapshot-malformed"
+  snd_leg nonetool - - 0 0 '' "cksum $(command -v cksum)"
+  { snd_why nonetool && ! snd_kept nonetool; } || snd_bad="$snd_bad no-sha-tool-after"
+  snd_leg changed - - 1 0
+  { snd_bare changed && ! snd_why changed && ! snd_kept changed; } || snd_bad="$snd_bad changed"
+  snd_leg gone - - gone 0
+  { snd_bare gone && ! snd_why gone && ! snd_kept gone; } || snd_bad="$snd_bad gone"
+  snd_leg kept - - 1 1
+  { snd_unfiltered kept && ! snd_kept kept; } || snd_bad="$snd_bad filter-unwritable"
+  snd_leg mvfail "$SND2/mbin" - 0 0
+  { snd_unfiltered mvfail && ! snd_bare mvfail && ! snd_kept mvfail; } || snd_bad="$snd_bad mv-fails"
+  snd_leg mvfailcm "$SND2/mbin" - 0 0 31-standards/other.md
+  { snd_unfiltered mvfailcm && ! snd_kept mvfailcm; } || snd_bad="$snd_bad mv-fails-commit-mismatch"
+  snd_leg cm - - 0 0 31-standards/x.md
+  { ! snd_kept cm && ! snd_unfiltered cm; } || snd_bad="$snd_bad commit-mismatch-recorded"
+  ran fence-leftover-nodigest
+  if [ -z "$snd_bad" ]; then
+    ok "a leftover whose checksum or SHA-256 cannot be taken, then or now, is not recorded and the log says why; a real change or a deleted file is listed without that reason; a filter that cannot write, and a file that changed while the commit checked it, record nothing"
+  else
+    bad "leftovers that cannot be compared -- failing legs:$snd_bad -- logs: $(for l in same tool crc crcboth snapun snapmal nonetool changed gone kept mvfail mvfailcm cm; do printf '[%s: %s] ' "$l" "$(tr '\n' '|' 2>/dev/null < "$SND2/$l/log" | cut -c1-140)"; done)"
+  fi
+fi
+rm -rf "$SND2"
 
 # The SHA-256 lines must never fail open (round 1 of the 1.7.1 review). Every
 # steering file gets a real digest, a name holding a backslash or a tab among
@@ -12548,7 +13183,7 @@ if [ "$RV_GIT" -eq 1 ]; then
   expect_rc "promotion-pass: the pass replaces a note with an empty folder -> VIOLATION" 2 \
     "$(runner promotion-pass.sh promote-empty-folder)"
   if [ -f "$RV/31-standards/existing.md" ] && tree_matches_head "$RV" 31-standards/existing.md \
-     && ! grep -q 'changed after the pass ended' "$PROMO_LOG"; then
+     && ! grep -q 'changed after the pass ended' "$PROMO_LOG" && ! grep -q 'are not as they were when the pass ended' "$PROMO_LOG"; then
     ok "a note replaced by an empty folder is restored"
   else
     bad "a note replaced by an empty folder was not restored -- log: $(grep -A4 REVERTED "$PROMO_LOG" | tr '\n' '|')"
@@ -12573,7 +13208,7 @@ if [ "$RV_GIT" -eq 1 ]; then
   if ! grep -q 'edited while the commit ran' "$RV/31-standards/sign-edit.md" 2>/dev/null; then
     bad "the signing program did not edit the note, so the changed-leftover control proves nothing"
   elif ! grep -q 'sign-edit.md' "$CASE_STATE/promotion-pass.uncommitted" 2>/dev/null \
-       && grep -q 'changed after the pass ended' "$PROMO_LOG"; then
+       && grep -q 'NOT-RECORDED: these files are not as they were when the pass ended' "$PROMO_LOG"; then
     ok "a leftover that changed while the commit ran is not recorded as the runner's own"
   else
     bad "a leftover that changed while the commit ran was recorded -- record: $(tr '\n' '|' < "$CASE_STATE/promotion-pass.uncommitted" 2>/dev/null)"
@@ -23366,6 +24001,63 @@ else
     ok "VERSION, the manifest header and the newest changelog entry all say $vu_v_file"
   else
     bad "the version is stated three ways -- VERSION=[${vu_v_file:-absent}] manifest=[${vu_v_manifest:-absent}] changelog=[${vu_v_changelog:-absent}]"
+  fi
+fi
+
+# Release C (M3): the list of files a tier rename has to reach is one table,
+# in docs/customizing.md section 2, and it is complete. It was kept in five
+# places that disagreed, and every copy missed files. Every tracked file that
+# names a tier folder must be covered by a row of the table (the row names
+# the file, or a folder holding it, written with its trailing /), and every
+# row must name something tracked. Left out, each for its reason: the prose
+# documents, which link to the table instead (docs/, README.md, CHANGELOG.md,
+# CONTRIBUTING.md); the notes in the content tiers, which are the vault and
+# not its machinery (VAULT-INDEX.md is in the table all the same, for its
+# queries); and .github/, which never reaches a vault. Deleting a row from a
+# copy of the table must make the check name that row's files.
+rt_rows() {  # rt_rows <customizing.md> - the paths in the first cell of each row of the table
+  awk '/^### The high-risk subset/ { s = 1 }
+    s && /^\| File \|/ { t = 1; next }
+    t && /^\|---/ { next }
+    t && /^\|/ { c = $0; sub(/^\| */, "", c); sub(/ *\|.*$/, "", c)
+      while (match(c, /`[^`]+`/)) { print substr(c, RSTART + 1, RLENGTH - 2); c = substr(c, RSTART + RLENGTH) }
+      next }
+    t { exit }' "$1"
+}
+rt_check() {  # rt_check <customizing.md> - prints "missing <file>" and "stale <row>" lines
+  local rows
+  rows="$(rt_rows "$1")"
+  # Names as they are (core.quotePath off), and read through ENVIRON, since
+  # awk -v treats a backslash as an escape. A folder row covers every file
+  # under it, on purpose: the two skills folders are one row each.
+  git -C "$ROOT" -c core.quotePath=false grep -lIE '01-inbox|10-daily|20-projects|30-knowledge|31-standards|40-llm-wiki|90-auto-memory|99-archive' -- . \
+    | LC_ALL=C grep -vE '^(docs/|README\.md$|CHANGELOG\.md$|CONTRIBUTING\.md$|\.github/|01-inbox/|10-daily/|20-projects/|30-knowledge/|31-standards/|40-llm-wiki/|90-auto-memory/|99-archive/)' \
+    | while IFS= read -r f; do
+        printf '%s\n' "$rows" | RT_F="$f" awk '{ f = ENVIRON["RT_F"] } $0 == f || (substr($0, length($0)) == "/" && index(f, $0) == 1) { hit = 1 } END { exit !hit }' \
+          || printf 'missing %s\n' "$f"
+      done
+  printf '%s\n' "$rows" | while IFS= read -r r; do
+    [ -n "$r" ] || continue
+    [ -n "$(git -C "$ROOT" ls-files -- "$r" | head -n 1)" ] || printf 'stale %s\n' "$r"
+  done
+}
+if [ "$VU_IS_TEMPLATE" != 1 ]; then
+  skip tmpl-rename-table "VAULT_TEMPLATE_MAINTAINER is not 1, so this is taken to be a vault, whose own files are its owner's to list"
+elif ! command -v git >/dev/null 2>&1; then
+  skip tmpl-rename-table "the rename table is held against the tracked files, and git is not installed"
+else
+  ran tmpl-rename-table
+  rt_doc="$ROOT/docs/customizing.md"
+  rt_n="$(rt_rows "$rt_doc" | awk 'END { print NR + 0 }')"
+  rt_out="$(rt_check "$rt_doc")"
+  # A copy without the row for vault-retention.sh must name that file.
+  awk '!/^\| `\.claude\/scripts\/vault-retention\.sh` \|/' "$rt_doc" > "$VU/rt-copy.md"
+  rt_cut="$(rt_check "$VU/rt-copy.md")"
+  if [ "$rt_n" -ge 20 ] && [ -z "$rt_out" ] && printf '%s\n' "$rt_cut" | grep -qx 'missing .claude/scripts/vault-retention.sh' \
+     && ! cmp -s "$rt_doc" "$VU/rt-copy.md"; then
+    ok "the tier-rename table in docs/customizing.md covers every tracked file that names a tier folder ($rt_n rows), and a row taken out is missed"
+  else
+    bad "the tier-rename table -- $rt_n row path(s); problems: [$(printf '%s' "$rt_out" | tr '\n' ' ')]; with the vault-retention.sh row cut: [$(printf '%s' "$rt_cut" | tr '\n' ' ')]"
   fi
 fi
 

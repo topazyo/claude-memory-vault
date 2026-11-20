@@ -467,6 +467,9 @@ jobs:
       # from its say("ran <id>") calls instead. The bash 3.2 job and the
       # macos-latest job run on the same image, so both read the macos ids of
       # required-controls.txt, and neither can drift from the other.
+      # check-unreadable-note-acl joined them in 1.7.2: it runs only on Windows,
+      # and GitHub's Windows runner does not let an icacls deny stop the read it
+      # needs, so it skips there (required-controls.txt's header says more).
       #
       # Guarded by repository. In a vault made from this template, run-tests.sh
       # is owned and moves with every update while this workflow is excluded
@@ -478,7 +481,7 @@ jobs:
           NOT_REQUIRED: >-
             runlog-hardlink runlog-mode runlog-unreadable stopping win-survivor win-late win-reaped
             win-kill-check retention-symlink-candidate stub-unknown-timestamp kill-state-gate
-            putback-kill-state-gate c1-name-log
+            putback-kill-state-gate c1-name-log check-unreadable-note-acl
         run: |
           awk '/^[ \t]*#/ { next }
             { s = $0

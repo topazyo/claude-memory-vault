@@ -994,7 +994,7 @@ not a tripwire; follow "When a move goes wrong" in [`reference.md` §4.3.1](refe
 | A new note renders `{{project}}` / `{{concept}}` / `{{selection}}` literally | Core Templates does not support those placeholders | Fill them by hand, or install Templater and adapt the syntax (step 5) |
 | `vault-check: 0 violation(s) across 0 file(s)` plus `VACUOUS`, exit 2 | The checker scanned nothing — **this is not a pass**. The 2 says the checker could not run, as against the 1 that says a note is wrong | Check `CLAUDE_PROJECT_DIR`, and that the `TIERS=` line in the script still names folders that exist. Add a note and re-run until the file count is non-zero |
 | `vault-check: no content-tier folders found under ...`, exit 2 | Wrong working directory, or the tier folders were renamed | Run from the vault root, or finish the rename everywhere (see below) |
-| `vault-check: ... is not a readable file`, exit 2 | A note named after `--` is missing or unreadable, so that note was not checked | Fix the path. Nothing here says any note is wrong |
+| `vault-check: ... is not a readable file`, exit 2 | A note named after `--` is missing or unreadable, or (since 1.7.2, with `N note(s) could not be read` after the count line) a note the full scan listed could not be opened, so that note was not checked | Fix the path, or the note's permissions. Nothing here says any note is wrong |
 | `vault-check: <path> is a link that ...`, and `N link(s) refused` after the count line, exit 2 (since 1.7.0) | A link in a content tier, or a note named after `--` in one, dangles or resolves to something the scan does not read where it is: outside the content-tier folders (a tier folder linked or joined to a synced folder outside the vault included), into a templates folder, to a compaction stub, or to a file that is no `.md` note. What it holds was not checked, and the commit gate refuses for the same reason | Point the link at a folder or note inside a content tier, or move what it names into the vault and remove the link. Remove a link by its bare name, never with a trailing `/`, which can empty the folder it points at. [`reference.md` §4.1](reference.md#41-vault-checksh--frontmatter-invariants-c1c5) has the rule |
 | `vault-check: unknown option ...`, exit 64 | The command line was wrong | Notes go after `--`, as in `vault-check.sh -- 10-daily/2026-01-15.md` |
 | `vault-check: TRIPWIRE ...`, exit 78 | A scheduled pass changed a steering or execution surface, so nothing was checked | Follow [A tripwire is set](#a-tripwire-is-set): read the right copy, review, then delete both copies. The runners use 78 for the same thing |
@@ -1062,17 +1062,8 @@ not a tripwire; follow "When a move goes wrong" in [`reference.md` §4.3.1](refe
 ### One more, because it is the template's biggest customization cost
 
 **Renaming a tier folder is a multi-file edit, not a rename.** The folder names are independently
-hardcoded in at least these files (`docs/customizing.md` § 2 has the full procedure):
-
-- `CLAUDE.md`
-- `.claude/hooks/vault-lint.sh`
-- `.claude/hooks/postcompact-wrap-up.sh`
-- `.claude/scripts/vault-check.sh`
-- `.claude/scripts/vault-retention.sh` (it names `20-projects/_logs` and the archive path it moves to)
-- `.claude/agents/dream-agent.md`
-- `.claude/rules/vault-notes.md`, `.claude/rules/verification.md`,
-  `.claude/rules/untrusted-captures.md`
-- `.obsidian/daily-notes.json`
+hardcoded in many files. The one complete list of them, and the full procedure, is the table in
+[`customizing.md`, section 2](customizing.md#2-renaming-or-adding-a-tier-folder).
 
 Miss one and the failure is quiet in the worst direction: the lint hook stops recognising the
 folder as a content tier and skips it, and `vault-check.sh` drops it from the scan list, so both

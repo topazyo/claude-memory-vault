@@ -815,7 +815,11 @@ EOF
 # fence_strong <snapshot> <root>
 # Prints "S<digest> 0 ./<path>" for every regular file among the snapshot's
 # paths, the digest from snap_tool. Paths under .git-common/ are read from the
-# git directories they stand for. Prints nothing where snap_tool finds only
+# git directories they stand for when those are known (a linked worktree), and
+# from the vault otherwise (1.7.2). Known limit: in a linked worktree vault a
+# folder of the vault that is itself named .git-common is read as git's, so
+# its files have no SHA-256 line of their own, or git's file's where the names
+# match; such a folder is a steering change all the same. Prints nothing where snap_tool finds only
 # cksum, which would add nothing, and the known limit says so. A file the tool
 # did not answer for gets the word unreadable, so it reads as changed if it was
 # readable before. An answer that is not 64 hex digits gets malformed and a
@@ -883,10 +887,13 @@ fence_strong() {
   list="$snap.strong-list"
   : > "$list" 2>/dev/null || ok_list=0
   snapshot_paths "$snap" | LC_ALL=C sort -u | while IFS= read -r p; do
+    # .git-common/ names a worktree vault's git folders only when they are
+    # known. In any other vault it is a folder of the vault like any other, and
+    # it was skipped, so its files had only their CRC (Release C).
+    f="$root/$p"
     case "$p" in
-      .git-common/worktree/*) [ -n "$gd" ] || continue; f="$gd/${p#.git-common/worktree/}" ;;
-      .git-common/*) [ -n "$cdir" ] || continue; f="$cdir/${p#.git-common/}" ;;
-      *) f="$root/$p" ;;
+      .git-common/worktree/*) [ -z "$gd" ] || f="$gd/${p#.git-common/worktree/}" ;;
+      .git-common/*) [ -z "$cdir" ] || f="$cdir/${p#.git-common/}" ;;
     esac
     [ -f "$f" ] && [ ! -L "$f" ] || continue
     case "$ok_list:$f" in
@@ -2417,33 +2424,50 @@ forget_uncommitted() {
 # failed, records the files in <snap-dir>/owned for adopt_uncommitted. A file that
 # was already dirty before this pass is not recorded, because it holds someone
 # else's edit too.
+leftovers_unfiltered() {
+  printf '[%s] NOT-RECORDED: the list of files this pass left could not be written in the runner'"'"'s state folder to be filtered, so none is recorded and the next run will take them for someone'"'"'s edit.\n' "$(ts)" >> "$1"
+}
 record_leftovers() {
-  local snap="$5" log="${6:-/dev/null}" p was
+  local snap="$5" log="${6:-/dev/null}" p was wfail=0
   [ "${VAULT_GIT:-0}" -eq 1 ] || return 0
   [ -s "$snap/outside" ] && return 0
-  awk 'FILENAME == ARGV[1] { dirty[$0] = 1; next } !($0 in dirty)' "$snap/predirty" "$snap/owned" > "$snap/leftover"
+  # A filter that cannot write its list records nothing, rather than the list
+  # it was to filter, or part of it (rounds 2 and 3 of the 1.7.2 review).
+  if ! awk 'FILENAME == ARGV[1] { dirty[$0] = 1; next } !($0 in dirty)' "$snap/predirty" "$snap/owned" > "$snap/leftover" 2>/dev/null; then
+    leftovers_unfiltered "$log"
+    return 0
+  fi
   # A file that changed while the commit checked it holds another writer's
   # bytes, so it is not recorded as this runner's own.
   if [ -s "$snap/commit-mismatch" ]; then
-    awk 'FILENAME == ARGV[1] { changed[$0] = 1; next } !($0 in changed)' "$snap/commit-mismatch" "$snap/leftover" > "$snap/leftover.kept"
-    mv -f "$snap/leftover.kept" "$snap/leftover"
+    if ! { awk 'FILENAME == ARGV[1] { changed[$0] = 1; next } !($0 in changed)' "$snap/commit-mismatch" "$snap/leftover" > "$snap/leftover.kept" \
+           && mv -f "$snap/leftover.kept" "$snap/leftover"; } 2>/dev/null; then
+      leftovers_unfiltered "$log"
+      return 0
+    fi
   fi
   # So does a file that is no longer as the second snapshot saw it, such as a
   # note someone edited while a slow commit step ran.
-  : > "$snap/leftover.kept"
-  : > "$snap/leftover.changed"
+  if ! { true > "$snap/leftover.kept" && true > "$snap/leftover.changed"; } 2>/dev/null; then
+    leftovers_unfiltered "$log"
+    return 0
+  fi
   while IFS= read -r p; do
     [ -n "$p" ] || continue
-    was="$(P="./$p" awk '{ line = $0; sub(/^[^ ]* [^ ]* /, "", line) } line == ENVIRON["P"] { print $1 " " $2; exit }' "$snap/after")"
-    if [ "$(path_state "$1" "$p")" = "$was" ]; then
-      printf '%s\n' "$p" >> "$snap/leftover.kept"
+    if same_as_snap "$1" "$p" "$snap/after"; then
+      printf '%s\n' "$p" >> "$snap/leftover.kept" || wfail=1
+    elif [ "$SAME_WHY" = nodigest ]; then
+      printf '%s (its checksum or SHA-256 could not be taken, so it is not known to be unchanged)\n' "$p" >> "$snap/leftover.changed" || wfail=1
     else
-      printf '%s\n' "$p" >> "$snap/leftover.changed"
+      printf '%s\n' "$p" >> "$snap/leftover.changed" || wfail=1
     fi
   done < "$snap/leftover"
-  mv -f "$snap/leftover.kept" "$snap/leftover"
+  if [ "$wfail" -eq 1 ] || ! mv -f "$snap/leftover.kept" "$snap/leftover" 2>/dev/null; then
+    leftovers_unfiltered "$log"
+    return 0
+  fi
   if [ -s "$snap/leftover.changed" ]; then
-    printf '[%s] NOT-RECORDED: these files changed after the pass ended, so the next run will take them for someone'"'"'s edit:\n' "$(ts)" >> "$log"
+    printf '[%s] NOT-RECORDED: these files are not as they were when the pass ended, or (where said) could not be read to tell, so the next run will take them for someone'"'"'s edit:\n' "$(ts)" >> "$log"
     sed 's/^/    /' "$snap/leftover.changed" >> "$log"
   fi
   record_uncommitted "$1" "$2" "$3" "$4" "$snap/leftover" "${6:-}"
@@ -2520,6 +2544,44 @@ path_state() {
   fi
 }
 
+# same_as_snap <root> <relative-path> <snapshot>
+# True when the path is as the snapshot saw it: the same path_state, and where
+# the snapshot also holds a SHA-256 line for it (an S line, when fence_strong
+# found a tool), the same digest now. path_state alone is a CRC, which four
+# chosen bytes can match, so a file rewritten to the same size and CRC passed
+# it (Release C; round 3 of the 1.7.1 review). A digest that cannot be taken
+# now, where the snapshot has one, counts as changed, and SAME_WHY says which
+# answer it was: crc, digest (both taken, and they differ) or nodigest, so a
+# log need not blame a writer for a file that could only not be read.
+# The tool is looked up once per run (SAME_TOOL), since the callers loop.
+SAME_TOOL=""
+same_as_snap() {
+  local was now s d
+  SAME_WHY=""
+  was="$(P="./$2" LC_ALL=C awk '{ line = $0; sub(/^[^ ]* [^ ]* /, "", line) } line == ENVIRON["P"] && $1 !~ /^S/ { print $1 " " $2; exit }' "$3" 2>/dev/null)"
+  now="$(path_state "$1" "$2")"
+  # A plain file whose CRC cannot be taken now, locked say, is not known to be
+  # unchanged, nor to have changed, whether or not the snapshot could take it
+  # (rounds 2 and 3 of the 1.7.2 review: unreadable both times, it compared
+  # equal). One the snapshot saw as a link has changed.
+  if [ -z "$now" ] && [ -f "$1/$2" ] && [ ! -L "$1/$2" ]; then
+    case "$was" in L*) SAME_WHY=crc ;; *) SAME_WHY=nodigest ;; esac
+    return 1
+  fi
+  [ "$now" = "$was" ] || { SAME_WHY=crc; return 1; }
+  s="$(P="./$2" LC_ALL=C awk '{ line = $0; sub(/^[^ ]* [^ ]* /, "", line) } line == ENVIRON["P"] && $1 ~ /^S/ { print substr($1, 2); exit }' "$3" 2>/dev/null)"
+  [ -n "$s" ] || return 0
+  # A snapshot that could not take the digest itself holds none to compare
+  # with, so the file is not known to be unchanged (round 2).
+  case "$s" in unreadable|malformed-*) SAME_WHY=nodigest; return 1 ;; esac
+  [ -n "$SAME_TOOL" ] || SAME_TOOL="$(snap_tool)" || SAME_TOOL="none none"
+  case "${SAME_TOOL%% *}" in cksum|none) SAME_WHY=nodigest; return 1 ;; esac
+  d="$(fence_digest "$1/$2" "${SAME_TOOL%% *}" "${SAME_TOOL#* }")"
+  [ "$d" = "$s" ] && return 0
+  case "$d" in unreadable|malformed-*) SAME_WHY=nodigest ;; *) SAME_WHY=digest ;; esac
+  return 1
+}
+
 # case_twin <relative-path> <snapshot>
 # Prints the first path the snapshot lists whose name differs from the given one
 # only in ASCII case, and nothing when there is none.
@@ -2546,8 +2608,12 @@ case_renamed() {
 # leftover of this runner that adopt_uncommitted took off the dirty list, so the
 # commit HEAD pointed at before the pass holds their pre-pass bytes.
 #
-#   - A path that is not exactly as the second snapshot saw it (changed, removed,
-#     or now a folder or a link) is someone else's since, and is left alone.
+#   - A path that is not as the second snapshot saw it (changed, removed, or now
+#     a folder or a link) is someone else's since, and is left alone. "As it
+#     saw it" is the size and CRC, not the SHA-256 line: a file rewritten to the
+#     same size and CRC after the pass is put back like the pass's own, its bytes
+#     copied to the quarantine first, which is the safer of the two answers for
+#     a rewrite chosen to pass the CRC (round 2 of the 1.7.2 review).
 #   - A path whose blob in HEAD differs from the one in the commit before the
 #     pass was committed while the pass ran. Restoring it would undo that commit
 #     in the work tree, so it is left alone.
@@ -2602,7 +2668,7 @@ revert_owned() {
 revert_path() {
   local now was b_blob h_blob d twin t_blob
   now="$(path_state "$root" "$p")"
-  was="$(P="./$p" awk '{ line = $0; sub(/^[^ ]* [^ ]* /, "", line) } line == ENVIRON["P"] { print $1 " " $2; exit }' "$snap/after")"
+  was="$(P="./$p" LC_ALL=C awk '{ line = $0; sub(/^[^ ]* [^ ]* /, "", line) } line == ENVIRON["P"] && $1 !~ /^S/ { print $1 " " $2; exit }' "$snap/after")"
   if [ "$now" = other ] && [ -z "$was" ] && [ -d "$root/$p" ] && [ ! -L "$root/$p" ]; then
     if rmdir "$root/$p" 2>/dev/null; then
       now=""
@@ -2853,8 +2919,7 @@ report_existing_left() {
   while IFS= read -r p; do
     [ -n "$p" ] || continue
     grep -qxF -- "$p" "$3/predirty" 2>/dev/null && continue
-    was="$(P="./$p" awk '{ line = $0; sub(/^[^ ]* [^ ]* /, "", line) } line == ENVIRON["P"] { print $1 " " $2; exit }' "$3/before" 2>/dev/null)"
-    [ "$(path_state "$1" "$p")" = "$was" ] && continue
+    same_as_snap "$1" "$p" "$3/before" && continue
     cands="$cands$p
 "
   done < "$2"
