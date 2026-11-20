@@ -2911,38 +2911,68 @@ if suite_section omp; then
 
 printf '\n=== omp extension (.claude/adapters/omp/vault.js) ===\n'
 
-OMP_SHARED="realPath isInside below rootsFor findRoots namesSecret braceAlternatives classAt sameLetter globMatches slashSets globParts partsMaySeeSecret globMaySeeSecret isWslLauncher runHook"
-omp_fn() {  # omp_fn <file> <name> - the function's lines, from its header to the first closing brace at column 0
-  awk -v want="function $2(" 'index($0, want) == 1 { on = 1 } on { print } on && /^}/ { exit }' "$1"
+#
+# Release C (M5): the names compared are derived, not listed. Every function and
+# every const declared at column 0 in both adapters is compared, so a function
+# added to both, or renamed in both, is held without anyone remembering to list
+# it; the hand-kept lists had left three shared ones uncompared. OMP_DIFFERS
+# names the shared ones meant to differ, each for its reason:
+#   findBash - Pi's reads Pi's own shell-path setting first, which omp has not.
+#   isSecret - omp decodes a URL's path and tries each path omp itself would open.
+#   NO_PATH  - the refusal names its harness.
+# A name OMP_DIFFERS lists must still be in both and still differ, or the list
+# is stale. The entry point, export default function vaultExtension, is each
+# harness's own glue and is not among the names.
+OMP_DIFFERS="findBash isSecret NO_PATH"
+omp_names() {  # omp_names <file> <fn|const> - the names declared at column 0, sorted
+  awk -v kind="$2" '
+    kind == "fn" && match($0, /^(async )?function [A-Za-z0-9_$]+\(/) { s = substr($0, 1, RLENGTH - 1); sub(/^(async )?function /, "", s); print s }
+    kind == "const" && match($0, /^const [A-Za-z0-9_$]+ = /) { print substr($0, 7, RLENGTH - 9) }' "$1" | LC_ALL=C sort -u
 }
-omp_shared_bad="" omp_shared_found=0
-for omp_name in $OMP_SHARED; do
-  omp_a=$(omp_fn "$ROOT/.claude/adapters/pi/vault.js" "$omp_name")
-  omp_b=$(omp_fn "$ROOT/.claude/adapters/omp/vault.js" "$omp_name")
-  if [ -z "$omp_a" ] || [ -z "$omp_b" ]; then omp_shared_bad="$omp_shared_bad missing:$omp_name"; continue; fi
-  omp_shared_found=$((omp_shared_found + 1))
-  [ "$omp_a" = "$omp_b" ] || omp_shared_bad="$omp_shared_bad differs:$omp_name"
-done
-# The constants those functions read, each a one-line const at column 0.
-omp_const_found=0
-for omp_name in SECRET_NAMES MAX_GLOB MAX_ALTERNATIVES MAX_SLASH_SETS HOOK_TIMEOUT_MS REPORT_LIMIT WINDOWS UNICODE_SPACES LINT STUB CHECK DENIED; do
-  omp_a=$(grep "^const $omp_name = " "$ROOT/.claude/adapters/pi/vault.js")
-  omp_b=$(grep "^const $omp_name = " "$ROOT/.claude/adapters/omp/vault.js")
-  if [ -z "$omp_a" ] || [ -z "$omp_b" ]; then omp_shared_bad="$omp_shared_bad missing-const:$omp_name"; continue; fi
-  omp_const_found=$((omp_const_found + 1))
-  [ "$omp_a" = "$omp_b" ] || omp_shared_bad="$omp_shared_bad differs-const:$omp_name"
-done
-[ "$omp_const_found" -eq 12 ] || omp_shared_bad="$omp_shared_bad (found $omp_const_found of 12 constants)"
-printf 'function namesSecret(path) {\n  return false\n}\n' > "$TMP/omp-fake-shared.js"
-if [ "$(omp_fn "$TMP/omp-fake-shared.js" namesSecret)" != "$(omp_fn "$ROOT/.claude/adapters/pi/vault.js" namesSecret)" ] \
-   && [ -n "$(omp_fn "$TMP/omp-fake-shared.js" namesSecret)" ]; then
-  if [ -z "$omp_shared_bad" ] && [ "$omp_shared_found" -eq 16 ]; then
-    ok "the omp adapter's path, glob and hook-running code is the Pi adapter's, function for function and constant for constant ($omp_shared_found functions, $omp_const_found constants)"
+omp_fn() {  # omp_fn <file> <name> - the function's lines, from its header to the first closing brace at column 0
+  awk -v a="function $2(" -v b="async function $2(" 'index($0, a) == 1 || index($0, b) == 1 { on = 1 } on { print } on && /^}/ { exit }' "$1"
+}
+omp_compare() {  # omp_compare <pi.js> <omp.js> <out> - one problem per line in <out>; sets OMP_NF, OMP_NC
+  local k n a b
+  OMP_NF=0 OMP_NC=0
+  : > "$3"
+  for k in fn const; do
+    omp_names "$1" "$k" > "$3.a"
+    omp_names "$2" "$k" > "$3.b"
+    while IFS= read -r n; do
+      if [ "$k" = fn ]; then
+        a="$(omp_fn "$1" "$n")"; b="$(omp_fn "$2" "$n")"; OMP_NF=$((OMP_NF + 1))
+      else
+        a="$(grep "^const $n = " "$1")"; b="$(grep "^const $n = " "$2")"; OMP_NC=$((OMP_NC + 1))
+      fi
+      case " $OMP_DIFFERS " in
+        *" $n "*) [ "$a" != "$b" ] || printf 'listed-but-same:%s\n' "$n" >> "$3" ;;
+        *) [ "$a" = "$b" ] || printf 'differs:%s\n' "$n" >> "$3" ;;
+      esac
+    done < <(LC_ALL=C comm -12 "$3.a" "$3.b")
+  done
+  for n in $OMP_DIFFERS; do
+    { omp_names "$1" fn; omp_names "$1" const; } | grep -qx -- "$n" \
+      && { omp_names "$2" fn; omp_names "$2" const; } | grep -qx -- "$n" \
+      || printf 'listed-but-not-shared:%s\n' "$n" >> "$3"
+  done
+}
+omp_compare "$ROOT/.claude/adapters/pi/vault.js" "$ROOT/.claude/adapters/omp/vault.js" "$TMP/omp-shared.txt"
+omp_shared_nf="$OMP_NF" omp_shared_nc="$OMP_NC"
+# The probe: a function and a const of one name added to both copies, unlike.
+cp "$ROOT/.claude/adapters/pi/vault.js" "$TMP/omp-probe-pi.js"
+cp "$ROOT/.claude/adapters/omp/vault.js" "$TMP/omp-probe-omp.js"
+printf '\nfunction rcSharedProbe() {\n  return 1\n}\nconst RC_PROBE = 1\n' >> "$TMP/omp-probe-pi.js"
+printf '\nfunction rcSharedProbe() {\n  return 2\n}\nconst RC_PROBE = 2\n' >> "$TMP/omp-probe-omp.js"
+omp_compare "$TMP/omp-probe-pi.js" "$TMP/omp-probe-omp.js" "$TMP/omp-probe.txt"
+if grep -qx 'differs:rcSharedProbe' "$TMP/omp-probe.txt" && grep -qx 'differs:RC_PROBE' "$TMP/omp-probe.txt"; then
+  if [ ! -s "$TMP/omp-shared.txt" ] && [ "$omp_shared_nf" -ge 20 ] && [ "$omp_shared_nc" -ge 14 ]; then
+    ok "the omp adapter's shared code is the Pi adapter's, for every function and const both declare ($omp_shared_nf functions, $omp_shared_nc constants), apart from the three meant to differ"
   else
-    bad "the omp and Pi adapters' shared code has drifted --$omp_shared_bad (found $omp_shared_found of 16)"
+    bad "the omp and Pi adapters' shared code has drifted -- [$(tr '\n' ' ' < "$TMP/omp-shared.txt")] (shared: $omp_shared_nf functions of at least 20, $omp_shared_nc constants of at least 14)"
   fi
 else
-  bad "positive control: a changed copy of namesSecret was not told apart from the Pi adapter's"
+  bad "positive control: a function and a const added to both adapters, unlike, were not reported -- [$(tr '\n' ' ' < "$TMP/omp-probe.txt")]"
 fi
 
 if [ "$pi_node_major" -lt 18 ]; then
