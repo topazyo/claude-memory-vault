@@ -122,9 +122,10 @@ jobs:
           # some of them skip a platform.
           REQUIRED_ON: ${{ matrix.os }}
           # The same comparison the guarded steps make, so one answer decides
-          # both: the expression ignores case, which a shell test would not, and
-          # a missing GITHUB_REPOSITORY cannot change it.
-          TEMPLATE_REPO: ${{ github.repository == 'topazyo/claude-memory-vault' }}
+          # both. It holds the repository's id, not its name, so a rename keeps
+          # it, and a copy made from the template or a fork has an id of its own
+          # (the hygiene job checks the id against the name).
+          TEMPLATE_REPO: ${{ github.repository_id == '1368450026' }}
         # The required lists belong to this repository. In a vault made from the
         # template, run-tests.sh is owned and moves with each update while this
         # workflow is excluded and never does, so a list frozen here would fail
@@ -193,7 +194,7 @@ jobs:
           # macos-latest image, so the two macOS jobs hold one list. No strace
           # on macOS, so the process budget is not on it. The bash 3.2 reading
           # of those controls is the whole reason this job exists.
-          TEMPLATE_REPO: ${{ github.repository == 'topazyo/claude-memory-vault' }}
+          TEMPLATE_REPO: ${{ github.repository_id == '1368450026' }}
         # Dropped outside this repository, and held non-empty here, for the
         # reasons the Control suite step above gives.
         run: |
@@ -246,6 +247,26 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      # The steps that belong to this repository alone are guarded by its id,
+      # github.repository_id, because the id survives a rename and a guard by
+      # name went false after one, silently skipping every guarded step. An id
+      # typed wrong would skip them just as silently, so this step, guarded by
+      # nothing, checks the id against the name: the name with any other id
+      # fails, and the id with any other name says the repository was renamed.
+      - name: The repository guard holds this repository's id
+        env:
+          BY_ID: ${{ github.repository_id == '1368450026' }}
+          BY_NAME: ${{ github.repository == 'topazyo/claude-memory-vault' }}
+        run: |
+          echo "repository $GITHUB_REPOSITORY, id ${GITHUB_REPOSITORY_ID:-unknown}: guarded steps run: $BY_ID"
+          if [ "$BY_NAME" = true ] && [ "$BY_ID" != true ]; then
+            echo "::error title=The repository guard holds the wrong id::This is the template repository by name, but ci.yml's guards hold an id that is not ${GITHUB_REPOSITORY_ID:-its id}, so every guarded step skips."
+            exit 1
+          fi
+          if [ "$BY_ID" = true ] && [ "$BY_NAME" != true ]; then
+            echo "::notice title=The repository was renamed::The guards still hold, by id. Update the name in this step and in CONTRIBUTING.md."
+          fi
+
       # A published release's CHANGELOG entry stays as it was tagged. Two
       # branches that both wrote the same release heading merged cleanly with
       # one side's text under the other's published heading, and every other
@@ -255,7 +276,7 @@ jobs:
       # repository, as the release step at the end of this job is and for the
       # same reason.
       - name: Published CHANGELOG entries are as they were tagged
-        if: github.repository == 'topazyo/claude-memory-vault'
+        if: github.repository_id == '1368450026'
         run: |
           # Both read headings outside code fences only, so an entry that quotes
           # an older heading in a code block neither opens nor ends one.
@@ -318,7 +339,7 @@ jobs:
       # a push to main it is the main the push replaced, however many commits
       # the push carries, and the parent commit when that one is not here.
       - name: Required controls are not dropped against main
-        if: github.repository == 'topazyo/claude-memory-vault'
+        if: github.repository_id == '1368450026'
         env:
           RETIRED: ''
           BEFORE: ${{ github.event.before }}
@@ -392,7 +413,7 @@ jobs:
       # and never does, so the first update that adds a control would turn
       # this step red for ever on a vault that is working perfectly.
       - name: Every recorded control is required somewhere
-        if: github.repository == 'topazyo/claude-memory-vault'
+        if: github.repository_id == '1368450026'
         env:
           NOT_REQUIRED: >-
             runlog-hardlink runlog-mode runlog-unreadable stopping win-survivor win-late win-reaped
@@ -440,13 +461,18 @@ jobs:
           done
           [ "$bad" -eq 0 ]
 
+      # The loops below read git ls-files -z, so a name with a space is one
+      # file, and each fails on an empty list: a pathspec that matches nothing,
+      # after a rename or a typo, would otherwise pass having checked nothing.
       - name: Every shell script parses
         run: |
           rc=0
           # Git hooks have no .sh extension, so they are listed separately.
-          for f in $(git ls-files '*.sh' '.claude/githooks/*'); do
+          git ls-files -z -- '*.sh' '.claude/githooks/*' > "$RUNNER_TEMP/files" || { echo "::error::git ls-files failed"; exit 1; }
+          [ -s "$RUNNER_TEMP/files" ] || { echo "::error title=Nothing was checked::no tracked file matches *.sh or .claude/githooks/*"; exit 1; }
+          while IFS= read -r -d '' f; do
             bash -n "$f" || { echo "::error file=$f::syntax error"; rc=1; }
-          done
+          done < "$RUNNER_TEMP/files"
           exit $rc
 
       # Advisory, not gating. Several warnings here would be deliberate - the
@@ -466,22 +492,26 @@ jobs:
         continue-on-error: true
         run: |
           shellcheck --version
-          for f in $(git ls-files '*.sh' '.claude/githooks/*'); do
+          git ls-files -z -- '*.sh' '.claude/githooks/*' > "$RUNNER_TEMP/files" || { echo "::error::git ls-files failed"; exit 1; }
+          [ -s "$RUNNER_TEMP/files" ] || { echo "::error title=Nothing was checked::no tracked file matches *.sh or .claude/githooks/*"; exit 1; }
+          while IFS= read -r -d '' f; do
             if [ "$f" = .claude/scripts/run-tests.sh ]; then
               echo "--- $f: skipped, too large for shellcheck on this runner (see the comment in ci.yml)"
               continue
             fi
             echo "--- $f"
             shellcheck --severity=warning "$f" || true
-          done
+          done < "$RUNNER_TEMP/files"
 
       - name: Every JSON file parses
         run: |
           rc=0
-          for f in $(git ls-files '*.json'); do
+          git ls-files -z -- '*.json' > "$RUNNER_TEMP/files" || { echo "::error::git ls-files failed"; exit 1; }
+          [ -s "$RUNNER_TEMP/files" ] || { echo "::error title=Nothing was checked::no tracked file matches *.json"; exit 1; }
+          while IFS= read -r -d '' f; do
             python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$f" \
               || { echo "::error file=$f::invalid JSON"; rc=1; }
-          done
+          done < "$RUNNER_TEMP/files"
           exit $rc
 
       # OpenCode runs every file in .opencode/plugins/ at startup without a trust
@@ -496,7 +526,7 @@ jobs:
       # docs/harnesses/opencode.md has a vault's owner copy the plugin into
       # .opencode/plugins/, and committing it there is the guide working.
       - name: The OpenCode plugin ships opt-in
-        if: github.repository == 'topazyo/claude-memory-vault'
+        if: github.repository_id == '1368450026'
         run: |
           specs=()
           for d in plugin plugins tool tools; do
@@ -539,7 +569,7 @@ jobs:
       # first runs the same pathspecs in a scratch repository whose answer is
       # known: its three .pi paths, in mixed case, and none of its decoys.
       - name: The Pi extension ships opt-in
-        if: github.repository == 'topazyo/claude-memory-vault'
+        if: github.repository_id == '1368450026'
         run: |
           specs=(':(icase,glob).pi' ':(icase,glob).pi/**' ':(icase,glob)**/.pi' ':(icase,glob)**/.pi/**')
           scratch="${RUNNER_TEMP:?}/pi-pathspec-probe"
@@ -565,7 +595,7 @@ jobs:
       # .omp/ (CONTRIBUTING.md, "Adding a harness"). The same pathspec shapes and
       # the same probe as the Pi step above, for the same reasons.
       - name: Nothing ships under .omp/
-        if: github.repository == 'topazyo/claude-memory-vault'
+        if: github.repository_id == '1368450026'
         run: |
           specs=(':(icase,glob).omp' ':(icase,glob).omp/**' ':(icase,glob)**/.omp' ':(icase,glob)**/.omp/**')
           scratch="${RUNNER_TEMP:?}/omp-pathspec-probe"
@@ -590,21 +620,28 @@ jobs:
       - name: Harness configs parse (TOML, YAML, plugin JavaScript)
         run: |
           rc=0
-          for f in $(git ls-files '*.toml'); do
+          tracked() {  # tracked <pathspec>... - the matching tracked names, NUL-separated, in $RUNNER_TEMP/files; none fails
+            git ls-files -z -- "$@" > "$RUNNER_TEMP/files" || { echo "::error::git ls-files failed"; exit 1; }
+            [ -s "$RUNNER_TEMP/files" ] || { echo "::error title=Nothing was checked::no tracked file matches $*"; exit 1; }
+          }
+          tracked '*.toml'
+          while IFS= read -r -d '' f; do
             python3 -c "import tomllib,sys; tomllib.load(open(sys.argv[1],'rb'))" "$f" \
               || { echo "::error file=$f::invalid TOML"; rc=1; }
-          done
-          for f in $(git ls-files '*.yml' '*.yaml'); do
+          done < "$RUNNER_TEMP/files"
+          tracked '*.yml' '*.yaml'
+          while IFS= read -r -d '' f; do
             ruby -ryaml -e 'YAML.load_file(ARGV[0])' "$f" \
               || { echo "::error file=$f::invalid YAML"; rc=1; }
-          done
+          done < "$RUNNER_TEMP/files"
           # The adapters are ES modules, and under .mjs every Node parses them as
           # one. The pathspec's * crosses folders, so it reaches each adapter.
-          for f in $(git ls-files '.claude/adapters/*.js'); do
+          tracked '.claude/adapters/*.js'
+          while IFS= read -r -d '' f; do
             cp "$f" "$RUNNER_TEMP/plugin-check.mjs"
             node --check "$RUNNER_TEMP/plugin-check.mjs" \
               || { echo "::error file=$f::invalid JavaScript"; rc=1; }
-          done
+          done < "$RUNNER_TEMP/files"
           exit $rc
 
       # Windows has no executable bit, so scripts committed from a Windows
@@ -612,10 +649,15 @@ jobs:
       - name: Shell scripts are executable in the index
         run: |
           rc=0
-          for f in $(git ls-files '*.sh' '.claude/githooks/*'); do
-            mode=$(git ls-files -s "$f" | cut -d' ' -f1)
+          # Each entry is "<mode> <object> <stage><TAB><name>", read whole, so
+          # the name is never used as a pathspec of its own.
+          git ls-files -s -z -- '*.sh' '.claude/githooks/*' > "$RUNNER_TEMP/files" || { echo "::error::git ls-files failed"; exit 1; }
+          [ -s "$RUNNER_TEMP/files" ] || { echo "::error title=Nothing was checked::no tracked file matches *.sh or .claude/githooks/*"; exit 1; }
+          while IFS= read -r -d '' entry; do
+            mode=${entry%% *}
+            f=${entry#*$'\t'}
             [ "$mode" = "100755" ] || { echo "::error file=$f::mode $mode, expected 100755"; rc=1; }
-          done
+          done < "$RUNNER_TEMP/files"
           exit $rc
 
       # A skill without a name: key silently never registers, which is the worst
@@ -623,13 +665,19 @@ jobs:
       - name: Skills and agents declare their frontmatter keys
         run: |
           rc=0
-          for f in $(git ls-files '.claude/skills/*/SKILL.md'); do
+          tracked() {  # tracked <pathspec>... - the matching tracked names, NUL-separated, in $RUNNER_TEMP/files; none fails
+            git ls-files -z -- "$@" > "$RUNNER_TEMP/files" || { echo "::error::git ls-files failed"; exit 1; }
+            [ -s "$RUNNER_TEMP/files" ] || { echo "::error title=Nothing was checked::no tracked file matches $*"; exit 1; }
+          }
+          tracked '.claude/skills/*/SKILL.md'
+          while IFS= read -r -d '' f; do
             grep -q '^name:' "$f" || { echo "::error file=$f::missing name: key"; rc=1; }
-          done
-          for f in $(git ls-files '.claude/agents/*.md'); do
+          done < "$RUNNER_TEMP/files"
+          tracked '.claude/agents/*.md'
+          while IFS= read -r -d '' f; do
             grep -q '^name:' "$f"  || { echo "::error file=$f::missing name: key"; rc=1; }
             grep -q '^tools:' "$f" || { echo "::error file=$f::missing tools: key"; rc=1; }
-          done
+          done < "$RUNNER_TEMP/files"
           exit $rc
 
       # Counts written into prose drift the moment someone adds a skill or an
@@ -642,7 +690,7 @@ jobs:
       # the docs keep the template's number, and the step would go red for ever
       # on a vault that is working perfectly.
       - name: Documented counts match reality
-        if: github.repository == 'topazyo/claude-memory-vault'
+        if: github.repository_id == '1368450026'
         run: |
           rc=0
 
@@ -688,9 +736,9 @@ jobs:
       # "Use this template" copies this whole workflow into the user's own
       # repository, where the manifest and the tree diverge on their very first
       # note and this step would go red for ever on a vault that is working
-      # perfectly. On a pull request from a fork, github.repository is still the
-      # base repository, so a contributor's change is checked here as it should
-      # be.
+      # perfectly. On a pull request from a fork, github.repository_id is still
+      # the base repository's, so a contributor's change is checked here as it
+      # should be.
       #
       # It does not check that the CLASSIFICATION is right. Both sides run the
       # same rules, so a wrong rule stays self-consistent and this stays green.
@@ -703,7 +751,7 @@ jobs:
       # in the template repository, which is exactly where that is the right
       # thing to do.
       - name: The template manifest matches the tree
-        if: github.repository == 'topazyo/claude-memory-vault'
+        if: github.repository_id == '1368450026'
         env:
           VAULT_TEMPLATE_MAINTAINER: '1'
         run: bash .claude/scripts/vault-update.sh --verify-manifest
@@ -742,7 +790,7 @@ jobs:
       # the owner's own folders are the vault working, and this step would go
       # red for ever on them.
       - name: No personal content or absolute user paths
-        if: github.repository == 'topazyo/claude-memory-vault'
+        if: github.repository_id == '1368450026'
         run: |
           rc=0
           # Scan every file. The one deliberate example path, "C:/Users/Some One/",
@@ -773,8 +821,9 @@ jobs:
       # this template" copies this workflow into somebody's own repository,
       # where their notes are shipped files by class and their releases are
       # their own business, and this step would go red for ever on a vault that
-      # is working perfectly. On a pull request from a fork, github.repository
-      # is still this repository, so a contributor's change is checked here.
+      # is working perfectly. On a pull request from a fork,
+      # github.repository_id is still this repository's, so a contributor's
+      # change is checked here.
       #
       # --release-branch only on a push to main, because a version that names
       # no tag is a release in preparation on a pull request and a debt on the
@@ -801,7 +850,7 @@ jobs:
       # 2, which looks like an ordinary red, and the usual response to a red
       # release check is to weaken it.
       - name: The release keeps up with what this template ships
-        if: github.repository == 'topazyo/claude-memory-vault'
+        if: github.repository_id == '1368450026'
         run: |
           # The status is captured with `|| rc=$?` rather than read from $? on
           # the next line, because a workflow run block is bash -e and a bare

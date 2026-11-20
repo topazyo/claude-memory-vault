@@ -332,8 +332,10 @@ document rather than against a memory of one. Four of those names also appear in
 **The CI step is guarded by repository and is not path filtered.** A path filtered step shows as
 skipped on a pull request that touches nothing matching the filter, and a reviewer reading the
 checks list cannot tell a skip from a pass. This one runs on every pull request and every push to
-`main` here, including pull requests from forks, because `github.repository` is still this
-repository for those.
+`main` here, including pull requests from forks, because `github.repository_id` is still this
+repository's for those. The guards hold the repository's numeric id rather than its name, so a
+rename does not turn them off, and an unguarded hygiene step fails when the name is this
+repository's but the id is not, so an id typed wrong cannot turn them off silently either.
 
 It skips everywhere else, and that includes **pushes to your own fork** as well as a repository
 made with "Use this template". This is the same wrinkle the manifest step has above, and it has the
