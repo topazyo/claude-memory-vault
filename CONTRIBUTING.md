@@ -50,6 +50,13 @@ separate job that runs them under macOS's system `/bin/bash` 3.2. It deliberatel
 install `jq`, because `jq` is absent by default on macOS and in Git for Windows and the hooks are
 written to degrade loudly without it, and installing it in CI would hide the case most users hit.
 
+A control you add records itself with `ran <id>`, and CI fails until the id is on a line of
+`.github/workflows/required-controls.txt` with each platform whose job must run it (`ubuntu`,
+`macos`, `windows`; `macos` covers both macOS jobs), or is named in `ci.yml`'s `NOT_REQUIRED`
+with a reason. Name a platform only where the control can run: the suite fails a required id that
+printed `SKIP`. Dropping an id or a platform from that file fails CI against `main` unless
+`ci.yml`'s `RETIRED` names the id.
+
 ## Changing a shell script
 
 The hooks run on macOS, Linux, and Windows via Git Bash, and the differences bite in ways that

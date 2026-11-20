@@ -117,103 +117,10 @@ jobs:
       - name: Control suite
         shell: bash
         env:
-          # Three lists, not two, because the controls added with the fence,
-          # retention and hook-cost changes do not all reach every platform.
-          # Windows reads a backslash in a name as a folder separator, so the
-          # two that need such a name skip there, only this ubuntu job has
-          # strace for the process budget, and only its filesystem keeps two
-          # names that differ in case apart, which promo-create-only-twinguards
-          # needs. pi-extension-symlink needs a file symlink, which Windows lets
-          # only a privileged or developer-mode user make; GitHub's Windows
-          # runners can, so it is required on every job, while a developer's
-          # machine without the privilege skips it. pi-extension-dirlink uses
-          # junctions on Windows. retention-unlistable is left off Windows
-          # because the job's account can list a folder whose listing is denied
-          # to it, so the case skips there, and retention-posix-mode is left off
-          # both macOS lists because their bash is 3.2, which cannot parse the
-          # runner in POSIX mode. mem-override-sink-unreadable and
-          # mem-override-sink-filelink are left off Windows for the same kind of
-          # reason: chmod 000 does not stop a listing there, and Git Bash's
-          # ln -s makes a file link only with a privilege and MSYS=winsymlinks
-          # set, copying the file otherwise. mem-override-file-mode is left off
-          # it too, because Git Bash's mode bits are not Windows permissions, and
-          # so are mem-override-winbin and mem-override-winbin-unreadable (which
-          # skips under root), because there a claude.exe is the binary
-          # the runner should start, and mem-override-stray-cygpath and
-          # mem-override-no-cygpath, because there cygpath is the real one.
-          # mem-override-mixed-release runs everywhere.
-          # mem-override-path-refused runs everywhere: on Windows Git Bash keeps
-          # a double quote or a tab in a name as U+F022 or U+F009 and the pass,
-          # started as dream-pass.cmd starts it, runs; elsewhere it refuses.
-          # mem-override-utf8-refused is left off
-          # Windows, where Git Bash reads a lone byte 0xFF as U+00FF; where the
-          # file system refuses such a name, as macOS's does, it calls
-          # memory_override directly. mem-override-utf8-lax-host is recorded
-          # only where iconv -t UTF-8 lets a sequence above U+10FFFF through, as
-          # glibc's does, so it is on the ubuntu list only, where it shows that
-          # job's twins can tell the round trip from a check to UTF-8 alone.
-          # mem-override-utf16-lax-host is recorded only where iconv -t UTF-16LE
-          # takes that sequence without an error under LC_ALL=C, the runners'
-          # locale, as macOS's does, so it is on
-          # the two macOS lists only, where it shows those twins can tell the
-          # round trip from a check to UTF-16LE alone. mem-override-unc-refused
-          # runs everywhere: a cygpath stand-in gives a network path.
-          # mem-override-work-refused runs everywhere too: a pass with TMPDIR
-          # inside the vault refuses where mktemp takes TMPDIR, and
-          # memory_override, called with a folder there, refuses on every
-          # platform, macOS's among them. mem-override-work-open is off Windows,
-          # where Git Bash mode bits are not permissions, and so are 1.5.0's
-          # rf-mode, rf-world, rf-owner and rf-findfail (the runner's own
-          # folder: its mode, its owner, and a find that cannot check it);
-          # rf-gone is off Windows too, where the drive path's map-back
-          # refuses a folder that is not there first;
-          # rf-owner needs sudo -n, which the hosted runners give. mem-override-work-case
-          # runs where the file system ignores case, Windows and macOS, so it is
-          # off the ubuntu list. mem-override-work-root runs everywhere: a
-          # vault at the root of the temporary folder's file system or drive.
-          # mem-override-work-resolved runs where mktemp
-          # takes TMPDIR, so it is off the two macOS lists, and
-          # mem-override-work-made, a missing folder spelled through a
-          # link, which must be refused and not made, and a folder for the
-          # pass that is a link itself, which must be refused, runs wherever
-          # a link can be made, so it is on all four.
-          # mem-override-no-iconv
-          # runs everywhere: a failing iconv stand-in comes first on PATH, and,
-          # off Windows, a pass also runs with a PATH that holds no iconv.
-          # mem-override-sink-link uses
-          # junctions on Windows and runs everywhere.
-          # mem-override-cygpath-refused needs cygpath, so it is on the Windows
-          # list only. mem-override-work-colon, mem-override-work-gone,
-          # mem-override-work-names and mem-override-settings-space run
-          # everywhere: each calls the library directly, with folders the twin
-          # makes itself (work-names' two legs with a line break in a folder
-          # name off Windows only, an INFO line there).
-          # mem-override-work-root-drive is on the Windows list
-          # only, because the drive-path walk it holds runs only there.
-          # mem-override-work-dotdot, mem-override-state-copy and
-          # mem-override-walk-status run everywhere: each calls the library
-          # directly (the first through a junction on Windows); work-dotdot's
-          # dream-pass leg runs where mktemp takes TMPDIR and prints an INFO
-          # line on macOS. mem-override-work-space is a whole pass with a
-          # TMPDIR holding a space, so it is off the two macOS lists, whose
-          # mktemp ignores TMPDIR. mem-override-work-backstop runs everywhere,
-          # its legs with a folder name ending in a line break and its
-          # dangling-link legs off Windows only (an INFO line there).
-          # mem-override-work-unreachable (a folder this
-          # account cannot enter) and mem-override-vault-unresolved (a vault
-          # that is not there, which cygpath's round trip refuses first on
-          # Windows) are off the Windows list: Git Bash's mode bits are not
-          # Windows permissions, and there an account may by default pass
-          # through a folder it cannot enter. temp-dir-spelling runs
-          # everywhere: its runner legs hand each runner the spelling through
-          # a mktemp stand-in, so macOS's mktemp does not matter, and off
-          # Windows a cygpath stand-in makes the platform read as Windows; its
-          # leg where the check must do nothing runs off Windows only, with no
-          # cygpath on PATH.
-          # Naming a control that legitimately skips would
-          # fail the job for the wrong reason, and naming none of them is how
-          # they came to skip everywhere unnoticed.
-          RUN_TESTS_REQUIRED: ${{ matrix.os == 'windows-latest' && 'win-native-tree c4-drive-spelling c3-junction windows-process-id-checks-against-powershell noncesweep win-sweep-report win-orphan-stop win-fork-stop signal-scope runlog-tmp-case retention-junction retention-stdout retention-stdout-escape cntrl-name-log retention-stalled-reader retention-inherited-nonce retention-posix-mode crlf-blob-preserved fence-cksum-unescape logger-not-registered logger-optin-snippet commit-window-not-reverted settings-hooks-present logger-records-session-start vtab-fence-agrees jq-crlf-output logger-crlf scan-upper-case scan-case-not-widened collating-range-probe collating-range-scan stub-nul-refused verify-diff-watchdog steering-locale-fold legacy-asks-the-adding-commit destination-staged-only tripwire-says-rename-outcome trailer-path-set head-holds-unknown tmpl-unclassified-fails tmpl-manifest-stale tmpl-generate-guarded tmpl-binary-refused tmpl-three-answers tmpl-status-unknown tmpl-vacuous tmpl-hostile-manifest-narrows tmpl-path-escape tmpl-collision-not-safe tmpl-user-note-untouched tmpl-source-older tmpl-same-version-disagrees tmpl-same-version-local-drift tmpl-same-version-manifest-legs tmpl-release-uncommitted hup-dream-pass hup-promotion-pass sig-reentry-dream-pass sig-reentry-promotion-pass exit-codes-dream-pass exit-codes-promotion-pass tmpl-crlf-agrees tmpl-lone-cr-modified tmpl-tripwire-refused tmpl-pass-in-flight tmpl-no-hash-tool tmpl-no-execution-from-source tmpl-class-table tmpl-changelog-adopting tmpl-version-agrees tmpl-merge-not-safe tmpl-tripwire-state-copy tmpl-shipped-rules-have-no-catchall tmpl-vault-check-line tmpl-narrowing-vectors tmpl-exempt-set-matches-the-tree tmpl-source-vacuous tmpl-source-disagrees tmpl-adopt-writes-one-file tmpl-version-filtered tmpl-generate-under-tripwire tmpl-exempt-set-is-behavioural tmpl-converged-not-a-merge tmpl-already-adopted tmpl-offered-is-a-plan tmpl-unknown-algorithm tmpl-source-not-a-template tmpl-adopt-rebuilds-manifest tmpl-adopt-names-what-is-absent tmpl-claims-your-folder tmpl-rules-character tmpl-generate-needs-a-version tmpl-retired-listed tmpl-seed-verdicts-counted tmpl-same-version-equivalent tmpl-plan-quoting tmpl-verify-manifest-guarded tmpl-fixtures-built tmpl-release-owed tmpl-release-in-preparation tmpl-release-tag-spelling tmpl-release-cut tmpl-missing-tracked tmpl-unwritable-name tmpl-case-collision tmpl-rules-refused tmpl-hash-tool-named tmpl-hash-tool-misbehaves tmpl-no-diff-tool tmpl-no-source tmpl-in-flight-state-copy tmpl-plan-digests tmpl-release-version-spelling tmpl-release-comparators-agree tmpl-release-cannot-look tmpl-release-ignores-git-dir tmpl-release-vacuous tmpl-release-tag-without-manifest tmpl-release-reclassified tmpl-release-tag-failed tmpl-release-scratch-survivor tmpl-release-shipped-unknown-sides tmpl-release-unwritten-not-empty promo-create-only-edit promo-create-only-supersede promo-create-only-stamp promo-create-only-reverse promo-create-only-wiki promo-create-only-ignored promo-create-only-failpath promo-create-only-timeout promo-create-only-leftover promo-create-only-syncnew promo-create-only-arms promo-create-only-passnote promo-create-only-globnew promo-create-only-casetwin promo-create-only-outside promo-create-only-contained promo-create-only-hangoutside pi-extension-behaviour omp-extension-behaviour pi-extension-dirlink pi-extension-symlink mem-override-flag mem-override-sink-refused mem-override-sink-link dream-agent-tools mem-override-sink-contained mem-override-cygpath-refused mem-override-sink-hardlink mem-override-path-refused mem-override-nonascii mem-override-order mem-override-sink-fifo mem-override-mixed-release mem-override-unc-refused mem-override-work-refused mem-override-work-root mem-override-work-made mem-override-work-case mem-override-work-resolved mem-override-no-iconv mem-override-work-colon mem-override-work-gone mem-override-work-names mem-override-settings-space mem-override-work-root-drive mem-override-work-dotdot mem-override-state-copy mem-override-walk-status mem-override-work-space mem-override-work-backstop temp-dir-spelling resume-skips-pass-output git-env-cleared git-dir-pass vault-root-spelling runner-folder retention-tmp mem-override-drive-walk mem-override-folder-above shown-name-c1 state-shown snapshot-sealed msys-conv-pass c2-after-read-tree c2-other-first-kept c2-swap-exhausted c2-source-edit-kept c2-no-empty-commit c2-landed-then-failed-once c2-ref-locked c2-merge-started-mid-run c2-branch-switched-mid-run c2-signal-put-back-over-other c2-signal-before-swap c2-verify-put-back-over-other c2-signs-when-gpgsign c2-no-sign-without-gpgsign c2-gpg-failure-put-back c8-commit-reason-logged c9-dry-run-keeps-record c7-dash-folder-backup fence-crc-forgery tmpl-c13-no-git tmpl-c13-nothing-tracked tmpl-c14-tab-led-rule tmpl-c15-source-manifest-malformed tmpl-c16-relative-from tmpl-adopt-edits-stay-visible c10-opencode-normalised c11-trigger-one-line c11-long-session-id c11-failed-write-logged c12-omp-lints-spelling-on-disk c18-template-decided-by-variable worktree-logs-held-to-root-rule c2-ref-lock-waited-for c2-history-rewritten-mid-run c2-commit-on-switched-branch-not-ok c2-own-commit-recognised-on-moved-head fence-strong-never-fails-open c2-destination-taken-kept c2-switch-after-commit-ok c2-switch-back-after-commit-ok c2-own-commit-under-another fence-crc-forgery-imported-note fence-digest-shape-checked read-guard-awk-failure-refuses c2-commit-on-neither-branch verify-kill-failed-not-put-back putback-verify-kill-failed' || (matrix.os == 'ubuntu-latest' && 'hup-group-dream-pass groupkill symlink c3-links c4-templates-dot run-log-link run-log-dirlink reaped-group line-break-name signal-scope runlog-tmp-case keep-output-dirlink tripwire-name keep-output-fifo retention-symlink retention-stdout retention-stdout-escape cntrl-name-log retention-unlistable retention-stalled-reader retention-posix-mode crlf-blob-preserved fence-cksum-unescape fence-backslash-name fence-wiring-escaped logger-not-registered logger-optin-snippet commit-window-not-reverted settings-hooks-present logger-records-session-start vtab-fence-agrees jq-crlf-output logger-crlf scan-trailing-dot scan-upper-case scan-case-not-widened collating-range-probe collating-range-scan lint-spawn-budget stub-nul-refused verify-diff-watchdog legacy-asks-the-adding-commit destination-staged-only tripwire-says-rename-outcome trailer-path-set head-holds-unknown tmpl-unclassified-fails tmpl-manifest-stale tmpl-generate-guarded tmpl-binary-refused tmpl-three-answers tmpl-status-unknown tmpl-vacuous tmpl-hostile-manifest-narrows tmpl-path-escape tmpl-collision-not-safe tmpl-user-note-untouched tmpl-source-older tmpl-same-version-disagrees tmpl-same-version-local-drift tmpl-same-version-manifest-legs tmpl-release-uncommitted hup-dream-pass hup-promotion-pass sig-reentry-dream-pass sig-reentry-promotion-pass exit-codes-dream-pass exit-codes-promotion-pass tmpl-crlf-agrees tmpl-lone-cr-modified tmpl-tripwire-refused tmpl-pass-in-flight tmpl-no-hash-tool tmpl-no-execution-from-source tmpl-class-table tmpl-changelog-adopting tmpl-version-agrees tmpl-merge-not-safe tmpl-tripwire-state-copy tmpl-shipped-rules-have-no-catchall tmpl-vault-check-line tmpl-narrowing-vectors tmpl-exempt-set-matches-the-tree tmpl-source-vacuous tmpl-source-disagrees tmpl-adopt-writes-one-file tmpl-version-filtered tmpl-generate-under-tripwire tmpl-exempt-set-is-behavioural tmpl-converged-not-a-merge tmpl-already-adopted tmpl-offered-is-a-plan tmpl-unknown-algorithm tmpl-source-not-a-template tmpl-adopt-rebuilds-manifest tmpl-adopt-names-what-is-absent tmpl-claims-your-folder tmpl-rules-character tmpl-generate-needs-a-version tmpl-retired-listed tmpl-seed-verdicts-counted tmpl-same-version-equivalent tmpl-plan-quoting tmpl-verify-manifest-guarded tmpl-unreadable-not-deleted tmpl-source-symlink tmpl-fixtures-built tmpl-release-owed tmpl-release-in-preparation tmpl-release-tag-spelling tmpl-release-cut tmpl-missing-tracked tmpl-unwritable-name tmpl-case-collision tmpl-rules-refused tmpl-hash-tool-named tmpl-hash-tool-misbehaves tmpl-no-diff-tool tmpl-no-source tmpl-in-flight-state-copy tmpl-plan-digests tmpl-release-version-spelling tmpl-release-comparators-agree tmpl-release-cannot-look tmpl-release-ignores-git-dir tmpl-release-vacuous tmpl-release-tag-without-manifest tmpl-release-reclassified tmpl-release-tag-failed tmpl-release-scratch-survivor tmpl-release-shipped-unknown-sides tmpl-release-unwritten-not-empty tmpl-hash-count tmpl-source-unreadable tmpl-source-dir-symlink promo-create-only-edit promo-create-only-supersede promo-create-only-stamp promo-create-only-reverse promo-create-only-wiki promo-create-only-ignored promo-create-only-failpath promo-create-only-timeout promo-create-only-leftover promo-create-only-syncnew promo-create-only-arms promo-create-only-passnote promo-create-only-globnew promo-create-only-casetwin promo-create-only-outside promo-create-only-contained promo-create-only-hangoutside promo-create-only-twinguards pi-extension-behaviour omp-extension-behaviour pi-extension-dirlink pi-extension-symlink mem-override-flag mem-override-sink-refused mem-override-sink-link dream-agent-tools mem-override-path-refused mem-override-sink-unreadable mem-override-sink-contained mem-override-sink-filelink mem-override-sink-hardlink mem-override-nonascii mem-override-order mem-override-sink-fifo mem-override-utf8-refused mem-override-file-mode mem-override-winbin mem-override-winbin-unreadable mem-override-stray-cygpath mem-override-no-cygpath mem-override-mixed-release mem-override-unc-refused mem-override-work-refused mem-override-work-root mem-override-work-made mem-override-work-open rf-mode rf-world rf-owner rf-gone rf-findfail mem-override-work-resolved mem-override-no-iconv mem-override-utf8-lax-host mem-override-work-colon mem-override-work-gone mem-override-work-names mem-override-settings-space mem-override-work-dotdot mem-override-work-backstop mem-override-work-unreachable mem-override-vault-unresolved mem-override-state-copy mem-override-walk-status mem-override-work-space temp-dir-spelling resume-skips-pass-output git-env-cleared git-dir-pass vault-root-spelling runner-folder retention-tmp mem-override-drive-walk mem-override-folder-above shown-name-c1 state-shown snapshot-sealed c2-after-read-tree c2-other-first-kept c2-swap-exhausted c2-source-edit-kept c2-no-empty-commit c2-landed-then-failed-once c2-ref-locked c2-merge-started-mid-run c2-branch-switched-mid-run c2-signal-put-back-over-other c2-signal-before-swap c2-verify-put-back-over-other c2-signs-when-gpgsign c2-no-sign-without-gpgsign c2-gpg-failure-put-back c8-commit-reason-logged c9-dry-run-keeps-record c7-dash-folder-backup fence-crc-forgery tmpl-c13-no-git tmpl-c13-nothing-tracked tmpl-c14-tab-led-rule tmpl-c15-source-manifest-malformed tmpl-c16-relative-from tmpl-adopt-edits-stay-visible c10-opencode-normalised c11-trigger-one-line c11-long-session-id c11-failed-write-logged c12-omp-lints-spelling-on-disk c18-template-decided-by-variable worktree-logs-held-to-root-rule check-unreadable-tier-folder c2-ref-lock-waited-for c2-history-rewritten-mid-run c2-commit-on-switched-branch-not-ok c2-own-commit-recognised-on-moved-head fence-strong-never-fails-open c18-gate-holds-in-update c2-destination-taken-kept c2-switch-after-commit-ok c2-switch-back-after-commit-ok c2-own-commit-under-another fence-crc-forgery-imported-note fence-digest-shape-checked read-guard-awk-failure-refuses check-transient-unread-folder putback-verify-kill-failed c2-commit-on-neither-branch verify-kill-failed-not-put-back' || 'groupkill symlink c3-links c4-templates-dot run-log-link run-log-dirlink reaped-group line-break-name signal-scope runlog-tmp-case keep-output-dirlink tripwire-name keep-output-fifo retention-symlink retention-stdout retention-stdout-escape cntrl-name-log retention-unlistable retention-stalled-reader crlf-blob-preserved fence-cksum-unescape fence-backslash-name logger-not-registered logger-optin-snippet commit-window-not-reverted settings-hooks-present logger-records-session-start vtab-fence-agrees jq-crlf-output logger-crlf scan-trailing-dot scan-upper-case scan-case-not-widened collating-range-probe collating-range-scan locale-collation-verdicts stub-nul-refused verify-diff-watchdog legacy-asks-the-adding-commit destination-staged-only tripwire-says-rename-outcome trailer-path-set head-holds-unknown tmpl-unclassified-fails tmpl-manifest-stale tmpl-generate-guarded tmpl-binary-refused tmpl-three-answers tmpl-status-unknown tmpl-vacuous tmpl-hostile-manifest-narrows tmpl-path-escape tmpl-collision-not-safe tmpl-user-note-untouched tmpl-source-older tmpl-same-version-disagrees tmpl-same-version-local-drift tmpl-same-version-manifest-legs tmpl-release-uncommitted hup-dream-pass hup-promotion-pass sig-reentry-dream-pass sig-reentry-promotion-pass exit-codes-dream-pass exit-codes-promotion-pass tmpl-crlf-agrees tmpl-lone-cr-modified tmpl-tripwire-refused tmpl-pass-in-flight tmpl-no-hash-tool tmpl-no-execution-from-source tmpl-class-table tmpl-changelog-adopting tmpl-version-agrees tmpl-merge-not-safe tmpl-tripwire-state-copy tmpl-shipped-rules-have-no-catchall tmpl-vault-check-line tmpl-narrowing-vectors tmpl-exempt-set-matches-the-tree tmpl-source-vacuous tmpl-source-disagrees tmpl-adopt-writes-one-file tmpl-version-filtered tmpl-generate-under-tripwire tmpl-exempt-set-is-behavioural tmpl-converged-not-a-merge tmpl-already-adopted tmpl-offered-is-a-plan tmpl-unknown-algorithm tmpl-source-not-a-template tmpl-adopt-rebuilds-manifest tmpl-adopt-names-what-is-absent tmpl-claims-your-folder tmpl-rules-character tmpl-generate-needs-a-version tmpl-retired-listed tmpl-seed-verdicts-counted tmpl-same-version-equivalent tmpl-plan-quoting tmpl-verify-manifest-guarded tmpl-unreadable-not-deleted tmpl-source-symlink tmpl-fixtures-built tmpl-release-owed tmpl-release-in-preparation tmpl-release-tag-spelling tmpl-release-cut tmpl-missing-tracked tmpl-unwritable-name tmpl-case-collision tmpl-rules-refused tmpl-hash-tool-named tmpl-hash-tool-misbehaves tmpl-no-diff-tool tmpl-no-source tmpl-in-flight-state-copy tmpl-plan-digests tmpl-release-version-spelling tmpl-release-comparators-agree tmpl-release-cannot-look tmpl-release-ignores-git-dir tmpl-release-vacuous tmpl-release-tag-without-manifest tmpl-release-reclassified tmpl-release-tag-failed tmpl-release-scratch-survivor tmpl-release-shipped-unknown-sides tmpl-release-unwritten-not-empty tmpl-hash-count tmpl-source-unreadable tmpl-source-dir-symlink promo-create-only-edit promo-create-only-supersede promo-create-only-stamp promo-create-only-reverse promo-create-only-wiki promo-create-only-ignored promo-create-only-failpath promo-create-only-timeout promo-create-only-leftover promo-create-only-syncnew promo-create-only-arms promo-create-only-passnote promo-create-only-globnew promo-create-only-casetwin promo-create-only-outside promo-create-only-contained promo-create-only-hangoutside pi-extension-behaviour omp-extension-behaviour pi-extension-dirlink pi-extension-symlink mem-override-flag mem-override-sink-refused mem-override-sink-link dream-agent-tools mem-override-path-refused mem-override-sink-unreadable mem-override-sink-contained mem-override-sink-filelink mem-override-sink-hardlink mem-override-nonascii mem-override-order mem-override-sink-fifo mem-override-utf8-refused mem-override-utf16-lax-host mem-override-file-mode mem-override-winbin mem-override-winbin-unreadable mem-override-stray-cygpath mem-override-no-cygpath mem-override-mixed-release mem-override-unc-refused mem-override-work-refused mem-override-work-root mem-override-work-made mem-override-work-case mem-override-work-open rf-mode rf-world rf-owner rf-gone rf-findfail mem-override-no-iconv mem-override-work-colon mem-override-work-gone mem-override-work-names mem-override-settings-space mem-override-work-dotdot mem-override-work-backstop mem-override-work-unreachable mem-override-vault-unresolved mem-override-state-copy mem-override-walk-status temp-dir-spelling resume-skips-pass-output git-env-cleared git-dir-pass vault-root-spelling runner-folder retention-tmp mem-override-drive-walk mem-override-folder-above shown-name-c1 state-shown snapshot-sealed c2-after-read-tree c2-other-first-kept c2-swap-exhausted c2-source-edit-kept c2-no-empty-commit c2-landed-then-failed-once c2-ref-locked c2-merge-started-mid-run c2-branch-switched-mid-run c2-signal-put-back-over-other c2-signal-before-swap c2-verify-put-back-over-other c2-signs-when-gpgsign c2-no-sign-without-gpgsign c2-gpg-failure-put-back c8-commit-reason-logged c9-dry-run-keeps-record c7-dash-folder-backup fence-crc-forgery tmpl-c13-no-git tmpl-c13-nothing-tracked tmpl-c14-tab-led-rule tmpl-c15-source-manifest-malformed tmpl-c16-relative-from tmpl-adopt-edits-stay-visible c10-opencode-normalised c11-trigger-one-line c11-long-session-id c11-failed-write-logged c12-omp-lints-spelling-on-disk c18-template-decided-by-variable worktree-logs-held-to-root-rule check-unreadable-tier-folder c2-ref-lock-waited-for c2-history-rewritten-mid-run c2-commit-on-switched-branch-not-ok c2-own-commit-recognised-on-moved-head fence-strong-never-fails-open c2-destination-taken-kept c2-switch-after-commit-ok c2-switch-back-after-commit-ok c2-own-commit-under-another fence-crc-forgery-imported-note fence-digest-shape-checked read-guard-awk-failure-refuses check-transient-unread-folder putback-verify-kill-failed c2-commit-on-neither-branch verify-kill-failed-not-put-back') }}
+          # The ids this platform must run are in required-controls.txt beside
+          # this file, one per line with its platforms, and so are the reasons
+          # some of them skip a platform.
+          REQUIRED_ON: ${{ matrix.os }}
           # The same comparison the guarded steps make, so one answer decides
           # both: the expression ignores case, which a shell test would not, and
           # a missing GITHUB_REPOSITORY cannot change it.
@@ -224,9 +131,13 @@ jobs:
         # the suite for every id a later template retires or re-gates. The suite
         # itself still runs there; only the insistence on these ids is dropped,
         # with a notice. Here an empty list fails, and the count is printed, so
-        # the branch taken is never silent.
+        # the branch taken is never silent, and a malformed list file fails
+        # rather than being read in part.
         run: |
           if [ "$TEMPLATE_REPO" = true ]; then
+            RUN_TESTS_REQUIRED="$(awk -v want="${REQUIRED_ON%-latest}" -f .github/workflows/required-controls.awk .github/workflows/required-controls.txt)" \
+              || { echo "::error title=The required controls could not be read::required-controls.awk refused required-controls.txt for ${REQUIRED_ON}; the line above says why."; exit 1; }
+            export RUN_TESTS_REQUIRED
             [ -n "${RUN_TESTS_REQUIRED:-}" ] || { echo "::error title=No required controls::RUN_TESTS_REQUIRED is empty in the template repository, so no control would be held to running."; exit 1; }
             set -- $RUN_TESTS_REQUIRED
             echo "requiring $# control id(s) to run on this platform"
@@ -235,7 +146,7 @@ jobs:
             export VAULT_TEMPLATE_MAINTAINER=1
           else
             unset RUN_TESTS_REQUIRED
-            echo "::notice title=Required controls dropped::not the template repository, so the RUN_TESTS_REQUIRED list frozen in this workflow is not enforced"
+            echo "::notice title=Required controls dropped::not the template repository, so the ids frozen in required-controls.txt are not enforced"
           fi
           bash .claude/scripts/run-tests.sh
 
@@ -278,15 +189,18 @@ jobs:
 
       - name: Control suite under bash 3.2
         env:
-          # No strace on macOS, so the process budget is not named here. The
-          # rest reach this job and the bash 3.2 reading of them is the whole
-          # reason this job exists.
-          RUN_TESTS_REQUIRED: groupkill symlink c3-links c4-templates-dot run-log-link run-log-dirlink reaped-group line-break-name signal-scope runlog-tmp-case keep-output-dirlink tripwire-name keep-output-fifo retention-symlink retention-stdout retention-stdout-escape cntrl-name-log retention-unlistable retention-stalled-reader crlf-blob-preserved fence-cksum-unescape fence-backslash-name logger-not-registered logger-optin-snippet commit-window-not-reverted settings-hooks-present logger-records-session-start vtab-fence-agrees jq-crlf-output logger-crlf scan-trailing-dot scan-upper-case scan-case-not-widened collating-range-probe collating-range-scan locale-collation-verdicts stub-nul-refused verify-diff-watchdog legacy-asks-the-adding-commit destination-staged-only tripwire-says-rename-outcome trailer-path-set head-holds-unknown tmpl-unclassified-fails tmpl-manifest-stale tmpl-generate-guarded tmpl-binary-refused tmpl-three-answers tmpl-status-unknown tmpl-vacuous tmpl-hostile-manifest-narrows tmpl-path-escape tmpl-collision-not-safe tmpl-user-note-untouched tmpl-source-older tmpl-same-version-disagrees tmpl-same-version-local-drift tmpl-same-version-manifest-legs tmpl-release-uncommitted hup-dream-pass hup-promotion-pass sig-reentry-dream-pass sig-reentry-promotion-pass exit-codes-dream-pass exit-codes-promotion-pass tmpl-crlf-agrees tmpl-lone-cr-modified tmpl-tripwire-refused tmpl-pass-in-flight tmpl-no-hash-tool tmpl-no-execution-from-source tmpl-class-table tmpl-changelog-adopting tmpl-version-agrees tmpl-merge-not-safe tmpl-tripwire-state-copy tmpl-shipped-rules-have-no-catchall tmpl-vault-check-line tmpl-narrowing-vectors tmpl-exempt-set-matches-the-tree tmpl-source-vacuous tmpl-source-disagrees tmpl-adopt-writes-one-file tmpl-version-filtered tmpl-generate-under-tripwire tmpl-exempt-set-is-behavioural tmpl-converged-not-a-merge tmpl-already-adopted tmpl-offered-is-a-plan tmpl-unknown-algorithm tmpl-source-not-a-template tmpl-adopt-rebuilds-manifest tmpl-adopt-names-what-is-absent tmpl-claims-your-folder tmpl-rules-character tmpl-generate-needs-a-version tmpl-retired-listed tmpl-seed-verdicts-counted tmpl-same-version-equivalent tmpl-plan-quoting tmpl-verify-manifest-guarded tmpl-unreadable-not-deleted tmpl-source-symlink tmpl-fixtures-built tmpl-release-owed tmpl-release-in-preparation tmpl-release-tag-spelling tmpl-release-cut tmpl-missing-tracked tmpl-unwritable-name tmpl-case-collision tmpl-rules-refused tmpl-hash-tool-named tmpl-hash-tool-misbehaves tmpl-no-diff-tool tmpl-no-source tmpl-in-flight-state-copy tmpl-plan-digests tmpl-release-version-spelling tmpl-release-comparators-agree tmpl-release-cannot-look tmpl-release-ignores-git-dir tmpl-release-vacuous tmpl-release-tag-without-manifest tmpl-release-reclassified tmpl-release-tag-failed tmpl-release-scratch-survivor tmpl-release-shipped-unknown-sides tmpl-release-unwritten-not-empty tmpl-hash-count tmpl-source-unreadable tmpl-source-dir-symlink promo-create-only-edit promo-create-only-supersede promo-create-only-stamp promo-create-only-reverse promo-create-only-wiki promo-create-only-ignored promo-create-only-failpath promo-create-only-timeout promo-create-only-leftover promo-create-only-syncnew promo-create-only-arms promo-create-only-passnote promo-create-only-globnew promo-create-only-casetwin promo-create-only-outside promo-create-only-contained promo-create-only-hangoutside pi-extension-behaviour omp-extension-behaviour pi-extension-dirlink pi-extension-symlink mem-override-flag mem-override-sink-refused mem-override-sink-link dream-agent-tools mem-override-path-refused mem-override-sink-unreadable mem-override-sink-contained mem-override-sink-filelink mem-override-sink-hardlink mem-override-nonascii mem-override-order mem-override-sink-fifo mem-override-utf8-refused mem-override-utf16-lax-host mem-override-file-mode mem-override-winbin mem-override-winbin-unreadable mem-override-stray-cygpath mem-override-no-cygpath mem-override-mixed-release mem-override-unc-refused mem-override-work-refused mem-override-work-root mem-override-work-made mem-override-work-case mem-override-work-open rf-mode rf-world rf-owner rf-gone rf-findfail mem-override-no-iconv mem-override-work-colon mem-override-work-gone mem-override-work-names mem-override-settings-space mem-override-work-dotdot mem-override-work-backstop mem-override-work-unreachable mem-override-vault-unresolved mem-override-state-copy mem-override-walk-status temp-dir-spelling resume-skips-pass-output git-env-cleared git-dir-pass vault-root-spelling runner-folder retention-tmp mem-override-drive-walk mem-override-folder-above shown-name-c1 state-shown snapshot-sealed c2-after-read-tree c2-other-first-kept c2-swap-exhausted c2-source-edit-kept c2-no-empty-commit c2-landed-then-failed-once c2-ref-locked c2-merge-started-mid-run c2-branch-switched-mid-run c2-signal-put-back-over-other c2-signal-before-swap c2-verify-put-back-over-other c2-signs-when-gpgsign c2-no-sign-without-gpgsign c2-gpg-failure-put-back c8-commit-reason-logged c9-dry-run-keeps-record c7-dash-folder-backup fence-crc-forgery tmpl-c13-no-git tmpl-c13-nothing-tracked tmpl-c14-tab-led-rule tmpl-c15-source-manifest-malformed tmpl-c16-relative-from tmpl-adopt-edits-stay-visible c10-opencode-normalised c11-trigger-one-line c11-long-session-id c11-failed-write-logged c12-omp-lints-spelling-on-disk c18-template-decided-by-variable worktree-logs-held-to-root-rule check-unreadable-tier-folder  c2-ref-lock-waited-for c2-history-rewritten-mid-run c2-commit-on-switched-branch-not-ok c2-own-commit-recognised-on-moved-head fence-strong-never-fails-open c2-destination-taken-kept c2-switch-after-commit-ok c2-switch-back-after-commit-ok c2-own-commit-under-another fence-crc-forgery-imported-note fence-digest-shape-checked read-guard-awk-failure-refuses check-transient-unread-folder putback-verify-kill-failed c2-commit-on-neither-branch verify-kill-failed-not-put-back
+          # It requires the macos ids of required-controls.txt: it runs on the
+          # macos-latest image, so the two macOS jobs hold one list. No strace
+          # on macOS, so the process budget is not on it. The bash 3.2 reading
+          # of those controls is the whole reason this job exists.
           TEMPLATE_REPO: ${{ github.repository == 'topazyo/claude-memory-vault' }}
         # Dropped outside this repository, and held non-empty here, for the
         # reasons the Control suite step above gives.
         run: |
           if [ "$TEMPLATE_REPO" = true ]; then
+            RUN_TESTS_REQUIRED="$(awk -v want=macos -f .github/workflows/required-controls.awk .github/workflows/required-controls.txt)" \
+              || { echo "::error title=The required controls could not be read::required-controls.awk refused required-controls.txt for macos; the line above says why."; exit 1; }
+            export RUN_TESTS_REQUIRED
             [ -n "${RUN_TESTS_REQUIRED:-}" ] || { echo "::error title=No required controls::RUN_TESTS_REQUIRED is empty in the template repository, so no control would be held to running."; exit 1; }
             set -- $RUN_TESTS_REQUIRED
             echo "requiring $# control id(s) to run on this platform"
@@ -294,7 +208,7 @@ jobs:
             export VAULT_TEMPLATE_MAINTAINER=1
           else
             unset RUN_TESTS_REQUIRED
-            echo "::notice title=Required controls dropped::not the template repository, so the RUN_TESTS_REQUIRED list frozen in this workflow is not enforced"
+            echo "::notice title=Required controls dropped::not the template repository, so the ids frozen in required-controls.txt are not enforced"
           fi
           /bin/bash .claude/scripts/run-tests.sh
 
@@ -386,9 +300,16 @@ jobs:
       # Every control main requires to run must still be required here, on the
       # same platform. RUN_TESTS_REQUIRED fails a listed control that did not
       # run and says nothing about one missing from the list, so resolving a
-      # conflict on one of these long lines by taking one side dropped the
-      # other side's ids with no signal at all. RETIRED names, space-separated,
-      # an id this change stops requiring on purpose, so the diff says so.
+      # conflict on the long lines these ids once sat on by taking one side
+      # dropped the other side's ids with no signal at all. RETIRED names,
+      # space-separated, an id this change stops requiring on purpose, so the
+      # diff says so.
+      #
+      # The ids are in required-controls.txt since Release C. A base from
+      # before that holds them in four RUN_TESTS_REQUIRED lines of ci.yml
+      # instead, so a side with no such file is read the old way. This side
+      # always has the file: without it the old reading finds no list here and
+      # the step fails.
       #
       # The side compared against is what this change lands on: on a pull
       # request the checkout is the merge commit, whose first parent is the
@@ -412,18 +333,34 @@ jobs:
           echo "comparing with $base ($(git rev-parse --short "$base" 2>/dev/null || echo unknown)${GITHUB_BASE_REF:+, $GITHUB_BASE_REF})"
           git show "$base:.github/workflows/ci.yml" > /tmp/ci.base.yml \
             || { echo "::error title=No base to compare::ci.yml could not be read at $base."; exit 1; }
-          arms() {  # arms <file> - one line per RUN_TESTS_REQUIRED list: its position, then its ids
-            awk '/^[ \t]*RUN_TESTS_REQUIRED:/ {
-              if (index($0, "matrix.os")) {
-                n = split($0, q, "\047")
-                for (i = 2; i <= n; i += 2) if (q[i] != "windows-latest" && q[i] != "ubuntu-latest") print "list" (++k), q[i]
-              } else { sub(/^[^:]*RUN_TESTS_REQUIRED:[ \t]*/, ""); print "list" (++k), $0 }
-            }' "$1"
+          if git cat-file -e "$base:.github/workflows/required-controls.txt" 2>/dev/null; then
+            git show "$base:.github/workflows/required-controls.txt" > /tmp/req.base \
+              || { echo "::error title=No base to compare::required-controls.txt could not be read at $base."; exit 1; }
+          else
+            : > /tmp/req.base
+          fi
+          # arms <ci.yml> <required-controls.txt> - one line per list: its
+          # position (list1 windows-latest, list2 ubuntu-latest, list3
+          # macos-latest, list4 bash 3.2), then its ids. An empty or missing
+          # list file means the side predates it, so ci.yml's own lines are read.
+          arms() {
+            if [ -s "$2" ]; then
+              awk -v want=lists -f .github/workflows/required-controls.awk "$2"
+            else
+              awk '/^[ \t]*RUN_TESTS_REQUIRED:/ {
+                if (index($0, "matrix.os")) {
+                  n = split($0, q, "\047")
+                  for (i = 2; i <= n; i += 2) if (q[i] != "windows-latest" && q[i] != "ubuntu-latest") print "list" (++k), q[i]
+                } else { sub(/^[^:]*RUN_TESTS_REQUIRED:[ \t]*/, ""); print "list" (++k), $0 }
+              }' "$1"
+            fi
           }
-          arms /tmp/ci.base.yml > /tmp/arms.base
-          arms .github/workflows/ci.yml > /tmp/arms.head
+          arms /tmp/ci.base.yml /tmp/req.base > /tmp/arms.base \
+            || { echo "::error title=The lists could not be read::required-controls.txt at $base was refused; the line above says why."; exit 1; }
+          arms .github/workflows/ci.yml .github/workflows/required-controls.txt > /tmp/arms.head \
+            || { echo "::error title=The lists could not be read::required-controls.txt was refused; the line above says why."; exit 1; }
           [ "$(wc -l < /tmp/arms.base)" -eq 4 ] && [ "$(wc -l < /tmp/arms.head)" -eq 4 ] \
-            || { echo "::error title=The lists could not be read::Expected four RUN_TESTS_REQUIRED lists on each side, found $(wc -l < /tmp/arms.base) at $base and $(wc -l < /tmp/arms.head) here."; exit 1; }
+            || { echo "::error title=The lists could not be read::Expected four lists on each side, found $(wc -l < /tmp/arms.base) at $base and $(wc -l < /tmp/arms.head) here."; exit 1; }
           total=0; lost=0
           while read -r arm ids; do
             here=" $(awk -v a="$arm" '$1 == a { $1 = ""; print }' /tmp/arms.head) "
@@ -447,8 +384,8 @@ jobs:
       # literally, or this step could not see it; the one exception is the line
       # that relays the Pi driver's own "ran <id>" lines, whose ids are read
       # from its say("ran <id>") calls instead. The bash 3.2 job and the
-      # macos-latest job run on the same image, so their lists must hold the
-      # same ids, or one drifts from the other unseen.
+      # macos-latest job run on the same image, so both read the macos ids of
+      # required-controls.txt, and neither can drift from the other.
       #
       # Guarded by repository. In a vault made from this template, run-tests.sh
       # is owned and moves with every update while this workflow is excluded
@@ -472,14 +409,10 @@ jobs:
               while (match(s, /say\("ran [a-z0-9][a-z0-9-]*"\)/)) {
                 a = substr(s, RSTART + 9, RLENGTH - 11); print a
                 s = substr(s, RSTART + RLENGTH) } }' .claude/scripts/run-tests.sh | sort -u > /tmp/ran.ids
-          awk '/^[ \t]*RUN_TESTS_REQUIRED:/ {
-              if (index($0, "matrix.os")) {
-                n = split($0, q, "\047")
-                for (i = 2; i <= n; i += 2) if (q[i] != "windows-latest" && q[i] != "ubuntu-latest") print "list" (++k), q[i]
-              } else { sub(/^[^:]*RUN_TESTS_REQUIRED:[ \t]*/, ""); print "list" (++k), $0 }
-            }' .github/workflows/ci.yml > /tmp/lists
+          awk -v want=lists -f .github/workflows/required-controls.awk .github/workflows/required-controls.txt > /tmp/lists \
+            || { echo "::error title=The lists could not be read::required-controls.txt was refused; the line above says why."; exit 1; }
           [ "$(wc -l < /tmp/lists)" -eq 4 ] \
-            || { echo "::error title=The lists could not be read::Expected four RUN_TESTS_REQUIRED lists, found $(wc -l < /tmp/lists)."; exit 1; }
+            || { echo "::error title=The lists could not be read::Expected four lists, found $(wc -l < /tmp/lists)."; exit 1; }
           awk '{ for (i = 2; i <= NF; i++) print $i }' /tmp/lists | sort -u > /tmp/req.ids
           bad=0
           while read -r id; do
@@ -489,19 +422,13 @@ jobs:
             grep -qx -- "$id" /tmp/req.ids && continue
             case " $NOT_REQUIRED " in *" $id "*) continue ;; esac
             bad=$((bad + 1))
-            echo "::error title=A recorded control is required nowhere::$id is recorded with ran but is on no RUN_TESTS_REQUIRED list. Require it where it runs, or name it in NOT_REQUIRED with the reason."
+            echo "::error title=A recorded control is required nowhere::$id is recorded with ran but is on no line of required-controls.txt. Require it where it runs, or name it in NOT_REQUIRED with the reason."
           done < /tmp/ran.ids
           for id in $NOT_REQUIRED; do
             grep -qx -- "$id" /tmp/ran.ids || { bad=$((bad + 1)); echo "::error title=NOT_REQUIRED names an id the suite no longer records::$id"; }
             grep -qx -- "$id" /tmp/req.ids && { bad=$((bad + 1)); echo "::error title=NOT_REQUIRED names a required id::$id is on a list now, so take it out of NOT_REQUIRED."; }
           done
-          awk '$1 == "list3" { for (i = 2; i <= NF; i++) print $i }' /tmp/lists | sort -u > /tmp/l3.ids
-          awk '$1 == "list4" { for (i = 2; i <= NF; i++) print $i }' /tmp/lists | sort -u > /tmp/l4.ids
-          if ! cmp -s /tmp/l3.ids /tmp/l4.ids; then
-            bad=$((bad + 1))
-            echo "::error title=The bash 3.2 list differs from the macos-latest list::only macos-latest: $(comm -23 /tmp/l3.ids /tmp/l4.ids | tr '\n' ' ') only bash 3.2: $(comm -13 /tmp/l3.ids /tmp/l4.ids | tr '\n' ' ')"
-          fi
-          echo "checked $(wc -l < /tmp/ran.ids) recorded id(s) against $(wc -l < /tmp/req.ids) required, macos-latest $(wc -l < /tmp/l3.ids) and bash 3.2 $(wc -l < /tmp/l4.ids); $bad problem(s)"
+          echo "checked $(wc -l < /tmp/ran.ids) recorded id(s) against $(wc -l < /tmp/req.ids) required; $bad problem(s)"
           [ "$(wc -l < /tmp/ran.ids)" -gt 0 ] || { echo "::error title=Nothing was checked::run-tests.sh records no control with ran, which this repository never does."; exit 1; }
           # Ids recorded by a ran at a line's start, after ||, after then,
           # and by the Pi relay's say("ran ID"): a reading that misses any of
