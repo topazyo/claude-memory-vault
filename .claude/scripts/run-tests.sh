@@ -24553,15 +24553,34 @@ if [ "$(uname -s 2>/dev/null)" = Linux ]; then
   done
   [ "$sf_rel_n" -ge 10 ] || sf_bad="$sf_bad fixture:only-$sf_rel_n-release-ids-found"
   # With the variable the controls must have answered, pass or fail, so a gate
-  # that dropped them altogether does not pass for one that ran them.
-  printf '%s\n' "$sf_on" | grep -q 'a tree matching its tag is owed nothing\|the release check did not tell a shipped change from an unshipped one' || sf_bad="$sf_bad never-ran-with-the-variable"
+  # that dropped them altogether does not pass for one that ran them. A tree
+  # without .github/release-check.sh skips them for that reason, which is an
+  # answer from past the gate too, as the shipped manifest's absence is for
+  # tmpl-class-table above. Not accepting it failed this control in every vault
+  # without the file, on Linux (1.7.3, found carrying it into a vault).
+  sf_rel_answered() {  # sf_rel_answered <nested output>
+    printf '%s\n' "$1" | grep -q 'a tree matching its tag is owed nothing\|the release check did not tell a shipped change from an unshipped one\|^  SKIP  \[tmpl-release-owed\] .*release-check\.sh is not present'
+  }
+  sf_rel_answered "$sf_on" || sf_bad="$sf_bad never-ran-with-the-variable"
+  # So that case is run as well: the update section with the variable, in a
+  # copy of this tree without .github/release-check.sh.
+  sf_nf="$TMP/sf-norelease"
+  rm -rf "$sf_nf"
+  mkdir -p "$sf_nf"
+  ( cd "$ROOT" && tar cf - --exclude=./.git . ) | ( cd "$sf_nf" && tar xf - )
+  rm -f "$sf_nf/.github/release-check.sh"
+  sf_nfo="$(env -u RUN_TESTS_REQUIRED CLAUDE_PROJECT_DIR="$sf_nf" RUN_TESTS_NESTED=1 RUN_TESTS_ONLY=update VAULT_TEMPLATE_MAINTAINER=1 "$BASH" "$sf_nf/.claude/scripts/run-tests.sh" 2>&1)"
+  [ -f "$sf_nf/.claude/scripts/run-tests.sh" ] || sf_bad="$sf_bad fixture:the-copy-has-no-suite"
+  printf '%s\n' "$sf_nfo" | grep -q '^  SKIP  \[tmpl-release-owed\] .*release-check\.sh is not present' || sf_bad="$sf_bad fixture:the-copy-still-ran-the-release-controls"
+  sf_rel_answered "$sf_nfo" || sf_bad="$sf_bad no-release-check:not-taken-as-answered"
+  rm -rf "$sf_nf"
   # The shipped manifest rules are excluded the same way, and the control that
   # reads them ran ungated until 1.7.3, so a vault that deleted its copy failed.
   printf '%s\n' "$sf_off" | grep -q '^  SKIP  \[tmpl-shipped-rules-have-no-catchall\] VAULT_TEMPLATE_MAINTAINER is not 1' || sf_bad="$sf_bad rules:not-skipped-without-the-variable"
   printf '%s\n' "$sf_on" | grep -q 'shipped rules leave both an unclassified root file\|classified a file nothing should have classified' || sf_bad="$sf_bad rules:never-ran-with-the-variable"
   ran c18-release-gate
   if [ -z "$sf_bad" ]; then
-    ok "the release controls and the shipped-rules control skip without VAULT_TEMPLATE_MAINTAINER=1 even where the template's own files exist, and run with it"
+    ok "the release controls and the shipped-rules control skip without VAULT_TEMPLATE_MAINTAINER=1 even where the template's own files exist, and run with it, or skip as absent where release-check.sh is not there"
   else
     bad "the release controls are gated by something other than the variable --$sf_bad"
   fi
