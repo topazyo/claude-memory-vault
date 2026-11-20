@@ -7740,9 +7740,13 @@ SCR_FORGE_EOF
 if ! command -v node >/dev/null 2>&1; then
   skip fence-crc-forgery 'a steering file rewritten to the same size and cksum: node is not installed to forge one'
   skip fence-crc-forgery-imported-note 'an imported note rewritten to the same size and cksum: node is not installed to forge one'
+  skip fence-crc-forgery-existing-note 'a long-tier note rewritten to the same size and cksum during a pass: node is not installed to forge one'
+  skip fence-crc-forgery-leftover 'a file rewritten to the same size and cksum after a pass: node is not installed to forge one'
 elif ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then
   skip fence-crc-forgery 'a steering file rewritten to the same size and cksum: no sha256sum or shasum, so the fence has only cksum here, which is its documented limit'
   skip fence-crc-forgery-imported-note 'an imported note rewritten to the same size and cksum: no sha256sum or shasum, so the fence has only cksum here'
+  skip fence-crc-forgery-existing-note 'a long-tier note rewritten to the same size and cksum during a pass: no sha256sum or shasum, so the fence has only cksum here'
+  skip fence-crc-forgery-leftover 'a file rewritten to the same size and cksum after a pass: no sha256sum or shasum, so the fence has only cksum here'
 elif ! node "$SCR/forge.js" "$SCR/orig" "$SCR/draft" "$SCR/forged" 2>/dev/null \
      || [ "$(cksum < "$SCR/orig")" != "$(cksum < "$SCR/forged")" ] || cmp -s "$SCR/orig" "$SCR/forged"; then
   bad "the fence CRC control could not forge a same-size, same-cksum rewrite, so it tested nothing"
@@ -7769,8 +7773,68 @@ else
   else
     bad "a same-size, same-cksum rewrite of an imported note passed the fence -- changed: [$scr_note]"
   fi
+  # Release C (H9): the checks that ask whether a file is still as a snapshot
+  # saw it compared the CRC alone. A long-tier note rewritten to the same size
+  # and cksum during a pass was left off the log's list of long-tier notes that
+  # changed, and a file rewritten so after a pass was recorded as the runner's
+  # own leftover, to be adopted by the next run. Both now read the SHA-256 line
+  # too.
+  SCV="$SCR/gvault"
+  mkdir -p "$SCV/31-standards" "$SCR/s9" "$SCR/s10" "$SCR/state" "$SCR/hooks"
+  cp "$SCR/orig" "$SCV/31-standards/x.md"
+  ( cd "$SCV" && git init -q && git add -A && git -c user.name=t -c user.email=t@example.invalid commit -qm base ) >/dev/null 2>&1
+  : > "$SCR/s9/predirty"
+  printf '31-standards/x.md\n' > "$SCR/s9/list"
+  ( . "$ROOT/.claude/scripts/lib/runner-common.sh" && VAULT_GIT=1 && snapshot_tree "$SCV" "$SCR/s9/before" \
+    && report_existing_left "$SCV" "$SCR/s9/list" "$SCR/s9" "$SCR/s9/log0" \
+    && cp "$SCR/forged" "$SCV/31-standards/x.md" \
+    && report_existing_left "$SCV" "$SCR/s9/list" "$SCR/s9" "$SCR/s9/log" ) >/dev/null 2>&1
+  ran fence-crc-forgery-existing-note
+  # The same note unchanged is named nowhere, so the digest is not taken as a
+  # change on its own.
+  if [ -s "$SCV/.git/HEAD" ] && grep -q '31-standards/x.md' "$SCR/s9/log" 2>/dev/null \
+     && ! grep -q '31-standards/x.md' "$SCR/s9/log0" 2>/dev/null; then
+    ok "a long-tier note rewritten to the same size and cksum during a pass is named among the long-tier notes that changed"
+  else
+    bad "a same-size, same-cksum rewrite of a long-tier note was left off the changed-notes list -- log: [$(tr '\n' '|' < "$SCR/s9/log" 2>/dev/null | cut -c1-400)]"
+  fi
+  cp "$SCR/orig" "$SCV/31-standards/x.md"
+  : > "$SCR/s10/predirty"
+  printf '31-standards/x.md\n' > "$SCR/s10/owned"
+  ( . "$ROOT/.claude/scripts/lib/runner-common.sh" && VAULT_GIT=1 && snapshot_tree "$SCV" "$SCR/s10/after" \
+    && cp "$SCR/forged" "$SCV/31-standards/x.md" \
+    && record_leftovers "$SCV" "$SCR/hooks" "$SCR/state" dream "$SCR/s10" "$SCR/s10/log" ) >/dev/null 2>&1
+  ran fence-crc-forgery-leftover
+  if grep -q 'NOT-RECORDED' "$SCR/s10/log" 2>/dev/null && grep -q '31-standards/x.md' "$SCR/s10/log" 2>/dev/null; then
+    ok "a file rewritten to the same size and cksum after a pass is not recorded as the runner's own leftover"
+  else
+    bad "a same-size, same-cksum rewrite after a pass was recorded as the runner's leftover -- log: [$(tr '\n' '|' < "$SCR/s10/log" 2>/dev/null | cut -c1-400)]"
+  fi
 fi
 rm -rf "$SCR"
+
+# Release C (H11): .git-common/ is how a snapshot names a worktree vault's git
+# folders. In any other vault a real folder of that name is the vault's own,
+# and its files were skipped by the SHA-256 lines, so only their CRC held them.
+SGC="$TMP/snap-git-common"
+rm -rf "$SGC"
+mkdir -p "$SGC/v/.git-common/hooks" "$SGC/v/31-standards"
+printf '#!/bin/sh\necho hi\n' > "$SGC/v/.git-common/hooks/post-commit"
+printf -- '---\ntier: long\ntype: standard\n---\n[[ARCH-INDEX]]\n' > "$SGC/v/31-standards/x.md"
+( cd "$SGC/v" && git init -q ) >/dev/null 2>&1
+if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then
+  skip fence-git-common-plain 'a folder named .git-common in a vault that is no worktree: no sha256sum or shasum, so the fence has only cksum here'
+else
+  ( . "$ROOT/.claude/scripts/lib/runner-common.sh" && snapshot_tree "$SGC/v" "$SGC/snap" ) >/dev/null 2>&1
+  ran fence-git-common-plain
+  if [ -d "$SGC/v/.git" ] && grep -qE '^S[0-9a-f]{64} 0 \./\.git-common/hooks/post-commit$' "$SGC/snap" 2>/dev/null \
+     && grep -qE '^S[0-9a-f]{64} 0 \./31-standards/x\.md$' "$SGC/snap" 2>/dev/null; then
+    ok "a folder named .git-common in a vault that is no worktree has its files' SHA-256 lines, as any other folder does"
+  else
+    bad "a plain vault's .git-common folder -- expected an S line for its file and for the note -- got: [$(grep -E 'git-common|x\.md' "$SGC/snap" 2>/dev/null | tr '\n' '|' | cut -c1-400)]"
+  fi
+fi
+rm -rf "$SGC"
 
 # The SHA-256 lines must never fail open (round 1 of the 1.7.1 review). Every
 # steering file gets a real digest, a name holding a backslash or a tab among

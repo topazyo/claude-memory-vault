@@ -171,8 +171,11 @@ exit-codes-promotion-pass ubuntu macos windows
 fence-backslash-name ubuntu macos
 fence-cksum-unescape ubuntu macos windows
 fence-crc-forgery ubuntu macos windows
+fence-crc-forgery-existing-note ubuntu macos windows
 fence-crc-forgery-imported-note ubuntu macos windows
+fence-crc-forgery-leftover ubuntu macos windows
 fence-digest-shape-checked ubuntu macos windows
+fence-git-common-plain ubuntu macos windows
 fence-strong-never-fails-open ubuntu macos windows
 fence-wiring-escaped ubuntu
 git-dir-pass ubuntu macos windows

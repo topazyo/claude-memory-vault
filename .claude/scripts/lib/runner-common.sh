@@ -883,10 +883,13 @@ fence_strong() {
   list="$snap.strong-list"
   : > "$list" 2>/dev/null || ok_list=0
   snapshot_paths "$snap" | LC_ALL=C sort -u | while IFS= read -r p; do
+    # .git-common/ names a worktree vault's git folders only when they are
+    # known. In any other vault it is a folder of the vault like any other, and
+    # it was skipped, so its files had only their CRC (Release C).
+    f="$root/$p"
     case "$p" in
-      .git-common/worktree/*) [ -n "$gd" ] || continue; f="$gd/${p#.git-common/worktree/}" ;;
-      .git-common/*) [ -n "$cdir" ] || continue; f="$cdir/${p#.git-common/}" ;;
-      *) f="$root/$p" ;;
+      .git-common/worktree/*) [ -z "$gd" ] || f="$gd/${p#.git-common/worktree/}" ;;
+      .git-common/*) [ -z "$cdir" ] || f="$cdir/${p#.git-common/}" ;;
     esac
     [ -f "$f" ] && [ ! -L "$f" ] || continue
     case "$ok_list:$f" in
@@ -2434,8 +2437,7 @@ record_leftovers() {
   : > "$snap/leftover.changed"
   while IFS= read -r p; do
     [ -n "$p" ] || continue
-    was="$(P="./$p" awk '{ line = $0; sub(/^[^ ]* [^ ]* /, "", line) } line == ENVIRON["P"] { print $1 " " $2; exit }' "$snap/after")"
-    if [ "$(path_state "$1" "$p")" = "$was" ]; then
+    if same_as_snap "$1" "$p" "$snap/after"; then
       printf '%s\n' "$p" >> "$snap/leftover.kept"
     else
       printf '%s\n' "$p" >> "$snap/leftover.changed"
@@ -2518,6 +2520,24 @@ path_state() {
   elif [ -e "$1/$2" ]; then
     printf 'other\n'
   fi
+}
+
+# same_as_snap <root> <relative-path> <snapshot>
+# True when the path is as the snapshot saw it: the same path_state, and where
+# the snapshot also holds a SHA-256 line for it (an S line, when fence_strong
+# found a tool), the same digest now. path_state alone is a CRC, which four
+# chosen bytes can match, so a file rewritten to the same size and CRC passed
+# it (Release C; round 3 of the 1.7.1 review). A digest that cannot be taken
+# now, where the snapshot has one, counts as changed.
+same_as_snap() {
+  local was s tool
+  was="$(P="./$2" awk '{ line = $0; sub(/^[^ ]* [^ ]* /, "", line) } line == ENVIRON["P"] && $1 !~ /^S/ { print $1 " " $2; exit }' "$3" 2>/dev/null)"
+  [ "$(path_state "$1" "$2")" = "$was" ] || return 1
+  s="$(P="./$2" awk '{ line = $0; sub(/^[^ ]* [^ ]* /, "", line) } line == ENVIRON["P"] && $1 ~ /^S/ { print substr($1, 2); exit }' "$3" 2>/dev/null)"
+  [ -n "$s" ] || return 0
+  tool="$(snap_tool)" || return 1
+  [ "${tool%% *}" != cksum ] || return 1
+  [ "$(fence_digest "$1/$2" "${tool%% *}" "${tool#* }")" = "$s" ]
 }
 
 # case_twin <relative-path> <snapshot>
@@ -2853,8 +2873,7 @@ report_existing_left() {
   while IFS= read -r p; do
     [ -n "$p" ] || continue
     grep -qxF -- "$p" "$3/predirty" 2>/dev/null && continue
-    was="$(P="./$p" awk '{ line = $0; sub(/^[^ ]* [^ ]* /, "", line) } line == ENVIRON["P"] { print $1 " " $2; exit }' "$3/before" 2>/dev/null)"
-    [ "$(path_state "$1" "$p")" = "$was" ] && continue
+    same_as_snap "$1" "$p" "$3/before" && continue
     cands="$cands$p
 "
   done < "$2"
