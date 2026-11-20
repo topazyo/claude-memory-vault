@@ -457,7 +457,7 @@ lint_file() {
     # the read is tested by asking whether the file opens at all. grep -P is
     # the fallback for a machine with no perl, and it gets the weaker check.
     if HITS=$(grep -noP '[\x{200B}-\x{200D}\x{FEFF}\x{202A}-\x{202E}\x{2066}-\x{2069}]' "$NORM" 2>/dev/null; [ "$?" -le 1 ] || exit 1) \
-       && { : < "$NORM"; } 2>/dev/null; then
+       && { true < "$NORM"; } 2>/dev/null; then
       SCAN_RAN=1
       HITS=$(printf '%s' "$HITS" | head -n 5)
       [ -n "$HITS" ] && HITS_FMT=$(printf '%s\n' "$HITS" | sed 's/:.*/: (invisible codepoint)/')

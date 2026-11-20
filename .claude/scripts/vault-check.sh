@@ -585,7 +585,9 @@ if [ "${#NAMED[@]}" -gt 0 ]; then
     # Opened, not asked about: Git Bash answers [ -r ] from mode bits, so a
     # note whose Windows ACL denies reading passed it and was reported as a C1
     # (round 1 of the 1.7.2 review). The -f first keeps a FIFO from blocking.
-    if [ ! -f "$file" ] || ! { : < "$file"; } 2>/dev/null; then
+    # true, not ":": a failed redirection on a special builtin such as ":"
+    # ends a shell in POSIX mode, and with it the run, with 1 (round 3).
+    if [ ! -f "$file" ] || ! { true < "$file"; } 2>/dev/null; then
       show "$file"
       printf 'vault-check: %s is not a readable file, so it was not checked.\n' "$SHOWN" >&2
       missing=$((missing + 1))
@@ -692,7 +694,7 @@ else
     # about with [ -r ], which Git Bash answers from mode bits alone. The -f
     # first, as in named mode: a FIFO put where the walk listed a note blocked
     # the scan on the open (round 2 of the 1.7.2 review).
-    if [ ! -f "$ROOT/$file" ] || ! { : < "$ROOT/$file"; } 2>/dev/null; then
+    if [ ! -f "$ROOT/$file" ] || ! { true < "$ROOT/$file"; } 2>/dev/null; then
       show "$file"
       printf 'vault-check: %s is not a readable file, so it was not checked.\n' "$SHOWN" >&2
       unreadable=$((unreadable + 1))
@@ -760,7 +762,11 @@ fi
 # reads the exit code - a CI step, a pre-commit hook, an agent - cannot mistake
 # a path or folder-name problem for a clean vault.
 if [ "$files" -eq 0 ]; then
-  if [ "$unreadable" -gt 0 ]; then
+  if [ "$refused" -gt 0 ]; then
+    # Some were refused as links, and any others could not be read, each said
+    # above; the root is not the cause (round 3 of the 1.7.2 review).
+    printf 'vault-check: VACUOUS - no notes were scanned, so this is not a pass: every note was refused as a link or could not be read, as said above. Check where each link leads, and the paths and permissions of the rest.\n' >&2
+  elif [ "$unreadable" -gt 0 ]; then
     # The notes are there; none of them could be opened, as said above.
     printf 'vault-check: VACUOUS - no notes were scanned, so this is not a pass: every note the scan found could not be read. Check their permissions.\n' >&2
   elif [ "$missing" -gt 0 ]; then

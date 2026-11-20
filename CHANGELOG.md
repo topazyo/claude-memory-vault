@@ -40,7 +40,9 @@ newly stop or change a run.
   the note had no fence. It is now named on stderr as not readable, a line after the count says
   `N note(s) could not be read`, and the run exits 2 unless a note violates an invariant, as named
   mode does for the same note. A note that is no longer a plain file when the scan opens it, a
-  FIFO put there say, counts the same rather than blocking the scan.
+  FIFO put there say, counts the same rather than blocking the scan, with bash in POSIX mode
+  (`POSIXLY_CORRECT` set) too. `vault-lint.sh` no longer stops with exit 1 in POSIX mode when a
+  note it read becomes unreadable before its last check.
 - **A backslash in a path named to `vault-check.sh` is a folder separator only on Windows.**
   Elsewhere a note named `a\b.md` was reported as `a/b.md`, a path that is not there, and a link's
   absolute target holding a backslash was read the same way. Windows here includes every MSYS2
@@ -52,10 +54,10 @@ newly stop or change a run.
 - **A long-tier note rewritten to the same size and `cksum` during a pass is named** among the
   long-tier notes the log says changed, and a file rewritten so after a pass is not recorded as
   the runner's own leftover for the next run to adopt. Both checks compared the CRC alone; they
-  now read the SHA-256 line too. A leftover whose checksum or SHA-256 cannot be taken, after the
-  pass or by the snapshot itself, is not recorded either, and the log says it could not be read
-  rather than that it changed; when the list of leftovers cannot be written to be checked, none is
-  recorded.
+  now read the SHA-256 line too. A leftover whose checksum or SHA-256 cannot be taken after the
+  pass, or whose SHA-256 the snapshot itself could not take, is not recorded either, and the log
+  says it could not be read rather than that it changed; when the list of leftovers cannot be
+  written to be filtered, none is recorded.
 - **A folder named `.git-common` in a vault that is no linked worktree has SHA-256 fence lines**,
   as any other folder does. The name stands for git's shared folder in a worktree vault, and
   elsewhere its files were held by their CRC alone.

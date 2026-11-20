@@ -1198,9 +1198,10 @@ Around that call, each runner does several things an exit code cannot:
   the SHA-256 line as well (since 1.7.2; they compared the CRC alone). A folder named
   `.git-common` in a vault that is no linked worktree is the vault's own folder and has the line
   too (since 1.7.2; in a worktree vault that name stands for git's shared folder). A leftover whose
-  checksum or SHA-256 cannot be taken, after the pass or by the snapshot itself, its file locked or
-  the tool gone, is not recorded, and the log says it could not be read rather than that it
-  changed; when the list of leftovers cannot be written to be checked, none is recorded. Known
+  checksum or SHA-256 cannot be taken after the pass, its file locked or the tool gone, or whose
+  SHA-256 the snapshot itself could not take, is not recorded, and the log says it could not be
+  read rather than that it changed; when the list of leftovers cannot be written to be filtered,
+  none is recorded. Known
   limits: in a linked worktree vault a folder of the vault that is itself named `.git-common` is
   read as git's, so its files are held by their CRC (it is a steering change all the same); a
   leftover rewritten in the instant between that check and the record of it is recorded as the

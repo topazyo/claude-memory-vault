@@ -2425,17 +2425,20 @@ forget_uncommitted() {
 # was already dirty before this pass is not recorded, because it holds someone
 # else's edit too.
 leftovers_unfiltered() {
-  printf '[%s] NOT-RECORDED: the files this pass left could not be checked against the snapshot taken after it, so none is recorded and the next run will take them for someone'"'"'s edit.\n' "$(ts)" >> "$1"
+  printf '[%s] NOT-RECORDED: the list of files this pass left could not be written in the runner'"'"'s state folder to be filtered, so none is recorded and the next run will take them for someone'"'"'s edit.\n' "$(ts)" >> "$1"
 }
 record_leftovers() {
-  local snap="$5" log="${6:-/dev/null}" p was
+  local snap="$5" log="${6:-/dev/null}" p was wfail=0
   [ "${VAULT_GIT:-0}" -eq 1 ] || return 0
   [ -s "$snap/outside" ] && return 0
-  awk 'FILENAME == ARGV[1] { dirty[$0] = 1; next } !($0 in dirty)' "$snap/predirty" "$snap/owned" > "$snap/leftover"
+  # A filter that cannot write its list records nothing, rather than the list
+  # it was to filter, or part of it (rounds 2 and 3 of the 1.7.2 review).
+  if ! awk 'FILENAME == ARGV[1] { dirty[$0] = 1; next } !($0 in dirty)' "$snap/predirty" "$snap/owned" > "$snap/leftover" 2>/dev/null; then
+    leftovers_unfiltered "$log"
+    return 0
+  fi
   # A file that changed while the commit checked it holds another writer's
   # bytes, so it is not recorded as this runner's own.
-  # A filter that cannot write its list records nothing, rather than the list
-  # it was to filter (round 2 of the 1.7.2 review).
   if [ -s "$snap/commit-mismatch" ]; then
     if ! { awk 'FILENAME == ARGV[1] { changed[$0] = 1; next } !($0 in changed)' "$snap/commit-mismatch" "$snap/leftover" > "$snap/leftover.kept" \
            && mv -f "$snap/leftover.kept" "$snap/leftover"; } 2>/dev/null; then
@@ -2445,21 +2448,21 @@ record_leftovers() {
   fi
   # So does a file that is no longer as the second snapshot saw it, such as a
   # note someone edited while a slow commit step ran.
-  if ! { : > "$snap/leftover.kept" && : > "$snap/leftover.changed"; } 2>/dev/null; then
+  if ! { true > "$snap/leftover.kept" && true > "$snap/leftover.changed"; } 2>/dev/null; then
     leftovers_unfiltered "$log"
     return 0
   fi
   while IFS= read -r p; do
     [ -n "$p" ] || continue
     if same_as_snap "$1" "$p" "$snap/after"; then
-      printf '%s\n' "$p" >> "$snap/leftover.kept"
+      printf '%s\n' "$p" >> "$snap/leftover.kept" || wfail=1
     elif [ "$SAME_WHY" = nodigest ]; then
-      printf '%s (its checksum or SHA-256 could not be taken, so it is not known to be unchanged)\n' "$p" >> "$snap/leftover.changed"
+      printf '%s (its checksum or SHA-256 could not be taken, so it is not known to be unchanged)\n' "$p" >> "$snap/leftover.changed" || wfail=1
     else
-      printf '%s\n' "$p" >> "$snap/leftover.changed"
+      printf '%s\n' "$p" >> "$snap/leftover.changed" || wfail=1
     fi
   done < "$snap/leftover"
-  if ! mv -f "$snap/leftover.kept" "$snap/leftover" 2>/dev/null; then
+  if [ "$wfail" -eq 1 ] || ! mv -f "$snap/leftover.kept" "$snap/leftover" 2>/dev/null; then
     leftovers_unfiltered "$log"
     return 0
   fi
@@ -2557,12 +2560,15 @@ same_as_snap() {
   SAME_WHY=""
   was="$(P="./$2" LC_ALL=C awk '{ line = $0; sub(/^[^ ]* [^ ]* /, "", line) } line == ENVIRON["P"] && $1 !~ /^S/ { print $1 " " $2; exit }' "$3" 2>/dev/null)"
   now="$(path_state "$1" "$2")"
-  if [ "$now" != "$was" ]; then
-    # A plain file whose CRC cannot be taken now, locked say, is not known to
-    # have changed either (round 2 of the 1.7.2 review).
-    if [ -z "$now" ] && [ -f "$1/$2" ] && [ ! -L "$1/$2" ]; then SAME_WHY=nodigest; else SAME_WHY=crc; fi
+  # A plain file whose CRC cannot be taken now, locked say, is not known to be
+  # unchanged, nor to have changed, whether or not the snapshot could take it
+  # (rounds 2 and 3 of the 1.7.2 review: unreadable both times, it compared
+  # equal). One the snapshot saw as a link has changed.
+  if [ -z "$now" ] && [ -f "$1/$2" ] && [ ! -L "$1/$2" ]; then
+    case "$was" in L*) SAME_WHY=crc ;; *) SAME_WHY=nodigest ;; esac
     return 1
   fi
+  [ "$now" = "$was" ] || { SAME_WHY=crc; return 1; }
   s="$(P="./$2" LC_ALL=C awk '{ line = $0; sub(/^[^ ]* [^ ]* /, "", line) } line == ENVIRON["P"] && $1 ~ /^S/ { print substr($1, 2); exit }' "$3" 2>/dev/null)"
   [ -n "$s" ] || return 0
   # A snapshot that could not take the digest itself holds none to compare

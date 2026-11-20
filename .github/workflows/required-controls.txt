@@ -158,6 +158,7 @@ check-retry-vanished ubuntu macos windows
 check-transient-unread-folder ubuntu macos
 check-unreadable-note ubuntu macos
 check-unreadable-note-acl windows
+check-unreadable-posix ubuntu
 check-unreadable-tier-folder ubuntu macos
 check-upper-md ubuntu macos windows
 check-upper-md-link ubuntu macos
