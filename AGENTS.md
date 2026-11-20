@@ -82,8 +82,8 @@ Every note opens with a YAML frontmatter block. `tier:` and `type:` are **mandat
 machine-checked**; the rest are conventional but keep the Dataview dashboards working. Dates are
 ISO `YYYY-MM-DD`. Their values are checked too: `tier` is the tier of the folder the note is in
 (§3) and `type` one of the values there, and `vault-check.sh` prints a `WARNING` line for one that
-is not, for a long-tier note with no wikilink, and for a key written as `"tier":` or `tier :` or
-written twice. The warnings become violations in a later release.
+is not, for a long-tier note with no wikilink, and for a key written as `"tier":`, `tier :` or
+`tier:long`, or written twice. The warnings become violations in a later release.
 
 ```yaml
 ---

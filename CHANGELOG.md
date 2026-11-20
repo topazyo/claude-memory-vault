@@ -41,14 +41,17 @@ newly stop or change a run.
   `N note(s) could not be read`, and the run exits 2 unless a note violates an invariant, as named
   mode does for the same note.
 - **A backslash in a path named to `vault-check.sh` is a folder separator only on Windows.**
-  Elsewhere a note named `a\b.md` was reported as `a/b.md`, a path that is not there.
+  Elsewhere a note named `a\b.md` was reported as `a/b.md`, a path that is not there, and a link's
+  absolute target holding a backslash was read the same way. Windows here includes every MSYS2
+  shell, UCRT64 and CLANG64 among them.
 - **The lint judges a relative path by where it names a file.** `x.md` given from inside
   `31-standards/` was taken for a file at the vault root, in no tier, and its missing tier passed
   without a word.
 - **A long-tier note rewritten to the same size and `cksum` during a pass is named** among the
   long-tier notes the log says changed, and a file rewritten so after a pass is not recorded as
   the runner's own leftover for the next run to adopt. Both checks compared the CRC alone; they
-  now read the SHA-256 line too.
+  now read the SHA-256 line too. A leftover whose SHA-256 cannot be taken after the pass is not
+  recorded either, and the log says it could not be read rather than that it changed.
 - **A folder named `.git-common` in a vault that is no linked worktree has SHA-256 fence lines**,
   as any other folder does. The name stands for git's shared folder in a worktree vault, and
   elsewhere its files were held by their CRC alone.
@@ -58,7 +61,8 @@ newly stop or change a run.
 - **`vault-check.sh` walks the tiers once**, for the notes and the links together. It walked them
   twice, which read a large vault twice and could disagree about a note made between the walks.
 - **`vault-check.sh` warns about `tier:long`**, a key with its value straight after the colon,
-  which these checks read as the key and a YAML reader takes for a line of text. A `WARNING:` line,
+  which these checks read as the key and a YAML reader takes for a line of text or, among other
+  keys, rejects the whole frontmatter for. A `WARNING:` line,
   as for the other key spellings; the count and the exit code do not change.
 - **One complete tier-rename table.** The list of files a tier rename has to reach was kept in five
   documents that disagreed, and every copy missed some. The table in `docs/customizing.md`

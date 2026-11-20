@@ -154,11 +154,14 @@ c8-commit-reason-logged ubuntu macos windows
 c9-dry-run-keeps-record ubuntu macos windows
 check-backslash-name ubuntu macos windows
 check-one-walk ubuntu macos windows
+check-retry-vanished ubuntu macos
 check-transient-unread-folder ubuntu macos
 check-unreadable-note ubuntu macos
+check-unreadable-note-acl windows
 check-unreadable-tier-folder ubuntu macos
 check-upper-md ubuntu macos windows
 check-upper-md-link ubuntu macos
+check-walk-non-note ubuntu macos windows
 cntrl-name-log ubuntu macos windows
 collating-range-probe ubuntu macos windows
 collating-range-scan ubuntu macos windows
@@ -176,6 +179,8 @@ fence-crc-forgery-imported-note ubuntu macos windows
 fence-crc-forgery-leftover ubuntu macos windows
 fence-digest-shape-checked ubuntu macos windows
 fence-git-common-plain ubuntu macos windows
+fence-git-common-worktree ubuntu macos windows
+fence-leftover-nodigest ubuntu macos windows
 fence-strong-never-fails-open ubuntu macos windows
 fence-wiring-escaped ubuntu
 git-dir-pass ubuntu macos windows

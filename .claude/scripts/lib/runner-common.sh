@@ -815,7 +815,11 @@ EOF
 # fence_strong <snapshot> <root>
 # Prints "S<digest> 0 ./<path>" for every regular file among the snapshot's
 # paths, the digest from snap_tool. Paths under .git-common/ are read from the
-# git directories they stand for. Prints nothing where snap_tool finds only
+# git directories they stand for when those are known (a linked worktree), and
+# from the vault otherwise (1.7.2). Known limit: in a linked worktree vault a
+# folder of the vault that is itself named .git-common is read as git's, so
+# its files have no SHA-256 line of their own, or git's file's where the names
+# match; such a folder is a steering change all the same. Prints nothing where snap_tool finds only
 # cksum, which would add nothing, and the known limit says so. A file the tool
 # did not answer for gets the word unreadable, so it reads as changed if it was
 # readable before. An answer that is not 64 hex digits gets malformed and a
@@ -2439,13 +2443,15 @@ record_leftovers() {
     [ -n "$p" ] || continue
     if same_as_snap "$1" "$p" "$snap/after"; then
       printf '%s\n' "$p" >> "$snap/leftover.kept"
+    elif [ "$SAME_WHY" = nodigest ]; then
+      printf '%s (its SHA-256 could not be taken now, so it is not known to be unchanged)\n' "$p" >> "$snap/leftover.changed"
     else
       printf '%s\n' "$p" >> "$snap/leftover.changed"
     fi
   done < "$snap/leftover"
   mv -f "$snap/leftover.kept" "$snap/leftover"
   if [ -s "$snap/leftover.changed" ]; then
-    printf '[%s] NOT-RECORDED: these files changed after the pass ended, so the next run will take them for someone'"'"'s edit:\n' "$(ts)" >> "$log"
+    printf '[%s] NOT-RECORDED: these files are not as they were when the pass ended, or (where said) could not be read to tell, so the next run will take them for someone'"'"'s edit:\n' "$(ts)" >> "$log"
     sed 's/^/    /' "$snap/leftover.changed" >> "$log"
   fi
   record_uncommitted "$1" "$2" "$3" "$4" "$snap/leftover" "${6:-}"
@@ -2528,16 +2534,24 @@ path_state() {
 # found a tool), the same digest now. path_state alone is a CRC, which four
 # chosen bytes can match, so a file rewritten to the same size and CRC passed
 # it (Release C; round 3 of the 1.7.1 review). A digest that cannot be taken
-# now, where the snapshot has one, counts as changed.
+# now, where the snapshot has one, counts as changed, and SAME_WHY says which
+# answer it was: crc, digest (both taken, and they differ) or nodigest, so a
+# log need not blame a writer for a file that could only not be read.
+# The tool is looked up once per run (SAME_TOOL), since the callers loop.
+SAME_TOOL=""
 same_as_snap() {
-  local was s tool
-  was="$(P="./$2" awk '{ line = $0; sub(/^[^ ]* [^ ]* /, "", line) } line == ENVIRON["P"] && $1 !~ /^S/ { print $1 " " $2; exit }' "$3" 2>/dev/null)"
-  [ "$(path_state "$1" "$2")" = "$was" ] || return 1
-  s="$(P="./$2" awk '{ line = $0; sub(/^[^ ]* [^ ]* /, "", line) } line == ENVIRON["P"] && $1 ~ /^S/ { print substr($1, 2); exit }' "$3" 2>/dev/null)"
+  local was s d
+  SAME_WHY=""
+  was="$(P="./$2" LC_ALL=C awk '{ line = $0; sub(/^[^ ]* [^ ]* /, "", line) } line == ENVIRON["P"] && $1 !~ /^S/ { print $1 " " $2; exit }' "$3" 2>/dev/null)"
+  [ "$(path_state "$1" "$2")" = "$was" ] || { SAME_WHY=crc; return 1; }
+  s="$(P="./$2" LC_ALL=C awk '{ line = $0; sub(/^[^ ]* [^ ]* /, "", line) } line == ENVIRON["P"] && $1 ~ /^S/ { print substr($1, 2); exit }' "$3" 2>/dev/null)"
   [ -n "$s" ] || return 0
-  tool="$(snap_tool)" || return 1
-  [ "${tool%% *}" != cksum ] || return 1
-  [ "$(fence_digest "$1/$2" "${tool%% *}" "${tool#* }")" = "$s" ]
+  [ -n "$SAME_TOOL" ] || SAME_TOOL="$(snap_tool)" || SAME_TOOL="none none"
+  case "${SAME_TOOL%% *}" in cksum|none) SAME_WHY=nodigest; return 1 ;; esac
+  d="$(fence_digest "$1/$2" "${SAME_TOOL%% *}" "${SAME_TOOL#* }")"
+  [ "$d" = "$s" ] && return 0
+  case "$d" in unreadable|malformed-*) SAME_WHY=nodigest ;; *) SAME_WHY=digest ;; esac
+  return 1
 }
 
 # case_twin <relative-path> <snapshot>
@@ -2622,7 +2636,7 @@ revert_owned() {
 revert_path() {
   local now was b_blob h_blob d twin t_blob
   now="$(path_state "$root" "$p")"
-  was="$(P="./$p" awk '{ line = $0; sub(/^[^ ]* [^ ]* /, "", line) } line == ENVIRON["P"] { print $1 " " $2; exit }' "$snap/after")"
+  was="$(P="./$p" LC_ALL=C awk '{ line = $0; sub(/^[^ ]* [^ ]* /, "", line) } line == ENVIRON["P"] && $1 !~ /^S/ { print $1 " " $2; exit }' "$snap/after")"
   if [ "$now" = other ] && [ -z "$was" ] && [ -d "$root/$p" ] && [ ! -L "$root/$p" ]; then
     if rmdir "$root/$p" 2>/dev/null; then
       now=""

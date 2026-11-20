@@ -195,6 +195,7 @@ note_facts() {
           # tier:long - a value straight after the colon (Release C). These
           # checks read the key; a YAML reader takes the line for text.
           rest = substr(s, length(k) + 2)
+          gsub(/\r/, "", rest)
           if (rest != "" && rest !~ /^[ \t]/) nospace[k] = 1
           if (n[k] == 1) {
             v = $0
@@ -228,7 +229,7 @@ note_facts() {
         printf "n_%s%s%d\n", k, us, n[k] + 0
         if (n[k] > 0) printf "r_%s%s%s\n", k, us, raw[k]
         if (k in odd) printf "spell%sthe key %s is also written as %s, which these checks do not read\n", us, k, odd[k]
-        if (k in nospace) printf "spell%sthe key %s has no space after its colon, so a YAML reader takes the line for text, not the key\n", us, k
+        if (k in nospace) printf "spell%sthe key %s has no space after its colon, so a YAML reader takes the line for text or rejects the whole block\n", us, k
         if (n[k] > 1) printf "spell%sthe key %s appears %d times; these checks read the first, a YAML reader the last\n", us, k, n[k]
       }
     }' "$1"
@@ -411,7 +412,14 @@ link_target_ok() {
 # tab completion names 31-standards\x.md and a link Windows made can give
 # C:\... as its target. Elsewhere it is a character a name may hold, so a path
 # keeps it (Release C; a\b.md was reported as a/b.md, which is not there).
-case "$(uname -s 2>/dev/null)" in MINGW*|MSYS*|CYGWIN*) BACKSLASH_SEP=1 ;; *) BACKSLASH_SEP=0 ;; esac
+# bash's own OSTYPE says msys or cygwin under every MSYS2 shell, Git Bash's
+# included, at no cost; uname covers a bash built otherwise, and its *_NT-*
+# the MSYS2 shells (UCRT64_NT-..., CLANG64_NT-...) that do not start MINGW.
+BACKSLASH_SEP=0
+case "${OSTYPE:-}" in msys*|cygwin*) BACKSLASH_SEP=1 ;; esac
+if [ "$BACKSLASH_SEP" -eq 0 ]; then
+  case "$(uname -s 2>/dev/null)" in MINGW*|MSYS*|CYGWIN*|*_NT-*) BACKSLASH_SEP=1 ;; esac
+fi
 # slashed <path> - sets SLASHED to the path with each backslash as a slash on
 # Windows, and to the path unchanged elsewhere.
 slashed() {
@@ -571,7 +579,10 @@ if [ "${#NAMED[@]}" -gt 0 ]; then
     # would read a relative name beginning with such a letter and a colon as an
     # absolute path on one platform and not on another.
     case "$file" in /*|[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]:[\\/]*) ;; *) file="$ROOT/$file" ;; esac
-    if [ ! -f "$file" ] || [ ! -r "$file" ]; then
+    # Opened, not asked about: Git Bash answers [ -r ] from mode bits, so a
+    # note whose Windows ACL denies reading passed it and was reported as a C1
+    # (round 1 of the 1.7.2 review). The -f first keeps a FIFO from blocking.
+    if [ ! -f "$file" ] || ! { : < "$file"; } 2>/dev/null; then
       show "$file"
       printf 'vault-check: %s is not a readable file, so it was not checked.\n' "$SHOWN" >&2
       missing=$((missing + 1))
@@ -666,12 +677,17 @@ else
       link_target_ok "$ROOT/$file" || refuse_link "$file" "$LINK_WHY"
       continue
     fi
+    # Only a note's name can be a note: an entry the walk listed as a link and
+    # that was replaced or removed before the test above is no note unless so
+    # named.
+    case "$file" in *.[mM][dD]) ;; *) continue ;; esac
     WALK_N=$((WALK_N + 1))
     # A note the walk lists and this account cannot read is not a note with
     # no fence: nothing in it was checked, so the run says so and exits 2
     # unless a note violates an invariant, as named mode does for the same
-    # note (Release C; it was reported as a C1).
-    if [ ! -r "$ROOT/$file" ]; then
+    # note (Release C; it was reported as a C1). Opened rather than asked
+    # about with [ -r ], which Git Bash answers from mode bits alone.
+    if ! { : < "$ROOT/$file"; } 2>/dev/null; then
       show "$file"
       printf 'vault-check: %s is not a readable file, so it was not checked.\n' "$SHOWN" >&2
       unreadable=$((unreadable + 1))
@@ -739,7 +755,12 @@ fi
 # reads the exit code - a CI step, a pre-commit hook, an agent - cannot mistake
 # a path or folder-name problem for a clean vault.
 if [ "$files" -eq 0 ]; then
-  printf 'vault-check: VACUOUS - no notes were scanned, so this is not a pass. Check CLAUDE_PROJECT_DIR and the TIERS list.\n' >&2
+  if [ "$unreadable" -gt 0 ]; then
+    # The notes are there; none of them could be opened, as said above.
+    printf 'vault-check: VACUOUS - no notes were scanned, so this is not a pass: every note the scan found could not be read. Check their permissions.\n' >&2
+  else
+    printf 'vault-check: VACUOUS - no notes were scanned, so this is not a pass. Check CLAUDE_PROJECT_DIR and the TIERS list.\n' >&2
+  fi
   exit 2
 fi
 
@@ -752,7 +773,7 @@ fi
 if [ "${#NAMED[@]}" -eq 0 ]; then
   archived=0
   if [ -d "$ROOT/99-archive" ]; then
-    archived="$(find "$ROOT/99-archive" -type f -name '*.md' 2>/dev/null | awk 'END { print NR + 0 }')"
+    archived="$(find "$ROOT/99-archive" -type f -iname '*.md' 2>/dev/null | awk 'END { print NR + 0 }')"
   fi
   printf 'vault-check: 99-archive/ holds %s note(s) on disk.\n' "$archived"
   # Replace refs off and hooks and fsmonitor out of the way, for the same reason
