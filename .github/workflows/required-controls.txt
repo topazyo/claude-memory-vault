@@ -188,6 +188,7 @@ keep-output-fifo ubuntu macos
 legacy-asks-the-adding-commit ubuntu macos windows
 line-break-name ubuntu macos
 lint-spawn-budget ubuntu
+lint-subfolder-relative ubuntu macos windows
 locale-collation-verdicts macos
 logger-crlf ubuntu macos windows
 logger-not-registered ubuntu macos windows

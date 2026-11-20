@@ -604,6 +604,24 @@ else
     skip c4-templates-dot "lint and a folder named templates.: the file system takes it for templates here"
   fi
 
+  # Release C: a relative path that names a file from a folder inside the
+  # vault is judged by where the file is in the vault. It stayed relative, so
+  # lintme.md from 31-standards/ looked like a file at the root, in no tier,
+  # and the lint said nothing about its missing tier.
+  printf -- '---\ntier: long\ntype: standard\n---\n\nSee [[ARCH-INDEX]].\n' > "$C4V/31-standards/fine.md"
+  c4s_out="$(cd "$C4V/31-standards" && CLAUDE_PROJECT_DIR="$C4V" bash "$HOOK" -- lintme.md </dev/null 2>&1 | strip_notices)"
+  c4s_up="$(cd "$C4V/10-daily" && CLAUDE_PROJECT_DIR="$C4V" bash "$HOOK" -- ../31-standards/lintme.md </dev/null 2>&1 | strip_notices)"
+  c4s_ok="$(cd "$C4V/31-standards" && CLAUDE_PROJECT_DIR="$C4V" bash "$HOOK" -- fine.md </dev/null 2>&1 | strip_notices)"
+  ran lint-subfolder-relative
+  if printf '%s' "$c4s_out" | grep -q "^vault-lint: lintme.md — .*missing 'tier'" \
+     && printf '%s' "$c4s_up" | grep -q "^vault-lint: ../31-standards/lintme.md — .*missing 'tier'" \
+     && [ -z "$c4s_ok" ]; then
+    ok "a relative path from a folder inside the vault is linted by where the file is, and a clean note there stays silent"
+  else
+    bad "lint of a relative path from a vault subfolder -- got: [$(printf '%s' "$c4s_out" | tr '\n' ' ')] [$(printf '%s' "$c4s_up" | tr '\n' ' ')] clean: [$(printf '%s' "$c4s_ok" | tr '\n' ' ')]"
+  fi
+  rm -f "$C4V/31-standards/fine.md"
+
   if [ -f "$WORK/.claude/logs/vault-lint.log" ]; then
     ok "audit log written to .claude/logs/vault-lint.log"
   else
