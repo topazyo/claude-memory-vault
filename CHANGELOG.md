@@ -25,6 +25,28 @@ bash .claude/scripts/vault-update.sh --check --from ../template-new
 
 ---
 
+## 1.7.4 — 2026-11-20
+
+A one-fix patch for a control 1.7.3 added, found by carrying 1.7.3 into a vault.
+
+### Fixed
+
+- **`c18-release-gate` passes in a vault that has no `.github/release-check.sh`.** With
+  `VAULT_TEMPLATE_MAINTAINER=1` its nested run of the update section skips the release controls
+  because that file is not there, and the control did not count that skip as an answer, so the
+  suite failed on Linux in every such vault: the case 1.7.3's `docs/updating.md` says is fine. It now
+  counts it, as the control beside it already does for a vault without the shipped manifest, and a
+  new arm runs that case: the update section in a copy of the tree without the file.
+
+### Adopting this
+
+1. **Take `.claude/scripts/run-tests.sh`.** Nothing else changes, and nothing a pass or the commit
+   gate does changes.
+2. The shipped files this release touches are `.claude/scripts/run-tests.sh`, plus `VERSION`, this
+   file and `.claude/template-manifest`.
+
+---
+
 ## 1.7.3 — 2026-11-20
 
 A patch release from an adopter's update report: a vault taken from 1.4.2 to 1.7.0 in one sitting.
