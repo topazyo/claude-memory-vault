@@ -54,6 +54,7 @@ vault-update: this vault records template version X.Y.Z.
 vault-update: 69 of 72 template file(s) match that record, 2 changed here, 1 deleted, 0 could not be read.
 vault-update: That record is what the template shipped at X.Y.Z. It is not a claim about what the template holds now. Fetch a newer copy and run --check --from <dir> to learn that.
 vault-update: No address to fetch it from is recorded here, on purpose. docs/updating.md section 3 says how to find the one this vault came from.
+vault-update: Taking a file from a newer template copy also shows up here as one you changed, because this mode has nothing to compare against but the record.
 ```
 
 Those counts are whatever your vault has. Read the numbers rather than matching the wording around
@@ -172,19 +173,19 @@ version, and expect it to report the files you just took as changed here. Neithe
 next release's `--check` still works from that record, because it compares against the source you
 point it at rather than against a version number.
 
-**Then run the control suite, in two steps.** First the section that covers this tool, which is
-quick:
+**Then run the control suite, in two steps.** First the section that covers this tool:
 
 ```bash
 RUN_TESTS_ONLY=update bash .claude/scripts/run-tests.sh
 ```
 
-Then the whole suite, `bash .claude/scripts/run-tests.sh`, which takes as long as
-[`setup.md` § 7a](setup.md#7a-the-control-suite) says for your platform. If an agent runs it for
-you, have it run the suite in the foreground with a timeout longer than that, or in the background
-with no time limit and wait for the closing `=== N passed, M failed ===` line. A run that was killed
-before that line proves nothing either way, and neither does a section run on its own: only the whole
-suite is the check that an update worked.
+Then the whole suite, `bash .claude/scripts/run-tests.sh`. [`setup.md` § 7a](setup.md#7a-the-control-suite)
+gives its running time on GitHub's runners for each platform; take that as a lower bound, because
+a laptop is usually slower, much slower on Windows. If an agent runs it for you, have it start the
+suite in the background with no time limit and wait for the closing `=== N passed, M failed ===`
+line. A foreground run under an agent's own command timeout is the usual way to have it killed
+part-way. A run that was killed before that line proves nothing either way, and neither does a
+section run on its own: only the whole suite is the check that an update worked.
 
 ### If you are several releases behind
 
@@ -207,8 +208,8 @@ releases is one comparison, not one per release:
    and do the rest of each Adopting note's steps after its copies, in the notes' order.
 4. **Then run the suite**, as above.
 
-Expect the copy plan to be long. A plan of thirty files is what four releases look like, not a sign
-that something went wrong.
+Expect the copy plan to be long. Dozens of files is what several releases look like, not a sign that
+something went wrong.
 
 ### Files the template keeps for itself
 
@@ -217,7 +218,9 @@ Some files in the template are the template project's own and never a vault's: `
 classes them `excluded`). `--check` never reports them, so a vault that came with copies keeps them
 at whatever release it was generated from. A vault does not need them. Since 1.7.3 the control
 suite runs nothing against them unless `VAULT_TEMPLATE_MAINTAINER=1` is set, which only the
-template's own CI does, so keeping or deleting your copies makes no difference to it.
+template's own CI does, so keeping or deleting your copies makes no difference to it. Do not
+delete `.github/` wholesale on the strength of this: `.github/hooks/` is not among them, and a vault
+worked on with GitHub Copilot uses it.
 
 ### If your vault predates all of this
 

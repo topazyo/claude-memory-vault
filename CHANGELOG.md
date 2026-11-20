@@ -46,7 +46,7 @@ adopter's machine for a reason that turned out to be the runners'.
 - **The controls for that case did not run in the shape a runner has.** They passed the wrapper to
   `run_agent` as a prefix assignment, so it was unset again when the status was judged, and every
   127 read as not found. They now set it as a runner does, and new cases hold the env shape, the
-  bash 5.2 shape (by standing in for it, since no CI platform runs bash 5.2), and a wrapper's own
+  bash 5.2 shape (by standing in for it on every platform), and a wrapper's own
   127, which still leaves as 79.
 - **The release controls skip in a vault even when `.github/release-check.sh` is there.** The file
   is the template project's and is never offered to a vault, so a vault can hold the copy of

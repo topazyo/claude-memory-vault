@@ -4465,28 +4465,34 @@ AGENT_RESERVED_STATUSES="2 3 4 5 64 70 75 78 79 124 125 127 129 130 143"
 # is not on PATH. bash 5.2 gives 127 for the first ("cannot execute: required
 # file not found"; 5.3 and 3.2 give 126) and env gives 127 for the second, and
 # neither code means the agent ran. Returns 1 for everything else, including
-# what it cannot read or parse (a relative interpreter, an env option such as
-# -S, an assignment, a path, a line cut at 255 characters), so a 127 it cannot
-# explain stays the agent's. A line holding a CR is never taken as proof:
-# Git Bash strips the CR and starts the wrapper, where Linux and macOS do not.
-# type -P rather than command -v, so a shell function of this library's does
-# not count as the command env would look for.
+# what it cannot read or parse (a relative interpreter, an env other than
+# /usr/bin/env or /bin/env, an env option such as -S, an assignment, a path, a
+# line of 127 bytes or more, which kernels before Linux 5.1 cut there, and a
+# line holding a NUL, which read drops where the kernel stops), so a 127 it
+# cannot explain stays the agent's. A line holding a CR is never taken as
+# proof: Git Bash strips the CR and starts the wrapper, where Linux and macOS
+# do not. type -P rather than command -v, so a shell function of this
+# library's does not count as the command env would look for. Read just
+# before the launch, so an interpreter that appears in between is the one
+# race left, and a pass cannot make it happen.
 agent_interpreter_missing() {
-  local p line interp word
+  local p line interp word nul
   p="$(command -v -- "$1" 2>/dev/null)" || return 1
   case "$p" in /*) ;; *) return 1 ;; esac
   [ -f "$p" ] && [ -r "$p" ] || return 1
   line=''
   IFS= read -r -n 256 line 2>/dev/null < "$p"
-  [ "${#line}" -lt 255 ] || return 1
+  [ "${#line}" -lt 127 ] || return 1
   case "$line" in '#!'*) ;; *) return 1 ;; esac
   case "$line" in *$'\r'*) return 1 ;; esac
+  nul="$(head -c 256 -- "$p" 2>/dev/null | head -n 1 | tr -dc '\000' | wc -c | tr -d ' ')"
+  [ "$nul" = 0 ] || return 1
   line="${line#??}"
   line="${line#"${line%%[! 	]*}"}"
   interp="${line%%[ 	]*}"
   case "$interp" in /*) ;; *) return 1 ;; esac
   [ -f "$interp" ] && [ -x "$interp" ] || return 0
-  case "$interp" in */env) ;; *) return 1 ;; esac
+  case "$interp" in /usr/bin/env|/bin/env) ;; *) return 1 ;; esac
   line="${line#"$interp"}"
   line="${line#"${line%%[! 	]*}"}"
   word="${line%%[ 	]*}"

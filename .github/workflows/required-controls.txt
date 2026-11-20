@@ -121,6 +121,7 @@ agent-status-env-missing-runner-dream ubuntu macos windows
 agent-status-env-missing-runner-promotion ubuntu macos windows
 agent-status-gone ubuntu macos windows
 agent-status-own-127 ubuntu macos windows
+agent-status-unread-shapes ubuntu macos windows
 c10-opencode-normalised ubuntu macos windows
 c11-failed-write-logged ubuntu macos windows
 c11-long-session-id ubuntu macos windows

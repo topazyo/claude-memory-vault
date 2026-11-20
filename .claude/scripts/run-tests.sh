@@ -14826,12 +14826,14 @@ ac_got="$(ac_try "$TMP/ac-badinterp")"
 ran agent-status-badinterp
 case "$ac_got" in
   'rc=126 ran=1 exit=126 log=0'|'rc=127 ran=1 exit=127 log=0')
-    ok "a wrapper whose interpreter is missing leaves with the shell's own code, 126 or 127, with no AGENT-STATUS line" ;;
+    ok "a wrapper whose interpreter is missing leaves with the shell's own code, 126 or 127, with no AGENT-STATUS line ($ac_got)" ;;
   *)
     bad "a wrapper whose interpreter is missing -- expected rc=126 or 127, exit the same, log=0, got: $ac_got" ;;
 esac
-# No platform CI runs has a bash that gives 127 there, so the 127 case is held
-# by standing in for one: the same wrapper, then RUN_RC=127.
+# The 127 case is held on every platform by standing in for such a bash: the
+# same wrapper, then RUN_RC=127. Measured 126 on Git Bash 5.3.15 and WSL bash
+# 5.3.9; CI's ubuntu-latest was ubuntu-26.04 when this was written. The PASS
+# line above prints the code each platform gave.
 ac_got="$(ac_try "$TMP/ac-badinterp" 127)"
 ran agent-status-badinterp-127
 if [ "$ac_got" = 'rc=127 ran=1 exit=127 log=0' ]; then
@@ -14894,23 +14896,82 @@ ac_got="$(ac_try "$TMP/ac-selfdelete")"
 [ -e "$TMP/ac-selfdelete.ran" ] || ac_bad="$ac_bad [self-delete: fixture, the wrapper never ran: $ac_got]"
 [ -e "$TMP/ac-selfdelete" ] && ac_bad="$ac_bad [self-delete: fixture, the wrapper is still there]"
 [ "$ac_got" = 'rc=127 ran=1 exit=79 log=1' ] || ac_bad="$ac_bad [self-delete: $ac_got]"
-# Only env's word is looked up on PATH. An interpreter of any other name takes
-# a plain word that is not a command, here an interpreter of the suite's own
-# that drops it and runs the wrapper with bash. Where a script cannot be an
-# interpreter (macOS), bash runs the wrapper itself, which starts it all the
-# same.
-printf '#!/usr/bin/env bash\nshift\nexec bash "$@"\n' > "$TMP/ac-interp"
-printf '#!%s plainword-not-a-command\n: > "%s"\nexit 127\n' "$TMP/ac-interp" "$TMP/ac-otherinterp.ran" > "$TMP/ac-otherinterp"
-chmod +x "$TMP/ac-interp" "$TMP/ac-otherinterp"
-rm -f "$TMP/ac-otherinterp.ran"
-ac_got="$(ac_try "$TMP/ac-otherinterp")"
-[ -e "$TMP/ac-otherinterp.ran" ] || ac_bad="$ac_bad [other interpreter: fixture, the wrapper never ran: $ac_got]"
-[ "$ac_got" = 'rc=127 ran=1 exit=79 log=1' ] || ac_bad="$ac_bad [other interpreter: $ac_got]"
 ran agent-status-own-127
 if [ -z "$ac_bad" ]; then
-  ok "a wrapper that starts and leaves with 127 itself still leaves as 79 with an AGENT-STATUS line, through env -S, with a CR in its #! line, after rewriting its own #! line or deleting itself, and under an interpreter that is not env"
+  ok "a wrapper that starts and leaves with 127 itself still leaves as 79 with an AGENT-STATUS line, through env -S, with a CR in its #! line, and after rewriting its own #! line or deleting itself"
 else
   bad "a wrapper's own 127 did not leave as 79 --$ac_bad"
+fi
+
+# Every #! shape the check does not read must leave a 127 as the agent's, so
+# a wrong "cannot start" cannot pass an agent's own 127 off as not found. What
+# matters here is only what the runner decides from the #! line before the
+# agent starts, so the launch itself is replaced, in a subshell, by one that
+# starts nothing and returns 127. None of these wrappers is ever run: some of
+# them would not stop (env given "FOO=1 cmd" as one word takes it all as an
+# assignment and runs the wrapper itself again). One shape the check does
+# read, a blank after #!, is held the other way. The interpreter that is not
+# env is this shell, by absolute path, so no temp path has to fit in a #! line.
+ac_decide() {
+  : > "$TMP/ac-try.log"
+  ( . "$ROOT/.claude/scripts/lib/runner-common.sh"
+    run_with_watchdog() { RUN_RC=127; RUN_TIMED_OUT=0; RUN_STALLED=0; RUN_KILL_FAILED=0; RUN_KILL_REPORT=""; return 0; }
+    AGENT_KIND=command
+    AGENT_BIN="$1"
+    SNAP_SEALS=x
+    run_agent 30 "$TMP/ac-try.out" dream-agent task prompt.md >/dev/null 2>&1
+    printf 'rc=%s ran=%s ' "$RUN_RC" "${AGENT_RAN:-}"
+    agent_status_exit dream-agent "$TMP/ac-try.log"
+    printf 'exit=%s log=%s' "$?" "$(awk 'END { print NR + 0 }' "$TMP/ac-try.log" 2>/dev/null)" )
+}
+ac_bash="$(command -v bash 2>/dev/null)"
+ac_bad=''
+case "$ac_bash" in /*) : ;; *) ac_bad="$ac_bad [fixture: no absolute bash: $ac_bash]" ;; esac
+ac_long="$(printf '%300s' '' | tr ' ' a)"
+ac_n=0
+for ac_shape in \
+  "other-interpreter|#!$ac_bash plainword-not-a-command" \
+  "env-assignment|#!/usr/bin/env FOO=1 no-such-command-for-vault-tests" \
+  "env-path|#!/usr/bin/env /no/such/command-for-vault-tests" \
+  "env-option|#!/usr/bin/env -S no-such-command-for-vault-tests" \
+  "relative|#!no/such/interpreter" \
+  "long-line|#!/usr/bin/env $ac_long" \
+  "cr|#!/usr/bin/env no-such-command-for-vault-tests$(printf '\r')"; do
+  ac_n=$((ac_n + 1))
+  printf '%s\nexit 127\n' "${ac_shape#*|}" > "$TMP/ac-shape$ac_n"
+  chmod +x "$TMP/ac-shape$ac_n"
+  ac_got="$(ac_decide "$TMP/ac-shape$ac_n")"
+  [ "$ac_got" = 'rc=127 ran=1 exit=79 log=1' ] || ac_bad="$ac_bad [${ac_shape%%|*}: $ac_got]"
+done
+# A NUL, which read drops and the kernel stops at, so the line read is not the
+# line run: bash<NUL>x reads as bashx, which is not on PATH.
+printf '#!/usr/bin/env bash\000x\nexit 127\n' > "$TMP/ac-shape-nul"
+chmod +x "$TMP/ac-shape-nul"
+ac_got="$(ac_decide "$TMP/ac-shape-nul")"
+[ "$ac_got" = 'rc=127 ran=1 exit=79 log=1' ] || ac_bad="$ac_bad [nul: $ac_got]"
+# An interpreter named env that is not the system's, which may find its
+# command some other way than PATH. Its path goes in the #! line, so only
+# where the temp path has no blank in it.
+case "$TMP" in
+  *[[:space:]]*) : ;;
+  *)
+    mkdir -p "$TMP/ac-bin"
+    printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/ac-bin/env"
+    printf '#!%s no-such-command-for-vault-tests\nexit 127\n' "$TMP/ac-bin/env" > "$TMP/ac-shape-otherenv"
+    chmod +x "$TMP/ac-bin/env" "$TMP/ac-shape-otherenv"
+    ac_got="$(ac_decide "$TMP/ac-shape-otherenv")"
+    [ "$ac_got" = 'rc=127 ran=1 exit=79 log=1' ] || ac_bad="$ac_bad [another env: $ac_got]"
+    ;;
+esac
+printf '#! /no/such/interpreter\nexit 127\n' > "$TMP/ac-shape-blank"
+chmod +x "$TMP/ac-shape-blank"
+ac_got="$(ac_decide "$TMP/ac-shape-blank")"
+[ "$ac_got" = 'rc=127 ran=1 exit=127 log=0' ] || ac_bad="$ac_bad [blank after #!, read as missing: $ac_got]"
+ran agent-status-unread-shapes
+if [ -z "$ac_bad" ]; then
+  ok "a 127 from a wrapper whose #! line the runner does not read (another interpreter, an env assignment, path or option, a relative interpreter, a long line, a CR, a NUL, an env that is not the system's) stays the agent's 79, and '#! /missing' is still read"
+else
+  bad "a #! shape the runner should not read changed whose 127 it is --$ac_bad"
 fi
 
 # The env case through a whole runner in command mode, the shape a scheduler
@@ -24295,6 +24356,10 @@ if [ "$VU_IS_TEMPLATE" = 1 ]; then
   for vu_fp_doc in AGENTS.md docs/reference.md docs/setup.md; do
     [ -n "$vu_fp_line" ] && ! grep -qxF -- "$vu_fp_line" "$ROOT/$vu_fp_doc" 2>/dev/null && vu_bad="$vu_bad $vu_fp_doc-quotes-another-line"
   done
+  # And the section --status names is the one that says where to fetch from,
+  # so renumbering the page cannot leave the pointer aimed elsewhere.
+  vu_fp_s3="$(LC_ALL=C awk '/^## 3\. / { on = 1; next } on && /^## / { exit } on' "$ROOT/docs/updating.md" 2>/dev/null)"
+  printf '%s\n' "$vu_fp_s3" | grep -q 'Where to fetch it from' || vu_bad="$vu_bad updating.md-section-3-does-not-say-where-to-fetch-from"
 fi
 ran tmpl-fetch-pointer
 if [ -z "$vu_bad" ]; then
@@ -24344,10 +24409,18 @@ fi
 # the full suite (an adopter's update report: a full run outlived two agent
 # deadlines, 1.7.3). A section renamed here would leave that advice naming a
 # run that refuses with 64, so every RUN_TESTS_ONLY=<name> the page names must
-# be a section, and it must name the update section.
+# be a section, and it must name the update section. Template-only: a vault
+# may keep its own copy of the page, or none, and that copy is not this suite's
+# to answer for.
+if [ "$SUITE_IS_TEMPLATE" != 1 ]; then
+  skip updating-doc-names-sections "VAULT_TEMPLATE_MAINTAINER is not 1, so this is taken to be a vault rather than the template project, and a vault's copy of docs/updating.md is its own"
+else
 sf_doc="$ROOT/docs/updating.md"
-sf_named="$(LC_ALL=C grep -o 'RUN_TESTS_ONLY=[a-z-]*' "$sf_doc" 2>/dev/null | LC_ALL=C sed 's/^RUN_TESTS_ONLY=//' | LC_ALL=C sort -u | tr '\n' ' ')"
+# The whole token after the =, up to white space or shell punctuation, so a
+# name such as update2 or Update is judged as itself and not as a prefix.
+sf_named="$(LC_ALL=C grep -o 'RUN_TESTS_ONLY=[^][:space:]`"'"'"'|;)(<>&]*' "$sf_doc" 2>/dev/null | LC_ALL=C sed 's/^RUN_TESTS_ONLY=//' | LC_ALL=C sort -u | tr '\n' ' ')"
 sf_bad=''
+[ -f "$sf_doc" ] || sf_bad="$sf_bad fixture:no-docs/updating.md"
 case " $sf_named " in *" update "*) : ;; *) sf_bad="$sf_bad updating.md-names-no-update-section-run" ;; esac
 for sf_n in $sf_named; do
   case " $sf_list " in *" $sf_n "*) : ;; *) sf_bad="$sf_bad $sf_n:not-a-section" ;; esac
@@ -24357,6 +24430,7 @@ if [ -z "$sf_bad" ]; then
   ok "docs/updating.md names the update section's run, and every section it names is one this suite has"
 else
   bad "docs/updating.md names a section run this suite does not have --$sf_bad (named: $sf_named; sections: $sf_list)"
+fi
 fi
 
 # A name that is not a section is refused before anything runs, so a typo is
@@ -24439,9 +24513,10 @@ if [ "$(uname -s 2>/dev/null)" = Linux ]; then
   # and failed in a vault that was working perfectly (an adopter's update
   # report, 1.7.3). This run is in the template tree, where the file exists,
   # so a gate that still asks whether it exists runs them without the
-  # variable. The ids come from this file's own skip lines, so one added there
-  # is held here without a second list.
-  sf_rel_ids="$(LC_ALL=C sed -n 's/^ *skip \(tmpl-release-[a-z0-9-]*\) .*/\1/p' "$SUITE_SELF" | LC_ALL=C sort -u)"
+  # variable. The ids come from this file's own skip and ran lines, so one
+  # added to either is held here, and one the vault-mode skip loop leaves out
+  # runs without the variable and fails here.
+  sf_rel_ids="$(LC_ALL=C sed -n -e 's/^ *skip \(tmpl-release-[a-z0-9-]*\) .*/\1/p' -e 's/^ *ran \(tmpl-release-[a-z0-9-]*\)$/\1/p' "$SUITE_SELF" | LC_ALL=C sort -u)"
   sf_bad=''
   sf_rel_n=0
   for sf_id in $sf_rel_ids; do
