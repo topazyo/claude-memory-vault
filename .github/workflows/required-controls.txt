@@ -113,7 +113,14 @@
 # a mktemp stand-in, so macOS's mktemp does not matter, and off
 # Windows a cygpath stand-in makes the platform read as Windows; its
 # leg where the check must do nothing runs off Windows only, with no
-# cygpath on PATH.
+# cygpath on PATH. check-unreadable-note-acl is on no list: it runs only
+# on Windows, and on GitHub's Windows runner an icacls read deny on a file
+# does not stop Git Bash reading it (1.7.2's CI: the control skipped with
+# "icacls could not deny the read here" on both runs that finished), most likely because
+# the job's account is elevated and MSYS2 opens files with backup intent,
+# the same kind of reason retention-unlistable is off Windows. It runs on a
+# Windows machine whose account is not elevated, and skips by name elsewhere;
+# ci.yml's NOT_REQUIRED names it, as an id the suite records on no list.
 agent-status-badinterp ubuntu macos windows
 agent-status-badinterp-127 ubuntu macos windows
 agent-status-env-missing ubuntu macos windows
@@ -166,7 +173,6 @@ check-one-walk ubuntu macos windows
 check-retry-vanished ubuntu macos windows
 check-transient-unread-folder ubuntu macos
 check-unreadable-note ubuntu macos
-check-unreadable-note-acl windows
 check-unreadable-posix ubuntu
 check-unreadable-tier-folder ubuntu macos
 check-upper-md ubuntu macos windows
