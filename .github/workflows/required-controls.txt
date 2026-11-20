@@ -119,7 +119,8 @@
 # "icacls could not deny the read here" on both runs that finished), most likely because
 # the job's account is elevated and MSYS2 opens files with backup intent,
 # the same kind of reason retention-unlistable is off Windows. It runs on a
-# Windows machine whose account is not elevated, and skips by name elsewhere.
+# Windows machine whose account is not elevated, and skips by name elsewhere;
+# ci.yml's NOT_REQUIRED names it, as an id the suite records on no list.
 c10-opencode-normalised ubuntu macos windows
 c11-failed-write-logged ubuntu macos windows
 c11-long-session-id ubuntu macos windows
