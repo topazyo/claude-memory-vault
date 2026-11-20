@@ -121,12 +121,21 @@
 # the same kind of reason retention-unlistable is off Windows. It runs on a
 # Windows machine whose account is not elevated, and skips by name elsewhere;
 # ci.yml's NOT_REQUIRED names it, as an id the suite records on no list.
+agent-status-badinterp ubuntu macos windows
+agent-status-badinterp-127 ubuntu macos windows
+agent-status-env-missing ubuntu macos windows
+agent-status-env-missing-runner-dream ubuntu macos windows
+agent-status-env-missing-runner-promotion ubuntu macos windows
+agent-status-gone ubuntu macos windows
+agent-status-own-127 ubuntu macos windows
+agent-status-unread-shapes ubuntu macos windows
 c10-opencode-normalised ubuntu macos windows
 c11-failed-write-logged ubuntu macos windows
 c11-long-session-id ubuntu macos windows
 c11-trigger-one-line ubuntu macos windows
 c12-omp-lints-spelling-on-disk ubuntu macos windows
 c18-gate-holds-in-update ubuntu
+c18-release-gate ubuntu
 c18-template-decided-by-variable ubuntu macos windows
 c2-after-read-tree ubuntu macos windows
 c2-branch-switched-mid-run ubuntu macos windows
@@ -333,6 +342,7 @@ tmpl-converged-not-a-merge ubuntu macos windows
 tmpl-crlf-agrees ubuntu macos windows
 tmpl-exempt-set-is-behavioural ubuntu macos windows
 tmpl-exempt-set-matches-the-tree ubuntu macos windows
+tmpl-fetch-pointer ubuntu macos windows
 tmpl-fixtures-built ubuntu macos windows
 tmpl-generate-guarded ubuntu macos windows
 tmpl-generate-needs-a-version ubuntu macos windows
@@ -406,6 +416,7 @@ tmpl-version-filtered ubuntu macos windows
 trailer-path-set ubuntu macos windows
 tripwire-name ubuntu macos
 tripwire-says-rename-outcome ubuntu macos windows
+updating-doc-names-sections ubuntu macos windows
 vault-root-spelling ubuntu macos windows
 verify-diff-watchdog ubuntu macos windows
 verify-kill-failed-not-put-back ubuntu macos windows

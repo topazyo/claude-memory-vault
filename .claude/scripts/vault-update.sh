@@ -1445,6 +1445,11 @@ do_status() {
   say "this vault records template version $LOCAL_VERSION."
   say "$same of $owned template file(s) match that record, $drifted changed here, $deleted deleted, $unreadable could not be read."
   say "That record is what the template shipped at $LOCAL_VERSION. It is not a claim about what the template holds now. Fetch a newer copy and run --check --from <dir> to learn that."
+  # Where from is not recorded, on purpose: an address in a file this script
+  # reads would be a place an agent fetches code from, and the manifest is the
+  # one file no hash reaches. An adopter's update began by asking for it
+  # (1.7.3), so the line says where the answer is written down instead.
+  say "No address to fetch it from is recorded here, on purpose. docs/updating.md section 3 says how to find the one this vault came from."
   # Said here because the shape of this mode makes it unavoidable and a reader
   # would otherwise take the count personally. With no source there is nothing
   # for a file to have moved towards, so a file you took from a newer template

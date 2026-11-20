@@ -850,7 +850,7 @@ if [ "${#NAMED[@]}" -eq 0 ]; then
       # is written with its path, and three documents quote this line verbatim,
       # so a bare script name would appear four times as something that gives
       # "command not found" when it is pasted.
-      tmpl_line="This vault records template version $tmpl_version. Run bash .claude/scripts/vault-update.sh --status for what has changed since."
+      tmpl_line="This vault records template version $tmpl_version. Run bash .claude/scripts/vault-update.sh --status for what has changed since, and see docs/updating.md for where to fetch a newer release."
     else
       tmpl_line="$ROOT/.claude/template-manifest names no version, so which template version this vault came from is unknown."
     fi
