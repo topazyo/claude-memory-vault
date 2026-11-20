@@ -695,7 +695,7 @@ jobs:
             python3 -c "import tomllib,sys; tomllib.load(open(sys.argv[1],'rb'))" "$f" \
               || { echo "::error file=$f::invalid TOML"; rc=1; }
           done 3< "$RUNNER_TEMP/files"
-          tracked '*.yml' '*.yaml'
+          tracked -a '*.yml' '*.yaml'
           while IFS= read -r -d '' -u 3 f; do
             ruby -ryaml -e 'YAML.load_file(ARGV[0])' "$f" \
               || { echo "::error file=$f::invalid YAML"; rc=1; }
