@@ -412,11 +412,14 @@ link_target_ok() {
 # tab completion names 31-standards\x.md and a link Windows made can give
 # C:\... as its target. Elsewhere it is a character a name may hold, so a path
 # keeps it (Release C; a\b.md was reported as a/b.md, which is not there).
-# bash's own OSTYPE says msys or cygwin under every MSYS2 shell, Git Bash's
-# included, at no cost; uname covers a bash built otherwise, and its *_NT-*
-# the MSYS2 shells (UCRT64_NT-..., CLANG64_NT-...) that do not start MINGW.
+# bash's own machine type says msys or cygwin under every MSYS2 shell, Git
+# Bash's included, at no cost. It is read from BASH_VERSINFO, which is read-only,
+# not from OSTYPE, which bash takes from the environment when one is exported
+# there (round 2 of the 1.7.2 review). uname covers a bash built otherwise, and
+# its *_NT-* the MSYS2 shells (UCRT64_NT-..., CLANG64_NT-...) that do not start
+# MINGW.
 BACKSLASH_SEP=0
-case "${OSTYPE:-}" in msys*|cygwin*) BACKSLASH_SEP=1 ;; esac
+case "${BASH_VERSINFO[5]:-}" in *-msys*|*-cygwin*) BACKSLASH_SEP=1 ;; esac
 if [ "$BACKSLASH_SEP" -eq 0 ]; then
   case "$(uname -s 2>/dev/null)" in MINGW*|MSYS*|CYGWIN*|*_NT-*) BACKSLASH_SEP=1 ;; esac
 fi
@@ -686,8 +689,10 @@ else
     # no fence: nothing in it was checked, so the run says so and exits 2
     # unless a note violates an invariant, as named mode does for the same
     # note (Release C; it was reported as a C1). Opened rather than asked
-    # about with [ -r ], which Git Bash answers from mode bits alone.
-    if ! { : < "$ROOT/$file"; } 2>/dev/null; then
+    # about with [ -r ], which Git Bash answers from mode bits alone. The -f
+    # first, as in named mode: a FIFO put where the walk listed a note blocked
+    # the scan on the open (round 2 of the 1.7.2 review).
+    if [ ! -f "$ROOT/$file" ] || ! { : < "$ROOT/$file"; } 2>/dev/null; then
       show "$file"
       printf 'vault-check: %s is not a readable file, so it was not checked.\n' "$SHOWN" >&2
       unreadable=$((unreadable + 1))
@@ -758,6 +763,10 @@ if [ "$files" -eq 0 ]; then
   if [ "$unreadable" -gt 0 ]; then
     # The notes are there; none of them could be opened, as said above.
     printf 'vault-check: VACUOUS - no notes were scanned, so this is not a pass: every note the scan found could not be read. Check their permissions.\n' >&2
+  elif [ "$missing" -gt 0 ]; then
+    # Named mode: the lines above name each note that could not be read, which
+    # may be there and closed to this account (round 2 of the 1.7.2 review).
+    printf 'vault-check: VACUOUS - no notes were scanned, so this is not a pass: no note named could be read, as said above. Check each path and its permissions, and CLAUDE_PROJECT_DIR for a path relative to the root.\n' >&2
   else
     printf 'vault-check: VACUOUS - no notes were scanned, so this is not a pass. Check CLAUDE_PROJECT_DIR and the TIERS list.\n' >&2
   fi

@@ -319,7 +319,9 @@ named notes, relative to the vault root or absolute, and fails a name that is no
 The dream runner uses it to check exactly the journals it is about to commit. A backslash in a
 named path separates folders only on Windows (Git Bash, MSYS, Cygwin), where tab completion writes
 `31-standards\x.md`; elsewhere it is part of the name, so a note named `a\b.md` is checked and
-reported as itself (since 1.7.2).
+reported as itself (since 1.7.2). The lint still reads every backslash as a separator, so on Linux
+and macOS it lints nothing for a note so named and logs `DEGRADED:` that the path does not resolve
+to a file; the checker, or the commit gate, is what checks it there.
 
 Scope: the six content tiers (`01-inbox`, `10-daily`, `20-projects`, `30-knowledge`,
 `31-standards`, `40-llm-wiki`), files named `*.md` in any case, as the lint takes them, so
@@ -1196,11 +1198,15 @@ Around that call, each runner does several things an exit code cannot:
   the SHA-256 line as well (since 1.7.2; they compared the CRC alone). A folder named
   `.git-common` in a vault that is no linked worktree is the vault's own folder and has the line
   too (since 1.7.2; in a worktree vault that name stands for git's shared folder). A leftover whose
-  SHA-256 cannot be taken after the pass, its file locked or the tool gone, is not recorded, and
-  the log says it could not be read rather than that it changed. Known limits: in a linked
-  worktree vault a folder of the vault that is itself named `.git-common` is read as git's, so its
-  files are held by their CRC (it is a steering change all the same); and a leftover rewritten in
-  the instant between that check and the record of it is recorded as the runner's own. `cksum` has
+  checksum or SHA-256 cannot be taken, after the pass or by the snapshot itself, its file locked or
+  the tool gone, is not recorded, and the log says it could not be read rather than that it
+  changed; when the list of leftovers cannot be written to be checked, none is recorded. Known
+  limits: in a linked worktree vault a folder of the vault that is itself named `.git-common` is
+  read as git's, so its files are held by their CRC (it is a steering change all the same); a
+  leftover rewritten in the instant between that check and the record of it is recorded as the
+  runner's own; and a file a failed pass is put back from is judged by its size and CRC, so one
+  rewritten after the pass to the same CRC is put back like the pass's own, its bytes copied to
+  the quarantine first. `cksum` has
   already read every byte by then, so the cost is a second read of the same
   files. The digests come from one run of the tool, matched back by name, and any file that run did
   not answer for is digested again on its own, so a tool that prints names another way cannot turn
