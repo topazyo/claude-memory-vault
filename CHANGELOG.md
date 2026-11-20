@@ -25,6 +25,79 @@ bash .claude/scripts/vault-update.sh --check --from ../template-new
 
 ---
 
+## 1.7.2 — 2026-11-20
+
+A patch release that finishes the checker gaps the 1.6.0 review deferred, and makes the list of
+files a tier rename has to reach one complete table. Item 2 of the Adopting note lists what can
+newly stop or change a run.
+
+### Fixed
+
+- **`vault-check.sh` reads a note named `*.MD` or `*.Md`**, as the lint already did. A note whose
+  name ended in `.MD` was passed over and the scan said 0 violations; a link named so is now judged
+  as a note's link.
+- **A note the full scan lists but cannot read exits 2, not 1.** It was reported as a C1, as if
+  the note had no fence. It is now named on stderr as not readable, a line after the count says
+  `N note(s) could not be read`, and the run exits 2 unless a note violates an invariant, as named
+  mode does for the same note.
+- **A backslash in a path named to `vault-check.sh` is a folder separator only on Windows.**
+  Elsewhere a note named `a\b.md` was reported as `a/b.md`, a path that is not there.
+- **The lint judges a relative path by where it names a file.** `x.md` given from inside
+  `31-standards/` was taken for a file at the vault root, in no tier, and its missing tier passed
+  without a word.
+- **A long-tier note rewritten to the same size and `cksum` during a pass is named** among the
+  long-tier notes the log says changed, and a file rewritten so after a pass is not recorded as
+  the runner's own leftover for the next run to adopt. Both checks compared the CRC alone; they
+  now read the SHA-256 line too.
+- **A folder named `.git-common` in a vault that is no linked worktree has SHA-256 fence lines**,
+  as any other folder does. The name stands for git's shared folder in a worktree vault, and
+  elsewhere its files were held by their CRC alone.
+
+### Changed
+
+- **`vault-check.sh` walks the tiers once**, for the notes and the links together. It walked them
+  twice, which read a large vault twice and could disagree about a note made between the walks.
+- **`vault-check.sh` warns about `tier:long`**, a key with its value straight after the colon,
+  which these checks read as the key and a YAML reader takes for a line of text. A `WARNING:` line,
+  as for the other key spellings; the count and the exit code do not change.
+- **One complete tier-rename table.** The list of files a tier rename has to reach was kept in five
+  documents that disagreed, and every copy missed some. The table in `docs/customizing.md`
+  section 2 is now the one list, the others link to it, and a template-only control holds it to
+  every tracked file that names a tier folder.
+- **`run-tests.sh` derives the names the Pi and omp adapters must share**, every function and
+  const both declare, rather than reading two hand-kept lists, which had left three shared ones
+  uncompared. The three meant to differ are named with their reasons.
+
+### Adopting this
+
+1. **Take `.claude/scripts/vault-check.sh`, `.claude/hooks/vault-lint.sh`,
+   `.claude/scripts/lib/runner-common.sh` and `.claude/scripts/run-tests.sh`.** Each stands on its
+   own: no runner needs a newer library for this release, and no library a newer runner.
+2. **What can newly stop or change a run:**
+   - A note named `*.MD` in a content tier is now checked, and can fail `vault-check.sh` (exit 1)
+     where it passed unread, which reaches the opt-in commit gate.
+   - A note in a content tier that this account cannot read now makes `vault-check.sh` exit 2
+     rather than 1. Give it back its read rights, or move it out of the tier.
+   - `tier:long` and its like print a `WARNING:` line; nothing else changes.
+   - The lint now warns about a note given as a relative path from inside a tier folder, which it
+     passed.
+3. **If you renamed a tier folder**, read the table in
+   [`docs/customizing.md` §2](docs/customizing.md#2-renaming-or-adding-a-tier-folder) once more:
+   it names files the old lists missed, `.agents/skills/`, `.claude/manifest-rules`,
+   `vault-retention.sh` and `vault-update.sh` among them.
+4. **If you kept the template's `.github/workflows/ci.yml`**, which no vault is ever offered, its
+   required control ids moved to `.github/workflows/required-controls.txt`, read through
+   `required-controls.awk`, and its file checks through `tracked.sh`, all beside it, and its
+   repository guards compare the template repository's id. Nothing changes for a vault.
+5. The shipped files this release touches are `.claude/scripts/vault-check.sh`,
+   `.claude/hooks/vault-lint.sh`, `.claude/scripts/lib/runner-common.sh`,
+   `.claude/scripts/run-tests.sh`, `AGENTS.md`, `README.md`, `docs/concepts.md`,
+   `docs/customizing.md`, `docs/reference.md` and `docs/setup.md`, plus `VERSION`, this file and
+   `.claude/template-manifest`. `.github/workflows/` and `CONTRIBUTING.md` changed as well; a vault
+   is offered neither.
+
+---
+
 ## 1.7.1 — 2026-11-15
 
 A patch release for the reproduced minors of the 1.6.0 review, led by a race in the retention

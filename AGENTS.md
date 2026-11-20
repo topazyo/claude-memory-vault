@@ -149,7 +149,7 @@ they were told apart a caller reading only the code could not choose.
 | --- | --- |
 | `0` | At least one note was scanned and none violates an invariant |
 | `1` | **The vault has a problem.** A note violates an invariant |
-| `2` | **This checker could not run**, so it says nothing about the vault. No notes were scanned, or there are no content-tier folders under the root, or a named note is not a readable file, or a link in a tier, or a note named through one, dangles or resolves to something the scan does not read where it is (outside the content-tier folders, a template, a stub), or a content-tier folder could not be read in full |
+| `2` | **This checker could not run**, so it says nothing about the vault. No notes were scanned, or there are no content-tier folders under the root, or a named note, or one the full scan lists, is not a readable file, or a link in a tier, or a note named through one, dangles or resolves to something the scan does not read where it is (outside the content-tier folders, a template, a stub), or a content-tier folder could not be read in full |
 | `64` | The command line was wrong |
 | `78` | A scheduled pass set the tripwire, so nothing was checked and a human has to look first ([`docs/setup.md`, A tripwire is set](docs/setup.md#a-tripwire-is-set)). The three runners use `78` for the same thing |
 
@@ -170,8 +170,9 @@ from, and says `No template provenance marker` when the vault has none. Some lin
 between the count line and those three. First a `vault-check: N link(s) refused` line, in both
 modes, when a link was refused: what it holds was not read, and the exit code is 2 unless a note
 violates an invariant, so `0 violation(s) across N` with exit 2 means some notes went unchecked.
-On a full scan only, a `vault-check: a content-tier folder could not be read in full` line means
-the same for a folder `find` could not read. Then, in both modes, for a vault with notes to warn
+On a full scan only, a `vault-check: N note(s) could not be read` line means the same for notes
+the scan listed and could not open, and a `vault-check: a content-tier folder could not be read in
+full` line for a folder `find` could not read. Then, in both modes, for a vault with notes to warn
 about (§4), `vault-check: WARNING:` lines and a
 `N warning(s)` line, which change neither the count nor the exit code. A scan narrowed with `--`
 prints those and nothing after them.
