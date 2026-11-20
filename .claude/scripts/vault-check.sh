@@ -192,6 +192,10 @@ note_facts() {
         k = keys[i]
         if ($0 ~ ("^" k ":")) {
           n[k]++
+          # tier:long - a value straight after the colon (Release C). These
+          # checks read the key; a YAML reader takes the line for text.
+          rest = substr(s, length(k) + 2)
+          if (rest != "" && rest !~ /^[ \t]/) nospace[k] = 1
           if (n[k] == 1) {
             v = $0
             sub(/^[^:]*:[ \t]*/, "", v)
@@ -224,6 +228,7 @@ note_facts() {
         printf "n_%s%s%d\n", k, us, n[k] + 0
         if (n[k] > 0) printf "r_%s%s%s\n", k, us, raw[k]
         if (k in odd) printf "spell%sthe key %s is also written as %s, which these checks do not read\n", us, k, odd[k]
+        if (k in nospace) printf "spell%sthe key %s has no space after its colon, so a YAML reader takes the line for text, not the key\n", us, k
         if (n[k] > 1) printf "spell%sthe key %s appears %d times; these checks read the first, a YAML reader the last\n", us, k, n[k]
       }
     }' "$1"

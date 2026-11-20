@@ -1330,6 +1330,13 @@ C3W_EOF
   # Every key the checks read is held to its spellings, created and tier too.
   d3_note 31-standards/w-created.md 'tier: long\ntype: standard\n"created": "2026-01-01"\n'
   d3_note 31-standards/w-duptier.md 'tier: long\ntier: long\ntype: standard\n'
+  # Release C: a key with its value straight after the colon. These checks
+  # read tier:long as the key, and a YAML reader takes the whole line for
+  # text, so the two disagree about whether the note has a tier at all. An
+  # empty value (w-empty.md's tier:) is no such line and stays unwarned, which
+  # the warning count below holds.
+  d3_note 31-standards/w-nospace.md 'tier:long\ntype: standard\n'
+  d3_note 31-standards/w-nospace-type.md 'tier: long\ntype:standard\n'
   d3_note 10-daily/w-daily.md 'tier: long\ntype: daily\n' 'a daily note'
   # A note at the wrong tier in every other folder the tier table names, so
   # each entry of that table is held by a warning.
@@ -1342,7 +1349,7 @@ C3W_EOF
   d3_out="$(c3_run "$D3V")"
   d3_bad=''
   [ "$(c3_rc "$d3_out")" = 0 ] || d3_bad="$d3_bad rc:$(c3_rc "$d3_out")"
-  [ "$(sentinel_violations "$d3_out")" = 0 ] && [ "$(sentinel_files "$d3_out")" = 20 ] || d3_bad="$d3_bad count-line"
+  [ "$(sentinel_violations "$d3_out")" = 0 ] && [ "$(sentinel_files "$d3_out")" = 22 ] || d3_bad="$d3_bad count-line"
   for d3_want in "31-standards/w-tier.md — tier 'banana' is not short, medium or long" \
                  "31-standards/w-empty.md — tier '' is not short, medium or long" \
                  "31-standards/w-folder.md — tier is short, but the folder it is in holds long-tier notes" \
@@ -1354,6 +1361,8 @@ C3W_EOF
                  "31-standards/w-squote.md — the key last_verified is also written as 'last_verified':" \
                  "31-standards/w-created.md — the key created is also written as \"created\":" \
                  "31-standards/w-duptier.md — the key tier appears 2 times" \
+                 "31-standards/w-nospace.md — the key tier has no space after its colon, so a YAML reader takes the line for text, not the key" \
+                 "31-standards/w-nospace-type.md — the key type has no space after its colon, so a YAML reader takes the line for text, not the key" \
                  "10-daily/w-daily.md — tier is long, but the folder it is in holds short-tier notes" \
                  "01-inbox/w-inbox.md — tier is long, but the folder it is in holds short-tier notes" \
                  "40-llm-wiki/raw/w-raw.md — tier is long, but the folder it is in holds short-tier notes" \
@@ -1365,7 +1374,7 @@ C3W_EOF
   printf '%s\n' "$d3_out" | grep -q '^vault-check: WARNING: 31-standards/good.md' && d3_bad="$d3_bad good-note-warned"
   printf '%s\n' "$d3_out" | grep -q '^vault-check: WARNING: 31-standards/commented.md' && d3_bad="$d3_bad inline-comment-warned"
   printf '%s\n' "$d3_out" | grep -q '^vault-check: WARNING: 31-standards/commented-quoted.md' && d3_bad="$d3_bad quoted-comment-warned"
-  printf '%s\n' "$d3_out" | grep -q '^vault-check: 17 warning(s)\. They change neither the count above nor the exit code' || d3_bad="$d3_bad no-summary"
+  printf '%s\n' "$d3_out" | grep -q '^vault-check: 19 warning(s)\. They change neither the count above nor the exit code' || d3_bad="$d3_bad no-summary"
   # The warnings come after the count line, never before it.
   d3_first="$(printf '%s\n' "$d3_out" | awk '/^vault-check: WARNING/ { print NR; exit }')"
   d3_count="$(printf '%s\n' "$d3_out" | awk '/ violation\(s\) across / { print NR; exit }')"
