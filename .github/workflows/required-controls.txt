@@ -10,7 +10,9 @@
 #
 # Name a platform only where the control can run there. A control that
 # legitimately skips on a platform fails that job for the wrong reason. Keep
-# the lines sorted, so two changes that add ids rarely touch the same line.
+# the lines in byte order (LC_ALL=C sort), so two changes that add ids rarely
+# touch the same line. That is a convention, not checked: the reader takes the
+# lines in any order.
 #
 # This file belongs to the template repository. It is excluded from the
 # template manifest, and ci.yml drops these requirements outside it.

@@ -251,17 +251,30 @@ jobs:
       # github.repository_id, because the id survives a rename and a guard by
       # name went false after one, silently skipping every guarded step. An id
       # typed wrong would skip them just as silently, so this step, guarded by
-      # nothing, checks the id against the name: the name with any other id
-      # fails, and the id with any other name says the repository was renamed.
+      # nothing, checks the id against the name: in the repository of that
+      # name, every comparison with an id anywhere in this file must be well
+      # formed and hold this repository's id, since each guard is a copy of its
+      # own; and the id with any other name says the repository was renamed.
       - name: The repository guard holds this repository's id
         env:
           BY_ID: ${{ github.repository_id == '1368450026' }}
           BY_NAME: ${{ github.repository == 'topazyo/claude-memory-vault' }}
         run: |
           echo "repository $GITHUB_REPOSITORY, id ${GITHUB_REPOSITORY_ID:-unknown}: guarded steps run: $BY_ID"
-          if [ "$BY_NAME" = true ] && [ "$BY_ID" != true ]; then
-            echo "::error title=The repository guard holds the wrong id::This is the template repository by name, but ci.yml's guards hold an id that is not ${GITHUB_REPOSITORY_ID:-its id}, so every guarded step skips."
-            exit 1
+          if [ "$BY_NAME" = true ]; then
+            # The word is split here so that this line is not one of the
+            # matches; comment lines are left out, since they guard nothing.
+            q='repository''_id'
+            grep -v '^[[:space:]]*#' .github/workflows/ci.yml > "$RUNNER_TEMP/ci.code"
+            all=$(grep -o "$q" "$RUNNER_TEMP/ci.code" | wc -l)
+            grep -o "$q == '[0-9]*'" "$RUNNER_TEMP/ci.code" | sed "s/^.*== '//; s/'\$//" | sort | uniq -c > "$RUNNER_TEMP/ids"
+            formed=$(awk '{ n += $1 } END { print n + 0 }' "$RUNNER_TEMP/ids")
+            echo "ci.yml compares an id $all time(s), $formed of them as $q == '<digits>': $(awk '{ printf "%s x%s ", $2, $1 }' "$RUNNER_TEMP/ids")"
+            if [ "$all" -eq 0 ] || [ "$formed" -ne "$all" ] || [ "$(wc -l < "$RUNNER_TEMP/ids")" -ne 1 ] \
+              || [ "$(awk '{ print $2 }' "$RUNNER_TEMP/ids")" != "${GITHUB_REPOSITORY_ID:-}" ]; then
+              echo "::error title=A repository guard holds the wrong id::This is the template repository by name, and its id is ${GITHUB_REPOSITORY_ID:-unknown}, but not every comparison with an id in ci.yml is $q == '${GITHUB_REPOSITORY_ID:-<id>}' (counts above), so the steps a wrong one guards skip without a word."
+              exit 1
+            fi
           fi
           if [ "$BY_ID" = true ] && [ "$BY_NAME" != true ]; then
             echo "::notice title=The repository was renamed::The guards still hold, by id. Update the name in this step and in CONTRIBUTING.md."
@@ -328,9 +341,10 @@ jobs:
       #
       # The ids are in required-controls.txt since Release C. A base from
       # before that holds them in four RUN_TESTS_REQUIRED lines of ci.yml
-      # instead, so a side with no such file is read the old way. This side
-      # always has the file: without it the old reading finds no list here and
-      # the step fails.
+      # instead, so a base with no such file is read the old way, and a base
+      # with one is read with its own required-controls.awk, so a change to the
+      # reader cannot hide an id on both sides at once. This side must have
+      # the file.
       #
       # The side compared against is what this change lands on: on a pull
       # request the checkout is the merge commit, whose first parent is the
@@ -354,19 +368,22 @@ jobs:
           echo "comparing with $base ($(git rev-parse --short "$base" 2>/dev/null || echo unknown)${GITHUB_BASE_REF:+, $GITHUB_BASE_REF})"
           git show "$base:.github/workflows/ci.yml" > /tmp/ci.base.yml \
             || { echo "::error title=No base to compare::ci.yml could not be read at $base."; exit 1; }
+          [ -s .github/workflows/required-controls.txt ] \
+            || { echo "::error title=No list of required controls::.github/workflows/required-controls.txt is missing or empty here, so no id is required anywhere."; exit 1; }
           if git cat-file -e "$base:.github/workflows/required-controls.txt" 2>/dev/null; then
-            git show "$base:.github/workflows/required-controls.txt" > /tmp/req.base \
-              || { echo "::error title=No base to compare::required-controls.txt could not be read at $base."; exit 1; }
+            { git show "$base:.github/workflows/required-controls.txt" > /tmp/req.base \
+                && git show "$base:.github/workflows/required-controls.awk" > /tmp/req.base.awk; } \
+              || { echo "::error title=No base to compare::required-controls.txt or its reader could not be read at $base."; exit 1; }
           else
             : > /tmp/req.base
           fi
-          # arms <ci.yml> <required-controls.txt> - one line per list: its
-          # position (list1 windows-latest, list2 ubuntu-latest, list3
-          # macos-latest, list4 bash 3.2), then its ids. An empty or missing
-          # list file means the side predates it, so ci.yml's own lines are read.
+          # arms <ci.yml> <required-controls.txt> <reader> - one line per list:
+          # its position (list1 windows-latest, list2 ubuntu-latest, list3
+          # macos-latest, list4 bash 3.2), then its ids. An empty list file
+          # means the base predates it, so ci.yml's own lines are read.
           arms() {
             if [ -s "$2" ]; then
-              awk -v want=lists -f .github/workflows/required-controls.awk "$2"
+              awk -v want=lists -f "$3" "$2"
             else
               awk '/^[ \t]*RUN_TESTS_REQUIRED:/ {
                 if (index($0, "matrix.os")) {
@@ -376,9 +393,9 @@ jobs:
               }' "$1"
             fi
           }
-          arms /tmp/ci.base.yml /tmp/req.base > /tmp/arms.base \
+          arms /tmp/ci.base.yml /tmp/req.base /tmp/req.base.awk > /tmp/arms.base \
             || { echo "::error title=The lists could not be read::required-controls.txt at $base was refused; the line above says why."; exit 1; }
-          arms .github/workflows/ci.yml .github/workflows/required-controls.txt > /tmp/arms.head \
+          arms .github/workflows/ci.yml .github/workflows/required-controls.txt .github/workflows/required-controls.awk > /tmp/arms.head \
             || { echo "::error title=The lists could not be read::required-controls.txt was refused; the line above says why."; exit 1; }
           [ "$(wc -l < /tmp/arms.base)" -eq 4 ] && [ "$(wc -l < /tmp/arms.head)" -eq 4 ] \
             || { echo "::error title=The lists could not be read::Expected four lists on each side, found $(wc -l < /tmp/arms.base) at $base and $(wc -l < /tmp/arms.head) here."; exit 1; }
@@ -461,18 +478,21 @@ jobs:
           done
           [ "$bad" -eq 0 ]
 
-      # The loops below read git ls-files -z, so a name with a space is one
-      # file, and each fails on an empty list: a pathspec that matches nothing,
-      # after a rename or a typo, would otherwise pass having checked nothing.
+      # The steps below that check every tracked file of a kind list them with
+      # tracked.sh beside this file: NUL-separated, read on descriptor 3, and a
+      # list that matches nothing fails here and is a notice in a vault. Its
+      # header says why.
       - name: Every shell script parses
+        env:
+          TEMPLATE_REPO: ${{ github.repository_id == '1368450026' }}
         run: |
           rc=0
+          . .github/workflows/tracked.sh
           # Git hooks have no .sh extension, so they are listed separately.
-          git ls-files -z -- '*.sh' '.claude/githooks/*' > "$RUNNER_TEMP/files" || { echo "::error::git ls-files failed"; exit 1; }
-          [ -s "$RUNNER_TEMP/files" ] || { echo "::error title=Nothing was checked::no tracked file matches *.sh or .claude/githooks/*"; exit 1; }
-          while IFS= read -r -d '' f; do
+          tracked '*.sh' '.claude/githooks/*'
+          while IFS= read -r -d '' -u 3 f; do
             bash -n "$f" || { echo "::error file=$f::syntax error"; rc=1; }
-          done < "$RUNNER_TEMP/files"
+          done 3< "$RUNNER_TEMP/files"
           exit $rc
 
       # Advisory, not gating. Several warnings here would be deliberate - the
@@ -490,28 +510,32 @@ jobs:
       # cannot catch that.
       - name: shellcheck (advisory)
         continue-on-error: true
+        env:
+          TEMPLATE_REPO: ${{ github.repository_id == '1368450026' }}
         run: |
           shellcheck --version
-          git ls-files -z -- '*.sh' '.claude/githooks/*' > "$RUNNER_TEMP/files" || { echo "::error::git ls-files failed"; exit 1; }
-          [ -s "$RUNNER_TEMP/files" ] || { echo "::error title=Nothing was checked::no tracked file matches *.sh or .claude/githooks/*"; exit 1; }
-          while IFS= read -r -d '' f; do
+          . .github/workflows/tracked.sh
+          tracked '*.sh' '.claude/githooks/*'
+          while IFS= read -r -d '' -u 3 f; do
             if [ "$f" = .claude/scripts/run-tests.sh ]; then
               echo "--- $f: skipped, too large for shellcheck on this runner (see the comment in ci.yml)"
               continue
             fi
             echo "--- $f"
             shellcheck --severity=warning "$f" || true
-          done < "$RUNNER_TEMP/files"
+          done 3< "$RUNNER_TEMP/files"
 
       - name: Every JSON file parses
+        env:
+          TEMPLATE_REPO: ${{ github.repository_id == '1368450026' }}
         run: |
           rc=0
-          git ls-files -z -- '*.json' > "$RUNNER_TEMP/files" || { echo "::error::git ls-files failed"; exit 1; }
-          [ -s "$RUNNER_TEMP/files" ] || { echo "::error title=Nothing was checked::no tracked file matches *.json"; exit 1; }
-          while IFS= read -r -d '' f; do
+          . .github/workflows/tracked.sh
+          tracked '*.json'
+          while IFS= read -r -d '' -u 3 f; do
             python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$f" \
               || { echo "::error file=$f::invalid JSON"; rc=1; }
-          done < "$RUNNER_TEMP/files"
+          done 3< "$RUNNER_TEMP/files"
           exit $rc
 
       # OpenCode runs every file in .opencode/plugins/ at startup without a trust
@@ -618,66 +642,66 @@ jobs:
       # them, and a syntax error in each fails silently: the harness skips the
       # file and runs with no hooks at all.
       - name: Harness configs parse (TOML, YAML, plugin JavaScript)
+        env:
+          TEMPLATE_REPO: ${{ github.repository_id == '1368450026' }}
         run: |
           rc=0
-          tracked() {  # tracked <pathspec>... - the matching tracked names, NUL-separated, in $RUNNER_TEMP/files; none fails
-            git ls-files -z -- "$@" > "$RUNNER_TEMP/files" || { echo "::error::git ls-files failed"; exit 1; }
-            [ -s "$RUNNER_TEMP/files" ] || { echo "::error title=Nothing was checked::no tracked file matches $*"; exit 1; }
-          }
+          . .github/workflows/tracked.sh
           tracked '*.toml'
-          while IFS= read -r -d '' f; do
+          while IFS= read -r -d '' -u 3 f; do
             python3 -c "import tomllib,sys; tomllib.load(open(sys.argv[1],'rb'))" "$f" \
               || { echo "::error file=$f::invalid TOML"; rc=1; }
-          done < "$RUNNER_TEMP/files"
+          done 3< "$RUNNER_TEMP/files"
           tracked '*.yml' '*.yaml'
-          while IFS= read -r -d '' f; do
+          while IFS= read -r -d '' -u 3 f; do
             ruby -ryaml -e 'YAML.load_file(ARGV[0])' "$f" \
               || { echo "::error file=$f::invalid YAML"; rc=1; }
-          done < "$RUNNER_TEMP/files"
+          done 3< "$RUNNER_TEMP/files"
           # The adapters are ES modules, and under .mjs every Node parses them as
           # one. The pathspec's * crosses folders, so it reaches each adapter.
           tracked '.claude/adapters/*.js'
-          while IFS= read -r -d '' f; do
+          while IFS= read -r -d '' -u 3 f; do
             cp "$f" "$RUNNER_TEMP/plugin-check.mjs"
             node --check "$RUNNER_TEMP/plugin-check.mjs" \
               || { echo "::error file=$f::invalid JavaScript"; rc=1; }
-          done < "$RUNNER_TEMP/files"
+          done 3< "$RUNNER_TEMP/files"
           exit $rc
 
       # Windows has no executable bit, so scripts committed from a Windows
       # machine land as 100644 and `./script.sh` fails on a Linux clone.
       - name: Shell scripts are executable in the index
+        env:
+          TEMPLATE_REPO: ${{ github.repository_id == '1368450026' }}
         run: |
           rc=0
+          . .github/workflows/tracked.sh
           # Each entry is "<mode> <object> <stage><TAB><name>", read whole, so
           # the name is never used as a pathspec of its own.
-          git ls-files -s -z -- '*.sh' '.claude/githooks/*' > "$RUNNER_TEMP/files" || { echo "::error::git ls-files failed"; exit 1; }
-          [ -s "$RUNNER_TEMP/files" ] || { echo "::error title=Nothing was checked::no tracked file matches *.sh or .claude/githooks/*"; exit 1; }
-          while IFS= read -r -d '' entry; do
+          tracked -s '*.sh' '.claude/githooks/*'
+          while IFS= read -r -d '' -u 3 entry; do
             mode=${entry%% *}
             f=${entry#*$'\t'}
             [ "$mode" = "100755" ] || { echo "::error file=$f::mode $mode, expected 100755"; rc=1; }
-          done < "$RUNNER_TEMP/files"
+          done 3< "$RUNNER_TEMP/files"
           exit $rc
 
       # A skill without a name: key silently never registers, which is the worst
       # kind of breakage - nothing errors, the skill simply does not exist.
       - name: Skills and agents declare their frontmatter keys
+        env:
+          TEMPLATE_REPO: ${{ github.repository_id == '1368450026' }}
         run: |
           rc=0
-          tracked() {  # tracked <pathspec>... - the matching tracked names, NUL-separated, in $RUNNER_TEMP/files; none fails
-            git ls-files -z -- "$@" > "$RUNNER_TEMP/files" || { echo "::error::git ls-files failed"; exit 1; }
-            [ -s "$RUNNER_TEMP/files" ] || { echo "::error title=Nothing was checked::no tracked file matches $*"; exit 1; }
-          }
+          . .github/workflows/tracked.sh
           tracked '.claude/skills/*/SKILL.md'
-          while IFS= read -r -d '' f; do
+          while IFS= read -r -d '' -u 3 f; do
             grep -q '^name:' "$f" || { echo "::error file=$f::missing name: key"; rc=1; }
-          done < "$RUNNER_TEMP/files"
+          done 3< "$RUNNER_TEMP/files"
           tracked '.claude/agents/*.md'
-          while IFS= read -r -d '' f; do
+          while IFS= read -r -d '' -u 3 f; do
             grep -q '^name:' "$f"  || { echo "::error file=$f::missing name: key"; rc=1; }
             grep -q '^tools:' "$f" || { echo "::error file=$f::missing tools: key"; rc=1; }
-          done < "$RUNNER_TEMP/files"
+          done 3< "$RUNNER_TEMP/files"
           exit $rc
 
       # Counts written into prose drift the moment someone adds a skill or an

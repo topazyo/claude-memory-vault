@@ -334,8 +334,10 @@ skipped on a pull request that touches nothing matching the filter, and a review
 checks list cannot tell a skip from a pass. This one runs on every pull request and every push to
 `main` here, including pull requests from forks, because `github.repository_id` is still this
 repository's for those. The guards hold the repository's numeric id rather than its name, so a
-rename does not turn them off, and an unguarded hygiene step fails when the name is this
-repository's but the id is not, so an id typed wrong cannot turn them off silently either.
+rename does not turn them off. Each guard is its own copy of the id, so an unguarded hygiene step
+fails, in the repository of this name, when any comparison with an id in `ci.yml` is not
+`repository_id == '<this repository's id>'`, and a copy typed wrong cannot turn its step off
+silently either.
 
 It skips everywhere else, and that includes **pushes to your own fork** as well as a repository
 made with "Use this template". This is the same wrinkle the manifest step has above, and it has the
