@@ -6395,12 +6395,14 @@ fi
 # written, so a scope moved earlier or joined with || fails here.
 sp_bad=''
 sp_elif='  elif [ "$AGENT_RUNNING" -eq 1 ] && [ "$RUN_LOG_APPENDED" -eq 0 ] && [ "${RUN_KILL_FAILED:-0}" -eq 1 ] && [ "$KILL_FAILED_MARKED" -eq 0 ]; then'
+# The handler is the library's from 1.7.5, once for both runners.
+[ "$(grep -cxF -- "$sp_elif" "$RV/.claude/scripts/lib/runner-common.sh")" = 1 ] || sp_bad="$sp_bad lib:elif-not-as-written"
 for sp_f in dream-pass promotion-pass; do
   sp_set="$(awk '/^  AGENT_RUNNING=1$/ { print NR; exit }' "$RV/.claude/scripts/$sp_f.sh")"
   sp_run="$(awk '/^  run_agent "\$TIMEOUT"/ { print NR; exit }' "$RV/.claude/scripts/$sp_f.sh")"
   sp_pend="$(awk '/^  STOP_REPORT_PENDING="\$\{RUN_KILL_FAILED/ { print NR; exit }' "$RV/.claude/scripts/$sp_f.sh")"
   sp_clear="$(awk '/^  AGENT_RUNNING=0$/ { print NR; exit }' "$RV/.claude/scripts/$sp_f.sh")"
-  grep -qxF -- "$sp_elif" "$RV/.claude/scripts/$sp_f.sh" || sp_bad="$sp_bad $sp_f:elif-not-as-written"
+  grep -q 'runner_on_signal' "$RV/.claude/scripts/$sp_f.sh" || sp_bad="$sp_bad $sp_f:handler-not-the-library's"
   [ "$(grep -c 'AGENT_RUNNING=1' "$RV/.claude/scripts/$sp_f.sh")" = 1 ] || sp_bad="$sp_bad $sp_f:set-more-than-once"
   if [ -n "$sp_set" ] && [ -n "$sp_run" ] && [ -n "$sp_pend" ] && [ -n "$sp_clear" ]; then
     { [ "$sp_run" -eq $((sp_set + 1)) ] && [ "$sp_run" -lt "$sp_pend" ] && [ "$sp_clear" -eq $((sp_pend + 1)) ]; } \
@@ -8778,11 +8780,23 @@ else
     new_case_state h13-lnk
     rm -f "$TMP/h13-rec.argv"
     h13_rc="$(RUNNER_VAULT="$TMP/h13-lnk" runner dream-pass.sh journal FAKE_RECORD="$TMP/h13-rec" PATH="$TMP/h13-lnk-out:$PATH")"
+    h13_lrc="$h13_rc"
+    # And a PATH folder outside the vault that is itself a link to a vault
+    # folder: only the folder's resolved path shows where the tool is.
+    h13_vault dln
+    mkdir -p "$TMP/h13-dln/tools"
+    printf '#!/bin/sh\nexec cksum "$@"\n' > "$TMP/h13-dln/tools/sha256sum"
+    chmod +x "$TMP/h13-dln/tools/sha256sum"
+    rm -f "$TMP/h13-dln-out"
+    ln -s "$TMP/h13-dln/tools" "$TMP/h13-dln-out" 2>/dev/null
+    new_case_state h13-dln
+    rm -f "$TMP/h13-rec.argv"
+    h13_rc="$(RUNNER_VAULT="$TMP/h13-dln" runner dream-pass.sh journal FAKE_RECORD="$TMP/h13-rec" PATH="$TMP/h13-dln-out:$PATH")"
     ran h13-link-into-vault
-    if h13_refused lnk sha256sum "$h13_rc"; then
-      ok "a sha256sum outside the vault that links to a file in it is refused, exit 1, before the agent starts"
+    if h13_refused lnk sha256sum "$h13_lrc" && [ -L "$TMP/h13-dln-out" ] && h13_refused dln sha256sum "$h13_rc"; then
+      ok "a sha256sum outside the vault that links to a file in it, or in a PATH folder that links to a vault folder, is refused, exit 1, before the agent starts"
     else
-      bad "a sha256sum linking into the vault was not refused -- exit $h13_rc, log: $(h13_tail lnk)"
+      bad "a sha256sum reached through a link into the vault was not refused -- file link: exit $h13_lrc, log: $(h13_tail lnk); folder link: exit $h13_rc, log: $(h13_tail dln)"
     fi
   fi
   # The mid-pass case: a vault folder is on PATH but empty when the pass starts,
@@ -8822,7 +8836,38 @@ H13_EOF
     bad "a pass that planted forging tools on PATH hid its change to CLAUDE.md -- exit $h13_rc, CLAUDE.md: $(tr '\n' '|' < "$TMP/h13-mid/CLAUDE.md" 2>/dev/null), log: $(h13_tail mid)"
   fi
 fi
-rm -rf "$TMP"/h13-sha "$TMP"/h13-ck "$TMP"/h13-rel "$TMP"/h13-lnk "$TMP"/h13-lnk-out "$TMP"/h13-mid "$TMP"/h13-mid-pristine "$TMP/h13-mid-plant.sh"
+rm -rf "$TMP"/h13-sha "$TMP"/h13-ck "$TMP"/h13-rel "$TMP"/h13-lnk "$TMP"/h13-lnk-out "$TMP"/h13-dln "$TMP"/h13-dln-out "$TMP"/h13-mid "$TMP"/h13-mid-pristine "$TMP/h13-mid-plant.sh"
+
+# No cksum at all: the fence records every file with it, so the runner
+# refuses. Function level, with a PATH that finds nothing (every command the
+# function runs on this path is a builtin).
+mkdir -p "$TMP/h13-nopath"
+: > "$TMP/h13-nock.log"
+h13_got="$( . "$ROOT/.claude/scripts/lib/runner-common.sh"
+  # ts finds no date here, which is no missing command of the suite's.
+  unset -f command_not_found_handle
+  PATH="$TMP/h13-nopath"
+  fence_tools_pin "$TMP/h13-nopath" "$TMP/h13-nock.log"
+  printf 'rc=%s tool=%s' "$?" "${RUNNER_CKSUM:-none}" )"
+ran h13-no-cksum
+if [ "$h13_got" = 'rc=1 tool=none' ] && grep -q 'ERROR: no cksum was found on PATH' "$TMP/h13-nock.log"; then
+  ok "a PATH with no cksum on it is refused, with the ERROR line"
+else
+  bad "a PATH with no cksum was not refused -- got: $h13_got, log: $(tr '\n' '|' < "$TMP/h13-nock.log")"
+fi
+rm -rf "$TMP/h13-nopath" "$TMP/h13-nock.log"
+
+# An import list that is named but cannot be read makes every path but the
+# logs steering, so the run fences them all rather than none (H2, 1.7.5).
+h2_got="$( . "$ROOT/.claude/scripts/lib/runner-common.sh"
+  printf '31-standards/x.md\n.claude/logs/dream-agent.log\n' \
+    | STEERING_IMPORTS_FILE="$TMP/no-such-imports-list" steering_filter | tr '\n' ' ' )"
+ran h2-imports-unreadable
+if [ "$h2_got" = '31-standards/x.md ' ]; then
+  ok "an import list that cannot be read makes every path steering, the runner's logs aside"
+else
+  bad "an unreadable import list -- expected '31-standards/x.md ', got: '$h2_got'"
+fi
 
 # H2 (1.7.5): a file the vault's instruction files import loads into every
 # session as instructions, so it is a steering file: a pass that changes or

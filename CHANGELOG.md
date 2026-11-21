@@ -25,6 +25,87 @@ bash .claude/scripts/vault-update.sh --check --from ../template-new
 
 ---
 
+## 1.7.5 — 2026-11-21
+
+The runner and lint half of the work planned after 1.7.2's review: two gaps in what the fence
+trusts, the dream and promotion runners' handlers moved into their library, a stop that never
+ended on Windows, and the lint reading paths the way the checker does. The documentation half
+(first-run checks per system, troubleshooting by exit code, a merge recipe, a glossary) follows in
+1.7.6.
+
+### Changed
+
+- **A file the vault's instruction files import is a steering file.** `CLAUDE.md` imports
+  `ARCH-INDEX`, and what it imports loads into every session as instructions, but until now a
+  pass that rewrote it was only reported, and the change was left. The dream and promotion runners
+  now list, before each pass, every file the root `CLAUDE.md`, `AGENTS.md` or `CLAUDE.local.md`,
+  or `.claude/CLAUDE.md`, imports with `@path`, followed to the end, and a change to one is put
+  back and sets the tripwire, as for `CLAUDE.md` itself. `docs/reference.md` (§4.3, Containment)
+  gives the rules the list follows.
+- **The runners refuse a hash tool `PATH` finds in the vault.** None of the three runners sets
+  `PATH`, so a vault folder on it let a pass replace the `sha256sum`, `shasum` or `cksum` that
+  records the vault before and after it. Each runner now finds the three once, before anything
+  else, refuses (exit 1) when one is in the vault or a link leads there, or when there is no
+  `cksum`, and runs those for the rest of the run, so a tool planted on `PATH` during the pass is
+  never run. A relative or empty `PATH` entry is the vault root while a runner runs.
+- **An agent's own exit 126 leaves as 79.** 126 is now reserved as 127 is: a binary or wrapper
+  that cannot be started at all (not executable, a folder, its `#!` interpreter missing or not
+  executable) keeps the shell's 126, and an agent that leaves with 126 itself leaves as 79 with an
+  `AGENT-STATUS:` line. Until now every 126 passed through, so the two read alike.
+- **The dream and promotion runners' exit and signal handlers are in `lib/runner-common.sh`.**
+  They were two identical copies. A runner whose library lacks them refuses (exit 1) before any
+  lock or state, with an `ERROR:` line saying the two come from different releases. The retention
+  runner keeps its own, which do different work.
+- **vault-check's warnings become violations in 1.8.0.** `AGENTS.md`, `README.md`,
+  `docs/customizing.md`, `docs/reference.md` and vault-check's own summary line said "a later
+  release"; they now name it.
+
+### Fixed
+
+- **A wrapper that runs itself again by exec is stopped on Windows.** Under Git Bash exec keeps a
+  process's pid and moves it to a new Windows process, and the stop knew a process only by its
+  Windows id, so it took the successor for a reused id, left it running, reported nothing alive,
+  and the runner waited for it for ever (found in 1.7.3 with a `#!/usr/bin/env FOO=1 cmd` wrapper,
+  which `env` runs again and again). A listed process now also counts while its parent is the
+  listed one.
+- **The lint reads a backslash as the checker does.** Outside Windows a backslash is part of a
+  name, so a note named `a\b.md` is linted as itself; it was logged `DEGRADED` and not linted.
+- **The lint reads a path through a folder spelled with a trailing dot on Windows.** Win32 opens
+  `<vault>./.claude/rules/r.md` as `.claude/rules/r.md`, which Git Bash's test does not find by
+  that name, so the lint logged `DEGRADED` and scanned nothing, a steering file included. It now
+  reads the file Win32 opens, and its log line names both.
+- **`tmpl-rename-table` says git cannot answer** in a template tree with no repository of its own,
+  instead of reporting every row stale; and `c18-release-gate` no longer packs a whole vault that
+  still holds a stale `.github/release-check.sh` (about a minute on Linux).
+
+### Tests
+
+New controls for each change above, and for gaps 1.7.2's review left: `same_as_snap` with no
+SHA-256 tool, a failed write to `record_leftovers`' lists, the D3 `tab-ok` note named outright, and
+the retry control's link arm under an id of its own, required only where a link can be made.
+
+### Adopting this
+
+1. **Take `lib/runner-common.sh`, `dream-pass.sh`, `promotion-pass.sh` and `vault-retention.sh`
+   together.** A 1.7.5 runner refuses an older library (exit 1, `ERROR: lib/runner-common.sh has
+   no runner_on_exit`), and the retention runner refuses one without `fence_tools_pin`.
+2. **Check that no vault folder is on the scheduler's `PATH`.** If one is, and it holds a
+   `sha256sum`, `shasum` or `cksum`, or the scheduled command's `PATH` has an empty or `.` entry
+   and the vault root holds one, every pass now exits 1 with the line naming it. Take the folder
+   off `PATH` for the runners.
+3. **A pass that edits a note your `CLAUDE.md` imports now sets the tripwire.** If you have asked a
+   pass to keep such a note up to date, it will be put back each time; take the `@` import out of
+   `CLAUDE.md`, or stop asking the pass to edit it.
+4. **A script that reads a runner's 126 as the agent's own** now sees 79 for that case.
+5. Read the new `WARNING` lines vault-check prints, if you have not: in 1.8.0 they become
+   violations, exit 1.
+6. The shipped files this release touches are `.claude/hooks/vault-lint.sh`,
+   `.claude/scripts/{dream-pass.sh,promotion-pass.sh,vault-retention.sh,vault-check.sh,run-tests.sh}`,
+   `.claude/scripts/lib/runner-common.sh`, `AGENTS.md`, `README.md`, `docs/customizing.md` and
+   `docs/reference.md`, plus `VERSION`, this file and `.claude/template-manifest`.
+
+---
+
 ## 1.7.4 — 2026-11-20
 
 A one-fix patch for a control 1.7.3 added, found by carrying 1.7.3 into a vault.

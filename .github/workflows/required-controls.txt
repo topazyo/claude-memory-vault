@@ -208,6 +208,7 @@ git-env-cleared ubuntu macos windows
 groupkill ubuntu macos
 h13-cksum-in-vault ubuntu macos windows
 h13-link-into-vault ubuntu macos
+h13-no-cksum ubuntu macos windows
 h13-pin-midpass ubuntu macos windows
 h13-relative-path ubuntu macos windows
 h13-sha-in-vault ubuntu macos windows
@@ -218,6 +219,7 @@ h2-import-crlf ubuntu macos windows
 h2-import-nested ubuntu macos windows
 h2-import-outside ubuntu macos windows
 h2-import-promotion ubuntu macos windows
+h2-imports-unreadable ubuntu macos windows
 h8a-dot-steering windows
 h8a-dot-tier windows
 head-holds-unknown ubuntu macos windows

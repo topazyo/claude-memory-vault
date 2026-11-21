@@ -65,7 +65,7 @@ lint_is_win() {
 }
 
 # norm_slashes <path> - sets NORM_OUT to <path> with backslashes turned into
-# slashes on Windows, runs of slashes and . parts dropped, each part's trailing dots and
+# slashes, runs of slashes and . parts dropped, each part's trailing dots and
 # spaces removed, which Win32 drops from every part of a path, not only the
 # last, and each .. taken out with the part before it, as Win32 resolves it
 # before it touches the disk. A .. with nothing before it to take out stays,
@@ -78,8 +78,9 @@ lint_is_win() {
 # a file reads that form: on Linux or macOS `templates.` is a folder of its own,
 # not `templates`, and a skip must never match more than is really there.
 norm_slashes() {
-  local p="$1" strip="${2:-strip}" rest part out="" n=0 first=1
-  case "$p" in *\\*) lint_is_win && p="${p//\\//}" ;; esac
+  # Every backslash, on every platform: this decides scope only, which scans
+  # more, not less, and the file read keeps its own name (lint_is_win).
+  local p="${1//\\//}" strip="${2:-strip}" rest part out="" n=0 first=1
   # The replacement is a bare /: bash before 5.2 keeps a backslash written in
   # the replacement, so \/ there gave .claude\/rules on macOS's bash 3.2.
   while :; do case "$p" in *//*) p="${p//\/\///}" ;; *) break ;; esac; done

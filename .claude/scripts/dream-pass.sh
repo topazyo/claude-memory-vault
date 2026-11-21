@@ -72,7 +72,10 @@
 #        ending in a dot, a colon that is not a drive letter's or a last part
 #        ending in a space, or the temporary folder is refused (above), or the
 #        runner could not record its folder for the pass, or its library comes
-#        from another release (no record of that folder was taken)
+#        from another release (no record of that folder was taken, or, from
+#        1.7.5, no runner_on_exit in it), or PATH finds a sha256sum, shasum or
+#        cksum in the vault or through a link into it, or no cksum at all, or
+#        the files the vault's instruction files import could not be listed
 #   2    VIOLATION: files outside the dream journals changed during the run
 #        (steering surfaces among them are contained and the tripwire is set),
 #        or the pass changed a journal that already had uncommitted changes, or
