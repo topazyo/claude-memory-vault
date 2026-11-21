@@ -197,6 +197,7 @@ fence-crc-forgery ubuntu macos windows
 fence-crc-forgery-existing-note ubuntu macos windows
 fence-crc-forgery-imported-note ubuntu macos windows
 fence-crc-forgery-leftover ubuntu macos windows
+fence-crc-forgery-planted-sha ubuntu macos windows
 fence-digest-shape-checked ubuntu macos windows
 fence-git-common-plain ubuntu macos windows
 fence-git-common-worktree ubuntu macos windows
@@ -210,6 +211,7 @@ h13-cksum-in-vault ubuntu macos windows
 h13-link-into-vault ubuntu macos
 h13-no-cksum ubuntu macos windows
 h13-pin-midpass ubuntu macos windows
+h13-pin-midpass-cksum-only ubuntu macos windows
 h13-relative-path ubuntu macos windows
 h13-sha-in-vault ubuntu macos windows
 h2-import-contained ubuntu macos windows

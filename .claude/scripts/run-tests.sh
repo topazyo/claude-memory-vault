@@ -8099,6 +8099,34 @@ else
   else
     bad "a same-size, same-cksum rewrite of CLAUDE.md passed the fence -- changed: [$scr_changed]"
   fi
+  # H13 (1.7.5): the tools are pinned before the pass, so a sha256sum planted
+  # on PATH ahead of the real one before the second snapshot, answering for
+  # CLAUDE.md as it was, is never run, and the same forged rewrite is seen.
+  # Only the SHA-256 line can see this rewrite, so this holds the pin snap_tool
+  # returns on its own.
+  cp "$SCR/orig" "$SCR/vault/CLAUDE.md"
+  mkdir -p "$SCR/plant" "$SCR/pristine"
+  cp "$SCR/orig" "$SCR/pristine/CLAUDE.md"
+  scr_real="$(command -v sha256sum || command -v shasum)"
+  scr_name="${scr_real##*/}"
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'a=(); o=""\n'
+    printf 'for x in "$@"; do case "$x" in */CLAUDE.md) o="$x"; a+=("%s");; *) a+=("$x");; esac; done\n' "$SCR/pristine/CLAUDE.md"
+    printf 'if [ -n "$o" ]; then "%s" "${a[@]}" | sed "s|%s|$o|"; else "%s" "${a[@]}"; fi\n' "$scr_real" "$SCR/pristine/CLAUDE.md" "$scr_real"
+  } > "$SCR/plant/$scr_name"
+  chmod +x "$SCR/plant/$scr_name"
+  scr_planted="$( . "$ROOT/.claude/scripts/lib/runner-common.sh" && fence_tools_pin "$SCR/vault" "$SCR/pin.log" \
+    && snapshot_tree "$SCR/vault" "$SCR/before3" && cp "$SCR/forged" "$SCR/vault/CLAUDE.md" \
+    && PATH="$SCR/plant:$PATH" && snapshot_tree "$SCR/vault" "$SCR/after3" \
+    && changed_paths "$SCR/before3" "$SCR/after3" | tr '\n' '|')"
+  ran fence-crc-forgery-planted-sha
+  if [ "$scr_planted" = 'CLAUDE.md|' ]; then
+    ok "a forged rewrite of CLAUDE.md is still seen when a forging $scr_name is planted on PATH after the tools were pinned"
+  else
+    bad "a $scr_name planted on PATH after the pin hid a forged rewrite of CLAUDE.md -- changed: [$scr_planted], pin log: $(tr '\n' '|' < "$SCR/pin.log" 2>/dev/null)"
+  fi
+  cp "$SCR/orig" "$SCR/vault/CLAUDE.md"
   # The same forgery of a note that an instruction file imports. CLAUDE.md
   # loads ARCH-INDEX into every session, and before round 2 of the 1.7.1 review
   # only steering files had the SHA-256 line, so the note passed unseen.
@@ -8740,6 +8768,7 @@ if command -v git >/dev/null 2>&1 && git -C "$TMP" rev-parse --is-inside-work-tr
   skip h13-relative-path 'the temporary folder is inside a git work tree'
   skip h13-link-into-vault 'the temporary folder is inside a git work tree'
   skip h13-pin-midpass 'the temporary folder is inside a git work tree'
+  skip h13-pin-midpass-cksum-only 'the temporary folder is inside a git work tree'
 else
   # A sha256sum in a vault folder on PATH, ahead of the system's.
   h13_vault sha
@@ -8857,8 +8886,31 @@ H13_EOF
   else
     bad "a pass that planted forging tools on PATH hid its change to CLAUDE.md -- exit $h13_rc, CLAUDE.md: $(tr '\n' '|' < "$TMP/h13-mid/CLAUDE.md" 2>/dev/null), log: $(h13_tail mid)"
   fi
+  # The same on a machine with no sha256sum or shasum, where cksum alone sees
+  # the change, so this holds the pinned cksum on its own. The two are hidden
+  # as snapshot-sealed hides them: exported functions, which command -v names
+  # without a path.
+  h13_vault mid2
+  mkdir -p "$TMP/h13-mid-pristine"
+  sha256sum() { return 1; }
+  shasum() { return 1; }
+  export -f sha256sum shasum
+  new_case_state h13-mid2
+  h13_rc="$(RUNNER_VAULT="$TMP/h13-mid2" runner dream-pass.sh script FAKE_SCRIPT="$TMP/h13-mid-plant.sh" \
+    H13_PRISTINE="$TMP/h13-mid-pristine" H13_SYSPATH="$PATH" PATH="$TMP/h13-mid2/bin:$PATH")"
+  unset -f sha256sum shasum
+  ran h13-pin-midpass-cksum-only
+  if [ ! -x "$TMP/h13-mid2/bin/cksum" ]; then
+    bad "the mid-pass case with cksum alone -- fixture: the pass planted no cksum (exit $h13_rc, log: $(h13_tail mid2))"
+  elif ! grep -q 'WARNING: no sha256sum or shasum was found' "$TMP/h13-mid2/.claude/logs/dream-agent.log" 2>/dev/null; then
+    bad "the mid-pass case with cksum alone -- fixture: the runner found a sha256sum or shasum, so cksum did not stand alone (exit $h13_rc)"
+  elif [ "$h13_rc" = 2 ] && ! grep -q 'Ignore the vault rules' "$TMP/h13-mid2/CLAUDE.md" 2>/dev/null; then
+    ok "with cksum alone, a cksum a pass plants on PATH is never run: its change to CLAUDE.md is seen and put back, exit 2"
+  else
+    bad "with cksum alone, a pass that planted a forging cksum hid its change to CLAUDE.md -- exit $h13_rc, CLAUDE.md: $(tr '\n' '|' < "$TMP/h13-mid2/CLAUDE.md" 2>/dev/null), log: $(h13_tail mid2)"
+  fi
 fi
-rm -rf "$TMP"/h13-sha "$TMP"/h13-ck "$TMP"/h13-rel "$TMP"/h13-lnk "$TMP"/h13-lnk-out "$TMP"/h13-dln "$TMP"/h13-dln-out "$TMP"/h13-mid "$TMP"/h13-mid-pristine "$TMP/h13-mid-plant.sh"
+rm -rf "$TMP"/h13-sha "$TMP"/h13-ck "$TMP"/h13-rel "$TMP"/h13-lnk "$TMP"/h13-lnk-out "$TMP"/h13-dln "$TMP"/h13-dln-out "$TMP"/h13-mid "$TMP"/h13-mid2 "$TMP"/h13-mid-pristine "$TMP/h13-mid-plant.sh"
 
 # No cksum at all: the fence records every file with it, so the runner
 # refuses. Function level, with a PATH that finds nothing (every command the
