@@ -14905,6 +14905,77 @@ else
   bad "a wrapper's own 127 did not leave as 79 --$ac_bad"
 fi
 
+# 126 is reserved as 127 is (1.7.5, the owner's decision): a wrapper that
+# starts and leaves with 126 itself leaves as 79 with an AGENT-STATUS line, so
+# 126 from a runner means only that the agent could not be started.
+printf '#!/usr/bin/env bash\n: > "%s"\nexit 126\n' "$TMP/ac-own126.ran" > "$TMP/ac-own126"
+chmod +x "$TMP/ac-own126"
+rm -f "$TMP/ac-own126.ran"
+ac_got="$(ac_try "$TMP/ac-own126")"
+ran agent-status-own-126
+if [ ! -e "$TMP/ac-own126.ran" ]; then
+  bad "a wrapper's own 126 -- fixture: the wrapper never ran: $ac_got"
+elif [ "$ac_got" = 'rc=126 ran=1 exit=79 log=1' ]; then
+  ok "a wrapper that starts and leaves with 126 itself leaves as 79 with an AGENT-STATUS line"
+else
+  bad "a wrapper's own 126 -- expected rc=126 ran=1 exit=79 log=1, got: $ac_got"
+fi
+# And the launch side: a folder named as the agent cannot be started, the shell
+# gives 126 on every platform (measured on Git Bash 5.3.15 and WSL bash 5.3.9),
+# and that 126 keeps its meaning.
+mkdir -p "$TMP/ac-dir126"
+ac_got="$(ac_try "$TMP/ac-dir126")"
+ran agent-status-dir-126
+if [ "$ac_got" = 'rc=126 ran=1 exit=126 log=0' ]; then
+  ok "a folder named as the agent leaves with the shell's 126, cannot start, with no AGENT-STATUS line"
+else
+  bad "a folder named as the agent -- expected rc=126 ran=1 exit=126 log=0, got: $ac_got"
+fi
+
+# A wrapper that execs itself, again and again, is stopped by the watchdog. On
+# Git Bash exec keeps the process's pid and its parent's and moves it to a new
+# Windows process, so a stop that knew the process only by its Windows id
+# read the successor as a reused pid, left it running and reported nothing
+# alive, and run_agent waited on it for ever (1.7.5; found with a
+# #!/usr/bin/env FOO=1 cmd wrapper, which env runs again and again, in 1.7.3).
+# The wrapper ends itself once a stop file exists, so a stop that misses it
+# costs this control its deadline, never the suite.
+printf '#!/usr/bin/env bash\n[ -e "%s" ] && exit 0\necho x >> "%s"\nsleep 1\nexec bash "$0"\n' \
+  "$TMP/ac-chain.stop" "$TMP/ac-chain.ran" > "$TMP/ac-chain"
+chmod +x "$TMP/ac-chain"
+rm -f "$TMP/ac-chain.stop" "$TMP/ac-chain.ran" "$TMP/ac-chain.got"
+( export LC_ALL=C
+  . "$ROOT/.claude/scripts/lib/runner-common.sh"
+  WATCHDOG_POLL=1
+  WATCHDOG_GRACE=2
+  AGENT_KIND=command
+  AGENT_BIN="$TMP/ac-chain"
+  SNAP_SEALS=x
+  run_agent 5 "$TMP/ac-chain.out" dream-agent task prompt.md >/dev/null 2>&1
+  printf 'timed_out=%s kill_failed=%s' "${RUN_TIMED_OUT:-}" "${RUN_KILL_FAILED:-}" ) > "$TMP/ac-chain.got" 2>/dev/null &
+ac_bg=$!
+ac_w=0
+while kill -0 "$ac_bg" 2>/dev/null && [ "$ac_w" -lt 90 ]; do sleep 1; ac_w=$((ac_w + 1)); done
+ac_hung=0
+kill -0 "$ac_bg" 2>/dev/null && ac_hung=1
+ac_n1="$(awk 'END { print NR + 0 }' "$TMP/ac-chain.ran" 2>/dev/null)"
+sleep 3
+ac_n2="$(awk 'END { print NR + 0 }' "$TMP/ac-chain.ran" 2>/dev/null)"
+: > "$TMP/ac-chain.stop"
+ac_w=0
+while kill -0 "$ac_bg" 2>/dev/null && [ "$ac_w" -lt 15 ]; do sleep 1; ac_w=$((ac_w + 1)); done
+kill "$ac_bg" 2>/dev/null
+wait "$ac_bg" 2>/dev/null
+ac_got="$(cat "$TMP/ac-chain.got" 2>/dev/null)"
+ran stop-exec-chain
+if [ "${ac_n1:-0}" -lt 2 ]; then
+  bad "a wrapper that execs itself -- fixture: it ran ${ac_n1:-0} time(s) before the stop, so no exec was shown"
+elif [ "$ac_hung" -eq 0 ] && [ "$ac_n1" = "$ac_n2" ] && [ "$ac_got" = 'timed_out=1 kill_failed=0' ]; then
+  ok "a wrapper that execs itself again and again is stopped by the watchdog, which returns, and nothing of it runs on ($ac_n1 runs)"
+else
+  bad "a wrapper that execs itself was not stopped -- run_agent still waiting after 90 s: $ac_hung, runs $ac_n1 then $ac_n2 three seconds later, got: ${ac_got:-nothing}"
+fi
+
 # Every #! shape the check does not read must leave a 127 as the agent's, so
 # a wrong "cannot start" cannot pass an agent's own 127 off as not found. What
 # matters here is only what the runner decides from the #! line before the

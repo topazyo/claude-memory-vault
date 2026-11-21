@@ -170,11 +170,11 @@ group_members() {
 }
 
 # win_msys_tree <pid>
-# On Git Bash for Windows, prints "<pid> <winpid>" for the pid and each of its
-# descendants in the Git Bash process table. That table keeps a child's parent
-# even after the Windows process between them has exited, which happens every
-# time Git Bash runs a program, so it finds children the Windows parent ids no
-# longer link. Returns 1 when ps gives no process list.
+# On Git Bash for Windows, prints "<pid> <winpid> <ppid>" for the pid and each
+# of its descendants in the Git Bash process table. That table keeps a child's
+# parent even after the Windows process between them has exited, which happens
+# every time Git Bash runs a program, so it finds children the Windows parent
+# ids no longer link. Returns 1 when ps gives no process list.
 win_msys_tree() {
   local list
   list="$(ps -l 2>/dev/null)"
@@ -183,13 +183,32 @@ win_msys_tree() {
     NR > 1 { sub(/^[^0-9]*/, ""); n++; pid[n] = $1; ppid[n] = $2; win[n] = $4 }
     END {
       keep[root] = 1
-      for (i = 1; i <= n; i++) if (pid[i] == root) print pid[i], win[i]
+      for (i = 1; i <= n; i++) if (pid[i] == root) print pid[i], win[i], ppid[i]
       grew = 1
       while (grew) {
         grew = 0
-        for (i = 1; i <= n; i++) if ((ppid[i] in keep) && !(pid[i] in keep)) { keep[pid[i]] = 1; print pid[i], win[i]; grew = 1 }
+        for (i = 1; i <= n; i++) if ((ppid[i] in keep) && !(pid[i] in keep)) { keep[pid[i]] = 1; print pid[i], win[i], ppid[i]; grew = 1 }
       }
     }'
+}
+
+# win_same_member <pid> <listed winpid> <listed ppid>
+# True while a Git Bash pid listed by win_msys_tree still names that process or
+# the one it became by exec. Git Bash hands pids out again once they are free,
+# so the Windows id is the first test. But exec keeps a process's pid and its
+# parent's and moves it to a new Windows process, with a new start time too
+# (measured on Git Bash 5.3.15, 1.7.5), so the Windows id alone read every exec
+# as a reused pid: a wrapper that execs itself was left running, the stop
+# reported nothing alive, and run_agent waited on it for ever. So a pid whose
+# parent is still the listed one counts as well. A pid handed out again under
+# that same parent is a new child of a process of the tree, which is the tree's
+# too; for the command itself the parent is the runner, which is waiting on it.
+win_same_member() {
+  local now
+  now="$(cat "/proc/$1/winpid" 2>/dev/null)"
+  [ -n "$now" ] || return 1
+  [ "$now" = "$2" ] && return 0
+  [ -n "$3" ] && [ "$(cat "/proc/$1/ppid" 2>/dev/null)" = "$3" ]
 }
 
 # win_tree_stop <winpid> <nonce> <record-file> [<more winpids> [<listed-epoch>]]
@@ -327,7 +346,7 @@ if (\$left.Count -eq 0) { 'none' } else { \$left }"
 # process group are signalled, because the group id stays reserved while it has
 # members. On Windows only the nonce finds what it left.
 stop_tree() {
-  local pid="$1" grace="$2" record="$3" nonce="$4" own="$5" members winpid g p w group=0 left listed
+  local pid="$1" grace="$2" record="$3" nonce="$4" own="$5" members winpid g p w pp group=0 left listed
   : > "$record"
   if is_windows_bash; then
     listed="$(date +%s)"
@@ -347,15 +366,17 @@ stop_tree() {
     win_tree_stop "$winpid" "$nonce" "$record" "$(printf '%s\n' "$members" | awk '$2 ~ /^[0-9]+$/ { printf "%s ", $2 }')" "$listed"
     grep -qE '^(none|alive|unknown \(PowerShell)' "$record" || printf 'unknown (PowerShell gave no answer)\n' >> "$record"
     # Git Bash pids are handed out again once free, so each is signalled and
-    # checked only while it still names the Windows process that was listed.
-    printf '%s\n' "$members" | while read -r p w; do
-      [ -n "$p" ] && [ "$(cat "/proc/$p/winpid" 2>/dev/null)" = "$w" ] && kill -KILL "$p" 2>/dev/null
+    # checked only while it is still the process that was listed, or the one it
+    # became by exec (win_same_member).
+    printf '%s\n' "$members" | while read -r p w pp; do
+      [ -n "$p" ] && win_same_member "$p" "$w" "$pp" && kill -KILL "$p" 2>/dev/null
     done
-    [ -n "$winpid" ] && [ "$(cat "/proc/$pid/winpid" 2>/dev/null)" = "$winpid" ] && kill -KILL "$pid" 2>/dev/null
+    pp="$(printf '%s\n' "$members" | awk -v p="$pid" '$1 == p { print $3; exit }')"
+    [ -n "$winpid" ] && win_same_member "$pid" "$winpid" "$pp" && kill -KILL "$pid" 2>/dev/null
     sleep 1
-    printf '%s\n' "$members" | while read -r p w; do
+    printf '%s\n' "$members" | while read -r p w pp; do
       [ -n "$p" ] && [ "$p" != "$pid" ] || continue
-      [ "$(cat "/proc/$p/winpid" 2>/dev/null)" = "$w" ] && kill -0 "$p" 2>/dev/null && printf 'alive %s\n' "$p" >> "$record"
+      win_same_member "$p" "$w" "$pp" && kill -0 "$p" 2>/dev/null && printf 'alive %s\n' "$p" >> "$record"
     done
     return 0
   fi
@@ -4456,7 +4477,7 @@ run_agent() {
 # "exited with code" line already says the status was the agent's. 79 itself is
 # in the list, so an agent that leaves with 79 gets the same AGENT-STATUS line
 # and cannot pass for a remapped code.
-AGENT_RESERVED_STATUSES="2 3 4 5 64 70 75 78 79 124 125 127 129 130 143"
+AGENT_RESERVED_STATUSES="2 3 4 5 64 70 75 78 79 124 125 126 127 129 130 143"
 
 # agent_interpreter_missing <bin>
 # Returns 0 only when <bin> cannot start because its #! line names something
@@ -4513,9 +4534,15 @@ agent_status_exit() {
   # 127 from a binary that was gone when run_agent came to start it, or from
   # one whose #! interpreter is missing (run_agent's AGENT_CANNOT_START), is the
   # shell's or env's, not the agent's, and keeps its own meaning: not found.
-  # Any other 127 is the agent's and is remapped below.
-  if [ "$RUN_RC" = 127 ] && [ "${AGENT_CANNOT_START:-0}" = 1 ]; then
-    return 127
+  # 126 from one that cannot be started (a file without its exec bit, a folder,
+  # an interpreter that is missing or not executable; each of them, measured on
+  # WSL bash 5.3.9 and Git Bash 5.3.15, sets AGENT_CANNOT_START) keeps its own
+  # meaning the same way: cannot execute. Any other 126 or 127 is the agent's
+  # and is remapped below (126 from 1.7.5). Known limit: a binary built for
+  # another machine passes command -v and gives 126 (exec format error), so it
+  # reads as the agent's own 126; the run log keeps the shell's message.
+  if { [ "$RUN_RC" = 127 ] || [ "$RUN_RC" = 126 ]; } && [ "${AGENT_CANNOT_START:-0}" = 1 ]; then
+    return "$RUN_RC"
   fi
   if [ "${AGENT_RAN:-0}" = 1 ]; then
     for c in $AGENT_RESERVED_STATUSES; do
