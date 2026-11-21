@@ -85,7 +85,11 @@
 #        a part ending in a dot, a colon that is not a drive letter's or a last
 #        part ending in a space, or the temporary folder is refused (above), or
 #        the runner could not record its folder for the pass, or its library
-#        comes from another release (no record of that folder was taken)
+#        comes from another release (no record of that folder was taken, or,
+#        from 1.7.5, no runner_on_exit in it), or PATH finds a sha256sum,
+#        shasum or cksum in the vault or through a link into it, or no cksum
+#        at all, or the files the vault's instruction files import could not
+#        be listed
 #   2    VIOLATION: files outside the allowed write areas changed during the run
 #        (steering surfaces among them are contained and the tripwire is set),
 #        or the pass changed a long-tier note or promotion report that already
@@ -118,7 +122,7 @@
 #        well)
 #   79   AGENT-STATUS: the agent or wrapper itself left with one of the codes
 #        in this list other than 0 and 1 (2, 3, 4, 5, 64, 70, 75, 78, 79, 124,
-#        125, 127, 129, 130 or 143), so the runner does not repeat a code that
+#        125, 126, 127, 129, 130 or 143), so the runner does not repeat a code that
 #        would mean something else, and logs an AGENT-STATUS line. A wrapper
 #        that was gone when the runner came to start it stays 127, and one that
 #        cannot start for its #! line stays as the shell gave it, 127 or 126
@@ -131,6 +135,11 @@
 #        set), and everything it started. After 124 or 125, KILL_FAILED in the
 #        log means a process may still be running. The run lock is kept, so later
 #        runs exit 75, and the tripwire is set
+#   126  the claude binary or the VAULT_AGENT_CMD wrapper cannot start: its #!
+#        interpreter is missing (bash 5.3 and 3.2; 5.2 gives 127) or is not
+#        executable. One that is not executable itself, or is a folder, is
+#        refused before the pass with 127. An agent's own 126 leaves as 79
+#        (1.7.5)
 #   127  the claude binary or the VAULT_AGENT_CMD wrapper was not found, or
 #        cannot start for a #! line docs/reference.md (exit 79) names
 #   129  stopped by HUP, 130 by INT, 143 by TERM. The agent's tree is stopped,
@@ -166,12 +175,13 @@ LC_ALL=C
 export LC_ALL
 
 RUNNER=promotion-pass
+RUNNER_AGENT=promotion-agent
 CONTAINMENT_CHECKED=0
 # Set here, so a value in the environment cannot switch the signal handler off.
 IN_ON_SIGNAL=0
 INFLIGHT=0
 SNAP_DIR=""
-# 1 once the check of the runner's folder failed, so on_exit keeps it for review.
+# 1 once the check of the runner's folder failed, so runner_on_exit keeps it for review.
 SNAP_KEEP=0
 SESSION_RECORDED=0
 AGENT_SESSION_ID=""
@@ -186,123 +196,9 @@ AGENT_KILL_REPORT=""
 # such result as it starts, and the probe clears its own.
 AGENT_RUNNING=0
 
-# record_session_once
-# Records a claude-mode pass's session, once, however the pass ended, so a later
-# capture of Claude Code sessions never takes a runner's pass for a person's
-# work. The stream is read from the runner's private copy.
-record_session_once() {
-  [ "$SESSION_RECORDED" -eq 0 ] && [ -n "$AGENT_SESSION_ID" ] && [ "${AGENT_KIND:-}" = claude ] \
-    && [ -n "$SNAP_DIR" ] && [ -f "$SNAP_DIR/run" ] || return 0
-  SESSION_RECORDED=1
-  record_runner_session "$STATE" "$RUNNER" "$SNAP_DIR/run" 0 "$AGENT_SESSION_ID" "$LOG"
-}
-
-# On any exit: clear the in-flight marker only once containment has checked the
-# pass, then remove the temporary directory. The pre-pass backup goes with the
-# marker, unless a stop left a process that may have written after containment,
-# because the owner needs the backup to review what it wrote.
-on_exit() {
-  if [ "$CONTAINMENT_CHECKED" -eq 1 ]; then
-    clear_inflight "$ROOT" "$STATE"
-    if [ "$KILL_FAILED_MARKED" -eq 0 ]; then
-      rm -f "$STATE/inflight-backup.tar" 2>/dev/null
-    elif [ -s "$STATE/inflight-backup.tar" ]; then
-      printf '[%s] The pre-pass backup is kept at %s for the review after KILL_FAILED.\n' "$(ts)" "$(shown_name "$STATE/inflight-backup.tar")" >> "$LOG"
-    else
-      printf '[%s] WARNING: there is no pre-pass backup at %s to review against after KILL_FAILED.\n' "$(ts)" "$(shown_name "$STATE/inflight-backup.tar")" >> "$LOG"
-    fi
-  fi
-  # What a tripwire or stop report left when a signal cut it short.
-  [ -n "${STATE:-}" ] && rm -f "$STATE/tripwire-body.$$" "$STATE/kill-report.$$" "$STATE/runner-tripwire.tmp.$$" "$STATE/$RUNNER.interrupted.run.tmp.$$" "$STATE/signal-stop.$$" "$STATE/signal-stop.$$.powershell" 2>/dev/null
-  [ -n "${ROOT:-}" ] && rm -f "$ROOT/$TRIPWIRE_REL.tmp.$$" "$ROOT/$TRIPWIRE_REL.tmp.$$".* "$ROOT/$INFLIGHT_REL.tmp.$$".* 2>/dev/null
-  [ -n "$SNAP_DIR" ] && [ "$SNAP_KEEP" -eq 0 ] && rm -rf "$SNAP_DIR"
-  run_lock_release
-}
-
-# On INT, TERM or HUP: stop the agent, and if it had started, containment cannot be
-# trusted to have run, so set the tripwire now rather than leave the vault to the
-# next pass's baseline.
-on_signal() {
-  # Bash runs a trap again when a second signal lands while the first one's
-  # handler is running (measured), and the nested call would exit from inside
-  # this one, part way through its tripwire. A hangup makes that routine: the
-  # terminal and the shell that owned it can each send one. So a nested call
-  # returns, and the first handler finishes with its own code. A flag rather
-  # than trap '', because an ignored signal is inherited by every child started
-  # after it.
-  [ "${IN_ON_SIGNAL:-0}" -eq 1 ] && return 0
-  IN_ON_SIGNAL=1
-  local report=""
-  # The whole tree, so a child of the agent or of a git step cannot keep writing
-  # after the exit. RUN_PID is set while such a command runs, and while the
-  # watchdog finishes stopping one that has ended (RUN_REAPED=1). It runs once the
-  # private temporary directory has been made, whether or not it is still there,
-  # and is recorded in the state directory, because a pass can remove that
-  # directory or put a link in its place. A stop that may have left a
-  # process marks the run lock. Before containment the tripwire below is set, so
-  # the stop's report goes into it as well.
-  if [ -n "${RUN_PID:-}" ] && [ -n "$SNAP_DIR" ]; then
-    stop_tree "$RUN_PID" 2 "$STATE/signal-stop.$$" "${AGENT_SESSION_ID:-}" 1
-    if grep -qE '^(alive|unknown)' "$STATE/signal-stop.$$" 2>/dev/null; then
-      if [ "$INFLIGHT" -eq 1 ] && [ "$CONTAINMENT_CHECKED" -eq 0 ]; then
-        report="$(cat "$STATE/signal-stop.$$")"
-      else
-        mark_kill_failed "$LOG" "$(cat "$STATE/signal-stop.$$")"
-      fi
-    fi
-  fi
-  # Before containment the pass may have put a link in place of the vault's log,
-  # so the lines below go to the state directory then (log_outside_links). The
-  # log is checked once the tree is stopped, so a pass cannot put the link there
-  # after the check.
-  if [ "$INFLIGHT" -eq 1 ] && [ "$CONTAINMENT_CHECKED" -eq 0 ]; then
-    log_outside_links "$ROOT" "$STATE" "$RUNNER"
-  fi
-  record_session_once
-  # Before its output reached the run log, the pass's stream would go with the
-  # temporary directory, so it is kept in the state directory, unless run or the
-  # folder is a link, which the copy would follow to whatever it names.
-  if [ "$RUN_LOG_APPENDED" -eq 0 ] && [ -n "$SNAP_DIR" ] && [ -f "$SNAP_DIR/run" ] \
-     && [ ! -L "$SNAP_DIR/run" ] && [ ! -L "$SNAP_DIR" ]; then
-    keep_run_output "$SNAP_DIR/run" "$STATE" "$RUNNER" "$LOG"
-  fi
-  if [ "$INFLIGHT" -eq 1 ] && [ "$CONTAINMENT_CHECKED" -eq 0 ]; then
-    # A tripwire this run already set, by containment or by a stop's report,
-    # stays as it is, with a note. tripwire_check made sure neither copy existed
-    # when the run started, and the pass cannot write the state directory copy.
-    if { [ "${CONTAINED:-0}" -eq 1 ] || [ -f "$STATE/$(basename "$TRIPWIRE_REL")" ]; } \
-       && note_tripwire "$ROOT" "$STATE" "$LOG" "The runner was then interrupted by a signal, so its log may lack some of what is above."; then
-      clear_inflight "$ROOT" "$STATE"
-      printf '[%s] INTERRUPTED after the tripwire was set. The tripwire is kept.\n' "$(ts)" >> "$LOG"
-    elif write_tripwire "$ROOT" "$STATE" "$RUNNER" \
-         "the pass was interrupted by a signal before containment ran, so the vault's steering surfaces are unverified (the pre-pass backup is $STATE/inflight-backup.tar)" \
-         "(none, because containment did not run)" /dev/null "" uncontained; then
-      clear_inflight "$ROOT" "$STATE"
-      printf '[%s] INTERRUPTED before containment. Tripwire set.\n' "$(ts)" >> "$LOG"
-    else
-      # With no tripwire the marker stays, so the next run still refuses.
-      printf '[%s] TRIPWIRE-ERROR: interrupted before containment and no tripwire could be written. Treat the vault as unverified, and run no git command in it before the steering surfaces have been checked. The in-flight marker is kept.\n' "$(ts)" >> "$LOG"
-    fi
-  fi
-  # A stop by the watchdog that may have left a process, and that the runner had
-  # not reported yet, is reported now, so the lock is marked and the tripwire says
-  # so. Before the run log is written that includes a result the watchdog has set
-  # while run_agent had not returned, which is why the result is read only while
-  # the agent's own run owns it, which AGENT_RUNNING records.
-  if [ "$STOP_REPORT_PENDING" -eq 1 ]; then
-    report="$AGENT_KILL_REPORT${report:+
-$report}"
-  elif [ "$AGENT_RUNNING" -eq 1 ] && [ "$RUN_LOG_APPENDED" -eq 0 ] && [ "${RUN_KILL_FAILED:-0}" -eq 1 ] && [ "$KILL_FAILED_MARKED" -eq 0 ]; then
-    report="${RUN_KILL_REPORT:-}${report:+
-$report}"
-  fi
-  if [ -n "$report" ]; then
-    RUN_KILL_FAILED=1
-    RUN_KILL_REPORT="$report"
-    report_stop "$LOG" promotion-agent "$ROOT" "$STATE" "$RUNNER"
-  fi
-  exit "$1"
-}
+# The handlers, runner_record_session_once, runner_on_exit and
+# runner_on_signal, are in lib/runner-common.sh from 1.7.5. They read this
+# runner's state from the globals above and RUNNER_AGENT.
 
 # Everything else runs inside main, and the script's last lines call it and
 # exit. Bash reads a script as it executes it, so a change made to this file
@@ -318,6 +214,18 @@ main() {
   mkdir -p "$LOG_DIR" 2>/dev/null
   LOG="$LOG_DIR/promotion-agent.log"
   RUN_OUT="$LOG_DIR/promotion-agent.run.log"
+  # From 1.7.5 the exit and signal handlers are the library's. A library from an
+  # earlier release has none, and the traps below would name functions that do
+  # not exist, so the run lock would never be released. Refused before any trap,
+  # lock or state.
+  for lib_fn in runner_on_exit runner_on_signal runner_record_session_once fence_tools_pin steering_imports; do
+    declare -F "$lib_fn" >/dev/null && continue
+    printf '[%s] ERROR: lib/runner-common.sh has no %s, so this runner and the library come from different releases. Take runner-common.sh, dream-pass.sh, promotion-pass.sh and vault-retention.sh together. Refusing to run.\n' "$(ts)" "$lib_fn" >> "$LOG"
+    exit 1
+  done
+  # The hash tools and cksum are found once, now, and refused when PATH finds
+  # them in the vault; every later record of the vault runs these (H13, 1.7.5).
+  fence_tools_pin "$ROOT" "$LOG" || exit 1
   git_env_warning "$LOG"
   # On Windows git reads the vault's folder as it is spelled, so a spelling it
   # reads as another folder is refused before the state directory, the lock or
@@ -352,14 +260,14 @@ main() {
 
   # One pass at a time per vault. The traps come first, so a signal that lands
   # while the lock is being taken still releases it. The lock is taken before any
-  # vault state is checked, and on_exit releases it on every exit path.
-  trap on_exit EXIT
-  trap 'on_signal 130' INT
-  trap 'on_signal 143' TERM
+  # vault state is checked, and runner_on_exit releases it on every exit path.
+  trap runner_on_exit EXIT
+  trap 'runner_on_signal 130' INT
+  trap 'runner_on_signal 143' TERM
   # A closed terminal or an ended SSH session sends HUP. Left untrapped it ended
   # the runner at once, with the agent still running, the lock released and no
   # tripwire, so it is handled exactly as TERM is.
-  trap 'on_signal 129' HUP
+  trap 'runner_on_signal 129' HUP
   run_lock_acquire "$STATE" "$ROOT" "$RUNNER" "$LOG" "$((TIMEOUT + WATCHDOG_GRACE + 900))"
   lock_rc=$?
   [ "$lock_rc" -eq 0 ] || exit "$lock_rc"
@@ -486,6 +394,14 @@ main() {
   fi
 
   snapshot_tree "$ROOT" "$SNAP_DIR/before"
+  # What the vault's instruction files import loads into every session, so it
+  # is steering too (H2, 1.7.5): listed once, from the vault as it is now, into
+  # the runner's own folder, and held for the whole run.
+  if ! steering_imports "$ROOT" "$SNAP_DIR/steering-imports" || [ ! -r "$SNAP_DIR/steering-imports" ]; then
+    printf '[%s] ERROR: could not list the files the vault'"'"'s instruction files import. Refusing to run without containment.\n' "$(ts)" >> "$LOG"
+    exit 1
+  fi
+  STEERING_IMPORTS_FILE="$SNAP_DIR/steering-imports"
   # Containment needs the pre-pass copy. Without it, refuse rather than run a pass
   # whose planted files could not be undone.
   if ! backup_steering "$ROOT" "$SNAP_DIR/before" "$SNAP_DIR/steering.tar"; then
@@ -581,7 +497,7 @@ main() {
     if [ -f "$SNAP_DIR/run" ] && [ ! -L "$SNAP_DIR/run" ] && [ ! -L "$SNAP_DIR" ]; then
       keep_run_output "$SNAP_DIR/run" "$STATE" "$RUNNER" "$LOG"
       RUN_LOG_APPENDED=1
-      record_session_once
+      runner_record_session_once
     else
       RUN_LOG_APPENDED=1
       printf '[%s] WARNING: the run output, %s, is missing, is not a regular file or is in a folder that is a link, so it was not kept.\n' "$(ts)" "$(shown_name "$SNAP_DIR/run")" >> "$LOG"
@@ -614,7 +530,7 @@ main() {
     append_run_log "$SNAP_DIR/run" "$RUN_OUT" "$LOG" || keep_run_output "$SNAP_DIR/run" "$STATE" "$RUNNER" "$LOG"
   fi
   RUN_LOG_APPENDED=1
-  record_session_once
+  runner_record_session_once
   if [ "$contain_rc" -ne 0 ]; then
     exit "$contain_rc"
   fi

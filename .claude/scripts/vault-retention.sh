@@ -66,7 +66,9 @@
 # Exit codes:
 #   0    moved and committed, nothing to move, a dry run, or no
 #        20-projects/_logs folder
-#   1    setup failure, 20-projects/_logs cannot be listed or entered, git
+#   1    setup failure, a sha256sum, shasum or cksum that PATH finds in the
+#        vault or through a link into it, or no cksum (from 1.7.5), a library
+#        without fence_tools_pin, 20-projects/_logs cannot be listed or entered, git
 #        cannot read the vault, the vault is not the top of its own
 #        repository, a shallow clone, grafts, or a sparse checkout, a
 #        temporary folder that could not be made in TMPDIR or /tmp, or is not
@@ -3699,6 +3701,17 @@ COPYEOF
   # reads as another folder is refused before the state directory, the lock or
   # any git call.
   vault_root_spelling_ok "$ROOT" "$LIB_LOG"
+  rc=$?
+  lib_logged
+  [ "$rc" -eq 0 ] || return 1
+  # cksum names the state directory (vault_state_dir), so it is found once, now,
+  # and refused when PATH finds it in the vault (H13, 1.7.5). A library from an
+  # earlier release has no fence_tools_pin.
+  if ! declare -F fence_tools_pin >/dev/null; then
+    say "ERROR: lib/runner-common.sh has no fence_tools_pin, so this runner and the library come from different releases. Take runner-common.sh, dream-pass.sh, promotion-pass.sh and vault-retention.sh together. Refusing to run."
+    return 1
+  fi
+  fence_tools_pin "$ROOT" "$LIB_LOG"
   rc=$?
   lib_logged
   [ "$rc" -eq 0 ] || return 1

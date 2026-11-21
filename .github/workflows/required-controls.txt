@@ -123,10 +123,12 @@
 # ci.yml's NOT_REQUIRED names it, as an id the suite records on no list.
 agent-status-badinterp ubuntu macos windows
 agent-status-badinterp-127 ubuntu macos windows
+agent-status-dir-126 ubuntu macos windows
 agent-status-env-missing ubuntu macos windows
 agent-status-env-missing-runner-dream ubuntu macos windows
 agent-status-env-missing-runner-promotion ubuntu macos windows
 agent-status-gone ubuntu macos windows
+agent-status-own-126 ubuntu macos windows
 agent-status-own-127 ubuntu macos windows
 agent-status-unread-shapes ubuntu macos windows
 c10-opencode-normalised ubuntu macos windows
@@ -171,6 +173,7 @@ c9-dry-run-keeps-record ubuntu macos windows
 check-backslash-name ubuntu macos windows
 check-one-walk ubuntu macos windows
 check-retry-vanished ubuntu macos windows
+check-retry-vanished-link ubuntu macos
 check-transient-unread-folder ubuntu macos
 check-unreadable-note ubuntu macos
 check-unreadable-posix ubuntu
@@ -194,6 +197,7 @@ fence-crc-forgery ubuntu macos windows
 fence-crc-forgery-existing-note ubuntu macos windows
 fence-crc-forgery-imported-note ubuntu macos windows
 fence-crc-forgery-leftover ubuntu macos windows
+fence-crc-forgery-planted-sha ubuntu macos windows
 fence-digest-shape-checked ubuntu macos windows
 fence-git-common-plain ubuntu macos windows
 fence-git-common-worktree ubuntu macos windows
@@ -203,6 +207,25 @@ fence-wiring-escaped ubuntu
 git-dir-pass ubuntu macos windows
 git-env-cleared ubuntu macos windows
 groupkill ubuntu macos
+h13-cksum-in-vault ubuntu macos windows
+h13-link-into-vault ubuntu macos
+h13-no-cksum ubuntu macos windows
+h13-pin-midpass ubuntu macos windows
+h13-pin-midpass-cksum-only ubuntu macos windows
+h13-relative-path ubuntu macos windows
+h13-sha-in-vault ubuntu macos windows
+h2-import-contained ubuntu macos windows
+h2-import-created ubuntu macos windows
+h2-import-crlf ubuntu macos windows
+h2-import-email ubuntu macos windows
+h2-import-link ubuntu macos
+h2-import-markdown ubuntu macos windows
+h2-import-nested ubuntu macos windows
+h2-import-outside ubuntu macos windows
+h2-import-promotion ubuntu macos windows
+h2-imports-unreadable ubuntu macos windows
+h8a-dot-steering windows
+h8a-dot-tier windows
 head-holds-unknown ubuntu macos windows
 hup-dream-pass ubuntu macos windows
 hup-group-dream-pass ubuntu
@@ -212,6 +235,7 @@ keep-output-dirlink ubuntu macos
 keep-output-fifo ubuntu macos
 legacy-asks-the-adding-commit ubuntu macos windows
 line-break-name ubuntu macos
+lint-backslash-posix ubuntu macos
 lint-spawn-budget ubuntu
 lint-subfolder-relative ubuntu macos windows
 locale-collation-verdicts macos
@@ -219,6 +243,7 @@ logger-crlf ubuntu macos windows
 logger-not-registered ubuntu macos windows
 logger-optin-snippet ubuntu macos windows
 logger-records-session-start ubuntu macos windows
+m4-skew-old-lib ubuntu macos windows
 mem-override-cygpath-refused windows
 mem-override-drive-walk ubuntu macos windows
 mem-override-file-mode ubuntu macos
@@ -290,6 +315,7 @@ putback-verify-kill-failed ubuntu macos windows
 read-guard-awk-failure-refuses ubuntu macos windows
 reaped-group ubuntu macos
 resume-skips-pass-output ubuntu macos windows
+ret-h13-cksum-in-vault ubuntu macos windows
 retention-inherited-nonce windows
 retention-junction windows
 retention-posix-mode ubuntu windows
@@ -304,10 +330,13 @@ rf-gone ubuntu macos
 rf-mode ubuntu macos
 rf-owner ubuntu macos
 rf-world ubuntu macos
+rl-predirty-check ubuntu macos windows
+rl-wfail ubuntu macos windows
 run-log-dirlink ubuntu macos
 run-log-link ubuntu macos
 runlog-tmp-case ubuntu macos windows
 runner-folder ubuntu macos windows
+sas-tool-none ubuntu macos windows
 scan-case-not-widened ubuntu macos windows
 scan-trailing-dot ubuntu macos
 scan-upper-case ubuntu macos windows
@@ -319,6 +348,7 @@ signal-scope ubuntu macos windows
 snapshot-sealed ubuntu macos windows
 state-shown ubuntu macos windows
 steering-locale-fold windows
+stop-exec-chain ubuntu macos windows
 stub-nul-refused ubuntu macos windows
 symlink ubuntu macos
 temp-dir-spelling ubuntu macos windows

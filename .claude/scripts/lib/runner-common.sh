@@ -34,6 +34,12 @@ unset SNAP_SEALS
 # Set only by log_outside_links, so a value from the environment can neither put
 # a note into a tripwire nor keep the log from being moved.
 unset LOG_MOVED_NOTE
+# Set only by fence_tools_pin (1.7.5), so a value from the environment can name
+# neither the hash tool nor the cksum the fence runs.
+unset RUNNER_SNAP_TOOL RUNNER_CKSUM
+# Set only by a runner, from steering_imports (1.7.5), so a value from the
+# environment cannot choose which notes count as steering files.
+unset STEERING_IMPORTS_FILE
 
 # Git's variables for one repository are cleared here, before any function
 # runs. GIT_DIR beats discovery and git -C changes only the working directory,
@@ -170,11 +176,11 @@ group_members() {
 }
 
 # win_msys_tree <pid>
-# On Git Bash for Windows, prints "<pid> <winpid>" for the pid and each of its
-# descendants in the Git Bash process table. That table keeps a child's parent
-# even after the Windows process between them has exited, which happens every
-# time Git Bash runs a program, so it finds children the Windows parent ids no
-# longer link. Returns 1 when ps gives no process list.
+# On Git Bash for Windows, prints "<pid> <winpid> <ppid>" for the pid and each
+# of its descendants in the Git Bash process table. That table keeps a child's
+# parent even after the Windows process between them has exited, which happens
+# every time Git Bash runs a program, so it finds children the Windows parent
+# ids no longer link. Returns 1 when ps gives no process list.
 win_msys_tree() {
   local list
   list="$(ps -l 2>/dev/null)"
@@ -183,13 +189,36 @@ win_msys_tree() {
     NR > 1 { sub(/^[^0-9]*/, ""); n++; pid[n] = $1; ppid[n] = $2; win[n] = $4 }
     END {
       keep[root] = 1
-      for (i = 1; i <= n; i++) if (pid[i] == root) print pid[i], win[i]
+      for (i = 1; i <= n; i++) if (pid[i] == root) print pid[i], win[i], ppid[i]
       grew = 1
       while (grew) {
         grew = 0
-        for (i = 1; i <= n; i++) if ((ppid[i] in keep) && !(pid[i] in keep)) { keep[pid[i]] = 1; print pid[i], win[i]; grew = 1 }
+        for (i = 1; i <= n; i++) if ((ppid[i] in keep) && !(pid[i] in keep)) { keep[pid[i]] = 1; print pid[i], win[i], ppid[i]; grew = 1 }
       }
     }'
+}
+
+# win_same_member <pid> <listed winpid> <listed ppid>
+# True while a Git Bash pid listed by win_msys_tree still names that process or
+# the one it became by exec. Git Bash hands pids out again once they are free,
+# so the Windows id is the first test. But exec keeps a process's pid and its
+# parent's and moves it to a new Windows process, with a new start time too
+# (measured on Git Bash 5.3.15, 1.7.5), so the Windows id alone read every exec
+# as a reused pid: a wrapper that execs itself was left running, the stop
+# reported nothing alive, and run_agent waited on it for ever. So a pid whose
+# parent is still the listed one counts as well. A pid handed out again under
+# that same parent is a new child of a process of the tree, which is the tree's
+# too, with one exception: for the command itself the parent is the runner,
+# and when the runner stops the tree itself (a signal) it forks subshells of
+# its own, one of which could be given the command's freed pid. The caller's
+# own process is therefore never a member (round 1 of the 1.7.5 review).
+win_same_member() {
+  local now
+  [ "$1" = "${BASHPID:-}" ] && return 1
+  now="$(cat "/proc/$1/winpid" 2>/dev/null)"
+  [ -n "$now" ] || return 1
+  [ "$now" = "$2" ] && return 0
+  [ -n "$3" ] && [ "$(cat "/proc/$1/ppid" 2>/dev/null)" = "$3" ]
 }
 
 # win_tree_stop <winpid> <nonce> <record-file> [<more winpids> [<listed-epoch>]]
@@ -327,7 +356,7 @@ if (\$left.Count -eq 0) { 'none' } else { \$left }"
 # process group are signalled, because the group id stays reserved while it has
 # members. On Windows only the nonce finds what it left.
 stop_tree() {
-  local pid="$1" grace="$2" record="$3" nonce="$4" own="$5" members winpid g p w group=0 left listed
+  local pid="$1" grace="$2" record="$3" nonce="$4" own="$5" members targets winpid g p w pp group=0 left listed
   : > "$record"
   if is_windows_bash; then
     listed="$(date +%s)"
@@ -347,15 +376,37 @@ stop_tree() {
     win_tree_stop "$winpid" "$nonce" "$record" "$(printf '%s\n' "$members" | awk '$2 ~ /^[0-9]+$/ { printf "%s ", $2 }')" "$listed"
     grep -qE '^(none|alive|unknown \(PowerShell)' "$record" || printf 'unknown (PowerShell gave no answer)\n' >> "$record"
     # Git Bash pids are handed out again once free, so each is signalled and
-    # checked only while it still names the Windows process that was listed.
-    printf '%s\n' "$members" | while read -r p w; do
-      [ -n "$p" ] && [ "$(cat "/proc/$p/winpid" 2>/dev/null)" = "$w" ] && kill -KILL "$p" 2>/dev/null
-    done
-    [ -n "$winpid" ] && [ "$(cat "/proc/$pid/winpid" 2>/dev/null)" = "$winpid" ] && kill -KILL "$pid" 2>/dev/null
-    sleep 1
-    printf '%s\n' "$members" | while read -r p w; do
+    # checked only while it is still the process that was listed, or the one it
+    # became by exec (win_same_member). Which pids those are is decided for
+    # every member before any is signalled, because a member whose parent is
+    # stopped first gets another parent and would no longer pass the test
+    # (round 1 of the 1.7.5 review). Each is kept with its Windows id then, the
+    # one the checks below compare, as well as the listed one and its parent,
+    # an empty field written as - so a record cannot shift. Each is checked
+    # again just before its kill, because a member may end, and its pid be
+    # handed out again, while the others are decided (round 2). The command
+    # itself is left to the line after, which the runner runs in its own
+    # process, and no loop ever takes its own pid.
+    targets="$(printf '%s\n' "$members" | while read -r p w q; do
       [ -n "$p" ] && [ "$p" != "$pid" ] || continue
-      [ "$(cat "/proc/$p/winpid" 2>/dev/null)" = "$w" ] && kill -0 "$p" 2>/dev/null && printf 'alive %s\n' "$p" >> "$record"
+      win_same_member "$p" "$w" "$q" || continue
+      n="$(cat "/proc/$p/winpid" 2>/dev/null)"
+      printf '%s %s %s %s\n' "$p" "${n:--}" "${w:--}" "${q:--}"
+    done)"
+    printf '%s\n' "$targets" | while read -r p n w q; do
+      [ -n "$p" ] && [ "$p" != "${BASHPID:-}" ] || continue
+      [ "$q" = - ] && q=""
+      { [ "$(cat "/proc/$p/winpid" 2>/dev/null)" = "$n" ] || win_same_member "$p" "$w" "$q"; } \
+        && kill -KILL "$p" 2>/dev/null
+    done
+    pp="$(printf '%s\n' "$members" | awk -v p="$pid" '$1 == p { print $3; exit }')"
+    [ -n "$winpid" ] && win_same_member "$pid" "$winpid" "$pp" && kill -KILL "$pid" 2>/dev/null
+    sleep 1
+    printf '%s\n' "$targets" | while read -r p n w q; do
+      [ -n "$p" ] && [ "$p" != "$pid" ] && [ "$p" != "${BASHPID:-}" ] || continue
+      [ "$q" = - ] && q=""
+      { [ "$(cat "/proc/$p/winpid" 2>/dev/null)" = "$n" ] || win_same_member "$p" "$w" "$q"; } \
+        && kill -0 "$p" 2>/dev/null && printf 'alive %s\n' "$p" >> "$record"
     done
     return 0
   fi
@@ -603,9 +654,9 @@ unescape_cksum() {
 }
 
 fence_find() {
-  LC_ALL=C find "$@" ! -path "*$RUNNER_NL*" -type f -exec cksum {} + 2>/dev/null | unescape_cksum
+  LC_ALL=C find "$@" ! -path "*$RUNNER_NL*" -type f -exec "${RUNNER_CKSUM:-cksum}" {} + 2>/dev/null | unescape_cksum
   LC_ALL=C find "$@" ! -path "*$RUNNER_NL*" -type l -print 2>/dev/null | while IFS= read -r link; do
-    printf 'L%s 0 %s\n' "$(readlink "$link" 2>/dev/null | cksum | cut -d' ' -f1)" "$link"
+    printf 'L%s 0 %s\n' "$(readlink "$link" 2>/dev/null | "${RUNNER_CKSUM:-cksum}" | cut -d' ' -f1)" "$link"
   done
 }
 
@@ -727,8 +778,8 @@ snapshot_tree() {
     # content into one line under a name no file has. A change to any of them
     # changes the line, and containment moves them out (move_line_break_names).
     lb="$( { LC_ALL=C find . -path "*$RUNNER_NL*" -print; \
-             LC_ALL=C find . -path "*$RUNNER_NL*" -type f -exec cksum {} +; } 2>/dev/null )"
-    [ -n "$lb" ] && printf 'N%s 0 ./%s\n' "$(printf '%s' "$lb" | cksum | cut -d' ' -f1)" "$LINE_BREAK_MARKER"
+             LC_ALL=C find . -path "*$RUNNER_NL*" -type f -exec "${RUNNER_CKSUM:-cksum}" {} +; } 2>/dev/null )"
+    [ -n "$lb" ] && printf 'N%s 0 ./%s\n' "$(printf '%s' "$lb" | "${RUNNER_CKSUM:-cksum}" | cut -d' ' -f1)" "$LINE_BREAK_MARKER"
     # The scan above prunes .obsidian by name, so a .obsidian that is a symlink
     # gets its own line here. The files below are still read through it.
     [ -L .obsidian ] && fence_find ./.obsidian
@@ -1015,7 +1066,21 @@ steering_filter() {
   # decision and it has to hold however it is reached. The retention runner
   # never calls this function at all, so a pin in the two passes that do call
   # it would leave anyone checking the third with the wrong answer.
-  LC_ALL=C awk '
+  #
+  # The files the vault's instruction files import (steering_imports, 1.7.5) are
+  # steering files too. Their list is read through the environment, never -v,
+  # which would treat a backslash in it as an escape. A list that is named but
+  # cannot be read makes every path steering: the run cannot tell which notes
+  # load into a session, so it fences them all.
+  STEERING_IMPORTS_FILE="${STEERING_IMPORTS_FILE:-}" LC_ALL=C awk '
+    BEGIN {
+      impf = ENVIRON["STEERING_IMPORTS_FILE"]
+      if (impf != "") {
+        while ((r = (getline l < impf)) > 0) imp[tolower(l)] = 1
+        if (r < 0) impall = 1
+        close(impf)
+      }
+    }
     function steer(lp, islink) {
       if (lp == ".runner-line-break-names") return 1
       if (lp == ".claude/logs" || lp ~ /^\.claude\/logs\//) return 0
@@ -1107,6 +1172,7 @@ steering_filter() {
     }
     {
       lp = tolower($0)
+      if ((lp in imp) || (impall && lp !~ /^\.claude\/logs\//)) { print $0; next }
       islink = (lp in link)
       # In the vault .claude/logs only files the runners, hooks and launchd jobs
       # do not write are fenced, so any change there is a planted file. The
@@ -1158,6 +1224,217 @@ steering_filter() {
       }
       if (steer(lp, islink)) print $0
     }' phase=1 "$@" phase=2 -
+}
+
+# steering_norm <relative-path>
+# Sets SI_NORM to the path with empty and . parts dropped and each .. taken out
+# with the part before it, as steering_imports' awk norm() does. Fails when a ..
+# would climb above where the path starts. Parameter expansion only.
+steering_norm() {
+  local rest="$1" part out=""
+  SI_NORM=""
+  while [ -n "$rest" ]; do
+    case "$rest" in
+      */*) part="${rest%%/*}"; rest="${rest#*/}" ;;
+      *) part="$rest"; rest="" ;;
+    esac
+    case "$part" in
+      ''|.) ;;
+      ..)
+        case "$out" in
+          '') return 1 ;;
+          */*) out="${out%/*}" ;;
+          *) out="" ;;
+        esac ;;
+      *) out="${out:+$out/}$part" ;;
+    esac
+  done
+  SI_NORM="$out"
+}
+
+# steering_imports <root> <out>
+# Writes to <out>, one per line and relative to <root>, every file the vault's
+# instruction files import, followed to the end (1.7.5, H2): a note an
+# instruction file imports loads into every session as instructions, so a pass
+# that rewrites it steers the next session as surely as one that rewrites
+# CLAUDE.md. The runners list them once, from the vault as it is before the
+# pass, so the fence, the backup and containment hold one set for the run
+# (steering_filter reads <out> through STEERING_IMPORTS_FILE).
+#
+# The roots are CLAUDE.md, AGENTS.md and CLAUDE.local.md at the vault root and
+# .claude/CLAUDE.md, matched without regard to case. Claude Code's rules
+# (code.claude.com/docs/en/memory.md, "Import additional files", read
+# 2026-11-21) take a relative path from the importing file's folder and end it
+# at the first space, "\ " being a space. Everything that could be an import
+# under those rules is listed, and more: an @ counts unless a letter or digit
+# comes just before it (so an e-mail address does not), the path ends at a
+# space, tab, no-break space, form feed or vertical tab, and code spans, fenced
+# blocks and quotes are not skipped, because a fence or a span read wrongly
+# would drop every import after it, and a file listed that loads nowhere costs
+# only a tripwire when a pass changes it, while one missed is not put back. For
+# the same reason each path is also listed without leading quotes or brackets
+# and trailing punctuation, imports are followed past Claude Code's four hops
+# (other harnesses load AGENTS.md too), and a file reached through a link is
+# listed, and its imports read, by its real path in the vault as well. A CR at
+# a line's end is dropped. Listed whether or not the file exists, so a pass that
+# creates one is contained too. An absolute or ~/ path counts only when it is
+# inside the vault as <root> spells it, its pwd -P spelling or the other Git
+# Bash spelling of either; anything outside the vault is outside the fence
+# anyway. Known limit: other instruction files (a CLAUDE.md below the root,
+# .claude/rules) are steering files themselves, but what they import is not
+# followed. Fails when <out> cannot be written or more than 5000 files would be
+# read, so a runner refuses rather than fence part of the set.
+steering_imports() {
+  local root="$1" out="$2" roots rootp new p d l phys hops round=0
+  : > "$out" 2>/dev/null || return 1
+  rootp="$(cd "$root" 2>/dev/null && pwd -P)" || return 1
+  roots="$(cd "$root" 2>/dev/null && {
+    LC_ALL=C find . -maxdepth 1 \( -type f -o -type l \) \( -iname claude.md -o -iname agents.md -o -iname claude.local.md \) -print 2>/dev/null
+    [ -d .claude ] && LC_ALL=C find ./.claude/ -maxdepth 1 \( -type f -o -type l \) -iname claude.md -print 2>/dev/null
+  })"
+  while :; do
+    printf '%s\n' "$roots" | SI_ROOT="${root%/}" SI_ROOT_REAL="${rootp%/}" SI_HOME="${HOME:-}" LC_ALL=C awk '
+      function norm(p,   n, part, i, k, st, o) {
+        n = split(p, part, "/")
+        k = 0
+        for (i = 1; i <= n; i++) {
+          if (part[i] == "" || part[i] == ".") continue
+          if (part[i] == "..") { if (k == 0) return ""; k--; continue }
+          st[++k] = part[i]
+        }
+        o = ""
+        for (i = 1; i <= k; i++) o = o (i > 1 ? "/" : "") st[i]
+        return o
+      }
+      function rel_of(raw, dir,   p, lp, a) {
+        p = raw
+        if (substr(p, 1, 2) == "~/") {
+          if (home == "") return ""
+          p = home substr(p, 2)
+        }
+        if (p ~ /^\// || p ~ /^[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]:[\/\\]/) {
+          gsub(/\\/, "/", p)
+          lp = tolower(p)
+          for (a = 1; a <= nsp; a++) if (index(lp, sp[a] "/") == 1) return norm(substr(p, length(sp[a]) + 2))
+          return ""
+        }
+        return norm(dir == "" ? p : dir "/" p)
+      }
+      function add(rel) {
+        if (rel == "" || (rel in seen)) return
+        seen[rel] = 1
+        q[++qn] = rel
+        print rel
+      }
+      function trimmed(t,   lead, trail) {
+        lead = "\"\047([<*`"
+        trail = ".,;:!?)]>*`|_~\"\047"
+        while (length(t) && index(lead, substr(t, 1, 1))) t = substr(t, 2)
+        while (length(t) && index(trail, substr(t, length(t), 1))) t = substr(t, 1, length(t) - 1)
+        return t
+      }
+      # The path up to the first character Markdown wraps a word in, so
+      # [@x.md](u) and |@x.md| give x.md too (round 2 of the review).
+      function cut(t,   i, set) {
+        set = "]|*<>()`\"\047"
+        for (i = 2; i <= length(t); i++) if (index(set, substr(t, i, 1))) return substr(t, 1, i - 1)
+        return t
+      }
+      function scan(rel,   dir, f, line, n, i, j, c, path, t) {
+        dir = rel
+        if (dir ~ /\//) sub(/\/[^\/]*$/, "", dir); else dir = ""
+        f = root "/" rel
+        while ((getline line < f) > 0) {
+          sub(/\r$/, "", line)
+          n = length(line)
+          for (i = 1; i <= n; i++) {
+            if (substr(line, i, 1) != "@") continue
+            if (i > 1 && index("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789", substr(line, i - 1, 1))) continue
+            path = ""
+            j = i + 1
+            while (j <= n) {
+              c = substr(line, j, 1)
+              if (c == "\\" && substr(line, j + 1, 1) == " ") { path = path " "; j += 2; continue }
+              if (c == " " || c == "\t" || c == "\f" || c == "\v" || substr(line, j, 2) == "\302\240") break
+              path = path c
+              j++
+            }
+            i = j
+            if (path == "") continue
+            add(rel_of(path, dir))
+            t = trimmed(path)
+            if (t != path && t != "") add(rel_of(t, dir))
+            t = trimmed(cut(trimmed(path)))
+            if (t != path && t != "") add(rel_of(t, dir))
+          }
+        }
+        close(f)
+      }
+      BEGIN {
+        root = ENVIRON["SI_ROOT"]
+        home = ENVIRON["SI_HOME"]
+        sub(/\/+$/, "", home)
+        nsp = 0
+        r[1] = root
+        r[2] = ENVIRON["SI_ROOT_REAL"]
+        for (k = 1; k <= 2; k++) {
+          if (r[k] == "") continue
+          sp[++nsp] = tolower(r[k])
+          if (r[k] ~ /^\/[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]\//) sp[++nsp] = tolower(substr(r[k], 2, 1) ":" substr(r[k], 3))
+          if (r[k] ~ /^[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]:\//) sp[++nsp] = tolower("/" substr(r[k], 1, 1) substr(r[k], 3))
+        }
+      }
+      { x = norm($0); if (x != "") add(x) }
+      END {
+        for (h = 1; h <= qn && h <= 5000; h++) scan(q[h])
+        if (qn > 5000) exit 3
+      }
+    ' > "$out.new" 2>/dev/null || { rm -f "$out.new"; return 1; }
+    # Each listed file that is there through a link, or in a linked folder, is
+    # listed by its real path in the vault too, and read from there, so its
+    # relative imports are taken from both folders. Whether or not the file
+    # exists yet, so long as its folder does: a pass that creates it creates it
+    # at its real path (round 2 of the review).
+    new=""
+    while IFS= read -r p; do
+      case "$p" in
+        */*) d="$(cd "$root/${p%/*}/" 2>/dev/null && pwd -P)" || continue ;;
+        *) d="$rootp" ;;
+      esac
+      phys="$d/${p##*/}"
+      hops=0
+      while [ -L "$phys" ] && [ "$hops" -lt 40 ]; do
+        l="$(readlink "$phys" 2>/dev/null)" || break
+        case "$l" in /*) phys="$l" ;; *) phys="${phys%/*}/$l" ;; esac
+        d="$(cd "${phys%/*}/" 2>/dev/null && pwd -P)" || break
+        phys="$d/${phys##*/}"
+        hops=$((hops + 1))
+      done
+      case "$phys" in "$rootp"/*) phys="${phys#"$rootp"/}" ;; *) continue ;; esac
+      # A hop into a folder that is not there leaves the link's own spelling
+      # (./gone/x.md), which the next round lists as gone/x.md: without this
+      # the same path read as new every round, and a dangling link made every
+      # pass refuse (round 3 of the review).
+      steering_norm "$phys" || continue
+      phys="$SI_NORM"
+      [ -n "$phys" ] && [ "$phys" != "$p" ] || continue
+      LC_ALL=C grep -qxF -- "$phys" "$out.new" && continue
+      new="$new$phys
+"
+    done < "$out.new"
+    mv -f "$out.new" "$out" 2>/dev/null || return 1
+    [ -n "$new" ] && [ "$round" -lt 5 ] || break
+    roots="$roots
+$new"
+    round=$((round + 1))
+  done
+  # Links still leading somewhere new after five rounds: the set is not known
+  # in full, so this fails, as the 5000-file cap does, and the runner refuses.
+  if [ -n "$new" ]; then
+    printf '%s' "$new" >> "$out"
+    return 1
+  fi
+  return 0
 }
 
 # is_restorable_path <relative-path>
@@ -1266,7 +1543,7 @@ vault_state_dir() {
   local root="$1" base id dir croot kroot
   croot="$(cd "$root" 2>/dev/null && pwd -P)"
   kroot="$(path_key "${croot:-$root}")"
-  id="$(printf '%s' "$kroot" | cksum | cut -d' ' -f1)"
+  id="$(printf '%s' "$kroot" | "${RUNNER_CKSUM:-cksum}" | cut -d' ' -f1)"
   if [ -n "${VAULT_STATE_DIR:-}" ]; then
     dir="$VAULT_STATE_DIR"
     command -v cygpath >/dev/null 2>&1 && dir="$(cygpath -u "$dir" 2>/dev/null || printf '%s' "$dir")"
@@ -2538,7 +2815,7 @@ path_state() {
     # Through unescape_cksum for the same reason fence_find is: where cksum
     # escapes, the leading backslash lands on the checksum field itself, and
     # this would never equal the snapshot line for the very same file.
-    ( cd "$1" && cksum "./$2" 2>/dev/null ) | unescape_cksum | cut -d' ' -f1,2
+    ( cd "$1" && "${RUNNER_CKSUM:-cksum}" "./$2" 2>/dev/null ) | unescape_cksum | cut -d' ' -f1,2
   elif [ -e "$1/$2" ]; then
     printf 'other\n'
   fi
@@ -3150,9 +3427,14 @@ move_line_break_names() {
 # The first of sha256sum, shasum and cksum found on PATH as an absolute path,
 # printed as "<name> <path>". cksum is a CRC: anyone able to write the folder
 # can make a file match it, which the runner's WARNING says. Fails when none is
-# found.
+# found. Once a runner has pinned its tools (fence_tools_pin), it is the pinned
+# one, whatever PATH holds by then.
 snap_tool() {
   local t p
+  if [ -n "${RUNNER_SNAP_TOOL:-}" ]; then
+    printf '%s\n' "$RUNNER_SNAP_TOOL"
+    return 0
+  fi
   for t in sha256sum shasum cksum; do
     p="$(command -v "$t" 2>/dev/null)" || continue
     case "$p" in
@@ -3161,6 +3443,75 @@ snap_tool() {
     esac
   done
   return 1
+}
+
+# fence_tool_in_vault <path> <root>
+# True when <path>, a folder above it, or the folder it is in once every link
+# on the way is followed (pwd -P), is the vault <root>. A folder that cannot be
+# entered counts as in the vault, so a doubt refuses.
+fence_tool_in_vault() {
+  local d
+  path_under_by_identity "$1" "$2" && return 0
+  d="$(cd "${1%/*}/" 2>/dev/null && pwd -P)" || return 0
+  path_under_by_identity "$d" "$2"
+}
+
+# fence_tools_pin <root> <log>
+# Finds sha256sum, shasum and cksum on PATH once, before the pass (1.7.5, H13),
+# and refuses, with an ERROR line in <log> and status 1, when any found one is
+# in the vault or a link on the way to it leads there: the runners never set
+# PATH, so a vault folder on it would let a pass rewrite the tool that records
+# the vault before and after it. A relative PATH entry (., or an empty one) is
+# the runner's current folder, the vault root, and is resolved against it.
+# Then sets RUNNER_SNAP_TOOL ("<name> <path>", what snap_tool returns) and
+# RUNNER_CKSUM, which every fence call of cksum runs, so a tool planted on PATH
+# while the pass runs is never found. Refuses when no cksum is found, because
+# the fence records every file with it. Known limit: a tool outside the vault
+# that is a hard link to a file in it is not seen.
+fence_tools_pin() {
+  local root="$1" log="$2" t p q l hops first="" ck=""
+  RUNNER_SNAP_TOOL=""
+  RUNNER_CKSUM=""
+  for t in sha256sum shasum cksum; do
+    # As snap_tool has always looked them up: command -v, and a bare name,
+    # which is what it prints for a function, a builtin or an alias, is not
+    # a tool on PATH and is passed over, never run. A name found through a
+    # relative entry comes back as ./name and is resolved below.
+    p="$(command -v "$t" 2>/dev/null)" || continue
+    case "$p" in
+      /*|[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]:/*|[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]:\\*) ;;
+      */*) p="$PWD/$p" ;;
+      *) continue ;;
+    esac
+    q="$p"
+    hops=0
+    while :; do
+      if fence_tool_in_vault "$q" "$root"; then
+        printf '[%s] ERROR: the %s found on PATH, %s, is in the vault or leads there through a link (%s), so a pass could rewrite the tool the runner records the vault with. Take that folder off PATH for the runners. Refusing to run.\n' "$(ts)" "$t" "$p" "$q" >> "$log"
+        return 1
+      fi
+      [ -L "$q" ] || break
+      hops=$((hops + 1))
+      l="$(readlink "$q" 2>/dev/null)"
+      if [ "$hops" -gt 40 ] || [ -z "$l" ]; then
+        printf '[%s] ERROR: the %s found on PATH, %s, is a link the runner could not follow to its end, so it could not check where the tool is. Refusing to run.\n' "$(ts)" "$t" "$p" >> "$log"
+        return 1
+      fi
+      case "$l" in
+        /*|[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]:/*) q="$l" ;;
+        *) q="${q%/*}/$l" ;;
+      esac
+    done
+    [ -n "$first" ] || first="$t $p"
+    [ "$t" = cksum ] && ck="$p"
+  done
+  if [ -z "$ck" ]; then
+    printf '[%s] ERROR: no cksum was found on PATH, and the runner records every file of the vault with it. Refusing to run.\n' "$(ts)" >> "$log"
+    return 1
+  fi
+  RUNNER_SNAP_TOOL="$first"
+  RUNNER_CKSUM="$ck"
+  return 0
 }
 
 # snap_digest <file> <tool name> <tool path>
@@ -4456,7 +4807,7 @@ run_agent() {
 # "exited with code" line already says the status was the agent's. 79 itself is
 # in the list, so an agent that leaves with 79 gets the same AGENT-STATUS line
 # and cannot pass for a remapped code.
-AGENT_RESERVED_STATUSES="2 3 4 5 64 70 75 78 79 124 125 127 129 130 143"
+AGENT_RESERVED_STATUSES="2 3 4 5 64 70 75 78 79 124 125 126 127 129 130 143"
 
 # agent_interpreter_missing <bin>
 # Returns 0 only when <bin> cannot start because its #! line names something
@@ -4513,9 +4864,15 @@ agent_status_exit() {
   # 127 from a binary that was gone when run_agent came to start it, or from
   # one whose #! interpreter is missing (run_agent's AGENT_CANNOT_START), is the
   # shell's or env's, not the agent's, and keeps its own meaning: not found.
-  # Any other 127 is the agent's and is remapped below.
-  if [ "$RUN_RC" = 127 ] && [ "${AGENT_CANNOT_START:-0}" = 1 ]; then
-    return 127
+  # 126 from one that cannot be started (a file without its exec bit, a folder,
+  # an interpreter that is missing or not executable; each of them, measured on
+  # WSL bash 5.3.9 and Git Bash 5.3.15, sets AGENT_CANNOT_START) keeps its own
+  # meaning the same way: cannot execute. Any other 126 or 127 is the agent's
+  # and is remapped below (126 from 1.7.5). Known limit: a binary built for
+  # another machine passes command -v and gives 126 (exec format error), so it
+  # reads as the agent's own 126; the run log keeps the shell's message.
+  if { [ "$RUN_RC" = 127 ] || [ "$RUN_RC" = 126 ]; } && [ "${AGENT_CANNOT_START:-0}" = 1 ]; then
+    return "$RUN_RC"
   fi
   if [ "${AGENT_RAN:-0}" = 1 ]; then
     for c in $AGENT_RESERVED_STATUSES; do
@@ -4526,4 +4883,130 @@ agent_status_exit() {
     done
   fi
   return "$RUN_RC"
+}
+
+# The dream and promotion runners' exit and signal handlers (1.7.5; until then
+# each runner held its own copy, identical but for the agent's name). They read
+# the runner's state from its globals (CONTAINMENT_CHECKED, INFLIGHT, SNAP_DIR,
+# SNAP_KEEP, ...) and RUNNER_AGENT, the agent's name. The names are new, so an
+# older runner that sources this library keeps its own on_exit and on_signal,
+# and a runner that finds these missing refuses to run (its library is older).
+# The retention runner keeps its own handlers: no agent, no containment.
+
+# runner_record_session_once
+# Records a claude-mode pass's session, once, however the pass ended, so a later
+# capture of Claude Code sessions never takes a runner's pass for a person's
+# work. The stream is read from the runner's private copy.
+runner_record_session_once() {
+  [ "$SESSION_RECORDED" -eq 0 ] && [ -n "$AGENT_SESSION_ID" ] && [ "${AGENT_KIND:-}" = claude ] \
+    && [ -n "$SNAP_DIR" ] && [ -f "$SNAP_DIR/run" ] || return 0
+  SESSION_RECORDED=1
+  record_runner_session "$STATE" "$RUNNER" "$SNAP_DIR/run" 0 "$AGENT_SESSION_ID" "$LOG"
+}
+
+# On any exit: clear the in-flight marker only once containment has checked the
+# pass, then remove the temporary directory. The pre-pass backup goes with the
+# marker, unless a stop left a process that may have written after containment,
+# because the owner needs the backup to review what it wrote.
+runner_on_exit() {
+  if [ "$CONTAINMENT_CHECKED" -eq 1 ]; then
+    clear_inflight "$ROOT" "$STATE"
+    if [ "$KILL_FAILED_MARKED" -eq 0 ]; then
+      rm -f "$STATE/inflight-backup.tar" 2>/dev/null
+    elif [ -s "$STATE/inflight-backup.tar" ]; then
+      printf '[%s] The pre-pass backup is kept at %s for the review after KILL_FAILED.\n' "$(ts)" "$(shown_name "$STATE/inflight-backup.tar")" >> "$LOG"
+    else
+      printf '[%s] WARNING: there is no pre-pass backup at %s to review against after KILL_FAILED.\n' "$(ts)" "$(shown_name "$STATE/inflight-backup.tar")" >> "$LOG"
+    fi
+  fi
+  # What a tripwire or stop report left when a signal cut it short.
+  [ -n "${STATE:-}" ] && rm -f "$STATE/tripwire-body.$$" "$STATE/kill-report.$$" "$STATE/runner-tripwire.tmp.$$" "$STATE/$RUNNER.interrupted.run.tmp.$$" "$STATE/signal-stop.$$" "$STATE/signal-stop.$$.powershell" 2>/dev/null
+  [ -n "${ROOT:-}" ] && rm -f "$ROOT/$TRIPWIRE_REL.tmp.$$" "$ROOT/$TRIPWIRE_REL.tmp.$$".* "$ROOT/$INFLIGHT_REL.tmp.$$".* 2>/dev/null
+  [ -n "$SNAP_DIR" ] && [ "$SNAP_KEEP" -eq 0 ] && rm -rf "$SNAP_DIR"
+  run_lock_release
+}
+
+# On INT, TERM or HUP: stop the agent, and if it had started, containment cannot be
+# trusted to have run, so set the tripwire now rather than leave the vault to the
+# next pass's baseline.
+runner_on_signal() {
+  # Bash runs a trap again when a second signal lands while the first one's
+  # handler is running (measured), and the nested call would exit from inside
+  # this one, part way through its tripwire. A hangup makes that routine: the
+  # terminal and the shell that owned it can each send one. So a nested call
+  # returns, and the first handler finishes with its own code. A flag rather
+  # than trap '', because an ignored signal is inherited by every child started
+  # after it.
+  [ "${IN_ON_SIGNAL:-0}" -eq 1 ] && return 0
+  IN_ON_SIGNAL=1
+  local report=""
+  # The whole tree, so a child of the agent or of a git step cannot keep writing
+  # after the exit. RUN_PID is set while such a command runs, and while the
+  # watchdog finishes stopping one that has ended (RUN_REAPED=1). It runs once the
+  # private temporary directory has been made, whether or not it is still there,
+  # and is recorded in the state directory, because a pass can remove that
+  # directory or put a link in its place. A stop that may have left a
+  # process marks the run lock. Before containment the tripwire below is set, so
+  # the stop's report goes into it as well.
+  if [ -n "${RUN_PID:-}" ] && [ -n "$SNAP_DIR" ]; then
+    stop_tree "$RUN_PID" 2 "$STATE/signal-stop.$$" "${AGENT_SESSION_ID:-}" 1
+    if grep -qE '^(alive|unknown)' "$STATE/signal-stop.$$" 2>/dev/null; then
+      if [ "$INFLIGHT" -eq 1 ] && [ "$CONTAINMENT_CHECKED" -eq 0 ]; then
+        report="$(cat "$STATE/signal-stop.$$")"
+      else
+        mark_kill_failed "$LOG" "$(cat "$STATE/signal-stop.$$")"
+      fi
+    fi
+  fi
+  # Before containment the pass may have put a link in place of the vault's log,
+  # so the lines below go to the state directory then (log_outside_links). The
+  # log is checked once the tree is stopped, so a pass cannot put the link there
+  # after the check.
+  if [ "$INFLIGHT" -eq 1 ] && [ "$CONTAINMENT_CHECKED" -eq 0 ]; then
+    log_outside_links "$ROOT" "$STATE" "$RUNNER"
+  fi
+  runner_record_session_once
+  # Before its output reached the run log, the pass's stream would go with the
+  # temporary directory, so it is kept in the state directory, unless run or the
+  # folder is a link, which the copy would follow to whatever it names.
+  if [ "$RUN_LOG_APPENDED" -eq 0 ] && [ -n "$SNAP_DIR" ] && [ -f "$SNAP_DIR/run" ] \
+     && [ ! -L "$SNAP_DIR/run" ] && [ ! -L "$SNAP_DIR" ]; then
+    keep_run_output "$SNAP_DIR/run" "$STATE" "$RUNNER" "$LOG"
+  fi
+  if [ "$INFLIGHT" -eq 1 ] && [ "$CONTAINMENT_CHECKED" -eq 0 ]; then
+    # A tripwire this run already set, by containment or by a stop's report,
+    # stays as it is, with a note. tripwire_check made sure neither copy existed
+    # when the run started, and the pass cannot write the state directory copy.
+    if { [ "${CONTAINED:-0}" -eq 1 ] || [ -f "$STATE/$(basename "$TRIPWIRE_REL")" ]; } \
+       && note_tripwire "$ROOT" "$STATE" "$LOG" "The runner was then interrupted by a signal, so its log may lack some of what is above."; then
+      clear_inflight "$ROOT" "$STATE"
+      printf '[%s] INTERRUPTED after the tripwire was set. The tripwire is kept.\n' "$(ts)" >> "$LOG"
+    elif write_tripwire "$ROOT" "$STATE" "$RUNNER" \
+         "the pass was interrupted by a signal before containment ran, so the vault's steering surfaces are unverified (the pre-pass backup is $STATE/inflight-backup.tar)" \
+         "(none, because containment did not run)" /dev/null "" uncontained; then
+      clear_inflight "$ROOT" "$STATE"
+      printf '[%s] INTERRUPTED before containment. Tripwire set.\n' "$(ts)" >> "$LOG"
+    else
+      # With no tripwire the marker stays, so the next run still refuses.
+      printf '[%s] TRIPWIRE-ERROR: interrupted before containment and no tripwire could be written. Treat the vault as unverified, and run no git command in it before the steering surfaces have been checked. The in-flight marker is kept.\n' "$(ts)" >> "$LOG"
+    fi
+  fi
+  # A stop by the watchdog that may have left a process, and that the runner had
+  # not reported yet, is reported now, so the lock is marked and the tripwire says
+  # so. Before the run log is written that includes a result the watchdog has set
+  # while run_agent had not returned, which is why the result is read only while
+  # the agent's own run owns it, which AGENT_RUNNING records.
+  if [ "$STOP_REPORT_PENDING" -eq 1 ]; then
+    report="$AGENT_KILL_REPORT${report:+
+$report}"
+  elif [ "$AGENT_RUNNING" -eq 1 ] && [ "$RUN_LOG_APPENDED" -eq 0 ] && [ "${RUN_KILL_FAILED:-0}" -eq 1 ] && [ "$KILL_FAILED_MARKED" -eq 0 ]; then
+    report="${RUN_KILL_REPORT:-}${report:+
+$report}"
+  fi
+  if [ -n "$report" ]; then
+    RUN_KILL_FAILED=1
+    RUN_KILL_REPORT="$report"
+    report_stop "$LOG" "$RUNNER_AGENT" "$ROOT" "$STATE" "$RUNNER"
+  fi
+  exit "$1"
 }

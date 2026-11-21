@@ -365,7 +365,7 @@ Every note carries YAML frontmatter. `tier` and `type` are the two keys the mach
 reads: the lint hook flags their absence on write, and `vault-check.sh` fails the vault without
 them. Since 1.7.0 it also prints a `WARNING` line for a value outside the lists below, a `tier`
 that is not its folder's, and a long-tier note with no wikilink; the warnings become violations
-in a later release. The rest are contract, enforced by review and by you.
+in release 1.8.0. The rest are contract, enforced by review and by you.
 
 | Key | Status | Meaning |
 | --- | --- | --- |
