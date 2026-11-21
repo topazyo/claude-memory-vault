@@ -1842,7 +1842,11 @@ if suite_section no-jq; then
 
 printf '\n=== no-jq fallback (forced) ===\n'
 
-win2=$(printf '%s' "$WORK/31-standards/bad.md" | sed 's|/|\\\\|g')
+# The path is escaped JSON with backslashes on Windows, where a backslash
+# separates folders; elsewhere it is part of a name (1.7.5), so the same parse
+# is fed the plain path there.
+win2="$WORK/31-standards/bad.md"
+is_windows_host && win2=$(printf '%s' "$WORK/31-standards/bad.md" | sed 's|/|\\\\|g')
 out_nojq=$(printf '{"tool_input":{"file_path":"%s"}}' "$win2" \
   | VAULT_FORCE_NO_JQ=1 CLAUDE_PROJECT_DIR="$WORK" bash "$HOOK" 2>&1)
 if printf '%s' "$out_nojq" | grep -q 'jq not found' \

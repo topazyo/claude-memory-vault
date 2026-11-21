@@ -1312,7 +1312,7 @@ steering_imports() {
           if (home == "") return ""
           p = home substr(p, 2)
         }
-        if (p ~ /^\// || p ~ /^[A-Za-z]:[\/\\]/) {
+        if (p ~ /^\// || p ~ /^[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]:[\/\\]/) {
           gsub(/\\/, "/", p)
           lp = tolower(p)
           for (a = 1; a <= nsp; a++) if (index(lp, sp[a] "/") == 1) return norm(substr(p, length(sp[a]) + 2))
@@ -1349,7 +1349,7 @@ steering_imports() {
           n = length(line)
           for (i = 1; i <= n; i++) {
             if (substr(line, i, 1) != "@") continue
-            if (i > 1 && substr(line, i - 1, 1) ~ /[A-Za-z0-9]/) continue
+            if (i > 1 && index("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789", substr(line, i - 1, 1))) continue
             path = ""
             j = i + 1
             while (j <= n) {
@@ -1380,8 +1380,8 @@ steering_imports() {
         for (k = 1; k <= 2; k++) {
           if (r[k] == "") continue
           sp[++nsp] = tolower(r[k])
-          if (r[k] ~ /^\/[A-Za-z]\//) sp[++nsp] = tolower(substr(r[k], 2, 1) ":" substr(r[k], 3))
-          if (r[k] ~ /^[A-Za-z]:\//) sp[++nsp] = tolower("/" substr(r[k], 1, 1) substr(r[k], 3))
+          if (r[k] ~ /^\/[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]\//) sp[++nsp] = tolower(substr(r[k], 2, 1) ":" substr(r[k], 3))
+          if (r[k] ~ /^[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]:\//) sp[++nsp] = tolower("/" substr(r[k], 1, 1) substr(r[k], 3))
         }
       }
       { x = norm($0); if (x != "") add(x) }
