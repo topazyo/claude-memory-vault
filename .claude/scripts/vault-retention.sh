@@ -66,7 +66,9 @@
 # Exit codes:
 #   0    moved and committed, nothing to move, a dry run, or no
 #        20-projects/_logs folder
-#   1    setup failure, 20-projects/_logs cannot be listed or entered, git
+#   1    setup failure, a sha256sum, shasum or cksum that PATH finds in the
+#        vault or through a link into it, or no cksum (from 1.7.5), a library
+#        without fence_tools_pin, 20-projects/_logs cannot be listed or entered, git
 #        cannot read the vault, the vault is not the top of its own
 #        repository, a shallow clone, grafts, or a sparse checkout, a
 #        temporary folder that could not be made in TMPDIR or /tmp, or is not

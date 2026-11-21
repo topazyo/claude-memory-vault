@@ -135,9 +135,11 @@
 #        set), and everything it started. After 124 or 125, KILL_FAILED in the
 #        log means a process may still be running. The run lock is kept, so later
 #        runs exit 75, and the tripwire is set
-#   126  the claude binary or the VAULT_AGENT_CMD wrapper cannot be started:
-#        not executable, a folder, or its #! interpreter is missing (bash 5.3
-#        and 3.2) or not executable. An agent's own 126 leaves as 79 (1.7.5)
+#   126  the claude binary or the VAULT_AGENT_CMD wrapper cannot start: its #!
+#        interpreter is missing (bash 5.3 and 3.2; 5.2 gives 127) or is not
+#        executable. One that is not executable itself, or is a folder, is
+#        refused before the pass with 127. An agent's own 126 leaves as 79
+#        (1.7.5)
 #   127  the claude binary or the VAULT_AGENT_CMD wrapper was not found, or
 #        cannot start for a #! line docs/reference.md (exit 79) names
 #   129  stopped by HUP, 130 by INT, 143 by TERM. The agent's tree is stopped,

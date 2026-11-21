@@ -212,10 +212,11 @@ h13-no-cksum ubuntu macos windows
 h13-pin-midpass ubuntu macos windows
 h13-relative-path ubuntu macos windows
 h13-sha-in-vault ubuntu macos windows
-h2-import-codespan ubuntu macos windows
 h2-import-contained ubuntu macos windows
 h2-import-created ubuntu macos windows
 h2-import-crlf ubuntu macos windows
+h2-import-email ubuntu macos windows
+h2-import-link ubuntu macos
 h2-import-nested ubuntu macos windows
 h2-import-outside ubuntu macos windows
 h2-import-promotion ubuntu macos windows
@@ -311,6 +312,7 @@ putback-verify-kill-failed ubuntu macos windows
 read-guard-awk-failure-refuses ubuntu macos windows
 reaped-group ubuntu macos
 resume-skips-pass-output ubuntu macos windows
+ret-h13-cksum-in-vault ubuntu macos windows
 retention-inherited-nonce windows
 retention-junction windows
 retention-posix-mode ubuntu windows

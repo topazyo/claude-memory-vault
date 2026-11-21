@@ -48,10 +48,7 @@ ended on Windows, and the lint reading paths the way the checker does. The docum
   else, refuses (exit 1) when one is in the vault or a link leads there, or when there is no
   `cksum`, and runs those for the rest of the run, so a tool planted on `PATH` during the pass is
   never run. A relative or empty `PATH` entry is the vault root while a runner runs.
-- **An agent's own exit 126 leaves as 79.** 126 is now reserved as 127 is: a binary or wrapper
-  that cannot be started at all (not executable, a folder, its `#!` interpreter missing or not
-  executable) keeps the shell's 126, and an agent that leaves with 126 itself leaves as 79 with an
-  `AGENT-STATUS:` line. Until now every 126 passed through, so the two read alike.
+- **An agent's own exit 126 leaves as 79.** 126 is now reserved as 127 is: a wrapper whose `#!` interpreter is missing or not executable keeps the shell's 126, and an agent that leaves with 126 itself leaves as 79 with an `AGENT-STATUS:` line. Until now every 126 passed through, so the two read alike.
 - **The dream and promotion runners' exit and signal handlers are in `lib/runner-common.sh`.**
   They were two identical copies. A runner whose library lacks them refuses (exit 1) before any
   lock or state, with an `ERROR:` line saying the two come from different releases. The retention

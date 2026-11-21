@@ -78,9 +78,12 @@ lint_is_win() {
 # a file reads that form: on Linux or macOS `templates.` is a folder of its own,
 # not `templates`, and a skip must never match more than is really there.
 norm_slashes() {
-  # Every backslash, on every platform: this decides scope only, which scans
-  # more, not less, and the file read keeps its own name (lint_is_win).
-  local p="${1//\\//}" strip="${2:-strip}" rest part out="" n=0 first=1
+  # A backslash is a separator on Windows only (lint_is_win, 1.7.5). Elsewhere
+  # it is part of a name, and turning it into a slash there moved scope the
+  # wrong way: templates\x.md met the templates skip and a\..\..\x.md left its
+  # tier, so a note vault-check reads was passed over (round 1 of the review).
+  local p="$1" strip="${2:-strip}" rest part out="" n=0 first=1
+  case "$p" in *\\*) lint_is_win && p="${p//\\//}" ;; esac
   # The replacement is a bare /: bash before 5.2 keeps a backslash written in
   # the replacement, so \/ there gave .claude\/rules on macOS's bash 3.2.
   while :; do case "$p" in *//*) p="${p//\/\///}" ;; *) break ;; esac; done
@@ -367,14 +370,25 @@ lint_file() {
   # Windows <vault>./.claude/rules/r.md opens .claude/rules/r.md, which Git
   # Bash's test does not find by that name (1.7.5, H8a: it was logged DEGRADED
   # and nothing was scanned). When the name as given is not a file there, the
-  # name norm_slashes strips is read instead, and the log names both.
+  # name norm_slashes strips is read instead, and the log names both. A
+  # relative name is tried from the same places, in the same order, as above:
+  # the current folder, the session's folder from the hook input, the vault.
   LINT_AS=""
   if [ ! -f "$NORM" ] && lint_is_win; then
-    norm_slashes "$NORM"
-    if [ -f "$NORM_OUT" ]; then
-      NORM="$NORM_OUT"
-      LINT_AS=" (named as $FILE)"
-    fi
+    local h8_try h8_cwd h8_rel=1
+    h8_cwd="${HOOK_CWD:-}"
+    h8_cwd="${h8_cwd//\\//}"
+    case "$NORM" in /*|[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]:/*) h8_rel=0 ;; esac
+    for h8_try in "$NORM" ${h8_cwd:+"$h8_cwd/$NORM"} "$ROOT/$NORM"; do
+      # An absolute name is tried as given, and only that.
+      [ "$h8_rel" -eq 1 ] || [ "$h8_try" = "$NORM" ] || continue
+      norm_slashes "$h8_try"
+      if [ -f "$NORM_OUT" ]; then
+        NORM="$NORM_OUT"
+        LINT_AS=" (named as $FILE)"
+        break
+      fi
+    done
   fi
   if [ ! -f "$NORM" ]; then
     log_line "DEGRADED: in-scope path does not resolve to a file, nothing was linted: $NORM"

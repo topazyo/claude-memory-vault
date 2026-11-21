@@ -208,9 +208,13 @@ win_msys_tree() {
 # reported nothing alive, and run_agent waited on it for ever. So a pid whose
 # parent is still the listed one counts as well. A pid handed out again under
 # that same parent is a new child of a process of the tree, which is the tree's
-# too; for the command itself the parent is the runner, which is waiting on it.
+# too, with one exception: for the command itself the parent is the runner,
+# and when the runner stops the tree itself (a signal) it forks subshells of
+# its own, one of which could be given the command's freed pid. The caller's
+# own process is therefore never a member (round 1 of the 1.7.5 review).
 win_same_member() {
   local now
+  [ "$1" = "${BASHPID:-}" ] && return 1
   now="$(cat "/proc/$1/winpid" 2>/dev/null)"
   [ -n "$now" ] || return 1
   [ "$now" = "$2" ] && return 0
@@ -352,7 +356,7 @@ if (\$left.Count -eq 0) { 'none' } else { \$left }"
 # process group are signalled, because the group id stays reserved while it has
 # members. On Windows only the nonce finds what it left.
 stop_tree() {
-  local pid="$1" grace="$2" record="$3" nonce="$4" own="$5" members winpid g p w pp group=0 left listed
+  local pid="$1" grace="$2" record="$3" nonce="$4" own="$5" members targets winpid g p w pp group=0 left listed
   : > "$record"
   if is_windows_bash; then
     listed="$(date +%s)"
@@ -373,16 +377,24 @@ stop_tree() {
     grep -qE '^(none|alive|unknown \(PowerShell)' "$record" || printf 'unknown (PowerShell gave no answer)\n' >> "$record"
     # Git Bash pids are handed out again once free, so each is signalled and
     # checked only while it is still the process that was listed, or the one it
-    # became by exec (win_same_member).
-    printf '%s\n' "$members" | while read -r p w pp; do
-      [ -n "$p" ] && win_same_member "$p" "$w" "$pp" && kill -KILL "$p" 2>/dev/null
+    # became by exec (win_same_member). Which pids those are is decided for
+    # every member before any is signalled, because a member whose parent is
+    # stopped first gets another parent and would no longer pass the test
+    # (round 1 of the 1.7.5 review). Each is kept with its Windows id then, the
+    # one the check below compares, as well as the listed one and its parent.
+    targets="$(printf '%s\n' "$members" | while read -r p w q; do
+      [ -n "$p" ] && win_same_member "$p" "$w" "$q" && printf '%s %s %s %s\n' "$p" "$(cat "/proc/$p/winpid" 2>/dev/null)" "$w" "$q"
+    done)"
+    printf '%s\n' "$targets" | while read -r p n w q; do
+      [ -n "$p" ] && kill -KILL "$p" 2>/dev/null
     done
     pp="$(printf '%s\n' "$members" | awk -v p="$pid" '$1 == p { print $3; exit }')"
     [ -n "$winpid" ] && win_same_member "$pid" "$winpid" "$pp" && kill -KILL "$pid" 2>/dev/null
     sleep 1
-    printf '%s\n' "$members" | while read -r p w pp; do
-      [ -n "$p" ] && [ "$p" != "$pid" ] || continue
-      win_same_member "$p" "$w" "$pp" && kill -0 "$p" 2>/dev/null && printf 'alive %s\n' "$p" >> "$record"
+    printf '%s\n' "$targets" | while read -r p n w q; do
+      [ -n "$p" ] && [ "$p" != "$pid" ] && [ "$p" != "${BASHPID:-}" ] || continue
+      { [ "$(cat "/proc/$p/winpid" 2>/dev/null)" = "$n" ] || win_same_member "$p" "$w" "$q"; } \
+        && kill -0 "$p" 2>/dev/null && printf 'alive %s\n' "$p" >> "$record"
     done
     return 0
   fi
@@ -1212,111 +1224,157 @@ steering_filter() {
 # (steering_filter reads <out> through STEERING_IMPORTS_FILE).
 #
 # The roots are CLAUDE.md, AGENTS.md and CLAUDE.local.md at the vault root and
-# .claude/CLAUDE.md, matched without regard to case, and the rules are Claude
-# Code's (code.claude.com/docs/en/memory.md, "Import additional files", read
-# 2026-11-21): a relative path is taken from the importing file's folder; the
-# path ends at the first space or tab, and "\ " is a space; a path in quotes is
-# no import; code spans and fenced blocks are skipped. An import is an @ at the
-# start of a line or after a space or tab, so an e-mail address is not one.
-# Claude Code stops after four hops; this follows imports to the end (up to
-# 5000 files), because other harnesses load AGENTS.md too, and a file taken as
-# steering that is not costs a tripwire, while one missed is not fenced. Each
-# path is also listed without trailing punctuation (.,;:!?)]), for the same
-# reason. A CR at a line's end is dropped first, so a CRLF file names the same
-# paths. Listed whether or not the file exists, so a pass that creates one is
-# contained too. An absolute or ~/ path counts only when it is inside the vault
-# as <root> spells it (or its other Git Bash spelling); anything outside the
-# vault is outside the fence anyway. Fails when <out> cannot be written.
+# .claude/CLAUDE.md, matched without regard to case. Claude Code's rules
+# (code.claude.com/docs/en/memory.md, "Import additional files", read
+# 2026-11-21) take a relative path from the importing file's folder and end it
+# at the first space, "\ " being a space. Everything that could be an import
+# under those rules is listed, and more: an @ counts unless a letter or digit
+# comes just before it (so an e-mail address does not), the path ends at a
+# space, tab, no-break space, form feed or vertical tab, and code spans, fenced
+# blocks and quotes are not skipped, because a fence or a span read wrongly
+# would drop every import after it, and a file listed that loads nowhere costs
+# only a tripwire when a pass changes it, while one missed is not put back. For
+# the same reason each path is also listed without leading quotes or brackets
+# and trailing punctuation, imports are followed past Claude Code's four hops
+# (other harnesses load AGENTS.md too), and a file reached through a link is
+# listed, and its imports read, by its real path in the vault as well. A CR at
+# a line's end is dropped. Listed whether or not the file exists, so a pass that
+# creates one is contained too. An absolute or ~/ path counts only when it is
+# inside the vault as <root> spells it, its pwd -P spelling or the other Git
+# Bash spelling of either; anything outside the vault is outside the fence
+# anyway. Known limit: other instruction files (a CLAUDE.md below the root,
+# .claude/rules) are steering files themselves, but what they import is not
+# followed. Fails when <out> cannot be written or more than 5000 files would be
+# read, so a runner refuses rather than fence part of the set.
 steering_imports() {
-  local root="$1" out="$2" roots
+  local root="$1" out="$2" roots rootp new p d l phys hops round=0
   : > "$out" 2>/dev/null || return 1
+  rootp="$(cd "$root" 2>/dev/null && pwd -P)" || return 1
   roots="$(cd "$root" 2>/dev/null && {
     LC_ALL=C find . -maxdepth 1 \( -type f -o -type l \) \( -iname claude.md -o -iname agents.md -o -iname claude.local.md \) -print 2>/dev/null
-    [ -d .claude ] && LC_ALL=C find ./.claude -maxdepth 1 \( -type f -o -type l \) -iname claude.md -print 2>/dev/null
+    [ -d .claude ] && LC_ALL=C find ./.claude/ -maxdepth 1 \( -type f -o -type l \) -iname claude.md -print 2>/dev/null
   })"
-  printf '%s\n' "$roots" | SI_ROOT="${root%/}" SI_HOME="${HOME:-}" LC_ALL=C awk '
-    function norm(p,   n, part, i, k, st, o) {
-      n = split(p, part, "/")
-      k = 0
-      for (i = 1; i <= n; i++) {
-        if (part[i] == "" || part[i] == ".") continue
-        if (part[i] == "..") { if (k == 0) return ""; k--; continue }
-        st[++k] = part[i]
-      }
-      o = ""
-      for (i = 1; i <= k; i++) o = o (i > 1 ? "/" : "") st[i]
-      return o
-    }
-    function rel_of(raw, dir,   p, lp, a) {
-      p = raw
-      if (substr(p, 1, 2) == "~/") {
-        if (home == "") return ""
-        p = home substr(p, 2)
-      }
-      if (p ~ /^\// || p ~ /^[A-Za-z]:[\/\\]/) {
-        gsub(/\\/, "/", p)
-        lp = tolower(p)
-        for (a = 1; a <= nsp; a++) if (index(lp, sp[a] "/") == 1) return norm(substr(p, length(sp[a]) + 2))
-        return ""
-      }
-      return norm(dir == "" ? p : dir "/" p)
-    }
-    function add(rel,   k) {
-      if (rel == "") return
-      k = tolower(rel)
-      if (k in seen) return
-      seen[k] = 1
-      q[++qn] = rel
-      print rel
-    }
-    function scan(rel,   dir, f, line, infence, s, n, i, j, c, path, t) {
-      dir = rel
-      if (dir ~ /\//) sub(/\/[^\/]*$/, "", dir); else dir = ""
-      f = root "/" rel
-      infence = 0
-      while ((getline line < f) > 0) {
-        sub(/\r$/, "", line)
-        if (line ~ /^[ \t]*(```|~~~)/) { infence = !infence; continue }
-        if (infence) continue
-        s = line
-        gsub(/`[^`]*`/, " ", s)
-        n = length(s)
+  while :; do
+    printf '%s\n' "$roots" | SI_ROOT="${root%/}" SI_ROOT_REAL="${rootp%/}" SI_HOME="${HOME:-}" LC_ALL=C awk '
+      function norm(p,   n, part, i, k, st, o) {
+        n = split(p, part, "/")
+        k = 0
         for (i = 1; i <= n; i++) {
-          if (substr(s, i, 1) != "@") continue
-          if (i > 1 && substr(s, i - 1, 1) != " " && substr(s, i - 1, 1) != "\t") continue
-          j = i + 1
-          c = substr(s, j, 1)
-          if (c == "\"" || c == "\047") continue
-          path = ""
-          while (j <= n) {
-            c = substr(s, j, 1)
-            if (c == "\\" && substr(s, j + 1, 1) == " ") { path = path " "; j += 2; continue }
-            if (c == " " || c == "\t") break
-            path = path c
-            j++
+          if (part[i] == "" || part[i] == ".") continue
+          if (part[i] == "..") { if (k == 0) return ""; k--; continue }
+          st[++k] = part[i]
+        }
+        o = ""
+        for (i = 1; i <= k; i++) o = o (i > 1 ? "/" : "") st[i]
+        return o
+      }
+      function rel_of(raw, dir,   p, lp, a) {
+        p = raw
+        if (substr(p, 1, 2) == "~/") {
+          if (home == "") return ""
+          p = home substr(p, 2)
+        }
+        if (p ~ /^\// || p ~ /^[A-Za-z]:[\/\\]/) {
+          gsub(/\\/, "/", p)
+          lp = tolower(p)
+          for (a = 1; a <= nsp; a++) if (index(lp, sp[a] "/") == 1) return norm(substr(p, length(sp[a]) + 2))
+          return ""
+        }
+        return norm(dir == "" ? p : dir "/" p)
+      }
+      function add(rel) {
+        if (rel == "" || (rel in seen)) return
+        seen[rel] = 1
+        q[++qn] = rel
+        print rel
+      }
+      function trimmed(t,   lead, trail) {
+        lead = "\"\047([<*`"
+        trail = ".,;:!?)]>*`\"\047"
+        while (length(t) && index(lead, substr(t, 1, 1))) t = substr(t, 2)
+        while (length(t) && index(trail, substr(t, length(t), 1))) t = substr(t, 1, length(t) - 1)
+        return t
+      }
+      function scan(rel,   dir, f, line, n, i, j, c, path, t) {
+        dir = rel
+        if (dir ~ /\//) sub(/\/[^\/]*$/, "", dir); else dir = ""
+        f = root "/" rel
+        while ((getline line < f) > 0) {
+          sub(/\r$/, "", line)
+          n = length(line)
+          for (i = 1; i <= n; i++) {
+            if (substr(line, i, 1) != "@") continue
+            if (i > 1 && substr(line, i - 1, 1) ~ /[A-Za-z0-9]/) continue
+            path = ""
+            j = i + 1
+            while (j <= n) {
+              c = substr(line, j, 1)
+              if (c == "\\" && substr(line, j + 1, 1) == " ") { path = path " "; j += 2; continue }
+              if (c == " " || c == "\t" || c == "\f" || c == "\v" || substr(line, j, 2) == "\302\240") break
+              path = path c
+              j++
+            }
+            i = j
+            if (path == "") continue
+            add(rel_of(path, dir))
+            t = trimmed(path)
+            if (t != path && t != "") add(rel_of(t, dir))
           }
-          i = j
-          if (path == "") continue
-          add(rel_of(path, dir))
-          t = path
-          sub(/[.,;:!?)\]]+$/, "", t)
-          if (t != path && t != "") add(rel_of(t, dir))
+        }
+        close(f)
+      }
+      BEGIN {
+        root = ENVIRON["SI_ROOT"]
+        home = ENVIRON["SI_HOME"]
+        sub(/\/+$/, "", home)
+        nsp = 0
+        r[1] = root
+        r[2] = ENVIRON["SI_ROOT_REAL"]
+        for (k = 1; k <= 2; k++) {
+          if (r[k] == "") continue
+          sp[++nsp] = tolower(r[k])
+          if (r[k] ~ /^\/[A-Za-z]\//) sp[++nsp] = tolower(substr(r[k], 2, 1) ":" substr(r[k], 3))
+          if (r[k] ~ /^[A-Za-z]:\//) sp[++nsp] = tolower("/" substr(r[k], 1, 1) substr(r[k], 3))
         }
       }
-      close(f)
-    }
-    BEGIN {
-      root = ENVIRON["SI_ROOT"]
-      home = ENVIRON["SI_HOME"]
-      sub(/\/+$/, "", home)
-      nsp = 0
-      sp[++nsp] = tolower(root)
-      if (root ~ /^\/[A-Za-z]\//) sp[++nsp] = tolower(substr(root, 2, 1) ":" substr(root, 3))
-      if (root ~ /^[A-Za-z]:\//) sp[++nsp] = tolower("/" substr(root, 1, 1) substr(root, 3))
-    }
-    { r = $0; sub(/^\.\//, "", r); if (r != "") add(r) }
-    END { for (h = 1; h <= qn && h <= 5000; h++) scan(q[h]) }
-  ' > "$out" 2>/dev/null
+      { x = $0; sub(/^\.\//, "", x); if (x != "") add(x) }
+      END {
+        for (h = 1; h <= qn && h <= 5000; h++) scan(q[h])
+        if (qn > 5000) exit 3
+      }
+    ' > "$out.new" 2>/dev/null || { rm -f "$out.new"; return 1; }
+    # Each listed file that is there through a link, or in a linked folder, is
+    # listed by its real path in the vault too, and read from there, so its
+    # relative imports are taken from both folders.
+    new=""
+    while IFS= read -r p; do
+      [ -e "$root/$p" ] || continue
+      case "$p" in
+        */*) d="$(cd "$root/${p%/*}/" 2>/dev/null && pwd -P)" || continue ;;
+        *) d="$rootp" ;;
+      esac
+      phys="$d/${p##*/}"
+      hops=0
+      while [ -L "$phys" ] && [ "$hops" -lt 40 ]; do
+        l="$(readlink "$phys" 2>/dev/null)" || break
+        case "$l" in /*) phys="$l" ;; *) phys="${phys%/*}/$l" ;; esac
+        d="$(cd "${phys%/*}/" 2>/dev/null && pwd -P)" || break
+        phys="$d/${phys##*/}"
+        hops=$((hops + 1))
+      done
+      case "$phys" in "$rootp"/*) phys="${phys#"$rootp"/}" ;; *) continue ;; esac
+      [ "$phys" = "$p" ] && continue
+      LC_ALL=C grep -qxF -- "$phys" "$out.new" && continue
+      new="$new$phys
+"
+    done < "$out.new"
+    mv -f "$out.new" "$out" 2>/dev/null || return 1
+    [ -n "$new" ] && [ "$round" -lt 5 ] || break
+    roots="$roots
+$new"
+    round=$((round + 1))
+  done
+  [ -z "$new" ] || printf '%s' "$new" >> "$out"
 }
 
 # is_restorable_path <relative-path>
@@ -3355,11 +3413,15 @@ fence_tools_pin() {
   RUNNER_SNAP_TOOL=""
   RUNNER_CKSUM=""
   for t in sha256sum shasum cksum; do
-    p="$(type -P "$t" 2>/dev/null)"
-    [ -n "$p" ] || continue
+    # As snap_tool has always looked them up: command -v, and a bare name,
+    # which is what it prints for a function, a builtin or an alias, is not
+    # a tool on PATH and is passed over, never run. A name found through a
+    # relative entry comes back as ./name and is resolved below.
+    p="$(command -v "$t" 2>/dev/null)" || continue
     case "$p" in
       /*|[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]:/*|[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]:\\*) ;;
-      *) p="$PWD/$p" ;;
+      */*) p="$PWD/$p" ;;
+      *) continue ;;
     esac
     q="$p"
     hops=0
