@@ -381,18 +381,30 @@ stop_tree() {
     # every member before any is signalled, because a member whose parent is
     # stopped first gets another parent and would no longer pass the test
     # (round 1 of the 1.7.5 review). Each is kept with its Windows id then, the
-    # one the check below compares, as well as the listed one and its parent.
+    # one the checks below compare, as well as the listed one and its parent,
+    # an empty field written as - so a record cannot shift. Each is checked
+    # again just before its kill, because a member may end, and its pid be
+    # handed out again, while the others are decided (round 2). The command
+    # itself is left to the line after, which the runner runs in its own
+    # process, and no loop ever takes its own pid.
     targets="$(printf '%s\n' "$members" | while read -r p w q; do
-      [ -n "$p" ] && win_same_member "$p" "$w" "$q" && printf '%s %s %s %s\n' "$p" "$(cat "/proc/$p/winpid" 2>/dev/null)" "$w" "$q"
+      [ -n "$p" ] && [ "$p" != "$pid" ] || continue
+      win_same_member "$p" "$w" "$q" || continue
+      n="$(cat "/proc/$p/winpid" 2>/dev/null)"
+      printf '%s %s %s %s\n' "$p" "${n:--}" "${w:--}" "${q:--}"
     done)"
     printf '%s\n' "$targets" | while read -r p n w q; do
-      [ -n "$p" ] && kill -KILL "$p" 2>/dev/null
+      [ -n "$p" ] && [ "$p" != "${BASHPID:-}" ] || continue
+      [ "$q" = - ] && q=""
+      { [ "$(cat "/proc/$p/winpid" 2>/dev/null)" = "$n" ] || win_same_member "$p" "$w" "$q"; } \
+        && kill -KILL "$p" 2>/dev/null
     done
     pp="$(printf '%s\n' "$members" | awk -v p="$pid" '$1 == p { print $3; exit }')"
     [ -n "$winpid" ] && win_same_member "$pid" "$winpid" "$pp" && kill -KILL "$pid" 2>/dev/null
     sleep 1
     printf '%s\n' "$targets" | while read -r p n w q; do
       [ -n "$p" ] && [ "$p" != "$pid" ] && [ "$p" != "${BASHPID:-}" ] || continue
+      [ "$q" = - ] && q=""
       { [ "$(cat "/proc/$p/winpid" 2>/dev/null)" = "$n" ] || win_same_member "$p" "$w" "$q"; } \
         && kill -0 "$p" 2>/dev/null && printf 'alive %s\n' "$p" >> "$record"
     done
@@ -1290,9 +1302,16 @@ steering_imports() {
       }
       function trimmed(t,   lead, trail) {
         lead = "\"\047([<*`"
-        trail = ".,;:!?)]>*`\"\047"
+        trail = ".,;:!?)]>*`|_~\"\047"
         while (length(t) && index(lead, substr(t, 1, 1))) t = substr(t, 2)
         while (length(t) && index(trail, substr(t, length(t), 1))) t = substr(t, 1, length(t) - 1)
+        return t
+      }
+      # The path up to the first character Markdown wraps a word in, so
+      # [@x.md](u) and |@x.md| give x.md too (round 2 of the review).
+      function cut(t,   i, set) {
+        set = "]|*<>()`\"\047"
+        for (i = 2; i <= length(t); i++) if (index(set, substr(t, i, 1))) return substr(t, 1, i - 1)
         return t
       }
       function scan(rel,   dir, f, line, n, i, j, c, path, t) {
@@ -1319,6 +1338,8 @@ steering_imports() {
             add(rel_of(path, dir))
             t = trimmed(path)
             if (t != path && t != "") add(rel_of(t, dir))
+            t = trimmed(cut(trimmed(path)))
+            if (t != path && t != "") add(rel_of(t, dir))
           }
         }
         close(f)
@@ -1337,7 +1358,7 @@ steering_imports() {
           if (r[k] ~ /^[A-Za-z]:\//) sp[++nsp] = tolower("/" substr(r[k], 1, 1) substr(r[k], 3))
         }
       }
-      { x = $0; sub(/^\.\//, "", x); if (x != "") add(x) }
+      { x = norm($0); if (x != "") add(x) }
       END {
         for (h = 1; h <= qn && h <= 5000; h++) scan(q[h])
         if (qn > 5000) exit 3
@@ -1345,10 +1366,11 @@ steering_imports() {
     ' > "$out.new" 2>/dev/null || { rm -f "$out.new"; return 1; }
     # Each listed file that is there through a link, or in a linked folder, is
     # listed by its real path in the vault too, and read from there, so its
-    # relative imports are taken from both folders.
+    # relative imports are taken from both folders. Whether or not the file
+    # exists yet, so long as its folder does: a pass that creates it creates it
+    # at its real path (round 2 of the review).
     new=""
     while IFS= read -r p; do
-      [ -e "$root/$p" ] || continue
       case "$p" in
         */*) d="$(cd "$root/${p%/*}/" 2>/dev/null && pwd -P)" || continue ;;
         *) d="$rootp" ;;
@@ -1374,7 +1396,13 @@ steering_imports() {
 $new"
     round=$((round + 1))
   done
-  [ -z "$new" ] || printf '%s' "$new" >> "$out"
+  # Links still leading somewhere new after five rounds: the set is not known
+  # in full, so this fails, as the 5000-file cap does, and the runner refuses.
+  if [ -n "$new" ]; then
+    printf '%s' "$new" >> "$out"
+    return 1
+  fi
+  return 0
 }
 
 # is_restorable_path <relative-path>

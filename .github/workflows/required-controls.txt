@@ -219,6 +219,7 @@ h2-import-created ubuntu macos windows
 h2-import-crlf ubuntu macos windows
 h2-import-email ubuntu macos windows
 h2-import-link ubuntu macos
+h2-import-markdown ubuntu macos windows
 h2-import-nested ubuntu macos windows
 h2-import-outside ubuntu macos windows
 h2-import-promotion ubuntu macos windows
