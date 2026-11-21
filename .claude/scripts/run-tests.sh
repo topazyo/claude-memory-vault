@@ -540,7 +540,7 @@ else
       # And through the session's folder from the hook input, which is tried
       # before the vault root: the vault named in "cwd" is not the one
       # CLAUDE_PROJECT_DIR names, so only that try finds this copy.
-      c4_out5="$(cd "$TMP" && printf '{"tool_input":{"file_path":".claude./rules/t.md"},"cwd":"%s"}' "$C4V" \
+      c4_out5="$(cd "$TMP" && printf '{"tool_input":{"file_path":".claude./rules/t.md"},"cwd":"%s"}' "$(printf '%s' "$C4V" | sed 's|\\|\\\\|g')" \
         | CLAUDE_PROJECT_DIR="$C4T" bash "$HOOK" 2>&1 | strip_notices)"
       ran h8a-dot-steering
       if printf '%s' "$c4_out" | grep -q 'U+202E' && printf '%s' "$c4_out3" | grep -q 'U+202E' \
@@ -8958,9 +8958,13 @@ fi
 H2M="$TMP/h2-markdown"
 rm -rf "$H2M"
 mkdir -p "$H2M/30-knowledge/shared"
-printf 'See [@a.md](u), |@b.md|, _@c.md_ and **@d.md**, write to me@e.md.\n@shared/x.md\n' > "$H2M/CLAUDE.md"
+printf 'See [@a.md](u), |@b.md|, _@c.md_ and **@d.md**, write to me@e.md.\n@shared/x.md\n@ARCH.md\n' > "$H2M/CLAUDE.md"
 h2_mlink=0
 ln -s 30-knowledge/shared "$H2M/shared" 2>/dev/null && [ -L "$H2M/shared" ] && h2_mlink=1
+# A dangling link to a file in a folder that is not there: listed by the path
+# it names, and the list still ends (round 3: it read as new every round and
+# made every pass refuse).
+[ "$h2_mlink" = 1 ] && ln -s ./gone/x.md "$H2M/ARCH.md" 2>/dev/null
 h2_mout="$( . "$ROOT/.claude/scripts/lib/runner-common.sh" && steering_imports "$H2M" "$H2M.out" && LC_ALL=C sort "$H2M.out" | tr '\n' ' ')"
 h2_mbad=''
 for h2_want in a.md b.md c.md d.md shared/x.md; do
@@ -8968,7 +8972,9 @@ for h2_want in a.md b.md c.md d.md shared/x.md; do
 done
 case " $h2_mout" in *" e.md "*) h2_mbad="$h2_mbad e-mail-listed" ;; esac
 if [ "$h2_mlink" = 1 ]; then
-  case " $h2_mout" in *" 30-knowledge/shared/x.md "*) ;; *) h2_mbad="$h2_mbad missing:30-knowledge/shared/x.md" ;; esac
+  for h2_want in 30-knowledge/shared/x.md gone/x.md; do
+    case " $h2_mout" in *" $h2_want "*) ;; *) h2_mbad="$h2_mbad missing:$h2_want" ;; esac
+  done
 fi
 ran h2-import-markdown
 if [ -z "$h2_mbad" ]; then

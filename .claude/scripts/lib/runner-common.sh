@@ -1226,6 +1226,32 @@ steering_filter() {
     }' phase=1 "$@" phase=2 -
 }
 
+# steering_norm <relative-path>
+# Sets SI_NORM to the path with empty and . parts dropped and each .. taken out
+# with the part before it, as steering_imports' awk norm() does. Fails when a ..
+# would climb above where the path starts. Parameter expansion only.
+steering_norm() {
+  local rest="$1" part out=""
+  SI_NORM=""
+  while [ -n "$rest" ]; do
+    case "$rest" in
+      */*) part="${rest%%/*}"; rest="${rest#*/}" ;;
+      *) part="$rest"; rest="" ;;
+    esac
+    case "$part" in
+      ''|.) ;;
+      ..)
+        case "$out" in
+          '') return 1 ;;
+          */*) out="${out%/*}" ;;
+          *) out="" ;;
+        esac ;;
+      *) out="${out:+$out/}$part" ;;
+    esac
+  done
+  SI_NORM="$out"
+}
+
 # steering_imports <root> <out>
 # Writes to <out>, one per line and relative to <root>, every file the vault's
 # instruction files import, followed to the end (1.7.5, H2): a note an
@@ -1385,7 +1411,13 @@ steering_imports() {
         hops=$((hops + 1))
       done
       case "$phys" in "$rootp"/*) phys="${phys#"$rootp"/}" ;; *) continue ;; esac
-      [ "$phys" = "$p" ] && continue
+      # A hop into a folder that is not there leaves the link's own spelling
+      # (./gone/x.md), which the next round lists as gone/x.md: without this
+      # the same path read as new every round, and a dangling link made every
+      # pass refuse (round 3 of the review).
+      steering_norm "$phys" || continue
+      phys="$SI_NORM"
+      [ -n "$phys" ] && [ "$phys" != "$p" ] || continue
       LC_ALL=C grep -qxF -- "$phys" "$out.new" && continue
       new="$new$phys
 "
