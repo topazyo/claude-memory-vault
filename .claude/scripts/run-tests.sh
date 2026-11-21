@@ -8928,22 +8928,25 @@ rm -rf "$TMP"/h13-sha "$TMP"/h13-ck "$TMP"/h13-rel "$TMP"/h13-lnk "$TMP"/h13-lnk
 
 # No cksum at all: the fence records every file with it, so the runner
 # refuses. Function level, with a PATH that finds nothing (every command the
-# function runs on this path is a builtin).
+# function runs on this path is a builtin), in a bash of its own, as a runner
+# is: run in a subshell of this suite on macOS, the suite stopped right after
+# it with an unbound variable six controls further on (PR CI, 1.7.5).
 mkdir -p "$TMP/h13-nopath"
 : > "$TMP/h13-nock.log"
-h13_got="$( . "$ROOT/.claude/scripts/lib/runner-common.sh"
-  # ts finds no date here, which is no missing command of the suite's.
-  unset -f command_not_found_handle
-  PATH="$TMP/h13-nopath"
-  fence_tools_pin "$TMP/h13-nopath" "$TMP/h13-nock.log"
-  printf 'rc=%s tool=%s' "$?" "${RUNNER_CKSUM:-none}" )"
+cat > "$TMP/h13-nock.sh" <<'H13_NOCK_EOF'
+. "$1/.claude/scripts/lib/runner-common.sh"
+PATH="$2"
+fence_tools_pin "$2" "$3"
+printf 'rc=%s tool=%s' "$?" "${RUNNER_CKSUM:-none}"
+H13_NOCK_EOF
+h13_got="$("$BASH" "$TMP/h13-nock.sh" "$ROOT" "$TMP/h13-nopath" "$TMP/h13-nock.log" 2>/dev/null)"
 ran h13-no-cksum
 if [ "$h13_got" = 'rc=1 tool=none' ] && grep -q 'ERROR: no cksum was found on PATH' "$TMP/h13-nock.log"; then
   ok "a PATH with no cksum on it is refused, with the ERROR line"
 else
   bad "a PATH with no cksum was not refused -- got: $h13_got, log: $(tr '\n' '|' 2>/dev/null < "$TMP/h13-nock.log")"
 fi
-rm -rf "$TMP/h13-nopath" "$TMP/h13-nock.log"
+rm -rf "$TMP/h13-nopath" "$TMP/h13-nock.log" "$TMP/h13-nock.sh"
 
 # An import list that is named but cannot be read makes every path but the
 # logs steering, so the run fences them all rather than none (H2, 1.7.5).
