@@ -3702,6 +3702,17 @@ COPYEOF
   rc=$?
   lib_logged
   [ "$rc" -eq 0 ] || return 1
+  # cksum names the state directory (vault_state_dir), so it is found once, now,
+  # and refused when PATH finds it in the vault (H13, 1.7.5). A library from an
+  # earlier release has no fence_tools_pin.
+  if ! declare -F fence_tools_pin >/dev/null; then
+    say "ERROR: lib/runner-common.sh has no fence_tools_pin, so this runner and the library come from different releases. Take runner-common.sh, dream-pass.sh, promotion-pass.sh and vault-retention.sh together. Refusing to run."
+    return 1
+  fi
+  fence_tools_pin "$ROOT" "$LIB_LOG"
+  rc=$?
+  lib_logged
+  [ "$rc" -eq 0 ] || return 1
   # Anything that reaches arithmetic is checked first, because the shell reads a
   # variable in arithmetic as an expression and a planted one would run.
   RETENTION_DAYS="$(uint_setting RETENTION_DAYS 60 1 "$LIB_LOG" days)"

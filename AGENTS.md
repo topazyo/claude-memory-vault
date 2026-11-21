@@ -83,7 +83,7 @@ machine-checked**; the rest are conventional but keep the Dataview dashboards wo
 ISO `YYYY-MM-DD`. Their values are checked too: `tier` is the tier of the folder the note is in
 (§3) and `type` one of the values there, and `vault-check.sh` prints a `WARNING` line for one that
 is not, for a long-tier note with no wikilink, and for a key written as `"tier":`, `tier :` or
-`tier:long`, or written twice. The warnings become violations in a later release.
+`tier:long`, or written twice. The warnings become violations in release 1.8.0.
 
 ```yaml
 ---

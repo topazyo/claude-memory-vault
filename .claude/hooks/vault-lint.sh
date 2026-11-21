@@ -44,8 +44,28 @@ log_line() {
   printf '[%s] %s\n' "$TS" "$1" >> "$LOG"
 }
 
+# lint_is_win - true on Windows (Git Bash, MSYS, Cygwin), where a backslash
+# separates folders. Elsewhere it is a character a name may hold, and the lint
+# reads such a note as itself, as vault-check.sh does (1.7.5; until then the
+# lint turned it into a slash, logged DEGRADED and linted nothing). The test is
+# the checker's: bash's own machine type, which BASH_VERSINFO holds read-only,
+# then uname for a bash built otherwise and the MSYS2 shells named *_NT-*.
+# Asked only for a path that holds a backslash or does not resolve, and
+# remembered, so the common path costs no process.
+LINT_WIN=""
+lint_is_win() {
+  if [ -z "$LINT_WIN" ]; then
+    LINT_WIN=0
+    case "${BASH_VERSINFO[5]:-}" in *-msys*|*-cygwin*) LINT_WIN=1 ;; esac
+    if [ "$LINT_WIN" -eq 0 ]; then
+      case "$(uname -s 2>/dev/null)" in MINGW*|MSYS*|CYGWIN*|*_NT-*) LINT_WIN=1 ;; esac
+    fi
+  fi
+  [ "$LINT_WIN" -eq 1 ]
+}
+
 # norm_slashes <path> - sets NORM_OUT to <path> with backslashes turned into
-# slashes, runs of slashes and . parts dropped, each part's trailing dots and
+# slashes on Windows, runs of slashes and . parts dropped, each part's trailing dots and
 # spaces removed, which Win32 drops from every part of a path, not only the
 # last, and each .. taken out with the part before it, as Win32 resolves it
 # before it touches the disk. A .. with nothing before it to take out stays,
@@ -58,7 +78,8 @@ log_line() {
 # a file reads that form: on Linux or macOS `templates.` is a folder of its own,
 # not `templates`, and a skip must never match more than is really there.
 norm_slashes() {
-  local p="${1//\\//}" strip="${2:-strip}" rest part out="" n=0 first=1
+  local p="$1" strip="${2:-strip}" rest part out="" n=0 first=1
+  case "$p" in *\\*) lint_is_win && p="${p//\\//}" ;; esac
   # The replacement is a bare /: bash before 5.2 keeps a backslash written in
   # the replacement, so \/ there gave .claude\/rules on macOS's bash 3.2.
   while :; do case "$p" in *//*) p="${p//\/\///}" ;; *) break ;; esac; done
@@ -144,7 +165,7 @@ scope_path() {
 # lint_file <path> - the whole check for one file. Returns, never exits, so
 # argument mode can lint several files in one call.
 lint_file() {
-  local FILE="$1" NORM MATCHN SCOPEP SCOPEP_KEEP TIER_DIR IS_CONTENT_TIER IS_CHAR_SCAN_SCOPE IS_TIER_SCOPE IS_STEERING warn FMV HITS HITS_FMT HITS_JOINED SCAN_RAN
+  local FILE="$1" NORM MATCHN SCOPEP SCOPEP_KEEP TIER_DIR IS_CONTENT_TIER IS_CHAR_SCAN_SCOPE IS_TIER_SCOPE IS_STEERING warn FMV HITS HITS_FMT HITS_JOINED SCAN_RAN LINT_AS=""
 
   # normalize backslashes -> forward slashes for git-bash / MSYS.
   # Bash parameter expansion, not `printf | tr`. The old form cost a process on
@@ -154,7 +175,9 @@ lint_file() {
   # spelled literally, GNU tr warns "unescaped backslash at end of string" to
   # stderr on every single invocation, which a harness surfaces as hook noise
   # on every write.
-  NORM="${FILE//\\//}"
+  # On Windows only (lint_is_win, 1.7.5): elsewhere a backslash is part of a name.
+  NORM="$FILE"
+  case "$FILE" in *\\*) lint_is_win && NORM="${FILE//\\//}" ;; esac
 
   # A patch header, or a harness, may give a path relative to the agent's
   # session directory while the hook runs from somewhere else. When the path
@@ -181,7 +204,7 @@ lint_file() {
       else
         local base_cwd
         base_cwd="${HOOK_CWD:-}"
-        base_cwd="${base_cwd//\\//}"
+        case "$base_cwd" in *\\*) lint_is_win && base_cwd="${base_cwd//\\//}" ;; esac
         if [ -n "$base_cwd" ] && [ -e "$base_cwd/$NORM" ]; then
           NORM="$base_cwd/$NORM"
         elif [ -e "$ROOT/$NORM" ]; then
@@ -339,6 +362,19 @@ lint_file() {
   fi
 
   [ "$IS_CONTENT_TIER" = 1 ] || [ "$IS_CHAR_SCAN_SCOPE" = 1 ] || return 0
+  # Win32 drops a trailing dot or space from every part of a path, so on
+  # Windows <vault>./.claude/rules/r.md opens .claude/rules/r.md, which Git
+  # Bash's test does not find by that name (1.7.5, H8a: it was logged DEGRADED
+  # and nothing was scanned). When the name as given is not a file there, the
+  # name norm_slashes strips is read instead, and the log names both.
+  LINT_AS=""
+  if [ ! -f "$NORM" ] && lint_is_win; then
+    norm_slashes "$NORM"
+    if [ -f "$NORM_OUT" ]; then
+      NORM="$NORM_OUT"
+      LINT_AS=" (named as $FILE)"
+    fi
+  fi
   if [ ! -f "$NORM" ]; then
     log_line "DEGRADED: in-scope path does not resolve to a file, nothing was linted: $NORM"
     return 0
@@ -356,7 +392,7 @@ lint_file() {
   # the invisible-character scan would have called such a file clean too. That
   # half was already true before this change and is fixed by the same guard.
   if [ ! -r "$NORM" ]; then
-    log_line "DEGRADED: in-scope file could not be read, nothing was checked: $NORM"
+    log_line "DEGRADED: in-scope file could not be read, nothing was checked: $NORM$LINT_AS"
     printf 'vault-lint: %s could not be read, so nothing was checked.\n' "$NORM" >&2
     return 0
   fi
@@ -476,10 +512,10 @@ lint_file() {
   fi
 
   if [ -n "$warn" ]; then
-    log_line "CONFORMANCE: $NORM — $warn"
+    log_line "CONFORMANCE: $NORM$LINT_AS — $warn"
     echo "vault-lint: $NORM — $warn (see .claude/rules/vault-notes.md)" >&2
   else
-    log_line "OK: $NORM"
+    log_line "OK: $NORM$LINT_AS"
   fi
   return 0
 }

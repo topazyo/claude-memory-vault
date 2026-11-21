@@ -34,7 +34,7 @@
 # that is not short, medium or long or not the folder's tier, a type outside
 # the allowed set, a long-tier note with no wikilink, and a tier, type,
 # created or last_verified key a YAML reader would read differently. They
-# change neither the count nor the exit code; a later release makes them
+# change neither the count nor the exit code; release 1.8.0 makes them
 # violations.
 #
 # These used to be a single 1, which meant a caller could not tell "the vault
@@ -271,8 +271,8 @@ report() {
 }
 
 # warn <rel> <text> - an advisory finding (1.7.0). Kept, and printed after the
-# count line, so the count line and the exit code stay what callers parse; a
-# later release makes these violations.
+# count line, so the count line and the exit code stay what callers parse;
+# release 1.8.0 makes these violations.
 warn() {
   local shown_rel
   show "$1"; shown_rel="$SHOWN"
@@ -755,7 +755,7 @@ fi
 # saw. Nothing is printed for a vault with none.
 if [ "$warnings" -gt 0 ]; then
   printf '%s' "$WARN_LINES"
-  printf 'vault-check: %s warning(s). They change neither the count above nor the exit code in this release; a later release makes them violations, so fix each note by hand.\n' "$warnings"
+  printf 'vault-check: %s warning(s). They change neither the count above nor the exit code in this release; release 1.8.0 makes them violations, so fix each note by hand.\n' "$warnings"
 fi
 
 # A scan that examined nothing proves nothing. Fail it, so a caller that only

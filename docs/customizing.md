@@ -184,7 +184,7 @@ asserts that `tier` and `type` are present, and `vault-check.sh` only enforces i
 invariants (a leading `---` fence, a `tier:` key, a `type:` key, `last_verified >= created` when
 both exist, and `last_verified` not in the future, with both dates in `YYYY-MM-DD` form). Add
 whatever you like. A new **value** of `type` is different: `vault-check.sh` prints a `WARNING` line
-for a type outside its list, and the warnings become violations in a later release, so add a type
+for a type outside its list, and the warnings become violations in release 1.8.0, so add a type
 you mean to keep to the list in `check_note()` (the rename table in section 2 names it).
 
 **Removing or renaming `tier` or `type` is breaking.** Both are load-bearing in three places at
