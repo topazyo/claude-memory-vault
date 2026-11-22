@@ -492,6 +492,21 @@ longest silence those passes usually have, and never below 10 minutes. Each run 
 `RUNNER_STALL_SECONDS` sets it outright, and turns stall detection on for a command-mode wrapper
 too. `RUNNER_STALL_FLOOR` changes the 10-minute floor.
 
+**Run each pass once by hand before you trust the schedule**, from a shell with the same variables
+the crontab sets:
+
+```bash
+/path/to/your-vault/.claude/scripts/dream-pass.sh; echo "exit $?"
+tail -n 3 /path/to/your-vault/.claude/logs/dream-agent.log
+```
+
+It worked when it says `exit 0` and the log's last line starts with `OK:`, for the dream pass
+`[<time>] OK: 20-projects/_logs/dream-<date>.md`. The promotion pass logs to
+`.claude/logs/promotion-agent.log` and ends `OK: <n> long-tier file(s) changed; PROMOTION-SUMMARY:
+promoted=<n> pending=<n>`. The retention pass logs to `.claude/logs/vault-retention.log`, prints the
+same lines, and ends with a line that starts `OK:`, `OK: nothing is ready to move.` when no note is
+old enough yet. Any other exit code is in [Troubleshooting](#troubleshooting).
+
 **Why not call `claude` directly from cron?** Two reasons. The agent is selected with the
 `--agent <name>` *flag*, not by putting a slash command in the prompt, so a hand-rolled line is
 easy to get subtly wrong. And a direct call has no artifact assertion: the runners exit 1 when a
@@ -720,10 +735,18 @@ Run it once by hand, while logged in, before trusting the schedule:
 
 ```bash
 launchctl kickstart -p gui/$(id -u)/com.claude-memory-vault.dream-pass
+tail -n 3 /path/to/your-vault/.claude/logs/dream-agent.log
 ```
 
-Then check `.claude/logs/dream-agent.log` for a timestamped line. As on Windows, the presence of a
-log line is the evidence. A job that launchd lists as loaded has not necessarily ever run.
+It worked when the log's last line starts with `OK:`, for the dream pass
+`[<time>] OK: 20-projects/_logs/dream-<date>.md`. Give the pass time to finish first: `kickstart`
+returns as soon as the job starts. The promotion and retention jobs
+(`com.claude-memory-vault.promotion-pass`, `com.claude-memory-vault.vault-retention`) log to
+`promotion-agent.log` and `vault-retention.log` and end on an `OK:` line too, as the Linux section
+above shows. Anything the runner printed instead is in that job's `.launchd.err`. As on Windows, the
+log line is the evidence: a job that launchd lists as loaded has not necessarily ever run. (The
+lines are the runner's own, the same code on every OS; they were checked on Linux and Windows, and
+this `kickstart` command was not run for this note.)
 
 
 ### Windows — Task Scheduler, and three traps that will cost you a week
@@ -749,6 +772,22 @@ schtasks /create /tn "Vault-DreamAgent" /tr "\"C:\path\to\your-vault\.claude\scr
 schtasks /create /tn "Vault-PromotionAgent" /tr "\"C:\path\to\your-vault\.claude\scripts\promotion-pass.cmd\"" /sc weekly /d SAT /st 20:00
 schtasks /create /tn "Vault-Retention" /tr "\"C:\path\to\your-vault\.claude\scripts\vault-retention.cmd\"" /sc weekly /d SUN /st 04:00
 ```
+
+Run each pass once by hand before you trust the schedule, in a `cmd` window, as two separate
+commands (on one line joined by `&`, `%ERRORLEVEL%` is read before the runner has run):
+
+```bat
+"C:\path\to\your-vault\.claude\scripts\dream-pass.cmd"
+echo exit %ERRORLEVEL%
+```
+
+It worked when it says `exit 0` and the last line of `.claude\logs\dream-agent.log` starts with
+`OK:`, for the dream pass `[<time>] OK: 20-projects/_logs/dream-<date>.md`. The promotion and
+retention wrappers log to `promotion-agent.log` and `vault-retention.log` and end on an `OK:` line
+too, as the Linux section above shows. Then `schtasks /run /tn "Vault-DreamAgent"` runs it the way
+the scheduler will, under the task's account and environment; judge that run as Trap 3 below says,
+by `Last Result: 0` in `schtasks /query /tn "Vault-DreamAgent" /v /fo list` plus a new `OK:` line.
+(The direct runs were checked with all three wrappers; `schtasks /run` was not run for this note.)
 
 Arguments pass through the retention wrapper, so a task that runs
 `vault-retention.cmd --dry-run` is a good way to watch its judgement for a few weeks before you
