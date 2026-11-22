@@ -167,12 +167,15 @@ folder, and is already the number the plan printed.
 #### Merging a file that moved upstream and changed here
 
 Nothing copies these for you, because both sides changed. Merge each on a copy, in four steps.
-`AGENTS.md` stands in for the file below; `<base>` and `<new>` are release tags.
+`AGENTS.md` stands in for the file below; `<base>` and `<new>` are release tags. For a file below
+the vault root, such as `.claude/scripts/lib/runner-common.sh`, keep its full path in the clones and
+name the copy by the file's name alone, `../runner-common.sh.merged`.
 
 1. **Find the base and fetch it.** The base is the release your copy of the file was last taken
    from. If you have taken every update in full, that is the version in your `VERSION` file. If
    you skipped this file in an earlier update, it is older. The version `--status` names is the
-   base only if you have never taken an update, because nothing but `--adopt` moves that record.
+   base only if you have taken no update since that record was written, because nothing but
+   `--adopt` moves it.
    Clone the base beside the new copy, and confirm it: the diff should show only your own edits.
 
    ```bash
@@ -194,7 +197,8 @@ Nothing copies these for you, because both sides changed. Merge each on a copy, 
    two versions. Edit each by hand, keeping your change and theirs.
 
 3. **Check it, then copy it in.** No marker may be left, a script must still parse, and the
-   merged file against the new copy must show exactly the edits step 1 showed:
+   merged file against the new copy must show the edits step 1 showed and, if you resolved a
+   conflict, your resolution, nothing else:
 
    ```bash
    grep -nE '^(<<<<<<<|>>>>>>>)' ../AGENTS.md.merged    # prints nothing
@@ -210,7 +214,7 @@ Nothing copies these for you, because both sides changed. Merge each on a copy, 
 
 Afterwards `--status` still lists the file as changed here and the next `--check` against the same
 release as moved upstream and changed here, because a merged file differs from both the record and
-the new copy. That is correct, and it is not a reason to run `--adopt`: it would replace the record
+the new copy (one that came out equal to the new copy reads as already carrying it). That is correct, and it is not a reason to run `--adopt`: it would replace the record
 of what the template shipped at your version, which is what tells your edits apart from an old copy.
 
 ### When you have finished copying
