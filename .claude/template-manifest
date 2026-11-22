@@ -12,7 +12,7 @@
 # Each entry is "<class> <sha256> <path>". owned is template machinery and
 # seed was shipped once and is yours now. Paths absent from this file are
 # yours and are never read.
-version 1.7.5
+version 1.7.6
 hash sha256
 owned 04f1a09f05fa705129cc0387c96c6fffa1a855c53e3a0ffae592087bef2fdfed .agents/skills/obsidian-save/SKILL.md
 owned 8266a3a171277bc0e12fa2a6789a41ab9feb7867c474c744c993ed9e7a8218fa .agents/skills/onboard-project/SKILL.md
@@ -85,11 +85,11 @@ owned 3c717fccd4318c3e5b298dd89cc69efb23a874c422bcd781502c0937334c7e51 40-llm-wi
 seed e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 90-auto-memory/.gitkeep
 seed e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 99-archive/.gitkeep
 owned fc28b74a6d336f42f3a9a75ffef2986d6df2f157b190ad92c4eab0ef3df2961e AGENTS.md
-owned 6274a90040653785e3d1e337ca665869cf4784320533af0dfefd8a7e376e87a4 CHANGELOG.md
+owned a819299756510dbb0d41d67ec79cb145755e90c133d6f420ffb5077805c5e6f0 CHANGELOG.md
 owned 98eb7be29c109a98805f2d612c422a4e05926201d385189131cb6b81cd3e0b12 CLAUDE.md
 owned 7960cfa62e9e835500310e6eb59f85bdab2e2e15ec9c6f28f4f4ae9c1f8e30d7 LICENSE
 seed 498dbf2a4edcce975e9a239452edc4f3ae2c4be351ae4c1608d5f89ebf3e2287 README.md
-owned 908276d7e66deb879777e2b9dd045d61940606c46552e360af898b697ab792dd VERSION
+owned 406b9efb67a070bc32c23c3ac6c886a8d25cfac10b1861ef92e4166708aa6ce1 VERSION
 owned 977d23740cd9a3935c3bea6e5e7b57cf02027fa4e6d2c3c7b1f342d1e6903162 docs/agent-onboarding.md
 owned 647fd12190ca966b734f195fb99b16379863e73a5afa266b843d33f4ab09609a docs/concepts.md
 owned f8b8903e9936682c1a09d4a684f905a2c4c018514c7b0cb87eb9267f916855f1 docs/customizing.md

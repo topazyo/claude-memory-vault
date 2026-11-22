@@ -25,6 +25,53 @@ bash .claude/scripts/vault-update.sh --check --from ../template-new
 
 ---
 
+## 1.7.6 — 2026-11-22
+
+The documentation half of the work planned after 1.7.2's review, split from 1.7.5 so that it could
+describe the exit codes 1.7.5 settled. No script, hook, rule or control changes.
+
+### Changed
+
+- **Troubleshooting in `docs/setup.md` is sorted by exit code.** It was one table of 75 rows in no
+  order a reader could search. It is now a ten-row *First failures* table, for a first install and a
+  first scheduled run, then *By exit code*, with a leading `Exit` column holding the first code each
+  symptom names and the rows with no code last. 26 refusals that only an unusual setup reaches
+  (a link where the runner keeps its folder for the pass, a path `cygpath` cannot convert, a shared
+  `TMPDIR`, a missing `tar`, a vault path the settings file cannot name) moved, unchanged, to a new
+  `docs/reference.md` § 10.1. The move changed no row's text: the 75 rows before equal the 75 after
+  with the `Exit` cell removed. Seventeen references between rows that said "the row above" or
+  "see that row below" now name the row they mean, since sorting moved them.
+- **Rows for the codes 1.7.5 settled.** 126 (the binary or the wrapper cannot start; an agent's own
+  126 is 79), 127 (which had no row, though it is the usual first failure under cron), the refusal
+  of a `sha256sum`, `shasum` or `cksum` found in the vault, and the refusal when the files the
+  instruction files import cannot be listed. The partial-update row names 1.7.5's library check,
+  and the 79 row the 126 cases.
+- **A first manual run per OS in `docs/setup.md` § 8.** Linux, macOS and Windows each give the
+  command, the log file, and the line that means it worked: the log's last line starts with `OK:`.
+  The lines were seen running all three runners in a scratch vault on Linux, under Git Bash and
+  through the `.cmd` wrappers; `launchctl kickstart` and `schtasks /run` were not run, and the text
+  says so.
+- **A merge recipe in `docs/updating.md` § 3** for a file that moved upstream and changed here:
+  find the base (the release the file was last taken from, which is the recorded version only for a
+  vault that never took an update), `git merge-file` on a copy, check, record the base. It says why
+  a merged file keeps being listed, and that this is no reason to run `--adopt`.
+- **A glossary in `docs/concepts.md` § 10**: fence, steering surface, containment, tripwire, run lock,
+  in-flight marker, state directory, owned, seed and excluded. The first use of each in `README.md`
+  and `docs/setup.md` links to it.
+
+### Adopting this
+
+1. **Nothing a pass, a hook or the commit gate does changes.** Take the documents if you have not
+   edited them, as `--check` lists them.
+2. **If you link to a Troubleshooting row, or edited that table, check where the row is now.** The
+   26 rows listed in `docs/reference.md` § 10.1 left `docs/setup.md`; the others are in one of its
+   two new tables. `#troubleshooting` still names the section.
+3. The shipped files this release touches are `README.md`, `docs/concepts.md`, `docs/reference.md`,
+   `docs/setup.md` and `docs/updating.md`, plus `VERSION`, this file and
+   `.claude/template-manifest`.
+
+---
+
 ## 1.7.5 — 2026-11-21
 
 The runner and lint half of the work planned after 1.7.2's review: two gaps in what the fence
