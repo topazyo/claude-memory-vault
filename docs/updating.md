@@ -118,7 +118,7 @@ now, and what the newer copy ships. That gives nine answers.
 | Bucket | Meaning |
 | --- | --- |
 | **Safe to take** | It moved upstream and you never touched your copy, so copying loses nothing. |
-| **Moved upstream and changed here** | Both sides moved. Nothing will overwrite it. Read it with `--diff` and merge it yourself. |
+| **Moved upstream and changed here** | Both sides moved. Nothing will overwrite it. Read it with `--diff` and merge it yourself, as [Merging a file that moved upstream and changed here](#merging-a-file-that-moved-upstream-and-changed-here) shows. |
 | **Already yours, and now shipped too** | The template has started shipping a file at a path you already occupy. **Not safe to take**, and kept out of the copy plan. The record has never held that path, so nothing here can tell your file from an old copy of theirs. Open both yourself. |
 | **Already carrying the newer copy** | You took this one at some point. Nothing to do. It is counted on the sentinel line and never listed for a decision. |
 | **No longer shipped** | The template retired it. Your copy is left exactly where it is, because nothing here deletes. |
@@ -163,6 +163,55 @@ A digest that does not match means the folder changed between the check reading 
 the plan, so run `--check` again and work from the new plan rather than copying out of the old one.
 It does not mean the carriage return case above, which is about the manifest rather than about the
 folder, and is already the number the plan printed.
+
+#### Merging a file that moved upstream and changed here
+
+Nothing copies these for you, because both sides changed. Merge each on a copy, in four steps.
+`AGENTS.md` stands in for the file below; `<base>` and `<new>` are release tags.
+
+1. **Find the base and fetch it.** The base is the release your copy of the file was last taken
+   from. If you have taken every update in full, that is the version in your `VERSION` file. If
+   you skipped this file in an earlier update, it is older. The version `--status` names is the
+   base only if you have never taken an update, because nothing but `--adopt` moves that record.
+   Clone the base beside the new copy, and confirm it: the diff should show only your own edits.
+
+   ```bash
+   git clone --depth 1 --branch <base> https://github.com/<owner>/claude-memory-vault.git ../template-base
+   git diff --no-index ../template-base/AGENTS.md AGENTS.md
+   ```
+
+2. **Merge on a copy.** `git merge-file` takes your copy, the base and the new copy, writes the
+   result into the first file, and exits with the number of conflicts, or above 127 on an error.
+   It needs no repository, so it works in a vault that is not in git.
+
+   ```bash
+   cp AGENTS.md ../AGENTS.md.merged
+   git merge-file ../AGENTS.md.merged ../template-base/AGENTS.md ../template-new/AGENTS.md
+   echo "conflicts: $?"
+   ```
+
+   Where both sides changed the same lines it leaves `<<<<<<<`, `=======` and `>>>>>>>` around the
+   two versions. Edit each by hand, keeping your change and theirs.
+
+3. **Check it, then copy it in.** No marker may be left, a script must still parse, and the
+   merged file against the new copy must show exactly the edits step 1 showed:
+
+   ```bash
+   grep -nE '^(<<<<<<<|>>>>>>>)' ../AGENTS.md.merged    # prints nothing
+   git diff --no-index ../template-new/AGENTS.md ../AGENTS.md.merged
+   cp ../AGENTS.md.merged AGENTS.md
+   ```
+
+   For a `.sh` file add `bash -n ../<file>.merged`. Then run the suite, as
+   [When you have finished copying](#when-you-have-finished-copying) says.
+4. **Record the base.** Write down which release you merged with, in the commit message if the
+   vault is in git ("merged with <base> as base"). The next merge of this file needs it, and
+   nothing else records it.
+
+Afterwards `--status` still lists the file as changed here and the next `--check` against the same
+release as moved upstream and changed here, because a merged file differs from both the record and
+the new copy. That is correct, and it is not a reason to run `--adopt`: it would replace the record
+of what the template shipped at your version, which is what tells your edits apart from an old copy.
 
 ### When you have finished copying
 
