@@ -2685,7 +2685,8 @@ disk is evidence about the vault.
 
 These rows were in [`setup.md`, Troubleshooting](setup.md#troubleshooting) until 1.7.6. Each is a
 refusal that only an unusual setup reaches, so they are kept here, sorted the same way, to leave
-that table short enough to read. Their text is unchanged.
+that table short enough to read. Their text is unchanged, apart from two links back to the
+state-directory row in `setup.md`.
 
 | Exit | Symptom | Likely cause | Fix |
 | --- | --- | --- | --- |

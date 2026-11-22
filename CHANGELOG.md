@@ -37,7 +37,7 @@ describe the exit codes 1.7.5 settled. No script, hook, rule or control changes.
   first scheduled run, then *By exit code*, with a leading `Exit` column holding the first code each
   symptom names and the rows with no code last. 25 refusals that only an unusual setup reaches
   (a link where the runner keeps its folder for the pass, a path `cygpath` cannot convert, a shared
-  `TMPDIR`, a vault path the settings file cannot name) moved, unchanged, to a new
+  `TMPDIR`, a vault path the settings file cannot name) moved, unchanged but for two links back, to a new
   `docs/reference.md` § 10.1. The move itself changed no row's text: at that commit the 75 rows before
   equal the 75 after with the `Exit` cell removed. Four rows were added after it and four edited
   (the partial-update and 79 rows below, and two moved rows that now link back to `setup.md`), so
