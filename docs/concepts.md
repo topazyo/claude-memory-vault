@@ -625,7 +625,8 @@ change one. ([`reference.md` § 4.3](reference.md#43-scheduled-runners), *Contai
 
 What a runner does when the fence finds a changed steering surface, before it even reads the
 agent's exit code: it puts the surface back from its backup, moves what the pass wrote into a
-quarantine outside the vault, and sets the tripwire. The pass exits 2.
+quarantine outside the vault, and sets the tripwire. The pass exits 2, or 70 when no tripwire could
+be written.
 ([`reference.md` § 4.3](reference.md#43-scheduled-runners), *Containment*)
 
 ### Tripwire
@@ -639,8 +640,8 @@ the steps in [`setup.md`, A tripwire is set](setup.md#a-tripwire-is-set).
 
 ### Run lock
 
-The folder `run.lock` in the state directory, which a runner takes before it looks at the vault so
-that two passes never overlap. A run that cannot take it within `RUN_LOCK_WAIT` exits 75, and a lock
+The folder `run.lock` in the state directory, which a runner takes before the pass starts so that
+two passes never overlap. A run that cannot take it within `RUN_LOCK_WAIT` exits 75, and a lock
 marked `KILL_FAILED` stays until the owner removes it.
 ([`reference.md` § 4.3](reference.md#43-scheduled-runners), *Run lock*)
 

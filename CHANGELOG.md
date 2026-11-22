@@ -35,9 +35,9 @@ describe the exit codes 1.7.5 settled. No script, hook, rule or control changes.
 - **Troubleshooting in `docs/setup.md` is sorted by exit code.** It was one table of 75 rows in no
   order a reader could search. It is now a ten-row *First failures* table, for a first install and a
   first scheduled run, then *By exit code*, with a leading `Exit` column holding the first code each
-  symptom names and the rows with no code last. 26 refusals that only an unusual setup reaches
+  symptom names and the rows with no code last. 25 refusals that only an unusual setup reaches
   (a link where the runner keeps its folder for the pass, a path `cygpath` cannot convert, a shared
-  `TMPDIR`, a missing `tar`, a vault path the settings file cannot name) moved, unchanged, to a new
+  `TMPDIR`, a vault path the settings file cannot name) moved, unchanged, to a new
   `docs/reference.md` § 10.1. The move changed no row's text: the 75 rows before equal the 75 after
   with the `Exit` cell removed. Seventeen references between rows that said "the row above" or
   "see that row below" now name the row they mean, since sorting moved them.
@@ -64,7 +64,7 @@ describe the exit codes 1.7.5 settled. No script, hook, rule or control changes.
 1. **Nothing a pass, a hook or the commit gate does changes.** Take the documents if you have not
    edited them, as `--check` lists them.
 2. **If you link to a Troubleshooting row, or edited that table, check where the row is now.** The
-   26 rows listed in `docs/reference.md` § 10.1 left `docs/setup.md`; the others are in one of its
+   25 rows listed in `docs/reference.md` § 10.1 left `docs/setup.md`; the others are in one of its
    two new tables. `#troubleshooting` still names the section.
 3. The shipped files this release touches are `README.md`, `docs/concepts.md`, `docs/reference.md`,
    `docs/setup.md` and `docs/updating.md`, plus `VERSION`, this file and
