@@ -602,6 +602,80 @@ That is a much lower promise than an enforced system. It is also one this design
 
 ---
 
+## 10. Glossary
+
+The words the setup guide and the reference use for the scheduled passes' safety machinery and for
+template updates. Each entry says what the thing is; the link after it is where it is specified.
+
+### Fence
+
+The runner's check that a pass wrote only where it may. It checksums every file in the vault before
+and after the pass, and fails the pass with exit 2 when anything outside the pass's allowed folders
+changed. It sees files inside the vault only, not a shell command or the network.
+([`reference.md` § 4.3](reference.md#43-scheduled-runners), *Write fence*)
+
+### Steering surface
+
+A file that decides what an agent or a harness does the next time something opens the vault: the
+instruction files such as `CLAUDE.md` and `AGENTS.md` and what they import, `.claude/` apart from
+its logs, harness configuration, memory, Obsidian plugins, and git's config and hooks. No pass may
+change one. ([`reference.md` § 4.3](reference.md#43-scheduled-runners), *Containment*)
+
+### Containment
+
+What a runner does when the fence finds a changed steering surface, before it even reads the
+agent's exit code: it puts the surface back from its backup, moves what the pass wrote into a
+quarantine outside the vault, and sets the tripwire. The pass exits 2.
+([`reference.md` § 4.3](reference.md#43-scheduled-runners), *Containment*)
+
+### Tripwire
+
+The file `.claude/logs/runner-tripwire`, with a second copy in the state directory, that a runner
+writes when containment was needed, when its own folder for the pass changed while the agent ran,
+when a stopped pass may have left a process running, or when it finds the in-flight marker of a
+pass that ended before containment. While it is
+there every runner exits 78 and `vault-check.sh` refuses with 78. Only the owner deletes it, after
+the steps in [`setup.md`, A tripwire is set](setup.md#a-tripwire-is-set).
+
+### Run lock
+
+The folder `run.lock` in the state directory, which a runner takes before it looks at the vault so
+that two passes never overlap. A run that cannot take it within `RUN_LOCK_WAIT` exits 75, and a lock
+marked `KILL_FAILED` stays until the owner removes it.
+([`reference.md` § 4.3](reference.md#43-scheduled-runners), *Run lock*)
+
+### In-flight marker
+
+The file `.claude/logs/runner-inflight`, with a second copy in the state directory, that a runner
+writes before the agent starts and removes once containment has run. A later run that finds it
+knows a pass ended before containment, and turns it into a tripwire.
+
+### State directory
+
+The folder outside the vault where the runners keep what a pass must not be able to rewrite: the
+run lock, the second copies of the tripwire and the in-flight marker, backups and quarantines. It is
+`%LOCALAPPDATA%\claude-memory-vault\<id>\` on Windows and
+`${XDG_STATE_HOME:-~/.local/state}/claude-memory-vault/<id>/` elsewhere, one per vault;
+`VAULT_STATE_DIR` sets it. ([`reference.md` § 4.3](reference.md#43-scheduled-runners))
+
+### Owned
+
+A template file that is machinery: hooks, scripts, rules, docs. `vault-update.sh` reports each one
+you changed, and `--check` lists each one a newer release moved. One of the three classes
+`.claude/manifest-rules` gives every file the template tracks.
+([`reference.md` § 4.5](reference.md#45-vault-updatesh--what-version-this-vault-came-from-and-what-has-moved))
+
+### Seed
+
+A template file shipped once and yours from then on, such as the example notes and Obsidian's
+settings. Every vault drifts there, so drift is reported as a count, never a list.
+
+### Excluded
+
+A file that belongs to the template project itself, such as `.github/workflows/`. It is left out of
+the manifest, so no update reports it and no vault needs it.
+([`updating.md`, Files the template keeps for itself](updating.md#files-the-template-keeps-for-itself))
+
 ## Where the rules live
 
 - `AGENTS.md` — the operating instructions every harness follows for the whole vault. `CLAUDE.md`

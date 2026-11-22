@@ -453,7 +453,7 @@ Use the shipped runners. They resolve the vault from their own location, guard f
 binary that a scheduler's minimal PATH cannot see, log to `.claude/logs/`, kill a pass that hangs,
 fail a pass that writes outside its allowed folders, and (the part that matters) assert that the
 pass actually produced something. Exit codes are `0` OK, `1` no artifact, `2` a write outside the
-fence or another refusal (`docs/reference.md` § 4.3), `3` refused (see below), `64` unknown `VAULT_AGENT`, `124` timeout, `125` stalled, `127` no
+[fence](concepts.md#fence) or another refusal (`docs/reference.md` § 4.3), `3` refused (see below), `64` unknown `VAULT_AGENT`, `124` timeout, `125` stalled, `127` no
 `claude` or wrapper. `docs/reference.md` § 4.3 has the full table.
 
 `vault-retention.sh` uses some of the same numbers for different things, so read its codes against
@@ -478,7 +478,7 @@ you do not want that, end the line with `>/dev/null` and read `.claude/logs/vaul
 instead. § 4.3.1 says where else the output may go, and why never into that log.
 
 Give the retention pass a slot after the other two rather than beside them. All three take the same
-run lock, so an overlap costs one of them a wait of up to `RUN_LOCK_WAIT` and then exit 75.
+[run lock](concepts.md#run-lock), so an overlap costs one of them a wait of up to `RUN_LOCK_WAIT` and then exit 75.
 
 If `claude` is not on the PATH cron gives you (it usually is not, since cron runs no login
 profile), set `CLAUDE_BIN` to the full path in the crontab. The watchdog limits are environment
@@ -722,7 +722,7 @@ Three things that will otherwise cost you an evening:
   are opened before your script runs, so the `.claude/logs/` directory must already exist, hence
   the `mkdir -p` above. The runners leave these six `.launchd.out` and `.launchd.err` names out
   of their write fence. A file of any other name that appears in `.claude/logs/` during a pass
-  is contained as a planted file, so keep these names if you rename the jobs.
+  is [contained](concepts.md#containment) as a planted file, so keep these names if you rename the jobs.
 - **The plist must be mode 0644 and owned by you**, or `bootstrap` fails with
   `Path had bad ownership/permissions`.
 - **A launchd job gets a minimal PATH and no login shell**, so a bare `claude` will usually not be
@@ -760,8 +760,8 @@ names a vault under a non-ASCII folder correctly, and it refuses a vault on a `/
 for one reached as `//localhost/c$/...` (this host's own administrative share) or
 `//wsl.localhost/...`, Claude Code 2.1.289 and 2.1.292 did not honour the file (measured; other
 versions, and a share on another server, unmeasured) (the
-`.cmd` files cannot start such a vault at all: `cmd.exe` refuses a `//` current folder). The state
-directory's path and other path checks are still converted under the runners' `C` locale, so an
+`.cmd` files cannot start such a vault at all: `cmd.exe` refuses a `//` current folder). The [state
+directory](concepts.md#state-directory)'s path and other path checks are still converted under the runners' `C` locale, so an
 account whose name is not ASCII needs `VAULT_STATE_DIR` (see Troubleshooting). Each `.cmd` looks for
 Git Bash in the standard Git for Windows locations and never searches `PATH`, because
 `C:\Windows\System32\bash.exe` is WSL; set `BASH_EXE` if yours is elsewhere. `CLAUDE_BIN` and the
@@ -831,8 +831,8 @@ and two git steps of `RUNNER_GIT_TIMEOUT` (default 2 minutes each), each with it
 to commit the pass's notes, plus a margin. Then the runner always kills a hung pass first, logs
 `TIMEOUT` with exit 124 or `STALLED` with exit 125, and releases its lock, unless the stop reports
 `KILL_FAILED` (see Troubleshooting). A limit shorter than that lets Task Scheduler end
-the runner mid-pass with no cleanup, which leaves its lock and in-flight marker behind. The next run
-then reclaims the lock after it goes stale and sets the tripwire. Change the existing task object
+the runner mid-pass with no cleanup, which leaves its lock and [in-flight marker](concepts.md#in-flight-marker) behind. The next run
+then reclaims the lock after it goes stale and sets the [tripwire](concepts.md#tripwire). Change the existing task object
 rather than building new settings (`New-ScheduledTaskSettingsSet` resets every setting you do not
 name), then read the definition back, because a success from `Set-ScheduledTask` is not evidence
 the change landed:
@@ -895,7 +895,7 @@ removes `.claude/logs/`. Your notes are plain Markdown and are untouched.
 
 ## A tripwire is set
 
-A scheduled pass sets the **tripwire** when it changed a steering or execution surface, was stopped
+A scheduled pass sets the **tripwire** when it changed a [steering or execution surface](concepts.md#steering-surface), was stopped
 before its changes were checked, or may have left a process running. While it is set, the dream,
 promotion and retention runners and `vault-check.sh` all exit **78** and do nothing else, until
 you have done the steps below. Nothing clears it on its own. The background is in
