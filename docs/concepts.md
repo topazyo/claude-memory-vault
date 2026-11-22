@@ -634,8 +634,9 @@ be written.
 The file `.claude/logs/runner-tripwire`, with a second copy in the state directory, that a runner
 writes when containment was needed, when its own folder for the pass changed while the agent ran,
 when a stopped pass may have left a process running, or when it finds the in-flight marker of a
-pass that ended before containment. While it is
-there every runner exits 78 and `vault-check.sh` refuses with 78. Only the owner deletes it, after
+pass that ended before containment. While it is there every runner exits 78, or 75 after a
+`KILL_FAILED` stop, which also marks the run lock, and `vault-check.sh` refuses with 78. Only the
+owner deletes it, after
 the steps in [`setup.md`, A tripwire is set](setup.md#a-tripwire-is-set).
 
 ### Run lock
