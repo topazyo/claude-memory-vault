@@ -38,8 +38,10 @@ describe the exit codes 1.7.5 settled. No script, hook, rule or control changes.
   symptom names and the rows with no code last. 25 refusals that only an unusual setup reaches
   (a link where the runner keeps its folder for the pass, a path `cygpath` cannot convert, a shared
   `TMPDIR`, a vault path the settings file cannot name) moved, unchanged, to a new
-  `docs/reference.md` § 10.1. The move changed no row's text: the 75 rows before equal the 75 after
-  with the `Exit` cell removed. Seventeen references between rows that said "the row above" or
+  `docs/reference.md` § 10.1. The move itself changed no row's text: at that commit the 75 rows before
+  equal the 75 after with the `Exit` cell removed. Four rows were added after it and four edited
+  (the partial-update and 79 rows below, and two moved rows that now link back to `setup.md`), so
+  the tables now hold 79. Seventeen references between rows that said "the row above" or
   "see that row below" now name the row they mean, since sorting moved them.
 - **Rows for the codes 1.7.5 settled.** 126 (the binary or the wrapper cannot start; an agent's own
   126 is 79), 127 (which had no row, though it is the usual first failure under cron), the refusal
