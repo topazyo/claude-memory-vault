@@ -64,7 +64,7 @@ worth taking.
 
 - plain markdown in git as the only store, with no services or API keys
 - automation that proposes changes instead of rewriting notes, with every unattended write inside
-  the vault fenced and revertible, within the limits `docs/reference.md` lists
+  the vault [fenced](docs/concepts.md#fence) and revertible, within the limits `docs/reference.md` lists
 - refuted beliefs kept as linked, superseded notes rather than deleted
 - a small long-term tier that has to be earned
 - native Windows support
@@ -450,7 +450,7 @@ watching. The runner backs that constraint mechanically: it fails the run if any
 changed. When the changed file could run code or steer later sessions (an Obsidian plugin, a hook,
 an instruction file, memory, git's config), failing is not enough, because the file would still be
 there next time something opens the vault. So the runner restores it, keeps what the pass wrote in
-a quarantine outside the vault, and sets a tripwire that stops every later run until you have
+a quarantine outside the vault, and sets a [tripwire](docs/concepts.md#tripwire) that stops every later run until you have
 looked. The promotion agent, which *does* write into the long tier, has no shell. Its runner fails
 the run if it wrote anywhere but the long tier or a promotion report, or changed a long-tier note
 that was already there, which it may only propose changing. Otherwise the runner checks every note
