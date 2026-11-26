@@ -196,6 +196,16 @@ name the copy by the file's name alone, `../runner-common.sh.merged`.
    Where both sides changed the same lines it leaves `<<<<<<<`, `=======` and `>>>>>>>` around the
    two versions. Edit each by hand, keeping your change and theirs.
 
+   A release that re-indents or re-wraps a passage changes every line of it, so an edit anywhere
+   in that passage gives one conflict as long as the passage. 1.7.7's headings in
+   `docs/reference.md` § 4.3 are such a release: one changed line there gave a single conflict of
+   about 2,000 lines (measured). Then start again from the new copy, make your edits again, the
+   ones step 1's diff showed, and go on to step 3:
+
+   ```bash
+   cp ../template-new/AGENTS.md ../AGENTS.md.merged
+   ```
+
 3. **Check it, then copy it in.** No marker may be left, a script must still parse, and the
    merged file against the new copy must show the edits step 1 showed and, if you resolved a
    conflict, your resolution, nothing else:
@@ -224,7 +234,10 @@ the template shipped at the version you started from, and rewriting it would thr
 evidence of which files you have changed since. So expect `--status` to keep naming your old
 version, and expect it to report the files you just took as changed here. Neither is a fault. The
 next release's `--check` still works from that record, because it compares against the source you
-point it at rather than against a version number.
+point it at rather than against a version number. A file you took that the template began shipping
+after your recorded version is listed on every later `--check` as already yours, and now shipped
+too, because the record has never held its path (measured). When it is byte for byte the
+template's copy, it is the one you took, and that is no reason to run `--adopt` either.
 
 **Then run the control suite, in two steps.** First the section that covers this tool:
 

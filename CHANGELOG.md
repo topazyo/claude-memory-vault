@@ -57,6 +57,12 @@ putting the moved text back gives 1.7.6's file byte for byte.
   the file with no anchor at all; and one each in `docs/customizing.md` and
   `docs/harnesses/claude-code.md`, the latter in place of a "Write fence item" that is now a
   heading.
+- **Two notes in `docs/updating.md`, from carrying this release into a vault with an edit in
+  § 4.3.** The merge recipe now says what to do when a release re-indents a passage: an edit
+  anywhere in it gives one conflict as long as the passage, about 2,000 lines here, so start from
+  the new copy and make your edits again. And *When you have finished copying* says that a file the
+  template began shipping after your recorded version, once taken, is listed as already yours on
+  every later `--check`, and why that is no reason to run `--adopt`.
 
 ### Adopting this
 
@@ -73,12 +79,15 @@ putting the moved text back gives 1.7.6's file byte for byte.
    `#exit-codes-of-the-dream-and-promotion-runners`, `#environment-variables`,
    `#librunner-commonsh-and-three-windows-traps`, `#retention-exit-1-continued`,
    `#retention-exit-71-continued`, `#exit-79-continued` and `#tmpdir-continued`.
-3. **If you edited § 4.3 of your copy of `docs/reference.md`, expect a merge.** Every line that was
-   inside one of its bullets lost two spaces of indentation, so the merge recipe in
-   `docs/updating.md` § 3 meets a conflict at each line you changed there.
+3. **If you edited § 4.3 of your copy of `docs/reference.md`, expect one long conflict.** Every
+   line that was inside one of its bullets lost two spaces of indentation, so `git merge-file`
+   gives a single conflict over all of them: one changed line in the *Watchdog* paragraph gave one
+   of about 2,000 lines (measured). Take the new copy and make your edits again, as the merge
+   recipe in `docs/updating.md` § 3 now says. An edit outside them, in § 4.3's opening paragraph,
+   the paragraph after the bullets or § 4.3.1, merged with no conflict (measured).
 4. The shipped files this release touches are `docs/reference.md`, `docs/concepts.md`,
-   `docs/setup.md`, `docs/customizing.md` and `docs/harnesses/claude-code.md`, plus `VERSION`, this
-   file and `.claude/template-manifest`.
+   `docs/setup.md`, `docs/customizing.md`, `docs/harnesses/claude-code.md` and `docs/updating.md`,
+   plus `VERSION`, this file and `.claude/template-manifest`.
 
 ---
 
