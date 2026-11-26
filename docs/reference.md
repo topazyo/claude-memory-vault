@@ -2350,45 +2350,8 @@ state directory says what should be where, and later runs refuse until it checks
 | `126` | the `claude` binary or the `VAULT_AGENT_CMD` wrapper cannot start because its `#!` interpreter is missing (bash 5.3 and 3.2; bash 5.2 gives 127) or is not executable. One that is not executable itself, or is a folder, is refused before the pass with `127`. Since 1.7.5; an agent's own 126 leaves as `79` |
 | `127` | the `claude` binary, the `VAULT_AGENT_CMD` wrapper, or (from a `.cmd`) Git Bash was not found, or the binary or wrapper could not start because its `#!` line names what is not there (see `79`) |
 | `129`, `130`, `143` | stopped by HUP, INT or TERM. The agent's tree is stopped. Before containment the tripwire is set (`INTERRUPTED before containment. Tripwire set.`); after it, a tripwire containment set stays with a note. Until 1.6.1 HUP was not trapped and left the agent running with the run lock released and no tripwire |
-| `79` | AGENT-STATUS: the agent or wrapper itself left with one of the codes in this table other than 0 and 1 (2, 3, 4, 5, 64, 70, 75, 78, 79, 124, 125, 126, 127, 129, 130 or 143), so the runner does not repeat a code that would mean something it did not do: a tripwire nobody set, a lock nobody held, or a remap the agent did not get. [More below the table](#exit-79-continued) |
+| `79` | AGENT-STATUS: the agent or wrapper itself left with one of the codes in this table other than 0 and 1 (2, 3, 4, 5, 64, 70, 75, 78, 79, 124, 125, 126, 127, 129, 130 or 143), so the runner does not repeat a code that would mean something it did not do: a tripwire nobody set, a lock nobody held, or a remap the agent did not get. A wrapper that was gone when the runner came to start it stays 127, which keeps its meaning, not found. That is judged before the agent starts (since 1.7.3; before, after the pass), so a wrapper that deletes itself and then leaves with 127 leaves as 79. One that is there but cannot start, because its `#!` line names an interpreter that does not exist, leaves with whatever the shell gave and logs no `AGENT-STATUS:` line: 126 from bash 5.3 and 3.2, 127 from bash 5.2, which says `cannot execute: required file not found` (all measured, 5.2 as 5.2.21 on Ubuntu 24.04). So does one whose line is `#!/usr/bin/env <command>` with no such command on `PATH`, which `env` reports as 127 on every platform. Since 1.7.3; before, both 127s left as 79, blaming the agent for a launch that never happened. The runner decides this before the agent starts, from the `#!` line, and only for two shapes: an absolute interpreter that is not an executable file, and `/usr/bin/env` or `/bin/env` followed by a plain command name. Any other 127 is the agent's and leaves as 79, which includes an `env` line with an option such as `-S` or an assignment, an `env` at any other path, a relative interpreter, a `#!` line of 127 bytes or more (where kernels before Linux 5.1 cut it), any `#!` line holding a NUL (bash's `read` drops it where the kernel stops reading, so the line read is not the line run), and any `#!` line holding a carriage return (Git Bash starts a wrapper whose line ends in one and Linux and macOS do not, so the line proves nothing). On Linux `#!/usr/bin/env cmd arg` passes `cmd arg` to `env` as one word, which fails with 127 while the runner reads only `cmd`, so that one launch failure still leaves as 79, and so does a binary whose system loader is missing, which bash 5.2 also reports as 127: these fail the safe way, as the agent's. When a 127 does pass through, the reason is the shell's or `env`'s own message in the run output. From 1.7.5 126 is reserved the same way (until 1.7.4 every 126 passed through as the agent's): a wrapper whose `#!` interpreter is missing or not executable keeps the shell's 126, "cannot execute", and an agent's own 126 leaves as 79. A binary or wrapper that is not executable, or is a folder, never gets that far: the runner refuses it before the pass with 127, because `command -v` does not find it (measured on Linux with bash 5.3.9; on Git Bash 5.3.15 a file needs no exec bit to start). Known limit: the launch failures the `#!` check does not read, listed above for 127, give 126 too on bash 5.3 and 3.2 (a `#!` line holding a carriage return on Linux and macOS, a relative interpreter, a line of 127 bytes or more), and so does a binary built for another machine (exec format error): each reads as the agent's own 126 and leaves as 79, the safe way, and the shell's message is in the run output. The log holds the agent's own status in its `exited with code` line and an `AGENT-STATUS:` line after it. Everything a failing pass does otherwise happens as for any other status: nothing is committed and what the pass wrote is left for the next run to check. Since 1.7.0; before, the runner left with the agent's code, so a wrapper that exited 78 made the runner exit 78 with no tripwire set |
 | other | the agent's own non-zero status, when nothing above applies, passed through as it is. That includes 1, which most failing wrappers and `claude -p` leave with, so a 1 is told from the runner's own only by the log's `exited with code` line |
-
-##### Exit `79`, continued
-
-A wrapper that was gone when the runner came to start it stays 127, which keeps its meaning, not
-found. That is judged before the agent starts (since 1.7.3; before, after the pass), so a wrapper
-that deletes itself and then leaves with 127 leaves as 79. One that is there but cannot start,
-because its `#!` line names an interpreter that does not exist, leaves with whatever the shell gave
-and logs no `AGENT-STATUS:` line: 126 from bash 5.3 and 3.2, 127 from bash 5.2, which says `cannot
-execute: required file not found` (all measured, 5.2 as 5.2.21 on Ubuntu 24.04). So does one whose
-line is `#!/usr/bin/env <command>` with no such command on `PATH`, which `env` reports as 127 on
-every platform. Since 1.7.3; before, both 127s left as 79, blaming the agent for a launch that never
-happened. The runner decides this before the agent starts, from the `#!` line, and only for two
-shapes: an absolute interpreter that is not an executable file, and `/usr/bin/env` or `/bin/env`
-followed by a plain command name. Any other 127 is the agent's and leaves as 79, which includes an
-`env` line with an option such as `-S` or an assignment, an `env` at any other path, a relative
-interpreter, a `#!` line of 127 bytes or more (where kernels before Linux 5.1 cut it), any `#!` line
-holding a NUL (bash's `read` drops it where the kernel stops reading, so the line read is not the
-line run), and any `#!` line holding a carriage return (Git Bash starts a wrapper whose line ends in
-one and Linux and macOS do not, so the line proves nothing). On Linux `#!/usr/bin/env cmd arg`
-passes `cmd arg` to `env` as one word, which fails with 127 while the runner reads only `cmd`, so
-that one launch failure still leaves as 79, and so does a binary whose system loader is missing,
-which bash 5.2 also reports as 127: these fail the safe way, as the agent's. When a 127 does pass
-through, the reason is the shell's or `env`'s own message in the run output. From 1.7.5 126 is
-reserved the same way (until 1.7.4 every 126 passed through as the agent's): a wrapper whose `#!`
-interpreter is missing or not executable keeps the shell's 126, "cannot execute", and an agent's own
-126 leaves as 79. A binary or wrapper that is not executable, or is a folder, never gets that far:
-the runner refuses it before the pass with 127, because `command -v` does not find it (measured on
-Linux with bash 5.3.9; on Git Bash 5.3.15 a file needs no exec bit to start). Known limit: the
-launch failures the `#!` check does not read, listed above for 127, give 126 too on bash 5.3 and 3.2
-(a `#!` line holding a carriage return on Linux and macOS, a relative interpreter, a line of 127
-bytes or more), and so does a binary built for another machine (exec format error): each reads as
-the agent's own 126 and leaves as 79, the safe way, and the shell's message is in the run output.
-The log holds the agent's own status in its `exited with code` line and an `AGENT-STATUS:` line
-after it. Everything a failing pass does otherwise happens as for any other status: nothing is
-committed and what the pass wrote is left for the next run to check. Since 1.7.0; before, the runner
-left with the agent's code, so a wrapper that exited 78 made the runner exit 78 with no tripwire
-set.
 
 #### Environment variables
 

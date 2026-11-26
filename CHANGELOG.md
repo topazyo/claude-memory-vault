@@ -46,16 +46,16 @@ putting the moved text back gives 1.7.6's file byte for byte.
   `lib/runner-common.sh` with the three Windows traps followed the retention runner's exit table
   under the `4.3.1 vault-retention.sh` heading, so `docs/setup.md`'s pointer to "the full table"
   left a reader in the retention runner's section. The `4.3.1` heading and its anchor are unchanged.
-- **Four long table cells keep their first sentence.** Exits `1` and `71` of the retention runner,
-  exit `79` of the dream and promotion runners, and the `TMPDIR` row each keep the sentence that
-  defines them and link to a note directly under their table that holds the rest, in order and word
-  for word. Exits `1` and `78` of the dream and promotion runners stay whole, because `AGENTS.md`,
-  `docs/setup.md` and `docs/reference.md` itself point at what those cells say. The long cells of
-  § 10 and § 10.1 are not touched.
+- **Three long table cells keep their first sentence.** Exits `1` and `71` of the retention runner
+  and the `TMPDIR` row each keep the sentence that defines them and link to a note directly under
+  their table that holds the rest, in order and word for word. Exits `1`, `78` and `79` of the dream
+  and promotion runners stay whole, because `AGENTS.md`, `docs/setup.md`, the runners' own comments
+  and `docs/reference.md` itself point at what those cells say. The long cells of § 10 and § 10.1
+  are not touched.
 - **Links into § 4.3 land on what they mean.** Five in `docs/concepts.md`; in `docs/setup.md` the
-  exit-table pointers, the tripwire background and the § 4.3.1 recovery link, two of which named
-  the file with no anchor at all; and one each in `docs/customizing.md` and
-  `docs/harnesses/claude-code.md`, the latter in place of a "Write fence item" that is now a
+  exit-table pointers, the tripwire background and the § 4.3.1 recovery link, three of which named
+  the file with no anchor at all; one in `docs/customizing.md`; and two in
+  `docs/harnesses/claude-code.md`, one of them in place of a "Write fence item" that is now a
   heading.
 - **Two notes in `docs/updating.md`, from carrying this release into a vault with an edit in
   § 4.3.** The merge recipe now says what to do when a release re-indents a passage: an edit
@@ -79,13 +79,15 @@ putting the moved text back gives 1.7.6's file byte for byte.
    `#the-history-each-agent-reads-and-which-vault-and-repository-a-runner-uses`,
    `#exit-codes-of-the-dream-and-promotion-runners`, `#environment-variables`,
    `#librunner-commonsh-and-three-windows-traps`, `#retention-exit-1-continued`,
-   `#retention-exit-71-continued`, `#exit-79-continued` and `#tmpdir-continued`.
-3. **If you edited § 4.3 of your copy of `docs/reference.md`, expect one long conflict.** Every
-   line that was inside one of its bullets lost two spaces of indentation, so `git merge-file`
-   gives a single conflict over all of them: one changed line in the *Watchdog* paragraph gave one
-   of 2,062 lines, about 1,000 from each side (measured). Take the new copy and make your edits again, as the merge
-   recipe in `docs/updating.md` § 3 now says. An edit outside them, in § 4.3's opening paragraph,
-   the paragraph after the bullets or § 4.3.1, merged with no conflict (measured).
+   `#retention-exit-71-continued` and `#tmpdir-continued`.
+3. **If you edited § 4.3 of your copy of `docs/reference.md`, expect a conflict where this release
+   moved lines.** Every line of the nine bullets from *Run lock* to *Runner commit* lost two spaces
+   of indentation, so `git merge-file` gives a single conflict over all of them: one changed line
+   in the *Watchdog* paragraph gave one of 2,062 lines, about 1,000 from each side (measured). Take
+   the new copy and make your edits again, as the merge recipe in `docs/updating.md` § 3 now says.
+   An edit to one of the three split rows gives a small conflict on that row. An edit to § 4.3's
+   opening paragraph, the `claude` bullet, the paragraph after the nine bullets, § 4.3.1's prose or
+   the exit `79` row merged with no conflict (each measured once).
 4. The shipped files this release touches are `docs/reference.md`, `docs/concepts.md`,
    `docs/setup.md`, `docs/customizing.md`, `docs/harnesses/claude-code.md` and `docs/updating.md`,
    plus `VERSION`, this file and `.claude/template-manifest`.
