@@ -59,10 +59,11 @@ putting the moved text back gives 1.7.6's file byte for byte.
   heading.
 - **Two notes in `docs/updating.md`, from carrying this release into a vault with an edit in
   § 4.3.** The merge recipe now says what to do when a release re-indents a passage: an edit
-  anywhere in it gives one conflict as long as the passage, about 2,000 lines here, so start from
-  the new copy and make your edits again. And *When you have finished copying* says that a file the
-  template began shipping after your recorded version, once taken, is listed as already yours on
-  every later `--check`, and why that is no reason to run `--adopt`.
+  anywhere in it gives one conflict holding the whole passage twice, 2,062 lines here, so start
+  from the new copy and make your edits again. And *When you have finished copying* says that a
+  file the template began shipping after your recorded version, once taken, is listed as already
+  yours from then on and never offered again, even when a later release changes it, so you judge
+  it against the release you took it from; and why that is no reason to run `--adopt`.
 
 ### Adopting this
 
@@ -82,7 +83,7 @@ putting the moved text back gives 1.7.6's file byte for byte.
 3. **If you edited § 4.3 of your copy of `docs/reference.md`, expect one long conflict.** Every
    line that was inside one of its bullets lost two spaces of indentation, so `git merge-file`
    gives a single conflict over all of them: one changed line in the *Watchdog* paragraph gave one
-   of about 2,000 lines (measured). Take the new copy and make your edits again, as the merge
+   of 2,062 lines, about 1,000 from each side (measured). Take the new copy and make your edits again, as the merge
    recipe in `docs/updating.md` § 3 now says. An edit outside them, in § 4.3's opening paragraph,
    the paragraph after the bullets or § 4.3.1, merged with no conflict (measured).
 4. The shipped files this release touches are `docs/reference.md`, `docs/concepts.md`,
