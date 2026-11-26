@@ -25,6 +25,77 @@ bash .claude/scripts/vault-update.sh --check --from ../template-new
 
 ---
 
+## 1.7.7 — 2026-11-26
+
+`docs/reference.md` § 4.3, the scheduled runners, gets places to land. No script, hook, rule or
+control changes, and no fact in `docs/reference.md` changes: taking out the added headings and
+putting the moved text back gives 1.7.6's file byte for byte.
+
+### Changed
+
+- **§ 4.3 has headings.** Its first 1,100 lines held no heading and no table, most of them one
+  bulleted list, so a link into it could land only on the section top, and `docs/concepts.md`
+  named the paragraph it meant in italics after four of its links. The mechanisms a runner adds around the agent are
+  now headings under *Around the agent call*: Run lock, Watchdog, Write fence, Containment with its
+  Known limits, Script integrity, Artifact assertion, Git preflight and files already being edited,
+  The long tier is create-only, and Runner commit. How the agent is started, the two details of
+  claude mode, and the history each agent reads with which vault and repository a runner uses have
+  headings too. The order and the words are unchanged.
+- **What sat under § 4.3.1 without being about the retention runner has its own heading.** The
+  dream and promotion runners' exit table, the environment variables of all three runners, and
+  `lib/runner-common.sh` with the three Windows traps followed the retention runner's exit table
+  under the `4.3.1 vault-retention.sh` heading, so `docs/setup.md`'s pointer to "the full table"
+  left a reader in the retention runner's section. The `4.3.1` heading and its anchor are unchanged.
+- **Three long table cells keep their first sentence.** Exits `1` and `71` of the retention runner
+  and the `TMPDIR` row each keep the sentence that defines them and link to a note directly under
+  their table that holds the rest, in order and word for word. Exits `1`, `78` and `79` of the dream
+  and promotion runners stay whole, because `AGENTS.md`, `docs/setup.md`, the runners' own comments
+  and `docs/reference.md` itself point at what those cells say. The long cells of § 10 and § 10.1
+  are not touched.
+- **Links into § 4.3 land on what they mean.** Five in `docs/concepts.md`; in `docs/setup.md` the
+  exit-table pointers, the tripwire background and the § 4.3.1 recovery link, three of which named
+  the file with no anchor at all; one in `docs/customizing.md`; and two in
+  `docs/harnesses/claude-code.md`, one of them in place of a "Write fence item" that is now a
+  heading.
+- **Two notes in `docs/updating.md`, from carrying this release into a vault with an edit in
+  § 4.3.** The merge recipe now says what to do when a release re-indents a passage: an edit
+  anywhere in it gives one conflict holding the whole passage twice, 2,062 lines here, so start
+  from the new copy and make your edits again. And *When you have finished copying* says that a
+  file the template began shipping after your recorded version, once taken, is listed as already
+  yours on every later `--check` and never offered again, so `--check` cannot tell you when a
+  later release changed it and you judge it against the release you took it from; and why that is
+  no reason to run `--adopt`.
+
+### Adopting this
+
+1. **Nothing a pass, a hook or the commit gate does changes.** Take the documents if you have not
+   edited them, as `--check` lists them.
+2. **No anchor was removed.** `#43-scheduled-runners` and
+   `#431-vault-retentionsh--the-retention-mover` still name their sections. The anchors added in
+   `docs/reference.md` are `#how-the-agent-is-started`, `#two-details-of-claude-mode`,
+   `#around-the-agent-call`, `#run-lock`, `#watchdog`, `#write-fence`, `#containment`,
+   `#known-limits`, `#script-integrity`, `#artifact-assertion`,
+   `#git-preflight-and-files-already-being-edited`, `#the-long-tier-is-create-only`,
+   `#runner-commit`,
+   `#the-history-each-agent-reads-and-which-vault-and-repository-a-runner-uses`,
+   `#exit-codes-of-the-dream-and-promotion-runners`, `#environment-variables`,
+   `#librunner-commonsh-and-three-windows-traps`, `#retention-exit-1-continued`,
+   `#retention-exit-71-continued` and `#tmpdir-continued`.
+3. **If you edited § 4.3 of your copy of `docs/reference.md`, expect a conflict where this release
+   moved lines.** Every line of the nine bullets from *Run lock* to *Runner commit* lost two spaces
+   of indentation, so `git merge-file` gives a single conflict over all of them: one changed line
+   in the *Watchdog* paragraph gave one of 2,062 lines, about 1,000 from each side (measured). Take
+   the new copy and make your edits again, as the merge recipe in `docs/updating.md` § 3 now says.
+   An edit to a split row gave a small conflict on that row (two edits to the retention runner's
+   `71` row, one in the part kept and one in the part moved, measured). An edit to § 4.3's opening
+   paragraph, the `claude` bullet, the paragraph after the nine bullets, § 4.3.1's prose or the
+   exit `79` row merged with no conflict (each measured once).
+4. The shipped files this release touches are `docs/reference.md`, `docs/concepts.md`,
+   `docs/setup.md`, `docs/customizing.md`, `docs/harnesses/claude-code.md` and `docs/updating.md`,
+   plus `VERSION`, this file and `.claude/template-manifest`.
+
+---
+
 ## 1.7.6 — 2026-11-22
 
 The documentation half of the work planned after 1.7.2's review, split from 1.7.5 so that it could

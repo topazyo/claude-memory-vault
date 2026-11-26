@@ -922,6 +922,8 @@ the prompt file, the watchdog's stall detection or the artifact assertion applie
 the run lock, the tripwire, the state directory and the `.cmd` wrapper's Git Bash lookup, and
 § 4.3.1 says what it does instead.
 
+#### How the agent is started
+
 `VAULT_AGENT` chooses how the agent is started:
 
 - **`claude`** (default): `claude -p "<prompt>" --agent <name> --permission-mode acceptEdits
@@ -953,6 +955,8 @@ the run lock, the tripwire, the state directory and the `.cmd` wrapper's Git Bas
   that starts Claude Code gets neither the memory override nor the hook switch, so its hooks stay
   on unless the wrapper turns them off.
 
+#### Two details of claude mode
+
 Two details of claude mode are load-bearing:
 
 - The agent is selected with the **`--agent <name>` flag**. There is no `/agent` slash command to
@@ -961,1023 +965,1054 @@ Two details of claude mode are load-bearing:
   scheduler there is no TTY and stdin is empty, so it reads EOF and exits **0** within seconds
   having done nothing. The scheduler records a success.
 
+#### Around the agent call
+
 Around that call, each runner does several things an exit code cannot:
 
-- **Run lock.** Before it checks any vault state, a runner takes one lock per vault, the directory
-  `run.lock` in the state directory, so two passes never race each other's fences or git's index.
-  The lock lives outside the vault because a pass that could rewrite it could stall or unlock
-  every later run. Runners share a lock only when they resolve the same state directory. The
-  spellings of the vault's path described under Containment below resolve to one, but runners
-  given different `VAULT_STATE_DIR` values, runners under two accounts, and a Git Bash runner and
-  a WSL runner on the same vault each take their own lock. Schedule both passes from the same
-  environment and account, and give them the same `VAULT_STATE_DIR` or leave it unset for both.
-  A runner that finds the lock held waits up to `RUN_LOCK_WAIT` seconds and then exits **75**
-  (LOCKED) without starting its agent.
+##### Run lock
 
-  A lock is reclaimed only when its runner is gone and the lock is older than the longest run that
-  runner declared (its timeout, plus the watchdog grace period, plus 15 minutes). "Gone" means no
-  process has the recorded pid, whichever account owns it, or the process that has it is not that
-  runner's script, which covers a runner killed by Task Scheduler whose pid was reused. On Windows
-  a pid that Git Bash cannot see, as with a runner in another logon session, is also looked up by
-  its Windows process id, and a bash process that started no later than the lock counts as the
-  runner. So does any answer other than a clear "no such bash process", including a PowerShell
-  that is missing, blocked, failing or slower than 30 seconds. A process whose command line is
-  readable but empty, such as a Linux kernel thread that reused the pid, is not the runner. A
-  runner that is still alive is never reclaimed, however old its lock, because the age includes
-  time the machine spent asleep. A lock dated more than two minutes in the future, because the
-  clock was set back, is reclaimed as soon as its runner is gone. A lock directory whose owner
-  file is missing or has no well-formed nonce is reclaimed after two minutes, or at once when it
-  is dated that far in the future, and one whose owner file this account cannot read is treated
-  as held. A lock directory that cannot be created is retried once a second, and after five
-  misses in a row, as with a full disk, the run stops with exit 1. A file or symlink named
-  `run.lock` in the state directory stops it at once, even a symlink to a folder. One reclaim runs
-  at a time. It checks the lock again before moving it aside and once more after, and a lock that
-  changed in between is put back, or kept beside the lock with a `RUN-LOCK-RACE` line in the log,
-  never deleted. The owner file is placed with a hard link, which fails when one is already there,
-  so the first owner file placed holds the lock. A runner that stalls for over two minutes between
-  taking the lock and writing its owner file, and whose lock another runner reclaims meanwhile,
-  either places its owner file first and holds the lock, or finds that runner's owner file and
-  waits. If it resumes in the moment after the other runner's mkdir, it can remove that still
-  empty directory, and both runners then stop with exit 1. It never removes a directory holding
-  a file. On a file system where no hard link can be made, the owner file is renamed into place
-  while none is there, and could still land over one placed a moment earlier. So just before a
-  runner marks its pass in flight, it checks that the lock still carries its own owner file, and
-  exits 75 if another runner's has replaced or removed it. A rename that lands after that check,
-  which takes a second stall, is not caught. The stalled runner then sets a false tripwire (exit
-  78), clears the other pass's in-flight marker and removes the lock while that pass runs. Every
-  owner field is checked before use, and so are the timeout, watchdog and lock settings, which
-  fall back to their defaults with a warning.
+Before it checks any vault state, a runner takes one lock per vault, the directory
+`run.lock` in the state directory, so two passes never race each other's fences or git's index.
+The lock lives outside the vault because a pass that could rewrite it could stall or unlock
+every later run. Runners share a lock only when they resolve the same state directory. The
+spellings of the vault's path described under Containment below resolve to one, but runners
+given different `VAULT_STATE_DIR` values, runners under two accounts, and a Git Bash runner and
+a WSL runner on the same vault each take their own lock. Schedule both passes from the same
+environment and account, and give them the same `VAULT_STATE_DIR` or leave it unset for both.
+A runner that finds the lock held waits up to `RUN_LOCK_WAIT` seconds and then exits **75**
+(LOCKED) without starting its agent.
 
-  A `.git/index.lock` older than 10 minutes also exits 75, because a crashed git command blocks
-  every commit until it is removed. A younger one is waited on like the run lock, and one that
-  stays for the whole wait exits 75 too. For a linked worktree the index lock in its own git
-  directory is the one checked. As a known limit, a runner in another pid namespace, such as a
-  container, or on a Linux system that hides other users' processes, reads as gone.
-- **Watchdog.** The agent runs with stdin from `/dev/null` under a timer. A run that exceeds its
-  timeout is stopped and the runner exits **124**. A run whose output stops growing for the stall
-  threshold is stopped as well, and the runner exits **125** (STALLED). That is on by default in
-  claude mode, and in command mode only when `RUNNER_STALL_SECONDS` is set, because the harness's
-  output is unknown. Any new output counts as progress, including a partial message. The
-  threshold is `RUNNER_STALL_FLOOR` (10 minutes) until three passes that ended OK are measured.
-  The runner records each such pass's longest silent stretch, and from then on the threshold is
-  1.5 times the 99th percentile of those, and never below the floor. The record
-  (`<runner>.stream-gaps` in the state directory) is not sealed. On 1.4.2 one value written there
-  by something other than the watchdog, such as 999999999, set the threshold to about 1.5e9
-  seconds, which is stall detection off, for every later pass while the record held fewer than 100
-  passes, and a few such values did beyond that (reasoned from the p99). So a recorded silence of
-  up to nine digits that is larger than the pass's timeout is read as the timeout, and is written
-  as the timeout in the first place; one of more than nine digits is ignored, as before. And a
-  threshold measured from the record (1.5 times the p99, when that is at or above the floor) that is
-  above three quarters of the pass's timeout (at least 1 second), or above the floor where that is
-  higher, becomes that value, which the start line says with `capped at three quarters of the
-  pass's timeout, or the floor where that is higher`: with a 100s timeout, a floor of 1s and a
-  forged record, `stall 75s`. A pass whose measured threshold is above that value therefore stops
-  as stalled (125) once it has been silent that long, where it could run on to the timeout (124).
-  The watchdog checks the timeout before the stall, in steps of its poll interval, so a threshold
-  less than one poll below the timeout still loses to it. The floor is a setting, not a
-  measurement, and is never changed: one at or above the timeout leaves stall detection off, as in
-  1.4.2. `RUNNER_STALL_SECONDS` and command mode are unchanged too. The start line of every run
-  logs the threshold, where it came from, and the session id. `RUNNER_STALL_SECONDS` sets the
-  threshold outright, and `0` turns stall detection off. A value that is not digits only, with no
-  leading zero and at most nine digits, is ignored with a warning.
+A lock is reclaimed only when its runner is gone and the lock is older than the longest run that
+runner declared (its timeout, plus the watchdog grace period, plus 15 minutes). "Gone" means no
+process has the recorded pid, whichever account owns it, or the process that has it is not that
+runner's script, which covers a runner killed by Task Scheduler whose pid was reused. On Windows
+a pid that Git Bash cannot see, as with a runner in another logon session, is also looked up by
+its Windows process id, and a bash process that started no later than the lock counts as the
+runner. So does any answer other than a clear "no such bash process", including a PowerShell
+that is missing, blocked, failing or slower than 30 seconds. A process whose command line is
+readable but empty, such as a Linux kernel thread that reused the pid, is not the runner. A
+runner that is still alive is never reclaimed, however old its lock, because the age includes
+time the machine spent asleep. A lock dated more than two minutes in the future, because the
+clock was set back, is reclaimed as soon as its runner is gone. A lock directory whose owner
+file is missing or has no well-formed nonce is reclaimed after two minutes, or at once when it
+is dated that far in the future, and one whose owner file this account cannot read is treated
+as held. A lock directory that cannot be created is retried once a second, and after five
+misses in a row, as with a full disk, the run stops with exit 1. A file or symlink named
+`run.lock` in the state directory stops it at once, even a symlink to a folder. One reclaim runs
+at a time. It checks the lock again before moving it aside and once more after, and a lock that
+changed in between is put back, or kept beside the lock with a `RUN-LOCK-RACE` line in the log,
+never deleted. The owner file is placed with a hard link, which fails when one is already there,
+so the first owner file placed holds the lock. A runner that stalls for over two minutes between
+taking the lock and writing its owner file, and whose lock another runner reclaims meanwhile,
+either places its owner file first and holds the lock, or finds that runner's owner file and
+waits. If it resumes in the moment after the other runner's mkdir, it can remove that still
+empty directory, and both runners then stop with exit 1. It never removes a directory holding
+a file. On a file system where no hard link can be made, the owner file is renamed into place
+while none is there, and could still land over one placed a moment earlier. So just before a
+runner marks its pass in flight, it checks that the lock still carries its own owner file, and
+exits 75 if another runner's has replaced or removed it. A rename that lands after that check,
+which takes a second stall, is not caught. The stalled runner then sets a false tripwire (exit
+78), clears the other pass's in-flight marker and removes the lock while that pass runs. Every
+owner field is checked before use, and so are the timeout, watchdog and lock settings, which
+fall back to their defaults with a warning.
 
-  A stop reaches everything the pass started. Outside Windows the agent starts in a process group
-  of its own. The runner signals that group only after `ps` shows the agent leads it and it is
-  not the runner's own group, and it signals each process of the tree it listed before the stop in
-  every case. `TERM` comes first, then `KILL` after `WATCHDOG_GRACE`. Without a working `ps` the
-  runner cannot list the tree, and it records the stop as unknown. On Windows a native process
-  ignores those signals, so the runner stops the tree before sending any. It lists the agent's
-  descendants from the Git Bash process table, which still links a child whose Windows parent
-  has exited, and hands their Windows ids to PowerShell. PowerShell takes one process list, runs
-  `taskkill /T /F` on the agent's Windows process, and stops those descendants and every process
-  whose command line holds the session id. It stops a listed id only while that id still belongs
-  to a process that started before the tree was listed, so an id Windows has given to a new
-  process is left alone. Then it lists the processes again once a second, up to 10 times, and
-  stops each new one that holds the session id or started before its parent's stop began,
-  because a process of the tree can start another between the list and the stop. A child started
-  while its parent's stop ran, or a child whose parent id now belongs to a newer process, is found
-  only by the session id. A program that Git Bash starts by exec has no Windows parent left, so only the session id finds it too. Exec keeps a Git Bash process's pid and its parent's and moves it to a new Windows process (measured on Git Bash 5.3.15), so a listed process counts as the one listed while its Windows id is unchanged or its parent is still the listed one. Until 1.7.5 the Windows id alone decided: a wrapper that ran itself again by exec was taken for a reused id, left running and reported stopped, and the runner waited for it for ever. Which processes are the tree's is decided for all of them before any is stopped, and each is checked again just before its own stop. Known limit: one that runs another program by exec in that moment, after its parent was stopped, is found only if Git Bash keeps its parent's pid once the parent has gone, which has not been measured. PowerShell gets the id in its
-  environment, leaves itself out, and is itself stopped after 60 seconds, which counts as an
-  unknown result. A command-mode wrapper gets
-  the id in `VAULT_RUN_NONCE`, and only a process that puts it on its own command line can be
-  found that way.
+A `.git/index.lock` older than 10 minutes also exits 75, because a crashed git command blocks
+every commit until it is removed. A younger one is waited on like the run lock, and one that
+stays for the whole wait exits 75 too. For a linked worktree the index lock in its own git
+directory is the one checked. As a known limit, a runner in another pid namespace, such as a
+container, or on a Linux system that hides other users' processes, reads as gone.
 
-  The runner then checks that no process it listed is still running and that the run's output
-  has stopped growing. If either check fails, or the check itself gave no answer, it logs
-  `KILL_FAILED` with what it found, marks the run lock and keeps it. It also sets the tripwire,
-  because a process of the pass may still be writing after containment ran, and keeps the
-  pre-pass backup `inflight-backup.tar` in the state directory for the review. The tripwire says
-  whether the lock could be marked and whether there is a backup. When containment set the
-  tripwire in the same run, the stop's report is added to it. Otherwise a tripwire found only in
-  the vault was written by the pass, and is replaced. A signal that arrives once the watchdog's
-  stop has found such a process, and before the runner has reported it, reports it. A signal after
-  containment wrote its tripwire leaves that tripwire in place with a note, and before containment
-  the signal's own stop names what it found in the tripwire the signal sets. After such a stop the
-  run's output is kept in the state directory, not added to the run log in the vault, because a
-  process left running could swap the log's temporary file for a link. The runner still exits 124
-  or 125, or 78 when its own folder for the pass was also changed while the agent ran (70 when no
-  tripwire could be written). A marked lock
-  is never released or reclaimed, so every later run exits **75** until a human has made sure
-  nothing of the old pass is running, reviewed the vault, deleted the tripwire and deleted the
-  lock folder. A stop of a commit step, or a stop made by a signal to the runner, that leaves a
-  process marks the lock the same way, and sets no tripwire unless the signal came before
-  containment. A signal that arrives while the watchdog is still stopping the run reaches what the
-  run left in its process group, or on Windows the processes holding the session id, and never
-  the pid of the ended command, which may belong to another process by then. After a stop the
-  runner also names a leftover `index.lock`, and the log still lists, under `VIOLATION`, any file
-  the pass wrote outside its allowed areas, and any note it wrote that someone was already
-  editing, before it was stopped.
+##### Watchdog
 
-  Every session a claude-mode pass ran under is appended to `runner-sessions.tsv` in the state
-  directory, with the time, the runner and whether the stream's init event confirmed the id, so a
-  later capture of Claude Code sessions can leave the runners' own out. That includes a pass
-  stopped by a signal and one whose containment could not write a tripwire. The runner reads the
-  stream from its own copy outside the vault, then adds it to the pass's run log in
-  `.claude/logs` after containment. The new run log is built beside the old one and renamed into
-  place, and a link at the run-log path is removed first, so the output is never written through a
-  link or moved into a folder a link names. A run log with another name linked to it starts
-  again, and a run log keeps its file mode. A run log larger than `RUNNER_RUN_LOG_MAX_BYTES` keeps
-  its newest part from the start of a line, or the end of its last line when that line alone is
-  longer. A pass stopped by a signal before its output reached the run log, or whose run log could
-  not be written, has the output kept as `<runner>.interrupted.run` in the state directory, and the
-  log says why. That copy is written beside the earlier one and renamed over it. A link or an empty
-  folder at that path is removed first, so nothing is written through a link or into a folder. A
-  folder that holds files or cannot be removed, a link that cannot be removed, or a path the rename
-  fails on is left for you to look at, and the output is kept under a new name beside it,
-  `<runner>.interrupted.run.<six characters>`, which the log's `WARNING` names. When something takes
-  the path during the rename, the log says the output may be inside it. The output is lost only when
-  the copy itself fails, or when neither the path nor a name beside it can take it, and the
-  `WARNING` then says what is at that path: an earlier run's output, or something that is not a
-  regular file and holds none. A signal keeps no output when `run`, or the runner's folder for the
-  pass itself, is a link, because the copy would follow it to whatever it names, and neither does a
-  pass that ends 78 because that folder changed, which logs `WARNING: the run output, …, is missing,
-  is not a regular file or is in a folder that is a link, so it was not kept.` On 1.4.1 a signal
-  copied what a link at `run` named into the state directory (measured). A signal before
-  containment and the 78 path also leave the vault's log as the pass left it, since containment
-  does not run there, and so, for the next run, does a pass that ended at 78 or died: when
-  `.claude/logs/<agent>.log`, `.claude` or `.claude/logs` is a symbolic link, `.claude/logs` is not
-  a folder, or the log is there and not a file, the runner writes the rest of the run's lines to
-  `<runner>.uncontained.log` in the state directory, with a `WARNING:` there, and a tripwire it
-  writes says so. A later run checks as soon as its state directory is known, before its run lock,
-  whenever the tripwire or the passes' in-flight marker (`runner-inflight`) is there in either
-  copy, and again once it holds the lock, because the pass holding the lock could make the link,
-  and set the tripwire, while the run waited; so its `TRIPWIRE:` refusal, and the line it writes
-  from a dead pass's marker, go there too. The retention runner's file is
-  `vault-retention.uncontained.log`; its printed lines carry the `WARNING:` once when the run could
-  keep its own copy of them, and otherwise say that the lines are only in that file, and name it.
-  A line logged before the state directory is known, in every runner (a setting's warning, the
-  state-directory error, the `WARNING:` naming the git variables the runner cleared, or the `ERROR:`
-  refusing the vault's spelling), still goes to the vault's log path, and opening the log there may
-  create, empty, a file a link at it names. A line a dream or promotion run logs while waiting for
-  the lock (a
-  stale-lock line, or the `LOCKED` line when the wait runs out) goes where the first check left
-  the log: to the state directory when that check moved it, otherwise to the vault's log path.
-  The retention runner passes on the lines it logged while waiting only after its second check, so
-  they go to the state directory too, when it could keep its own copy of its lines and was not
-  stopped while waiting; otherwise they too go where the first check left the log (reasoned). A
-  signal checks the log only after it has stopped the agent's process tree, so a link that a
-  process the stop reaches puts there once it is reached is found too; a process that has left
-  the tree and its process group, as one started with `setsid` can, is neither stopped nor
-  recorded (reasoned). On 1.4.1 a signal's lines were
-  written through a link at the log (measured; through a link at `.claude` or `.claude/logs`,
-  reasoned), one the pass made once the stop reached it included (measured), and a later run's
-  refusal was too (measured), a run that waited for the run lock included, through a link the log
-  became while it waited (measured, for each runner), so a command-mode pass could have the runner
-  append to any file the account can write through a symbolic link. Besides the lines listed above
-  as still going to the vault's log path, these are still open, and carried to a later release, each
-  needing a command-mode pass with a shell, which `docs/setup.md` says not to give it (what the
-  harness itself runs during a pass could give one all the same, reasoned: the vault's own hooks,
-  where the wrapper left them on, git, which runs what the vault's git configuration and hooks name,
-  or a tool the harness starts by itself (carried); so the Aider guide sets Aider's documented
-  `git: false` (not measured for this release), the container recipes mount `.claude/` and the
-  vault's `.git` read-only, and `docs/setup.md` now asks for hooks off too, and for the vault's
-  `.git`, and, with the commit gate on, its `.claude/`, out of a pass's reach, with a check in
-  `docs/harnesses/README.md`, while whether the Codex and Gemini CLI sandboxes leave
-  those folders writable is carried): a hard link at a log, which has the runner
-  append its lines, names the pass chose included, to the file it shares, and one at
-  `.claude/logs/dream-pass.git-state.txt`, which has the next dream run empty that file and write
-  `git status`, those names included, into it; a FIFO at a log, which blocks every later run of that
-  runner at the log's first write, before any check, and one at the git-state file, which blocks the
-  next dream run while it holds the run lock, so a promotion run is refused with 75 and every later
-  dream run blocks the same way, each with no tripwire at all, an outside time limit ending each
-  run; and a symbolic link containment cannot move, as in a `.claude/logs` made read-only, which the
-  runner still writes through (measured with 1.4.2; 1.4.1 behaves the same; the FIFO at a log
-  measured for the dream runner only, and on 1.4.1 by reading).
-  A process that outlives the pass can also give the vault's `runner-tripwire` a second name, and a
-  later note is then appended to the file it shares, and, after a stop that could not end it, put a
-  link at the log once containment has run, so the runner's later lines go through it (both
-  reasoned). Once the runner's
-  folder for the pass has been made, a
-  signal stops the agent's process tree whether or not that folder is still there, and records the
-  stop in the state directory as `signal-stop.<pid>`. On 1.4.1 a pass that removed that folder and
-  then sent its runner TERM was not stopped and was still running after the runner exited
-  (measured), and would run on until its own end or the watchdog's timeout (reasoned), and a link
-  at the folder had the stop's record written through it (measured).
-- **Write fence.** The runner checksums every file in the vault before and after the run and exits
-  **2** with the offending paths logged if anything changed outside the allowed areas. For
-  `dream-pass` that is `20-projects/_logs/dream-*.md`. For `promotion-pass` it is `31-standards/`
-  and `40-llm-wiki/wiki/` (never their `templates/`) plus `20-projects/_logs/promotion-*.md`. Both
-  tolerate a `compaction-*.md` stub written by the compaction hook. Another writer active during
-  the run, such as a sync client, or a harness that keeps state files in its working directory,
-  trips the fence too; the logged paths tell you which.
+The agent runs with stdin from `/dev/null` under a timer. A run that exceeds its
+timeout is stopped and the runner exits **124**. A run whose output stops growing for the stall
+threshold is stopped as well, and the runner exits **125** (STALLED). That is on by default in
+claude mode, and in command mode only when `RUNNER_STALL_SECONDS` is set, because the harness's
+output is unknown. Any new output counts as progress, including a partial message. The
+threshold is `RUNNER_STALL_FLOOR` (10 minutes) until three passes that ended OK are measured.
+The runner records each such pass's longest silent stretch, and from then on the threshold is
+1.5 times the 99th percentile of those, and never below the floor. The record
+(`<runner>.stream-gaps` in the state directory) is not sealed. On 1.4.2 one value written there
+by something other than the watchdog, such as 999999999, set the threshold to about 1.5e9
+seconds, which is stall detection off, for every later pass while the record held fewer than 100
+passes, and a few such values did beyond that (reasoned from the p99). So a recorded silence of
+up to nine digits that is larger than the pass's timeout is read as the timeout, and is written
+as the timeout in the first place; one of more than nine digits is ignored, as before. And a
+threshold measured from the record (1.5 times the p99, when that is at or above the floor) that is
+above three quarters of the pass's timeout (at least 1 second), or above the floor where that is
+higher, becomes that value, which the start line says with `capped at three quarters of the
+pass's timeout, or the floor where that is higher`: with a 100s timeout, a floor of 1s and a
+forged record, `stall 75s`. A pass whose measured threshold is above that value therefore stops
+as stalled (125) once it has been silent that long, where it could run on to the timeout (124).
+The watchdog checks the timeout before the stall, in steps of its poll interval, so a threshold
+less than one poll below the timeout still loses to it. The floor is a setting, not a
+measurement, and is never changed: one at or above the timeout leaves stall detection off, as in
+1.4.2. `RUNNER_STALL_SECONDS` and command mode are unchanged too. The start line of every run
+logs the threshold, where it came from, and the session id. `RUNNER_STALL_SECONDS` sets the
+threshold outright, and `0` turns stall detection off. A value that is not digits only, with no
+leading zero and at most nine digits, is ignored with a warning.
 
-  A note whose name holds a backslash is fenced under the name the file really has. Some `cksum`
-  implementations escape such a name and some do not — uutils coreutils, which Ubuntu ships in
-  place of GNU's from 25.10, escapes it, and there is no switch to stop it — so the runner decodes
-  the escaping and the same vault fences the same way whichever one is installed.
+A stop reaches everything the pass started. Outside Windows the agent starts in a process group
+of its own. The runner signals that group only after `ps` shows the agent leads it and it is
+not the runner's own group, and it signals each process of the tree it listed before the stop in
+every case. `TERM` comes first, then `KILL` after `WATCHDOG_GRACE`. Without a working `ps` the
+runner cannot list the tree, and it records the stop as unknown. On Windows a native process
+ignores those signals, so the runner stops the tree before sending any. It lists the agent's
+descendants from the Git Bash process table, which still links a child whose Windows parent
+has exited, and hands their Windows ids to PowerShell. PowerShell takes one process list, runs
+`taskkill /T /F` on the agent's Windows process, and stops those descendants and every process
+whose command line holds the session id. It stops a listed id only while that id still belongs
+to a process that started before the tree was listed, so an id Windows has given to a new
+process is left alone. Then it lists the processes again once a second, up to 10 times, and
+stops each new one that holds the session id or started before its parent's stop began,
+because a process of the tree can start another between the list and the stop. A child started
+while its parent's stop ran, or a child whose parent id now belongs to a newer process, is found
+only by the session id. A program that Git Bash starts by exec has no Windows parent left, so only the session id finds it too. Exec keeps a Git Bash process's pid and its parent's and moves it to a new Windows process (measured on Git Bash 5.3.15), so a listed process counts as the one listed while its Windows id is unchanged or its parent is still the listed one. Until 1.7.5 the Windows id alone decided: a wrapper that ran itself again by exec was taken for a reused id, left running and reported stopped, and the runner waited for it for ever. Which processes are the tree's is decided for all of them before any is stopped, and each is checked again just before its own stop. Known limit: one that runs another program by exec in that moment, after its parent was stopped, is found only if Git Bash keeps its parent's pid once the parent has gone, which has not been measured. PowerShell gets the id in its
+environment, leaves itself out, and is itself stopped after 60 seconds, which counts as an
+unknown result. A command-mode wrapper gets
+the id in `VAULT_RUN_NONCE`, and only a process that puts it on its own command line can be
+found that way.
 
-  `cksum` is a CRC, and for a file of a given size four chosen bytes give any CRC wanted: a
-  `CLAUDE.md` rewritten to the same size and `cksum` passed the fence unseen until 1.7.1 (measured
-  2026-11-15). Every regular file the fence covers now has a second fence line holding its
-  SHA-256, from `sha256sum`, or `shasum -a 256` where that is the one installed, so such a rewrite
-  is a change. Notes are held to it as well as steering files, because an instruction file can load
-  a note into every session (`CLAUDE.md` imports `ARCH-INDEX`), and a note forged the same way
-  passed too. The checks that ask, after a pass, whether a file is still as a snapshot saw it, for
-  the log's list of long-tier notes a pass changed and for the leftovers the next run adopts, read
-  the SHA-256 line as well (since 1.7.2; they compared the CRC alone). A folder named
-  `.git-common` in a vault that is no linked worktree is the vault's own folder and has the line
-  too (since 1.7.2; in a worktree vault that name stands for git's shared folder). A leftover whose
-  checksum or SHA-256 cannot be taken after the pass, its file locked or the tool gone, or whose
-  SHA-256 the snapshot itself could not take, is not recorded, and the log says it could not be
-  read rather than that it changed; when the list of leftovers cannot be written to be filtered,
-  none is recorded. Known
-  limits: in a linked worktree vault a folder of the vault that is itself named `.git-common` is
-  read as git's, so its files are held by their CRC (it is a steering change all the same); a
-  leftover rewritten in the instant between that check and the record of it is recorded as the
-  runner's own; and a file a failed pass is put back from is judged by its size and CRC, so one
-  rewritten after the pass to the same CRC is put back like the pass's own, its bytes copied to
-  the quarantine first. `cksum` has
-  already read every byte by then, so the cost is a second read of the same
-  files. The digests come from one run of the tool, matched back by name, and any file that run did
-  not answer for is digested again on its own, so a tool that prints names another way cannot turn
-  the line off. An answer that is not 64 hex digits, or no answer for a file that can be read, is
-  written as `malformed` with a value new to each snapshot, so it reads as changed rather than as the same word before and after. Known limits: where
-  neither tool is on `PATH` the second line is not written and the fence is the CRC alone, as
-  before; and a process left running after a failed stop could swap a FIFO in between the check
-  that a path is a file and its read, which `cksum` is open to as well, and a failed stop already
-  sets the tripwire. On Windows the second line costs about 3 seconds per snapshot plus about 2
-  seconds per thousand files: a snapshot of the template's own tree (180 files) went from 7.9 s to
-  11.3 s, and one of a 2,000-note vault from 1.9 s to 5.5 s (measured 2026-11-15).
+The runner then checks that no process it listed is still running and that the run's output
+has stopped growing. If either check fails, or the check itself gave no answer, it logs
+`KILL_FAILED` with what it found, marks the run lock and keeps it. It also sets the tripwire,
+because a process of the pass may still be writing after containment ran, and keeps the
+pre-pass backup `inflight-backup.tar` in the state directory for the review. The tripwire says
+whether the lock could be marked and whether there is a backup. When containment set the
+tripwire in the same run, the stop's report is added to it. Otherwise a tripwire found only in
+the vault was written by the pass, and is replaced. A signal that arrives once the watchdog's
+stop has found such a process, and before the runner has reported it, reports it. A signal after
+containment wrote its tripwire leaves that tripwire in place with a note, and before containment
+the signal's own stop names what it found in the tripwire the signal sets. After such a stop the
+run's output is kept in the state directory, not added to the run log in the vault, because a
+process left running could swap the log's temporary file for a link. The runner still exits 124
+or 125, or 78 when its own folder for the pass was also changed while the agent ran (70 when no
+tripwire could be written). A marked lock
+is never released or reclaimed, so every later run exits **75** until a human has made sure
+nothing of the old pass is running, reviewed the vault, deleted the tripwire and deleted the
+lock folder. A stop of a commit step, or a stop made by a signal to the runner, that leaves a
+process marks the lock the same way, and sets no tripwire unless the signal came before
+containment. A signal that arrives while the watchdog is still stopping the run reaches what the
+run left in its process group, or on Windows the processes holding the session id, and never
+the pid of the ended command, which may belong to another process by then. After a stop the
+runner also names a leftover `index.lock`, and the log still lists, under `VIOLATION`, any file
+the pass wrote outside its allowed areas, and any note it wrote that someone was already
+editing, before it was stopped.
 
-  The fence checksums symlinks by their target, so swapping a file for a link, or retargeting one,
-  counts as a change. Known limits: a link's line holds only a CRC of its target, with no SHA-256
-  line, and a path whose name holds a line break is held only through the one line that sums them
-  all, below; neither can be made or changed with the agents' own tools today. A `.obsidian` or `.git` that is itself a symlink is fenced as a link as well,
-  and the files described below are still fenced through it. In `.claude/logs` only the files the
-  runners, the hooks and the documented schedulers write there are left out: `*.log`, the two
-  `*.git-state.txt` and `*.prompt.md` files, `runner-tripwire` and `runner-inflight` with their
-  `.tmp.*` files, the run logs' temporary files `dream-agent.run.log.runner-tmp.XXXXXX` and
-  `promotion-agent.run.log.runner-tmp.XXXXXX` (six ASCII letters or digits, in exactly that case),
-  and the launchd output files `setup.md` names (`dream-pass.launchd.out`, `dream-pass.launchd.err`,
-  `promotion-pass.launchd.out`, `promotion-pass.launchd.err`, `vault-retention.launchd.out` and
-  `vault-retention.launchd.err`). The retention runner's own log is `vault-retention.log`, already
-  covered by `*.log`, and it writes nothing else here. Any other file or symlink there, such as a
-  planted `CLAUDE.md`, is fenced and counts as a steering surface. A planted name that differs from
-  one of the other names only in case is listed and reported as a violation, but not quarantined. A
-  path with a line break in its name, anywhere in the vault, is never read as a line, because its
-  second line could name any path, such as `.git`. Such paths are summed into one fence line, a
-  change to them counts as a steering surface, and containment moves each of them to a folder made
-  for them in the quarantine, as `line-break-name-<n>`, with its original path in that folder's
-  `names.txt`. Every such path is moved, including one that was in the vault before the pass. The
-  fence matches names byte by byte, whatever the locale. In `.obsidian/` only what carries or
-  enables code is fenced: `community-plugins.json` and the `plugins/`, `themes/` and `snippets/`
-  folders. Obsidian rewrites its workspace, graph and app settings while it is open, and none of
-  them runs anything. The code-bearing part must be fenced, because `.obsidian/` is not a path
-  Claude Code protects. A plugin's `data.json` holds its settings and many plugins rewrite it in
-  normal use, so it is fenced only for plugins that run code or commands named in their settings:
-  `dataview`, `templater-obsidian`, `obsidian-shellcommands`, `quickadd`, `customjs`,
-  `obsidian-git`, `execute-code` and `terminal` (the `CODE_PLUGINS` list in `lib/runner-common.sh`).
-  A plugin is matched by its folder name or by the `id` in its `manifest.json`, ignoring case, so it
-  is recognised whatever folder it was installed in. Every other file or folder in a plugin folder
-  is fenced for every plugin, including a folder named `data.json` and a `data.json` deeper inside
-  the plugin's folder. The list names known plugins, so a plugin that can run code but is not on it
-  keeps its `data.json` outside the fence until you add it. Memory (`.claude/agent-memory*` and
-  `90-auto-memory/`) is fenced in both modes, because it loads into later sessions. What follows
-  holds in claude mode only: a command-mode wrapper that starts Claude Code gets no settings file
-  and no `CLAUDE_CODE_DISABLE_AUTO_MEMORY`, so its memory folder stays where Claude Code puts it,
-  outside the vault by default, as in 1.4.0, and its hooks are not turned off. In claude mode,
-  Claude Code grants the agent's Write and Edit tools its memory folder: the one a settings file
-  names as `autoMemoryDirectory`, or by default one under `~/.claude/projects/`. The default folder
-  lies outside the vault, a named one may too, and `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`, which the
-  runner also sets, does not withdraw that grant. So before each claude-mode pass the runner writes
-  `pass-settings.json` into its own folder for the pass, the one it makes with `mktemp -d` for its
-  snapshots and removes when the pass ends, and passes it with `--settings`. The state directory may
-  be shared, or on Windows take its parent's permissions, so the file is not kept there, and one an
-  earlier build left there is removed. It points the memory folder at `90-auto-memory/.pass-agent/`,
-  inside the fence. With it, a Write to the folder the vault's local settings name and one to the
-  default folder were both refused, where both landed without it. That was measured, with 1.4.1's
-  file, for the Write tool on Windows with Claude Code 2.1.284, 2.1.285, 2.1.287, 2.1.289,
-  2.1.292, 2.1.295 and 2.1.296 (the default folder from 2.1.285), for an ASCII vault path on a
-  drive, and on 2.1.289 and
-  2.1.292, for the default folder only, for a vault on a drive mapped to the measuring host's own
-  administrative share; for vaults under folders named in Cyrillic and with a Git Bash double quote
-  (2.1.287, 2.1.289, 2.1.292, 2.1.295 and 2.1.296), and with an e-acute (one run on 2.1.287, against
-  an earlier build), a Write to the folder a `C`-locale conversion named landed with that
-  conversion's file and was refused with the runner's. Any other version is unmeasured. For a vault
-  reached as a network path, measured as `//localhost/c$/...` (this host's own administrative share)
-  and `//wsl.localhost/...`, and started from Git Bash, Claude Code 2.1.289 and 2.1.292 ignored the
-  file and a Write to the default folder landed with it as without it (measured; a share on another
-  server is unmeasured, and refused all the same), so on Windows the runner accepts only a drive
-  path. Edit was not probed, and Linux
-  and macOS are unverified. On Windows the runner converts the vault's path and the file's with
-  `cygpath` under a UTF-8 locale, because under the runners' `LC_ALL=C` it cuts a path at its first
-  character outside the ANSI code page, which made the file name a folder outside the vault, and a
-  Write there landed (measured). Each converted path must then name, converted back, the folder or
-  file it came from. A folder named in project or user settings rests on settings precedence
-  (`--settings` outranks both) rather than on a measurement.
-  The file also holds `"disableAllHooks":true`, so the hooks in the account's settings, in enabled
-  plugins and in the vault's own settings, which would otherwise run inside the unattended pass as
-  the account, with a shell the agent's allowlist never sees, do not run. With 1.4.1's file Claude
-  Code 2.1.301 ran a probe folder's own hooks and plugins' `SessionStart` and `Stop` hooks, one of
-  which wrote a file outside the folder; with the new line it ran none, and the account's
-  `CLAUDE.md` was still sent in the request (measured on Windows, `-p`, on 2.1.301 only); a live
-  dream pass through the 1.4.2 runner ran to its journal (measured). The probe held no hook in the
-  account's user settings, nor in an agent's or a skill's frontmatter, so that the line turns those
-  off too is reasoned, not measured. Hooks from managed settings
-  are not turned off (measured 2026-09-15 on an earlier version), and MCP servers, and the commands
-  a settings file names outside hooks, still start (reasoned): `apiKeyHelper`, `awsAuthRefresh`,
-  `awsCredentialExport` and `otelHeadersHelper`, a `statusLine` command, and the MCP and LSP
-  servers plugins ship, among them (reasoned).
-  Managed settings outrank `--settings`, so a memory folder set there is not overridden. A memory
-  write that does happen lands in `.pass-agent/`, where it is contained and trips the tripwire like
-  any other write under `90-auto-memory/`. The pass refuses to start (exit 1) when `.pass-agent/`
-  already holds anything but a regular `.DS_Store` file with no other hard link, or cannot be
-  listed, because what it holds could be read into the pass as memory and a linked file could let a
-  write leave the vault; when it or `90-auto-memory` is a symlink or junction, because the fence
-  would see only the link; when either is not a folder; when the vault's path holds a `"`, a `\` or
-  a control character, which the file cannot carry (on Windows Git Bash keeps a `"` or a tab in a
-  name as U+F022 or U+F009, the `.cmd` wrappers start the runner with the path spelled that way, and
-  `cygpath` gives it back, so the override names such a vault as Windows spells it; started from a
-  Git Bash prompt, which shows the name with the `"` or the tab itself, git cannot enter the folder
-  and the pass exits 1 before the override, at a git step unchanged from 1.4.0); when the vault's
-  path, or the settings file's, holds bytes that do not come back unchanged when `iconv` converts
-  them from UTF-8 to UTF-16LE and back (glibc passes some invalid forms through to UTF-8, and macOS,
-  under the C locale the runners set, takes them to UTF-16LE without an error, both measured), which
-  Claude Code could read as another folder (on Linux, where a path is bytes), or holds a byte outside
-  printable ASCII and `iconv` is missing or fails; on Windows when
-  `cygpath` is missing, fails, prints nothing, or gives a path that is not a drive path (a network
-  path among them) or that names another folder or file; where the platform is not Git Bash, MSYS
-  or Cygwin and no `cygpath` is found, when the agent binary
-  looks like a Windows program (the file `CLAUDE_BIN` names, or the `claude` found on `PATH`, ends
-  in `.exe` or, read through any link, starts with `MZ`), which would read the runner's POSIX paths
-  as other folders, or is not a file it can check, being no file at all or one whose first bytes it
-  cannot read; when the runner's folder for the pass fails the checks the state directory gets
-  (below), or lies inside the vault by file identity, a check the state directory does not get,
-  because the file can name hooks Claude Code runs: inside the vault (by name, then by identity, so
-  a letter in another case or a vault at a drive or file-system root does not hide it, nor, reasoned,
-  an 8.3 name on a volume with file IDs; a `subst` or mapped drive, or a mount, whose root lies
-  inside the vault is not seen, reasoned), where the agent could change it, or, off Windows, under a
-  folder every account can write that has no sticky bit; when it is not there as a folder, because
-  the runner makes it before
-  the pass's "before" snapshot and keeps the snapshot in it, so one that went away may have taken
-  the snapshot with it and the fence would compare the pass with nothing (it is refused, never made
-  again; a folder emptied, or removed and made again, before the checks by another process of your
-  account, by root, or on Windows by any account that can change the temporary folder, is not seen,
-  reasoned, since it is checked like the runner's own, while off Windows a folder another account
-  owns fails the owner check, but not another folder of yours moved into its place by an account
-  that can rename entries in `TMPDIR`; one replaced once the checks have resolved it and before
-  Claude Code has read the file is written into, or read from, whatever took its place, reasoned);
-  on Windows, or wherever a `cygpath` is found on `PATH`, when its spelling holds a `..` or a part
-  ending in a dot, because git there reads the folder as `TMPDIR` spells it and takes the `..` as
-  text and drops the dot, so after a junction in Git Bash's `/c/...` spelling it took its hooks
-  folder and the commit message from a folder of the textual name, and with a part such as `x.` it
-  looked for its hooks in `x`, in the `C:/...` spelling too, where `mktemp` keeps the dot as well
-  (measured in Git Bash; every runner refuses such a spelling in every mode right after `mktemp`
-  makes the folder git is given, before its first git call, and the override checks it again for
-  any other caller); when a folder above it is not there or, off Windows, this account cannot enter
-  one, so the checks cannot reach it (a line of its own, not the one for a folder that is not there
-  itself; on Windows an account may by default pass through a folder it cannot enter, and the checks
-  reach the folder and accept it, measured in Git Bash for a folder spelled with no link); when the path
-  resolving the folder
-  above it gives is not the folder itself, compared by file identity, because the file would then
-  go to another folder (a folder
-  above it named with a line break at its end, which the shell drops, measured with the suite's
-  twin off Windows; a link above it repointed while it is resolved, reasoned); when it is a link,
-  which `mktemp -d` never makes, or a folder above it became one during the checks (a link above
-  it that is there all along is resolved and accepted, and from 1.5.0 the settings file, the
-  snapshots, the steering backup and git's hooks folder are all reached through the resolved path,
-  where 1.4.2 reached all but the settings file through `TMPDIR` as spelled), so that it is not the
-  path it resolves to (off Windows a
-  link in a folder every account can write is refused as one, measured on Linux for a dangling one
-  with the suite's twin); when the identity walk up its path ends with a status that is no answer,
-  so it
-  cannot be shown to lie outside the vault; when the vault itself cannot be resolved (a line naming
-  the vault); when `pass-settings.json`, `pass-settings.new`, or the temporary name ending in the
-  runner's process id that the file is written through, is already there, since a link there would
-  carry the write elsewhere, a folder would take it in and a FIFO would hold the pass (only a name
-  there when the runner checks is seen: one planted after the check is still written through; off
-  Windows the folder `mktemp -d` made is your account's with mode 0700, so only a process of your
-  account or root can plant one there, whatever `TMPDIR` says, unless an account that can rename
-  entries in `TMPDIR` or in a folder above it put another folder of yours in its place, and on
-  Windows any account that can change the temporary folder can); when the file cannot be written
-  (off Windows readable by the runner's account only, in a folder only it can enter; on Windows it
-  carries the temporary folder's permissions, which under the per-user default give it to the
-  account, SYSTEM and Administrators only, measured); and when it does not read back byte for byte,
-  because Claude Code 2.1.287 reads an empty or invalid settings file as if there were none and
-  grants the folders outside the vault again (measured on 2.1.287; not re-run on a later version).
-  From 1.5.0 every runner, in either mode, the retention runner included, also runs the checks of
-  the folder itself listed here, from its spelling to the vault that cannot be resolved, right
-  after it makes the folder and before its first git call, so in claude mode the folder is checked
-  twice. Where the override's line for a failed state-directory check, a folder that is not there,
-  one above it that cannot be reached or a resolution that led to another folder names its
-  settings file, the runner's says it keeps the pass's snapshots, its backup and git's hooks folder
-  there (Known limits, below).
-  The file covers memory only. A folder a settings file grants through `additionalDirectories` stays
-  outside the fence. Inside `.git/`, only the files that make git run code are fenced: `config`,
-  `config.worktree`, `commondir`, `hooks/`, `info/attributes`, `info/grafts` and
-  `objects/info/alternates`, and `info/`, `objects/` or `objects/info/` when one of them is a
-  symlink. The same files, and every symlink, are fenced in every linked worktree's git directory
-  under `.git/worktrees/` and every submodule's under `.git/modules/`, except under the ref folders
-  `heads`, `tags`, `remotes`, `prefetch`, `notes` and `rewritten` inside `refs/`, where a ref may be
-  named `config`. Git reads config and hooks from the directory `commondir` names. The rest of
-  `info/` is not fenced, because `git gc --auto` after an ordinary commit rewrites `info/refs`. For
-  a vault that is a linked worktree, the same files in the shared git directory are fenced too, and
-  appear in logs under `.git-common/`. HEAD and refs are not fenced, because you or a sync plugin
-  may commit while a pass runs.
-- **Containment.** A fence that only reports leaves a planted file in place, where it runs the next
-  time something opens the vault. So when the changed paths include a *steering or execution
-  surface*, the runner contains it before anything else, including before it looks at the agent's
-  exit code. Steering surfaces are the fenced Obsidian and git files above, memory, `.claude/`
-  except `logs/`, `.agents/`, each shipped harness's configuration folder or file, OpenCode's
-  `.opencode/`, Pi's `.pi/` and Oh My Pi's `.omp/` (which the template does not ship but those
-  harnesses run code from, omp with no trust prompt), the singular `.agent/` that omp reads
-  instructions from, `_agents/` and `_agent/`, which Google Antigravity still reads rules, skills,
-  workflows, `hooks.json` and `mcp_config.json` from
-  (<https://antigravity.google/docs/customization-discovery/>, read 2026-11-11), `.github/`,
-  `.vscode/`, and, **at any depth**, `CLAUDE.md`, `CLAUDE.local.md`,
-  `AGENTS.md`, `AGENTS.override.md`, `GEMINI.md`, Hermes Agent's `.hermes.md` and `HERMES.md`,
-  OpenCode's `opencode.json` and `opencode.jsonc` (OpenCode reads both from the folder it starts in
-  and every folder above it, `packages/opencode/src/config/paths.ts` line 17 at the v1.19.5 tag,
-  commit `810c0eb` of `github.com/anomalyco/opencode`, read 2026-11-11), Oh My Pi's `mcp.json`,
-  whose MCP servers omp starts without asking (`src/discovery/mcp-json.ts` in omp 18.18.9),
-  `.mcp.json`, `.gitattributes`, `.gitignore` and any `.claude/` or other harness folder, including
-  one that is the last part of the path, such as a symlink named `.claude`. Every harness folder named earlier in this list counts at any depth too, not only at the vault root.
-  From 1.7.5 so is every file the vault root's `CLAUDE.md`, `AGENTS.md` or `CLAUDE.local.md`, or
-  `.claude/CLAUDE.md`, imports with `@path`, and every file those import in turn: such a file, this
-  template's `ARCH-INDEX` among them, loads into every session as instructions. The runner lists
-  them once per pass, before it, from the files as they are then (`steering_imports`), by Claude
-  Code's rules (<https://code.claude.com/docs/en/memory.md>, "Import additional files", read
-  2026-11-21): a relative path is taken from the importing file's folder, the path ends at the first
-  space unless `\ ` escapes it, a path in quotes or in a code span or fenced block is no import, and
-  an `@` counts at a line's start or after a space, so an e-mail address is none. A CR at a line's
-  end is dropped first. It follows imports past Claude Code's four hops, because other harnesses
-  load `AGENTS.md` too, and lists each path without trailing punctuation as well: a file taken as
-  steering that loads nowhere costs a tripwire, and a missed one would not be put back. A target
-  that does not exist is listed too, so a pass that creates it is contained. A path outside the
-  vault, absolute or `~/`, is outside the fence. An import a pass adds to `CLAUDE.md` is a change to
-  `CLAUDE.md`, which is put back. Until 1.7.4 such a note had only the SHA-256 line above, so a
-  change to it was reported and left. Matching ignores case,
-  so a note named `hermes.md` is a steering surface too, and so is this template's own
-  `docs/harnesses/hermes.md`: on a file system that ignores case, Hermes started in that folder
-  would load it as `HERMES.md`. omp's own documentation (`docs/config-usage.md` at commit
-  `f2ee6ba`, read 2026-11-11) names two writes an omp session makes into the vault's `.omp/`:
-  setting a project model role (`.omp/config.yml`), and setting aside a project settings file it
-  cannot parse. Either, made while a pass runs, is contained and sets the tripwire like any other
-  steering change, and so would any write omp makes there that its documentation does not name
-  (not measured). A nested file counts because Claude Code loads
-  `31-standards/CLAUDE.md` for work in that folder and registers skills from a nested
-  `.claude/skills/`, so the promotion pass's permission to write `31-standards/` does not cover
-  them. A `.git` file or folder below the vault root, such as a submodule's gitlink, is a steering
-  surface too, and so are the files inside a nested git directory that run code or redirect git
-  (its config, `commondir`, hooks, `info/attributes` and the like) and any symlink in it, such as
-  a `hooks` folder replaced by a link, but not its index, objects, branches, tags or logs. Inside
-  `.claude/worktrees/<name>/` the same rules apply to the rest of the path, apart from the
-  line-break marker, which belongs to that worktree's session. That includes the worktree's own
-  `.claude/logs/`, held since 1.7.1 to the same list of left-out names as the vault's: before, every
-  file there was left out, a planted `CLAUDE.md` among them. Since 1.7.0 two more things there
-  are steering: a file of a reserved name placed directly in `.claude/worktrees/` (a `CLAUDE.md`
-  or `.mcp.json` there is read by a session in any worktree below it), and everything under a
-  child whose own name is a harness folder, such as `.claude/worktrees/.claude/`, which is no
-  worktree. A worktree, or `.claude/worktrees` itself, that is a link is steering as any link the
-  pass makes or changes is (below).
+Every session a claude-mode pass ran under is appended to `runner-sessions.tsv` in the state
+directory, with the time, the runner and whether the stream's init event confirmed the id, so a
+later capture of Claude Code sessions can leave the runners' own out. That includes a pass
+stopped by a signal and one whose containment could not write a tripwire. The runner reads the
+stream from its own copy outside the vault, then adds it to the pass's run log in
+`.claude/logs` after containment. The new run log is built beside the old one and renamed into
+place, and a link at the run-log path is removed first, so the output is never written through a
+link or moved into a folder a link names. A run log with another name linked to it starts
+again, and a run log keeps its file mode. A run log larger than `RUNNER_RUN_LOG_MAX_BYTES` keeps
+its newest part from the start of a line, or the end of its last line when that line alone is
+longer. A pass stopped by a signal before its output reached the run log, or whose run log could
+not be written, has the output kept as `<runner>.interrupted.run` in the state directory, and the
+log says why. That copy is written beside the earlier one and renamed over it. A link or an empty
+folder at that path is removed first, so nothing is written through a link or into a folder. A
+folder that holds files or cannot be removed, a link that cannot be removed, or a path the rename
+fails on is left for you to look at, and the output is kept under a new name beside it,
+`<runner>.interrupted.run.<six characters>`, which the log's `WARNING` names. When something takes
+the path during the rename, the log says the output may be inside it. The output is lost only when
+the copy itself fails, or when neither the path nor a name beside it can take it, and the
+`WARNING` then says what is at that path: an earlier run's output, or something that is not a
+regular file and holds none. A signal keeps no output when `run`, or the runner's folder for the
+pass itself, is a link, because the copy would follow it to whatever it names, and neither does a
+pass that ends 78 because that folder changed, which logs `WARNING: the run output, …, is missing,
+is not a regular file or is in a folder that is a link, so it was not kept.` On 1.4.1 a signal
+copied what a link at `run` named into the state directory (measured). A signal before
+containment and the 78 path also leave the vault's log as the pass left it, since containment
+does not run there, and so, for the next run, does a pass that ended at 78 or died: when
+`.claude/logs/<agent>.log`, `.claude` or `.claude/logs` is a symbolic link, `.claude/logs` is not
+a folder, or the log is there and not a file, the runner writes the rest of the run's lines to
+`<runner>.uncontained.log` in the state directory, with a `WARNING:` there, and a tripwire it
+writes says so. A later run checks as soon as its state directory is known, before its run lock,
+whenever the tripwire or the passes' in-flight marker (`runner-inflight`) is there in either
+copy, and again once it holds the lock, because the pass holding the lock could make the link,
+and set the tripwire, while the run waited; so its `TRIPWIRE:` refusal, and the line it writes
+from a dead pass's marker, go there too. The retention runner's file is
+`vault-retention.uncontained.log`; its printed lines carry the `WARNING:` once when the run could
+keep its own copy of them, and otherwise say that the lines are only in that file, and name it.
+A line logged before the state directory is known, in every runner (a setting's warning, the
+state-directory error, the `WARNING:` naming the git variables the runner cleared, or the `ERROR:`
+refusing the vault's spelling), still goes to the vault's log path, and opening the log there may
+create, empty, a file a link at it names. A line a dream or promotion run logs while waiting for
+the lock (a
+stale-lock line, or the `LOCKED` line when the wait runs out) goes where the first check left
+the log: to the state directory when that check moved it, otherwise to the vault's log path.
+The retention runner passes on the lines it logged while waiting only after its second check, so
+they go to the state directory too, when it could keep its own copy of its lines and was not
+stopped while waiting; otherwise they too go where the first check left the log (reasoned). A
+signal checks the log only after it has stopped the agent's process tree, so a link that a
+process the stop reaches puts there once it is reached is found too; a process that has left
+the tree and its process group, as one started with `setsid` can, is neither stopped nor
+recorded (reasoned). On 1.4.1 a signal's lines were
+written through a link at the log (measured; through a link at `.claude` or `.claude/logs`,
+reasoned), one the pass made once the stop reached it included (measured), and a later run's
+refusal was too (measured), a run that waited for the run lock included, through a link the log
+became while it waited (measured, for each runner), so a command-mode pass could have the runner
+append to any file the account can write through a symbolic link. Besides the lines listed above
+as still going to the vault's log path, these are still open, and carried to a later release, each
+needing a command-mode pass with a shell, which `docs/setup.md` says not to give it (what the
+harness itself runs during a pass could give one all the same, reasoned: the vault's own hooks,
+where the wrapper left them on, git, which runs what the vault's git configuration and hooks name,
+or a tool the harness starts by itself (carried); so the Aider guide sets Aider's documented
+`git: false` (not measured for this release), the container recipes mount `.claude/` and the
+vault's `.git` read-only, and `docs/setup.md` now asks for hooks off too, and for the vault's
+`.git`, and, with the commit gate on, its `.claude/`, out of a pass's reach, with a check in
+`docs/harnesses/README.md`, while whether the Codex and Gemini CLI sandboxes leave
+those folders writable is carried): a hard link at a log, which has the runner
+append its lines, names the pass chose included, to the file it shares, and one at
+`.claude/logs/dream-pass.git-state.txt`, which has the next dream run empty that file and write
+`git status`, those names included, into it; a FIFO at a log, which blocks every later run of that
+runner at the log's first write, before any check, and one at the git-state file, which blocks the
+next dream run while it holds the run lock, so a promotion run is refused with 75 and every later
+dream run blocks the same way, each with no tripwire at all, an outside time limit ending each
+run; and a symbolic link containment cannot move, as in a `.claude/logs` made read-only, which the
+runner still writes through (measured with 1.4.2; 1.4.1 behaves the same; the FIFO at a log
+measured for the dream runner only, and on 1.4.1 by reading).
+A process that outlives the pass can also give the vault's `runner-tripwire` a second name, and a
+later note is then appended to the file it shares, and, after a stop that could not end it, put a
+link at the log once containment has run, so the runner's later lines go through it (both
+reasoned). Once the runner's
+folder for the pass has been made, a
+signal stops the agent's process tree whether or not that folder is still there, and records the
+stop in the state directory as `signal-stop.<pid>`. On 1.4.1 a pass that removed that folder and
+then sent its runner TERM was not stopped and was still running after the runner exited
+(measured), and would run on until its own end or the watchdog's timeout (reasoned), and a link
+at the folder had the stop's record written through it (measured).
 
-  For each changed steering path the runner moves the file or link as the pass left it into a
-  quarantine outside the vault (it never deletes it), then restores the pre-pass copy from a backup
-  taken before the agent started. Any symlink the pass made or retargeted is a steering change
-  wherever it is, even in an area the pass may write, because a link such as `31-standards/ext2`
-  pointed at a folder outside the vault can hand a later session instructions from there. Those
-  links are quarantined first. A folder the pass swapped for a link, such as `31-standards/ext`,
-  then gets the steering files that were under it restored into a real folder, so neither step
-  follows the link. Only the backed-up steering files and links come back. The rest of what was
-  in that folder stays where the link pointed, reachable through the quarantined link, so check it
-  before you rely on the folder again, for example before `git add -A` in a repository whose
-  `info/` was swapped. A path is moved or restored through a symlink only when the link is the
-  same before and after the pass, so a `.obsidian` you keep as a link to shared settings is still
-  contained in place. A path below any other link that is still standing, because it could not be
-  quarantined, is neither moved nor restored, and the tripwire lists it as a containment error.
-  If the quarantine cannot be written, the file is renamed in place
-  with the suffix `.runner-quarantined`, so Obsidian and git stop loading it. After that, and only
-  while git's own config and hooks are known to be the pre-pass ones, the runner asks git whether
-  HEAD was rewound: a different branch, a branch that no longer resolves, or a commit that does not
-  descend from the pre-pass one. A normal commit is a fast-forward and passes. HEAD and refs are
-  never rewritten back, because that could undo a real commit. Check them with `git reflog`.
+##### Write fence
 
-  Any of this writes the tripwire `.claude/logs/runner-tripwire`, listing each path, anything that
-  could not be contained, and the quarantine, and a second copy in the state directory. While either
-  copy exists, both runners exit **78** without starting an agent, and `vault-check.sh` exits the
-  same **78** without checking anything. `/resume` stops instead of a briefing when it finds the
-  vault's copy, showing it when `ls -ld` lists it as a regular file with one link and the listing
-  line otherwise; it cannot see a copy that is only in the state directory. While `.claude` or
-  `.claude/logs` is a link, no vault copy is written (see below), nor while `.claude/logs` is a file
-  or a folder the runner cannot write, so `/resume` stops instead whenever
-  `ls -ld .claude .claude/logs` shows either as anything but `drwx`, and says a tripwire may be set
-  in the state directory only, which it does not read. That test reads the mode bits `ls` prints, so
-  a folder that lists as `drwx` but refuses the runner (a Windows ACL, a macOS `uchg` flag, or a
-  folder another account owns) is not caught. Clear a tripwire by reviewing the paths and then
-  deleting both copies. The refusal names the state directory copy when it is a file, because a pass
-  cannot write it. When only the vault's copy is there, the runners and `vault-check.sh` name that
-  copy and say a pass may have written it, so check its reason against the runner log before you
-  follow anything it says. When neither copy is a file, they say so and send you to the log instead.
-  If no copy can be written, the runner exits **70** (TRIPWIRE-ERROR) and leaves its in-flight
-  marker, so the next run still refuses. When a signal stops a pass and no copy of the tripwire can
-  be written, the runner logs the same TRIPWIRE-ERROR keyword and keeps its marker too, but exits
-  with the signal's code, 129, 130 or 143. The `TRIPWIRE-ERROR:`
-  line for a changed folder, the one a signal logs and the one for a dead pass's marker say "Treat
-  the vault as unverified, and run no git command in it before the steering surfaces have been
-  checked." The vault's copy is written into a file `mktemp` makes beside it (or, where `mktemp`
-  fails or makes no file, so the copy does not depend on it, one made under a name from `$RANDOM`,
-  refused when anything is already there, because a pass can read the clock and pid that seed
-  `$RANDOM`, and created with noclobber, which refuses a file, a link to a file or a dangling link
-  put there after that check but still opens a device or a FIFO; the seed, and that race, which
-  only a process still running could win, are reasoned) and renamed into place, once a link at the
-  copy's own name has been removed, because `mv` would otherwise move the copy into a folder the
-  link names, outside the vault; when that link cannot be removed, as an immutable link on macOS
-  can make it (the cause reasoned), nothing is written. Nothing is written there while `.claude`
-  or `.claude/logs` is a link, and then only the state
-  directory's copy is written, which the runners and `vault-check.sh` read too, so they still
-  refuse. The vault's copy of the
-  in-flight marker is written the same way. A note added to the tripwire leaves the vault's copy
-  alone in the same case. On 1.4.1 the vault's copy went through `runner-tripwire.tmp.<pid>`, a
-  name a pass could work out from the runner's pid in the vault's in-flight marker, and a link
-  planted there had a file outside the vault written through it (measured), as a note had through
-  a linked `.claude/logs` (measured) and the marker's copy through a link at
-  `runner-inflight.tmp.<pid>` (measured); and a link to a folder at the tripwire's own name had the
-  copy moved into that folder, leaving the vault's tripwire not a file (measured).
+The runner checksums every file in the vault before and after the run and exits
+**2** with the offending paths logged if anything changed outside the allowed areas. For
+`dream-pass` that is `20-projects/_logs/dream-*.md`. For `promotion-pass` it is `31-standards/`
+and `40-llm-wiki/wiki/` (never their `templates/`) plus `20-projects/_logs/promotion-*.md`. Both
+tolerate a `compaction-*.md` stub written by the compaction hook. Another writer active during
+the run, such as a sync client, or a harness that keeps state files in its working directory,
+trips the fence too; the logged paths tell you which.
 
-  The **in-flight marker** (`.claude/logs/runner-inflight`, also copied to the state directory) is
-  written just before the agent starts and removed only once containment has checked the pass, or
-  once the tripwire is written for a pass whose runner's own folder was changed while it ran (exit
-  78), when the tripwire does the marker's job. A pass that never gets there, because the
-  scheduler ended the task, the machine stopped, or a signal arrived, leaves the marker behind. The next runner reads the state-directory copy first, because
-  the pass cannot reach it, and sets the tripwire instead of adopting the unknown state as its
-  baseline. The tripwire quotes that copy. That tripwire, and the one a signal sets before
-  containment (`INTERRUPTED before containment. Tripwire set.`, exit 129, 130 or 143), are in the
-  uncontained shape: "Nothing was moved or restored, because containment did not run.", then the
-  advice the 78 row of the exit table gives, to check the steering surfaces without git before any
-  git command, and to list the links in `.claude/logs` or at `.claude`, which are in neither the
-  backup nor git, and remove any you did not make. On 1.4.1 both said that changed files were
-  moved to the
-  quarantine and restored, and sent the owner to `git reflog` (measured), which honours the
-  `core.pager` of a `.git/config` the pass may have changed, as `git status` runs its
-  `core.fsmonitor` (reasoned). A marker found only in the
-  vault still sets the tripwire, but is not quoted, because a pass or a process a stop left could
-  have written it. A runner checks
-  for the marker only while it holds the run lock, when no other pass can
-  be running, so a marker whose pid now belongs to another process still counts. If that tripwire cannot
-  be written, it exits **70** and keeps the marker. A runner that cannot write the marker's
-  state-directory copy refuses to start with exit 1. A copy of the pre-pass backup,
-  `inflight-backup.tar`, is kept in the state directory while a pass runs, and after a pass whose
-  runner's own folder was changed it stays there for the review until the next pass replaces it.
-  The next pass removes a backup an earlier pass kept before it copies its own, and a copy that
-  fails, or leaves something other than a regular file, refuses the pass with exit 1 before the
-  in-flight marker and the agent: `ERROR: could not copy the pre-pass backup of the steering
-  surfaces to the state directory as <path>. Refusing to run.` That covers a link already at that
-  name, which is removed before the copy, and a copy that succeeds leaving a link, or nothing,
-  there. On 1.4.1 the copy was unchecked: the agent ran after a failed copy (measured), and an
-  older backup left there could be named as the pass's own (reasoned); a link already at the name
-  was followed and the file it named overwritten, and a copy that left a link or nothing was taken
-  and the agent ran (measured).
+A note whose name holds a backslash is fenced under the name the file really has. Some `cksum`
+implementations escape such a name and some do not — uutils coreutils, which Ubuntu ships in
+place of GNU's from 25.10, escapes it, and there is no switch to stop it — so the runner decodes
+the escaping and the same vault fences the same way whichever one is installed.
 
-  The state directory is `%LOCALAPPDATA%\claude-memory-vault\<id>\` on Windows and
-  `${XDG_STATE_HOME:-~/.local/state}/claude-memory-vault/<id>/` elsewhere, where `<id>` is a checksum
-  of the vault's resolved path. Symlinks and `..` are resolved, Windows short names are expanded,
-  and on Windows and macOS ASCII case is ignored, so those spellings of one vault's path find the
-  same state directory. A `subst` or mapped drive letter, and on macOS a differently normalized
-  Unicode folder name, count as another path. On a case-sensitive macOS volume, two vaults whose
-  paths differ only in case share one state directory, and so block each other's runs.
-  `VAULT_STATE_DIR` overrides it, and a Windows path such as `C:/Users/Some One/vault-state` is
-  accepted. A value inside the vault, a relative one, or one containing `..` is never used. A
-  value that does not exist yet is judged by where it would be created, so a symlink into the
-  vault does not get past the check. The runner logs a warning and uses a directory under the
-  system temp folder instead. Set `VAULT_STATE_DIR` the same way for both runners and for the
-  shells where you run `vault-check.sh`, or they look for the tripwire in different places, and
-  give each vault its own value. The runner resolves the state directory's path first, checks the
-  directory it resolves to, and uses that directory for the rest of the run, so a symlink pointed
-  elsewhere after the check changes nothing. It refuses to start with exit 1, and logs which check
-  failed, when the state directory cannot be created, resolves into the vault (a symlink planted
-  at the temp-folder fallback, for example), is a symlink in a folder every account can write, sits
-  inside a folder every account can write that has no sticky bit, or on Linux and macOS is not
-  owned and writable by the runner's account or is writable by every account. Another account
-  could otherwise plant a forged tripwire there, or rename the directory and put its own in its
-  place. A folder above it that another account owns is not checked, so keep the state directory
-  under your own home folder or the default location, or on Windows in a folder with an ASCII name
-  you made yourself directly under `C:\` and made private (`docs/setup.md`, Troubleshooting, has
-  the commands); check another drive's root with `icacls` first, since one that gives every account
-  full control lets them rename your folder, and a folder deeper down is only as safe as the
-  folders above it. A group-writable
-  directory is allowed, because many Linux systems give each user a private group. Git Bash
-  reports every file as the current user's and its mode bits are not Windows permissions, so on
-  Windows only the check against the vault applies. `vault-check.sh` prints a warning when it
-  cannot work out the state directory, since it then checks only the tripwire in the vault. A
-  runner that cannot take the backup, for example because `tar` is missing, refuses to start with
-  exit 1. A backup that cannot be restored is listed in the tripwire as a containment error.
-  Ordinary notes are not contained. A human may be editing one at the same moment, and git already
-  shows their diff.
+`cksum` is a CRC, and for a file of a given size four chosen bytes give any CRC wanted: a
+`CLAUDE.md` rewritten to the same size and `cksum` passed the fence unseen until 1.7.1 (measured
+2026-11-15). Every regular file the fence covers now has a second fence line holding its
+SHA-256, from `sha256sum`, or `shasum -a 256` where that is the one installed, so such a rewrite
+is a change. Notes are held to it as well as steering files, because an instruction file can load
+a note into every session (`CLAUDE.md` imports `ARCH-INDEX`), and a note forged the same way
+passed too. The checks that ask, after a pass, whether a file is still as a snapshot saw it, for
+the log's list of long-tier notes a pass changed and for the leftovers the next run adopts, read
+the SHA-256 line as well (since 1.7.2; they compared the CRC alone). A folder named
+`.git-common` in a vault that is no linked worktree is the vault's own folder and has the line
+too (since 1.7.2; in a worktree vault that name stands for git's shared folder). A leftover whose
+checksum or SHA-256 cannot be taken after the pass, its file locked or the tool gone, or whose
+SHA-256 the snapshot itself could not take, is not recorded, and the log says it could not be
+read rather than that it changed; when the list of leftovers cannot be written to be filtered,
+none is recorded. Known
+limits: in a linked worktree vault a folder of the vault that is itself named `.git-common` is
+read as git's, so its files are held by their CRC (it is a steering change all the same); a
+leftover rewritten in the instant between that check and the record of it is recorded as the
+runner's own; and a file a failed pass is put back from is judged by its size and CRC, so one
+rewritten after the pass to the same CRC is put back like the pass's own, its bytes copied to
+the quarantine first. `cksum` has
+already read every byte by then, so the cost is a second read of the same
+files. The digests come from one run of the tool, matched back by name, and any file that run did
+not answer for is digested again on its own, so a tool that prints names another way cannot turn
+the line off. An answer that is not 64 hex digits, or no answer for a file that can be read, is
+written as `malformed` with a value new to each snapshot, so it reads as changed rather than as the same word before and after. Known limits: where
+neither tool is on `PATH` the second line is not written and the fence is the CRC alone, as
+before; and a process left running after a failed stop could swap a FIFO in between the check
+that a path is a file and its read, which `cksum` is open to as well, and a failed stop already
+sets the tripwire. On Windows the second line costs about 3 seconds per snapshot plus about 2
+seconds per thousand files: a snapshot of the template's own tree (180 files) went from 7.9 s to
+11.3 s, and one of a 2,000-note vault from 1.9 s to 5.5 s (measured 2026-11-15).
 
-  Known limits:
-  - Claude Code 2.1.287 reads an empty or invalid `--settings` file as if there were none, with exit
-    0 and nothing on stderr, so the memory grant outside the vault comes back (measured on 2.1.287;
-    not re-run on a later version). The runner reads `pass-settings.json` back byte for byte before
-    it starts the agent, but a change between that read and Claude Code's is not seen, nor one
-    Claude Code might read later in the pass (whether it re-reads the file is unmeasured). The file
-    lies in the runner's own folder for the pass under `TMPDIR` (or `/tmp`; on macOS in the per-user
-    temporary folder, where Apple's `mktemp` makes it even when `TMPDIR` names another folder),
-    which `mktemp -d` makes private off Windows and which must pass the state directory's checks and
-    an identity check of its own. The file is written, checked and handed to Claude Code through the
-    folder's resolved path, the folder above it resolved as `mktemp -d` resolved it, so a link in
-    `TMPDIR`'s spelling, or a `..` after one, cannot be pointed at another folder after the checks;
-    a link inside the vault that leads to the folder, or to one above it, is not seen, and may put
-    the file within the agent's reach (unmeasured). As for the state directory, a group-writable
-    folder above it is allowed, and a member of that group could rename the folder and put their own
-    in its place; so is a folder above it that another account owns, whose owner could do the same;
-    and the checks read mode bits only, so an access control list that lets another account change
-    the folder is not seen: keep `TMPDIR`, and every folder above it, owned by your account or by
-    root, and writable by no other account unless it has the sticky bit, as `/tmp` has. On Windows
-    it carries the temporary folder's permissions and the runner cannot read them, so schedule the
-    task as your own account, and leave `TMPDIR` unset there unless the `//?/` limit below needs a
-    shorter folder: unset, the folder is made in Git Bash's `/tmp`, this account's temporary folder,
-    which only the account, SYSTEM and Administrators can change (measured; on the one host
-    measured, setting `TEMP` and `TMP` for the `.cmd` did not move `/tmp`). A Git Bash login shell,
-    as a Git Bash terminal starts one, sets `TMPDIR` from `TMP`, spelled `C:/...`, and a pass
-    started from it fails at its steering backup, as in 1.4.0, because `tar` reads `C:` as a host
-    name (measured on 1.4.0 and this release): start passes with the `.cmd` wrappers, or unset
-    `TMPDIR` first, and never spell `TMPDIR` in that form. That advice assumes the task runs as your
-    own account, whose `TEMP` is a folder of its own: a task run as SYSTEM gets `C:\Windows\Temp`
-    instead (unmeasured), whose permissions the per-user default does not describe. The same folder
-    has held the pass's snapshots, its steering backup and the folder git takes hooks from since
-    1.4.0, reached through `TMPDIR` as spelled through 1.4.2. Name the folder with no `..` and no
-    part ending in a dot in its spelling all the same: git on Windows reads such a spelling as text,
-    a `..` after a junction and a dropped dot leading it to another folder than the one `mktemp`
-    made, so the 1.4.2 spelling checks still refuse it before the folder is resolved. A link above
-    the folder is resolved and accepted; one at the folder itself is refused. On Windows, or
-    wherever a `cygpath` is found on `PATH`, every runner, the retention runner included, refuses a
-    `..`, a part ending in a dot or a colon that is not a drive letter's in every mode, before its
-    first git call, and on every
-    platform it refuses a folder that is not an absolute path, as a relative `TMPDIR` or one
-    starting with `~` gives (a drive path counts only under Git Bash, MSYS or Cygwin). The retention
-    pass takes `TMPDIR` only when it starts with `/`, and otherwise uses `/tmp`, for its temporary
-    files too, and it has no last-resort folder. Those checks read the spelling only, so they do not
-    see a link. From 1.5.0 every runner, in either mode, then resolves the folder once (the folder
-    above it resolved physically, with `cd -P` and `pwd -P`, its own name kept) and checks the
-    result before its first git call, with the checks the memory override runs on it: that it is
-    the folder `mktemp` made, compared by identity; the state directory's checks of its owner and
-    that it is not writable by every account; and that it does not lie inside the vault, by file
-    identity and, on Windows or wherever a `cygpath` is found, walked as a drive path too. There it
-    must also convert to a drive path that maps back to it, and off Windows it must also
-    be open to no other account, with no permission bit for its group or for others, which the
-    state directory's checks do not ask (`mktemp -d` makes it 0700, measured on Linux, and on macOS
-    in CI's bash 3.2 job, where a pass ran through this check). A folder that fails refuses the
-    run (1) before any git call, and no agent starts. From then on the snapshots, the steering
-    backup, git's hooks folder, the settings file and the record of the folder use the resolved
-    path, so a link above the folder, as a `TMPDIR` spelled through a link gives, still runs, and
-    git and Claude Code are handed the resolved path. On 1.4.2 only a claude-mode pass checked the
-    folder itself, inside the override and after the runner's first git calls, and command mode
-    did not check it at all. The retention runner gives the folder for its own copy of the log, made
-    before its run lock, the same check before it writes anything there, and puts the copy into
-    exactly the path the check passed, never one resolved again. A folder that fails costs the run
-    only that copy: each of the check's lines is logged as `WARNING: (the folder for this run's copy
-    of its log) …`, ending `So this run keeps no copy of its log, which goes to the log alone.`, and
-    the run goes on; a check that prints nothing gives one line, `WARNING: the folder for this run's
-    copy of its log could not be checked, so this run keeps no copy of its log, which goes to the
-    log alone.` The checks share
-    the limits above: a group-writable folder above, one another account owns, and an access control
-    list are not seen. The settings file adds a file there that Claude Code reads at every
-    claude-mode pass, whether or not the vault is a git repository: the runner's own file turns
-    hooks off, but anyone who can change the folder can swap it for one naming hooks, which Claude
-    Code would run as your account.
-  - The runner's folder for the pass also holds the pass's "before" snapshot. A folder that is gone
-    when the runner checks it before its first git call, or when the override is written, is
-    refused (exit 1), and so is a link put in its place before the checks resolve it, but one
-    emptied, or removed and made again, before then by another process of
-    your account, by root, or on Windows by any account that can change the temporary folder, is not
-    seen (reasoned), nor, off Windows, another folder of yours moved into its place by an account
-    that can rename entries in `TMPDIR`, nor one replaced once the checks have resolved it and
-    before Claude Code has read the settings file, which is then written into, or read from,
-    whatever took its place (both reasoned). One removed while the agent runs takes the snapshot
-    with it, and on 1.4.1 the fence then compared the pass with nothing: writes the agent made
-    under `90-auto-memory/` and to `AGENTS.md` stayed in the vault and no tripwire was set
-    (measured on 1.4.0 and 1.4.1 with a stand-in agent). Each runner now records the folder before
-    the agent starts and again as soon as it returns, before writing anything there, so a folder
-    removed or changed in between ends the pass with exit 78, the tripwire set in a shape that says
-    nothing was moved or restored, and the pre-pass backup and the folder kept; when no tripwire
-    can be written it exits 70 instead, with a `TRIPWIRE-ERROR:` line in place of the
-    `UNVERIFIED:` one, and keeps the in-flight marker. The record holds each file's digest and
-    whether it has one link or more, and refuses a name outside letters, digits, dot, underscore and
-    hyphen. Folders in it are recorded as empty or not, never entered, and one that cannot be listed
-    fails the record: on Linux a hooks folder made searchable but not readable (`chmod 100`) listed
-    as empty while a hook in it still ran through its search bit (measured on Linux; on Windows
-    `chmod` does not stop a listing, measured in Git Bash), so such a folder refuses the pass with
-    exit 1 before the agent starts (reasoned), and ends it with 78 after. The library clears
-    `GLOBIGNORE` as it loads, because set before then it would hide names from both records, which
-    would then agree
-    (bash 5.3 does not take it from the environment, measured in Git Bash and on Linux; bash 3.2 is
-    unmeasured). The record does not see a change undone before the agent returns, or one made
-    after the check by a process still running, and where the runner falls back to `cksum` (it logs
-    a `WARNING:`), any of the accounts above that can write the folder can forge a match. Keep
-    anything that cleans the temporary folder from removing a pass's folder while it runs.
-  - The runner removes the settings file with its folder when the pass ends. After a stop that
-    leaves Claude Code running (`KILL_FAILED`, which sets the tripwire), the file is gone while the
-    process may still be at work; whether Claude Code would then grant its default memory folder
-    again is unmeasured, so when you review such a pass, look in its default memory folder too:
-    `~/.claude/projects/<the vault's path, with each character but a letter or digit turned into
-    a ->/memory/`.
-  - The override assumes the runner and Claude Code see paths alike. A runner started outside Git
-    Bash (in WSL, say) whose Claude Code is Windows' `claude.exe` would pass Linux paths a Windows
-    program reads as folders under its drive root, so such a pass refuses to start. That check runs
-    only where no `cygpath` is found: with a stray `cygpath` on `PATH` the runner converts the paths
-    instead, and they must pass the conversion checks. The check
-    looks the name up as the runner will start it and reads the file it resolves to, through any
-    link, for a `.exe` ending or the `MZ` header every Windows program starts with; a file it
-    cannot read, and a name that is no file (an exported shell function), refuse too. A wrapper
-    script that starts a Windows Claude Code is not recognised, and the name is looked up again
-    when Claude Code starts, so a `PATH` folder or link changed in between by someone who can
-    write it is not seen.
-  - On Windows the override names the vault as the runner was started with it, so a vault reached
-    through an 8.3 short name (a profile folder such as `RUNNER~1`) is named that way, and the
-    settings file by its folder's resolved path, in which Git Bash expands such a name. A folder
-    under Git Bash's `/tmp` keeps that spelling only where the temporary folder's path holds no 8.3
-    name; on CI's Windows image, whose `TEMP` is spelled `RUNNER~1`, it resolves to the long drive
-    path (`/c/Users/runneradmin/...`), while a vault there under `/tmp`, as the suite's are, is
-    named with `RUNNER~1` (reasoned: `TEMP`'s spelling was seen on CI, and that `cygpath -m` keeps an
-    8.3 name was measured on a development host, with another short name; no CI log prints either
-    path). The suite's claude-mode passes, whose vaults lie there, pass the identity checks on CI;
-    real Claude Code has not been measured with a short-name value.
-  - On Windows, `cygpath -m` gives a `//?/` device path for a path of about 260 characters or more
-    (254 converted normally, 309 did not, measured), so a vault, or a temporary folder, that deep is
-    refused with `which is not a Windows drive path`. Move the vault nearer a drive root, or point
-    `TMPDIR` at a shorter folder outside the vault that only your account can change; the runner
-    cannot read its permissions on Windows, so make it private yourself, as for a state directory
-    (`docs/setup.md`, Troubleshooting).
-  - On a volume where Git Bash gets no file IDs (FAT32, exFAT, some network shares), it builds a
-    file's identity from its spelled path, so the identity checks the runner's folder for the pass
-    gets could take one folder spelled two ways (an 8.3 name and its long name, say) for two: they
-    could refuse a pass whose `TMPDIR` lies there spelled otherwise than `pwd -P` spells it, and
-    could miss a vault spelled with an 8.3 name that holds such a folder (reasoned; no such volume
-    was measured).
-  - On Windows a vault on a network path is refused with `which is not a Windows drive path`. For
-    one reached as `//localhost/c$/...` (this host's own administrative share) or
-    `//wsl.localhost/...` and started from Git Bash, Claude Code 2.1.289 and 2.1.292 ignored the
-    settings file and kept granting the default memory folder outside the vault (measured; a share
-    on another server is unmeasured, and refused all the same). The `.cmd` wrappers cannot start
-    such a vault at all (`CMD does not support UNC paths as current directories`). A mapped drive
-    gives a drive path and runs: for
-    one drive mapped to the measuring host's own administrative share (`\\localhost\c$`), a Write to
-    the default folder was refused with the file (2.1.289 and 2.1.292, measured through
-    `dream-pass.cmd`). A drive mapped to another server is unmeasured, and where that server reports
-    no file IDs the runner's identity checks could refuse it (reasoned). For the vault, any other
-    drive letter whose target is a network path is accepted too and unmeasured: DFS, WebDAV and
-    other redirectors, a local link to a share, `subst` onto one, and a drive mapped to
-    `\\wsl.localhost\...`. The temporary folder is taken by its resolved path, so one reached
-    through a local link to a share should be refused as a network path (reasoned; not measured).
-  - When `VAULT_STATE_DIR` is rejected, or there is no per-user state folder to use, the state
-    directory falls back to `${TMPDIR:-/tmp}/claude-memory-vault-state-<id>`. On Linux and macOS
-    the checks above still apply to it; on Windows a `TMPDIR` other accounts can write would hold
-    the state, as it holds the settings file on every pass, so leave `TMPDIR` at its private
-    default there.
-  - A vault in a folder other accounts can write, such as one made directly under `C:\` or on a
-    data drive, is open to them before and during every pass: they can change its `.claude/`
-    settings, swap `90-auto-memory` for a link after the checks, or plant memory there. Keep the
-    vault in your profile, or make its folder private as for the state directory.
-  - The override covers Claude Code's auto memory only. An agent definition's own `memory:` key
-    would grant a folder such as `~/.claude/agent-memory/`, outside the vault; the template's agents
-    set none. In claude mode the runner does not check that `.claude/agents/<name>.md` exists, so
-    without it `--agent` may resolve to a user-level definition of the same name (unmeasured).
-  - Only the Write tool was probed under the memory override. Edit is granted the same folder by
-    the same setting, and was not measured.
-  - On Windows the state directory's path, and the path keys that compare vault and repository
-    paths, are still converted with `cygpath` under the runners' `C` locale, as in 1.4.0, apart from
-    the claude-mode check of the runner's folder for the pass, which runs under `C.UTF-8`. That
-    double-encodes a non-ASCII name: with the default `%LOCALAPPDATA%` base, an account whose name
-    is not ASCII gets a state directory beside its profile that it cannot create, so every pass
-    exits 1 until `VAULT_STATE_DIR` names a folder it owns. A non-ASCII `VAULT_STATE_DIR` is used
-    under its double-encoded name, a folder the runner makes itself beside the one named, which
-    takes its parent's permissions rather than that folder's: directly under `C:\` every signed-in
-    account can then change the state it holds (measured), and where the account cannot make
-    folders, as in `C:\Users`, every pass exits 1. Use an ASCII path for it on Windows. Two vaults
-    whose paths differ only at or after their first character outside the ANSI code page can get the
-    same state directory id, and so block each other's runs. The same coarse comparison decides
-    whether a vault is a repository of its own, so a vault folder inside a larger repository whose
-    paths agree up to that point could be taken for the repository's top (reasoned, not measured).
-  - The watchdog stops a pass's process tree only when it times out or stalls. A pass that exits
-    on its own but leaves a background process running, such as a server a hook started, is not
-    stopped, and that process can write after the second snapshot. A process that leaves the
-    process group with `setsid`, or on Windows starts without the session id on its command line
-    after its parent exited, is not found by the stop either. The output check still catches one
-    that keeps writing to the run's output.
-  - Outside Windows the agent runs in a process group of its own. A scheduler that ends a job by
-    signalling the runner's group, as launchd does when a job's process exits, no longer reaches
-    the agent. If the runner itself is killed with `KILL`, or dies before its signal handler
-    runs, the agent keeps running until it ends on its own, and the in-flight marker makes the
-    next run set the tripwire.
-  - A directory symlink that existed before the pass, other than `.obsidian` or `.git` itself, is
-    fenced as a link, not by what it points to. A write through a link such as
-    `.claude/skills -> ~/shared-skills` is not seen. Retargeting or replacing the link is.
-  - Rebasing, pulling with rebase, or switching branches while a pass runs moves HEAD in a way the
-    runner cannot tell apart from a rewrite, so it sets the tripwire. That fails closed. Avoid it
-    during a scheduled pass, or clear the tripwire after checking `git reflog`.
-  - Adding, removing or pruning a linked worktree while a pass runs (`git worktree add`, `remove`
-    or `prune`, including the prune inside `git gc --auto`) changes the fenced files under
-    `.git/worktrees/` and sets the tripwire. A new worktree's `commondir` is moved to the
-    quarantine, so git fails in that worktree until you copy the file back from the quarantine
-    path the tripwire names. A removed one leaves a `.git/worktrees/<name>/` folder holding only
-    the restored files, which `git worktree prune` clears. When the vault is itself a linked
-    worktree, those files sit in the shared git directory and appear under `.git-common/`, which
-    the runner reports but never moves or restores. Avoid worktree commands during a scheduled
-    pass.
-  - Git activity inside a nested repository while a pass runs, such as a `git clone` into
-    `40-llm-wiki/raw/`, `git submodule update --init`, or `git remote add` in an embedded
-    repository, changes its gitlink, config or hooks and sets the tripwire. The new files are moved
-    to the quarantine, so the clone loses its config or the submodule checkout loses its `.git`
-    file until you copy them back from the quarantine path the tripwire names. Avoid these
-    commands during a scheduled pass.
-  - A submodule whose own path contains `refs/heads`, `refs/tags`, `refs/remotes`,
-    `refs/prefetch`, `refs/notes` or `refs/rewritten`, such as `vendor/refs/tags/lib`, has its git
-    directory's config and hooks left out of the fence, as a ref of that name would be. Nothing in
-    a path tells where a submodule's name ends and its refs begin.
-  - Some plugins run code that lives in ordinary notes or vault folders. DataviewJS runs
-    JavaScript blocks from any note, and Templater, QuickAdd and CustomJS load user scripts from a
-    folder you choose. A pass that writes such a note or script outside its allowed areas is
-    reported as a VIOLATION but not contained, and one inside them (a script folder under
-    `31-standards/`, for example) is not reported at all. Keep script folders outside the areas a
-    pass may write, and leave DataviewJS and inline JavaScript queries off unless you need them.
-- **Script integrity.** Each runner's body is a function called on the script's last lines, so an
-  edit made to the script while it runs is never executed by that run. Every git command a runner
-  issues runs with no hooks, no fsmonitor, no signature checks and no prompts (`core.hooksPath`
-  set to an empty temporary directory), the journal commit below included. On Windows git is handed
-  that folder converted to a drive path, because the library clears `MSYS_NO_PATHCONV`,
-  `MSYS2_ARG_CONV_EXCL` and `MSYS2_ENV_CONV_EXCL` as it loads: with an inherited
-  `MSYS2_ARG_CONV_EXCL` covering `core.`, `git.exe` looked for its hooks in a folder under the
-  drive root, which another account could make (measured in Git Bash on 1.4.0 and 1.4.1's code),
-  and an account-wide `MSYS_NO_PATHCONV=1`, which made every pass fail at its first git step, now
-  lets the pass run. Each path a runner names is
-  taken literally (`GIT_LITERAL_PATHSPECS=1`), because git otherwise also reads a path as a
-  pattern, and a journal named `dream-[x].md` would then stage someone's `dream-x.md`. Git's other
-  pathspec settings are turned off for those commands, because git refuses to combine them with
-  the literal one. That is not a sandbox. A filter declared in `.gitattributes` can still run on
-  a command that reads the work tree, which is why the runners call git on the vault only while
-  its config is known to be the pre-pass one.
-- **Artifact assertion.** A pass that exits 0 but left no evidence it ran exits **1**
-  (NO-ARTIFACT). For `dream-pass` a `dream-*.md` journal must have been added or changed during
-  this run; matching any date rather than today's keeps a run that crosses midnight valid. For
-  `promotion-pass` a week that promotes nothing is legitimate, so it accepts *either* a long-tier
-  change *or* a `PROMOTION-SUMMARY: promoted=<n> pending=<n>` line in this run's own output,
-  which an error dump does not contain. In command mode the line must start a line of the output.
-  In claude mode it counts only in the text of the stream's result event, at the start of that text
-  or of one of its lines, so a summary quoted in a sentence or found in another field does not.
-- **Git preflight and files already being edited.** Before the agent starts, a runner exits
-  **1** when the vault has a `.git` git cannot read (for example git's "dubious ownership" refusal
-  under another account), because a real repository must not pass as none. A vault that is only a
-  folder inside a larger repository, such as a home folder kept in git, is noted and never
-  committed, because that repository's config and hooks are outside the fence. In a vault that is
-  its own repository, the runner exits **75** when a merge, rebase, cherry-pick, revert or bisect is
-  in progress, or HEAD is detached, and records every file `git status` reports as modified,
-  staged, untracked or conflicted, both sides of a rename included. After the pass, a file the pass
-  owns (a dream journal, or for the promotion pass a long-tier note or promotion report) that
-  changed and was on that list exits **2**, and the runner commits none of them. Every other dirty
-  or staged file is left as the runner found it.
-- **The long tier is create-only.** A promotion pass may add notes to `31-standards/` and
-  `40-llm-wiki/wiki/` but never change one that was there before it started, whoever wrote it. A
-  note was there when the commit HEAD pointed at before the pass holds it, or when it was on disk
-  before the pass, a note git ignores included, unless it is an earlier promotion pass's own
-  uncommitted note that this run adopted (below). A new name that differs from such a note only in
-  ASCII case counts as that note, adopted or not, because on Windows and macOS it is one. A pass
-  during which one changed exits **2**, logs the notes under `VIOLATION: long-tier notes that were
-  there before the pass started changed during it`, commits nothing and puts back every note it
-  changed, whether the agent succeeded, failed, timed out or gave no summary. The notes are listed
-  under that line even when the pass also wrote into a note someone was editing, or removed one,
-  and that refusal is logged too. A note the snapshot alone knows is marked `in no commit under
-  this name`, and a case twin says so. When the commit from before the pass cannot be listed, the
-  pass is refused under `VIOLATION: the runner could not list the commit from before the pass`,
-  because the runner cannot say whether a note that was there changed. The runner cannot tell the pass's
-  change from one you or a sync client made while it ran, so either refuses the pass. A change a
-  sync client *commits* while the pass runs stays committed: the runner logs it as committed while
-  the pass ran and cannot undo it, so read that commit with `git show` and revert it yourself when
-  it holds the pass's change, and pause any auto-commit around the scheduled pass. The check comes
-  before vault-check, so such a pass exits 2 even when a note of its own would fail the check. A
-  pass that also wrote outside the areas it may write, or changed a steering surface, is refused
-  for that first, and that refusal puts none of the pass's notes back and copies none of them to
-  the quarantine (below). The log then names each long-tier note that was there before the pass
-  and is no longer as it was, under `Long-tier notes that were there before the pass changed
-  during it, and this exit puts none of them back`, leaving out one that already had uncommitted
-  changes, which the dirty-note line names. The runner cannot tell who changed them, so read each
-  with `git diff <commit> -- <path>`, the commit from before the pass that the line names, which
-  also shows a change a sync client has committed since, before you restore it with
-  `git restore --source=<commit> -- <path>`, which would discard an edit of yours along with the
-  pass's. When that commit cannot be listed, the log names every note the pass owns that changed,
-  under a line that says so. A note git ignores, or one whose name on disk differs only
-  in case from the name a commit holds it under (a case-only rename, such as one made in
-  Obsidian, that git has not recorded), is in no commit under its name on disk, so it is refused
-  but left as the pass wrote it, and the log says so. `git status` shows the second kind's change
-  under its committed name and later sessions read it from disk, so read it with `git diff` and
-  restore what the pass wrote before anything commits it, because there is no quarantine copy and
-  `git restore` also discards an edit of yours. A note the pass itself wrote under a new case is
-  put back (below). A freshness
-  stamp, a supersession or a correction of an existing note reaches you as a proposal in the
-  pass's promotion report instead, and applying it is yours. A promotion report is not in the long
-  tier, so a pass may still change one. Like the commit and the put-back, the check needs a vault
-  that is its own git repository, and a pass in any other vault is not checked for it. Case that
-  differs outside ASCII, and names that differ only in Unicode normalization, are not caught.
-- **Runner commit.** A successful pass has the files it changed in the areas it owns committed by
-  its runner, and nothing else. For the dream pass those are its journals. For the promotion pass
-  they are its new long-tier notes and its promotion report. The runner records their blob ids, runs
-  `vault-check.sh` on exactly those files and exits **5** (CHECK-FAILED) when any fails. It then
-  runs `git add -- <files>` and `git commit --only -- <files>` with `core.hooksPath` pointed at an
-  empty folder (on Windows handed to git as a drive path, as under Script integrity), each step
-  under the watchdog with `RUNNER_GIT_TIMEOUT`, so a signing prompt cannot
-  stall the run. The commit runs no hooks because hook managers such as pre-commit or husky read
-  their configuration from ordinary files a pass can write, and the check on the files takes the
-  commit gate's place. Signing still applies. A staged blob that differs from the checked one (the
-  file changed while it was checked), or a failed or stopped step, exits **4** (COMMIT-FAILED). The
-  runner then takes the files back out of the index, says in the log when it could not, and names
-  a leftover `index.lock`. Exit 4 also covers a commit that was made but whose trailers do not
-  match what HEAD holds, and the log says so. The commit message carries `Vault-Pass: dream` or
-  `Vault-Pass: promotion` and one `Vault-Pass-Blob: <blob id> <path>` per file. A file git
-  ignores, or one HEAD already holds because something else committed it during the pass, is noted
-  and passes.
+The fence checksums symlinks by their target, so swapping a file for a link, or retargeting one,
+counts as a change. Known limits: a link's line holds only a CRC of its target, with no SHA-256
+line, and a path whose name holds a line break is held only through the one line that sums them
+all, below; neither can be made or changed with the agents' own tools today. A `.obsidian` or `.git` that is itself a symlink is fenced as a link as well,
+and the files described below are still fenced through it. In `.claude/logs` only the files the
+runners, the hooks and the documented schedulers write there are left out: `*.log`, the two
+`*.git-state.txt` and `*.prompt.md` files, `runner-tripwire` and `runner-inflight` with their
+`.tmp.*` files, the run logs' temporary files `dream-agent.run.log.runner-tmp.XXXXXX` and
+`promotion-agent.run.log.runner-tmp.XXXXXX` (six ASCII letters or digits, in exactly that case),
+and the launchd output files `setup.md` names (`dream-pass.launchd.out`, `dream-pass.launchd.err`,
+`promotion-pass.launchd.out`, `promotion-pass.launchd.err`, `vault-retention.launchd.out` and
+`vault-retention.launchd.err`). The retention runner's own log is `vault-retention.log`, already
+covered by `*.log`, and it writes nothing else here. Any other file or symlink there, such as a
+planted `CLAUDE.md`, is fenced and counts as a steering surface. A planted name that differs from
+one of the other names only in case is listed and reported as a violation, but not quarantined. A
+path with a line break in its name, anywhere in the vault, is never read as a line, because its
+second line could name any path, such as `.git`. Such paths are summed into one fence line, a
+change to them counts as a steering surface, and containment moves each of them to a folder made
+for them in the quarantine, as `line-break-name-<n>`, with its original path in that folder's
+`names.txt`. Every such path is moved, including one that was in the vault before the pass. The
+fence matches names byte by byte, whatever the locale. In `.obsidian/` only what carries or
+enables code is fenced: `community-plugins.json` and the `plugins/`, `themes/` and `snippets/`
+folders. Obsidian rewrites its workspace, graph and app settings while it is open, and none of
+them runs anything. The code-bearing part must be fenced, because `.obsidian/` is not a path
+Claude Code protects. A plugin's `data.json` holds its settings and many plugins rewrite it in
+normal use, so it is fenced only for plugins that run code or commands named in their settings:
+`dataview`, `templater-obsidian`, `obsidian-shellcommands`, `quickadd`, `customjs`,
+`obsidian-git`, `execute-code` and `terminal` (the `CODE_PLUGINS` list in `lib/runner-common.sh`).
+A plugin is matched by its folder name or by the `id` in its `manifest.json`, ignoring case, so it
+is recognised whatever folder it was installed in. Every other file or folder in a plugin folder
+is fenced for every plugin, including a folder named `data.json` and a `data.json` deeper inside
+the plugin's folder. The list names known plugins, so a plugin that can run code but is not on it
+keeps its `data.json` outside the fence until you add it. Memory (`.claude/agent-memory*` and
+`90-auto-memory/`) is fenced in both modes, because it loads into later sessions. What follows
+holds in claude mode only: a command-mode wrapper that starts Claude Code gets no settings file
+and no `CLAUDE_CODE_DISABLE_AUTO_MEMORY`, so its memory folder stays where Claude Code puts it,
+outside the vault by default, as in 1.4.0, and its hooks are not turned off. In claude mode,
+Claude Code grants the agent's Write and Edit tools its memory folder: the one a settings file
+names as `autoMemoryDirectory`, or by default one under `~/.claude/projects/`. The default folder
+lies outside the vault, a named one may too, and `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`, which the
+runner also sets, does not withdraw that grant. So before each claude-mode pass the runner writes
+`pass-settings.json` into its own folder for the pass, the one it makes with `mktemp -d` for its
+snapshots and removes when the pass ends, and passes it with `--settings`. The state directory may
+be shared, or on Windows take its parent's permissions, so the file is not kept there, and one an
+earlier build left there is removed. It points the memory folder at `90-auto-memory/.pass-agent/`,
+inside the fence. With it, a Write to the folder the vault's local settings name and one to the
+default folder were both refused, where both landed without it. That was measured, with 1.4.1's
+file, for the Write tool on Windows with Claude Code 2.1.284, 2.1.285, 2.1.287, 2.1.289,
+2.1.292, 2.1.295 and 2.1.296 (the default folder from 2.1.285), for an ASCII vault path on a
+drive, and on 2.1.289 and
+2.1.292, for the default folder only, for a vault on a drive mapped to the measuring host's own
+administrative share; for vaults under folders named in Cyrillic and with a Git Bash double quote
+(2.1.287, 2.1.289, 2.1.292, 2.1.295 and 2.1.296), and with an e-acute (one run on 2.1.287, against
+an earlier build), a Write to the folder a `C`-locale conversion named landed with that
+conversion's file and was refused with the runner's. Any other version is unmeasured. For a vault
+reached as a network path, measured as `//localhost/c$/...` (this host's own administrative share)
+and `//wsl.localhost/...`, and started from Git Bash, Claude Code 2.1.289 and 2.1.292 ignored the
+file and a Write to the default folder landed with it as without it (measured; a share on another
+server is unmeasured, and refused all the same), so on Windows the runner accepts only a drive
+path. Edit was not probed, and Linux
+and macOS are unverified. On Windows the runner converts the vault's path and the file's with
+`cygpath` under a UTF-8 locale, because under the runners' `LC_ALL=C` it cuts a path at its first
+character outside the ANSI code page, which made the file name a folder outside the vault, and a
+Write there landed (measured). Each converted path must then name, converted back, the folder or
+file it came from. A folder named in project or user settings rests on settings precedence
+(`--settings` outranks both) rather than on a measurement.
+The file also holds `"disableAllHooks":true`, so the hooks in the account's settings, in enabled
+plugins and in the vault's own settings, which would otherwise run inside the unattended pass as
+the account, with a shell the agent's allowlist never sees, do not run. With 1.4.1's file Claude
+Code 2.1.301 ran a probe folder's own hooks and plugins' `SessionStart` and `Stop` hooks, one of
+which wrote a file outside the folder; with the new line it ran none, and the account's
+`CLAUDE.md` was still sent in the request (measured on Windows, `-p`, on 2.1.301 only); a live
+dream pass through the 1.4.2 runner ran to its journal (measured). The probe held no hook in the
+account's user settings, nor in an agent's or a skill's frontmatter, so that the line turns those
+off too is reasoned, not measured. Hooks from managed settings
+are not turned off (measured 2026-09-15 on an earlier version), and MCP servers, and the commands
+a settings file names outside hooks, still start (reasoned): `apiKeyHelper`, `awsAuthRefresh`,
+`awsCredentialExport` and `otelHeadersHelper`, a `statusLine` command, and the MCP and LSP
+servers plugins ship, among them (reasoned).
+Managed settings outrank `--settings`, so a memory folder set there is not overridden. A memory
+write that does happen lands in `.pass-agent/`, where it is contained and trips the tripwire like
+any other write under `90-auto-memory/`. The pass refuses to start (exit 1) when `.pass-agent/`
+already holds anything but a regular `.DS_Store` file with no other hard link, or cannot be
+listed, because what it holds could be read into the pass as memory and a linked file could let a
+write leave the vault; when it or `90-auto-memory` is a symlink or junction, because the fence
+would see only the link; when either is not a folder; when the vault's path holds a `"`, a `\` or
+a control character, which the file cannot carry (on Windows Git Bash keeps a `"` or a tab in a
+name as U+F022 or U+F009, the `.cmd` wrappers start the runner with the path spelled that way, and
+`cygpath` gives it back, so the override names such a vault as Windows spells it; started from a
+Git Bash prompt, which shows the name with the `"` or the tab itself, git cannot enter the folder
+and the pass exits 1 before the override, at a git step unchanged from 1.4.0); when the vault's
+path, or the settings file's, holds bytes that do not come back unchanged when `iconv` converts
+them from UTF-8 to UTF-16LE and back (glibc passes some invalid forms through to UTF-8, and macOS,
+under the C locale the runners set, takes them to UTF-16LE without an error, both measured), which
+Claude Code could read as another folder (on Linux, where a path is bytes), or holds a byte outside
+printable ASCII and `iconv` is missing or fails; on Windows when
+`cygpath` is missing, fails, prints nothing, or gives a path that is not a drive path (a network
+path among them) or that names another folder or file; where the platform is not Git Bash, MSYS
+or Cygwin and no `cygpath` is found, when the agent binary
+looks like a Windows program (the file `CLAUDE_BIN` names, or the `claude` found on `PATH`, ends
+in `.exe` or, read through any link, starts with `MZ`), which would read the runner's POSIX paths
+as other folders, or is not a file it can check, being no file at all or one whose first bytes it
+cannot read; when the runner's folder for the pass fails the checks the state directory gets
+(below), or lies inside the vault by file identity, a check the state directory does not get,
+because the file can name hooks Claude Code runs: inside the vault (by name, then by identity, so
+a letter in another case or a vault at a drive or file-system root does not hide it, nor, reasoned,
+an 8.3 name on a volume with file IDs; a `subst` or mapped drive, or a mount, whose root lies
+inside the vault is not seen, reasoned), where the agent could change it, or, off Windows, under a
+folder every account can write that has no sticky bit; when it is not there as a folder, because
+the runner makes it before
+the pass's "before" snapshot and keeps the snapshot in it, so one that went away may have taken
+the snapshot with it and the fence would compare the pass with nothing (it is refused, never made
+again; a folder emptied, or removed and made again, before the checks by another process of your
+account, by root, or on Windows by any account that can change the temporary folder, is not seen,
+reasoned, since it is checked like the runner's own, while off Windows a folder another account
+owns fails the owner check, but not another folder of yours moved into its place by an account
+that can rename entries in `TMPDIR`; one replaced once the checks have resolved it and before
+Claude Code has read the file is written into, or read from, whatever took its place, reasoned);
+on Windows, or wherever a `cygpath` is found on `PATH`, when its spelling holds a `..` or a part
+ending in a dot, because git there reads the folder as `TMPDIR` spells it and takes the `..` as
+text and drops the dot, so after a junction in Git Bash's `/c/...` spelling it took its hooks
+folder and the commit message from a folder of the textual name, and with a part such as `x.` it
+looked for its hooks in `x`, in the `C:/...` spelling too, where `mktemp` keeps the dot as well
+(measured in Git Bash; every runner refuses such a spelling in every mode right after `mktemp`
+makes the folder git is given, before its first git call, and the override checks it again for
+any other caller); when a folder above it is not there or, off Windows, this account cannot enter
+one, so the checks cannot reach it (a line of its own, not the one for a folder that is not there
+itself; on Windows an account may by default pass through a folder it cannot enter, and the checks
+reach the folder and accept it, measured in Git Bash for a folder spelled with no link); when the path
+resolving the folder
+above it gives is not the folder itself, compared by file identity, because the file would then
+go to another folder (a folder
+above it named with a line break at its end, which the shell drops, measured with the suite's
+twin off Windows; a link above it repointed while it is resolved, reasoned); when it is a link,
+which `mktemp -d` never makes, or a folder above it became one during the checks (a link above
+it that is there all along is resolved and accepted, and from 1.5.0 the settings file, the
+snapshots, the steering backup and git's hooks folder are all reached through the resolved path,
+where 1.4.2 reached all but the settings file through `TMPDIR` as spelled), so that it is not the
+path it resolves to (off Windows a
+link in a folder every account can write is refused as one, measured on Linux for a dangling one
+with the suite's twin); when the identity walk up its path ends with a status that is no answer,
+so it
+cannot be shown to lie outside the vault; when the vault itself cannot be resolved (a line naming
+the vault); when `pass-settings.json`, `pass-settings.new`, or the temporary name ending in the
+runner's process id that the file is written through, is already there, since a link there would
+carry the write elsewhere, a folder would take it in and a FIFO would hold the pass (only a name
+there when the runner checks is seen: one planted after the check is still written through; off
+Windows the folder `mktemp -d` made is your account's with mode 0700, so only a process of your
+account or root can plant one there, whatever `TMPDIR` says, unless an account that can rename
+entries in `TMPDIR` or in a folder above it put another folder of yours in its place, and on
+Windows any account that can change the temporary folder can); when the file cannot be written
+(off Windows readable by the runner's account only, in a folder only it can enter; on Windows it
+carries the temporary folder's permissions, which under the per-user default give it to the
+account, SYSTEM and Administrators only, measured); and when it does not read back byte for byte,
+because Claude Code 2.1.287 reads an empty or invalid settings file as if there were none and
+grants the folders outside the vault again (measured on 2.1.287; not re-run on a later version).
+From 1.5.0 every runner, in either mode, the retention runner included, also runs the checks of
+the folder itself listed here, from its spelling to the vault that cannot be resolved, right
+after it makes the folder and before its first git call, so in claude mode the folder is checked
+twice. Where the override's line for a failed state-directory check, a folder that is not there,
+one above it that cannot be reached or a resolution that led to another folder names its
+settings file, the runner's says it keeps the pass's snapshots, its backup and git's hooks folder
+there (Known limits, below).
+The file covers memory only. A folder a settings file grants through `additionalDirectories` stays
+outside the fence. Inside `.git/`, only the files that make git run code are fenced: `config`,
+`config.worktree`, `commondir`, `hooks/`, `info/attributes`, `info/grafts` and
+`objects/info/alternates`, and `info/`, `objects/` or `objects/info/` when one of them is a
+symlink. The same files, and every symlink, are fenced in every linked worktree's git directory
+under `.git/worktrees/` and every submodule's under `.git/modules/`, except under the ref folders
+`heads`, `tags`, `remotes`, `prefetch`, `notes` and `rewritten` inside `refs/`, where a ref may be
+named `config`. Git reads config and hooks from the directory `commondir` names. The rest of
+`info/` is not fenced, because `git gc --auto` after an ordinary commit rewrites `info/refs`. For
+a vault that is a linked worktree, the same files in the shared git directory are fenced too, and
+appear in logs under `.git-common/`. HEAD and refs are not fenced, because you or a sync plugin
+may commit while a pass runs.
 
-  On exit 5 the passes differ. The dream pass leaves the rejected journal in place, uncommitted,
-  for you to fix or delete. The promotion pass puts back the notes it changed, because the long
-  tier steers later sessions, and logs each under `REVERTED`. It does the same on exit 2 when a
-  note the pass changed was already being edited, or is no longer a regular file, or was a
-  long-tier note that was there before the pass, whether the agent succeeded, failed, timed out or
-  gave no summary, so a pass that deletes or edits one note cannot keep its other notes in place. A dream pass in that state exits 2 too, and records nothing for
-  the next run. A note someone was already editing is never put back, because its pre-pass bytes
-  are in no commit.
-  - A note that was in the commit HEAD pointed at before the pass is first copied to a quarantine
-    folder ending in `-rejected` in the state directory, and then restored from that commit. The
-    log names the copy, which keeps an edit you made to that note while the pass ran. When the
-    copy fails, the note is not restored.
-  - A deleted note is restored the same way, and so is a note the pass replaced with a folder,
-    once the files in that folder are in the quarantine and the empty folder is removed. A folder
-    that still holds something the pass did not leave there is logged and left.
-  - A new note is moved to that quarantine folder, and a folder the move leaves empty is removed
-    unless it held other files before the pass. The tier folders themselves are never removed.
-  - A note git ignores that existed before the pass is in no commit, so there is nothing to
-    restore, and it is left as the pass wrote it.
-  - A new note that is the same file as one that was there before the pass, under a name that
-    differs only in case, is that note renamed by a writer that replaces files on a filesystem that
-    folds case. Moving it out would take the note out of the vault, so it is copied to the
-    quarantine and the note restored under its own name instead, unless no commit holds that name,
-    someone was already editing it or it was committed while the pass ran, when it is left as it
-    is, or the copy or the restore failed. The log says which, and what was done. A link, or a
-    second name for the same file, is never taken for such a note.
-  - A note that is no longer exactly as the pass left it (changed again, removed, or now a folder
-    or a link) is someone else's since, and is left as it is.
-  - A note whose content in HEAD changed while the pass ran, because you or a sync plugin committed
-    it, is left as it is, because restoring the older commit would undo that commit in the work
-    tree.
+##### Containment
 
-  Every note left as it is gets its own line in the log, and the runner still exits 5 or 2. So
-  "put back" means every note except the ones the log lists.
+A fence that only reports leaves a planted file in place, where it runs the next
+time something opens the vault. So when the changed paths include a *steering or execution
+surface*, the runner contains it before anything else, including before it looks at the agent's
+exit code. Steering surfaces are the fenced Obsidian and git files above, memory, `.claude/`
+except `logs/`, `.agents/`, each shipped harness's configuration folder or file, OpenCode's
+`.opencode/`, Pi's `.pi/` and Oh My Pi's `.omp/` (which the template does not ship but those
+harnesses run code from, omp with no trust prompt), the singular `.agent/` that omp reads
+instructions from, `_agents/` and `_agent/`, which Google Antigravity still reads rules, skills,
+workflows, `hooks.json` and `mcp_config.json` from
+(<https://antigravity.google/docs/customization-discovery/>, read 2026-11-11), `.github/`,
+`.vscode/`, and, **at any depth**, `CLAUDE.md`, `CLAUDE.local.md`,
+`AGENTS.md`, `AGENTS.override.md`, `GEMINI.md`, Hermes Agent's `.hermes.md` and `HERMES.md`,
+OpenCode's `opencode.json` and `opencode.jsonc` (OpenCode reads both from the folder it starts in
+and every folder above it, `packages/opencode/src/config/paths.ts` line 17 at the v1.19.5 tag,
+commit `810c0eb` of `github.com/anomalyco/opencode`, read 2026-11-11), Oh My Pi's `mcp.json`,
+whose MCP servers omp starts without asking (`src/discovery/mcp-json.ts` in omp 18.18.9),
+`.mcp.json`, `.gitattributes`, `.gitignore` and any `.claude/` or other harness folder, including
+one that is the last part of the path, such as a symlink named `.claude`. Every harness folder named earlier in this list counts at any depth too, not only at the vault root.
+From 1.7.5 so is every file the vault root's `CLAUDE.md`, `AGENTS.md` or `CLAUDE.local.md`, or
+`.claude/CLAUDE.md`, imports with `@path`, and every file those import in turn: such a file, this
+template's `ARCH-INDEX` among them, loads into every session as instructions. The runner lists
+them once per pass, before it, from the files as they are then (`steering_imports`), by Claude
+Code's rules (<https://code.claude.com/docs/en/memory.md>, "Import additional files", read
+2026-11-21): a relative path is taken from the importing file's folder, the path ends at the first
+space unless `\ ` escapes it, a path in quotes or in a code span or fenced block is no import, and
+an `@` counts at a line's start or after a space, so an e-mail address is none. A CR at a line's
+end is dropped first. It follows imports past Claude Code's four hops, because other harnesses
+load `AGENTS.md` too, and lists each path without trailing punctuation as well: a file taken as
+steering that loads nowhere costs a tripwire, and a missed one would not be put back. A target
+that does not exist is listed too, so a pass that creates it is contained. A path outside the
+vault, absolute or `~/`, is outside the fence. An import a pass adds to `CLAUDE.md` is a change to
+`CLAUDE.md`, which is put back. Until 1.7.4 such a note had only the SHA-256 line above, so a
+change to it was reported and left. Matching ignores case,
+so a note named `hermes.md` is a steering surface too, and so is this template's own
+`docs/harnesses/hermes.md`: on a file system that ignores case, Hermes started in that folder
+would load it as `HERMES.md`. omp's own documentation (`docs/config-usage.md` at commit
+`f2ee6ba`, read 2026-11-11) names two writes an omp session makes into the vault's `.omp/`:
+setting a project model role (`.omp/config.yml`), and setting aside a project settings file it
+cannot parse. Either, made while a pass runs, is contained and sets the tripwire like any other
+steering change, and so would any write omp makes there that its documentation does not name
+(not measured). A nested file counts because Claude Code loads
+`31-standards/CLAUDE.md` for work in that folder and registers skills from a nested
+`.claude/skills/`, so the promotion pass's permission to write `31-standards/` does not cover
+them. A `.git` file or folder below the vault root, such as a submodule's gitlink, is a steering
+surface too, and so are the files inside a nested git directory that run code or redirect git
+(its config, `commondir`, hooks, `info/attributes` and the like) and any symlink in it, such as
+a `hooks` folder replaced by a link, but not its index, objects, branches, tags or logs. Inside
+`.claude/worktrees/<name>/` the same rules apply to the rest of the path, apart from the
+line-break marker, which belongs to that worktree's session. That includes the worktree's own
+`.claude/logs/`, held since 1.7.1 to the same list of left-out names as the vault's: before, every
+file there was left out, a planted `CLAUDE.md` among them. Since 1.7.0 two more things there
+are steering: a file of a reserved name placed directly in `.claude/worktrees/` (a `CLAUDE.md`
+or `.mcp.json` there is read by a session in any worktree below it), and everything under a
+child whose own name is a harness folder, such as `.claude/worktrees/.claude/`, which is no
+worktree. A worktree, or `.claude/worktrees` itself, that is a link is steering as any link the
+pass makes or changes is (below).
 
-  Files the runner could not commit are recorded with their exact bytes in the state directory.
-  That covers exit 124, exit 125, exit 4, the agent's own failure, a promotion pass's NO-ARTIFACT exit 1,
-  and a dream pass's exit 5 for the journals that pass the check on their own, after a pass that
-  wrote only where it may. A file someone was already editing is never recorded, and neither is
-  one that is no longer as the pass left it, such as a note edited while the commit ran. Each
-  record line is the blob id, a tab and the path, so a name that ends in a space stays its own
-  name. A record that cannot be written in full is logged, and the earlier record is kept.
+For each changed steering path the runner moves the file or link as the pass left it into a
+quarantine outside the vault (it never deletes it), then restores the pre-pass copy from a backup
+taken before the agent started. Any symlink the pass made or retargeted is a steering change
+wherever it is, even in an area the pass may write, because a link such as `31-standards/ext2`
+pointed at a folder outside the vault can hand a later session instructions from there. Those
+links are quarantined first. A folder the pass swapped for a link, such as `31-standards/ext`,
+then gets the steering files that were under it restored into a real folder, so neither step
+follows the link. Only the backed-up steering files and links come back. The rest of what was
+in that folder stays where the link pointed, reachable through the quarantined link, so check it
+before you rely on the folder again, for example before `git add -A` in a repository whose
+`info/` was swapped. A path is moved or restored through a symlink only when the link is the
+same before and after the pass, so a `.obsidian` you keep as a link to shared settings is still
+contained in place. A path below any other link that is still standing, because it could not be
+quarantined, is neither moved nor restored, and the tripwire lists it as a containment error.
+If the quarantine cannot be written, the file is renamed in place
+with the suffix `.runner-quarantined`, so Obsidian and git stop loading it. After that, and only
+while git's own config and hooks are known to be the pre-pass ones, the runner asks git whether
+HEAD was rewound: a different branch, a branch that no longer resolves, or a commit that does not
+descend from the pre-pass one. A normal commit is a fast-forward and passes. HEAD and refs are
+never rewritten back, because that could undo a real commit. Check them with `git reflog`.
 
-  A pass stopped by a signal before containment has run records nothing, because it sets the
-  tripwire and its files are left for you to review. A signal that arrives later, while the
-  runner commits or puts back the pass's notes, stops the runner with no tripwire and no record.
-  The notes it had not committed or put back yet stay in the vault, uncommitted and possibly still
-  staged, and the next run takes them for someone's edit. Check `git status` after stopping a
-  runner by hand.
+Any of this writes the tripwire `.claude/logs/runner-tripwire`, listing each path, anything that
+could not be contained, and the quarantine, and a second copy in the state directory. While either
+copy exists, both runners exit **78** without starting an agent, and `vault-check.sh` exits the
+same **78** without checking anything. `/resume` stops instead of a briefing when it finds the
+vault's copy, showing it when `ls -ld` lists it as a regular file with one link and the listing
+line otherwise; it cannot see a copy that is only in the state directory. While `.claude` or
+`.claude/logs` is a link, no vault copy is written (see below), nor while `.claude/logs` is a file
+or a folder the runner cannot write, so `/resume` stops instead whenever
+`ls -ld .claude .claude/logs` shows either as anything but `drwx`, and says a tripwire may be set
+in the state directory only, which it does not read. That test reads the mode bits `ls` prints, so
+a folder that lists as `drwx` but refuses the runner (a Windows ACL, a macOS `uchg` flag, or a
+folder another account owns) is not caught. Clear a tripwire by reviewing the paths and then
+deleting both copies. The refusal names the state directory copy when it is a file, because a pass
+cannot write it. When only the vault's copy is there, the runners and `vault-check.sh` name that
+copy and say a pass may have written it, so check its reason against the runner log before you
+follow anything it says. When neither copy is a file, they say so and send you to the log instead.
+If no copy can be written, the runner exits **70** (TRIPWIRE-ERROR) and leaves its in-flight
+marker, so the next run still refuses. When a signal stops a pass and no copy of the tripwire can
+be written, the runner logs the same TRIPWIRE-ERROR keyword and keeps its marker too, but exits
+with the signal's code, 129, 130 or 143. The `TRIPWIRE-ERROR:`
+line for a changed folder, the one a signal logs and the one for a dead pass's marker say "Treat
+the vault as unverified, and run no git command in it before the steering surfaces have been
+checked." The vault's copy is written into a file `mktemp` makes beside it (or, where `mktemp`
+fails or makes no file, so the copy does not depend on it, one made under a name from `$RANDOM`,
+refused when anything is already there, because a pass can read the clock and pid that seed
+`$RANDOM`, and created with noclobber, which refuses a file, a link to a file or a dangling link
+put there after that check but still opens a device or a FIFO; the seed, and that race, which
+only a process still running could win, are reasoned) and renamed into place, once a link at the
+copy's own name has been removed, because `mv` would otherwise move the copy into a folder the
+link names, outside the vault; when that link cannot be removed, as an immutable link on macOS
+can make it (the cause reasoned), nothing is written. Nothing is written there while `.claude`
+or `.claude/logs` is a link, and then only the state
+directory's copy is written, which the runners and `vault-check.sh` read too, so they still
+refuse. The vault's copy of the
+in-flight marker is written the same way. A note added to the tripwire leaves the vault's copy
+alone in the same case. On 1.4.1 the vault's copy went through `runner-tripwire.tmp.<pid>`, a
+name a pass could work out from the runner's pid in the vault's in-flight marker, and a link
+planted there had a file outside the vault written through it (measured), as a note had through
+a linked `.claude/logs` (measured) and the marker's copy through a link at
+`runner-inflight.tmp.<pid>` (measured); and a link to a folder at the tripwire's own name had the
+copy moved into that folder, leaving the vault's tripwire not a file (measured).
 
-  The next run of the same pass checks each recorded file that nobody has changed since, on its
-  own, before its agent starts. One that fails is logged under `LEFTOVER-REJECTED` with
-  vault-check's output. So is a promotion leftover that changes a long-tier note the last commit
-  already holds, with a `create-only:` line, because the long tier is create-only and it would
-  otherwise take the run's own notes down with it. The promotion pass puts it back then, into a quarantine folder ending in
-  `-leftover`, and the dream pass leaves it in place for review. Either way it cannot make that
-  run's own files fail with it. The rest are logged under `ADOPTED` and join the files that run
-  checks, whether or not the run touches them, and are committed with its changes or put back
-  like them. The promotion pass lists them for its agent in the git state file. The record stays
-  until a run commits or puts back its files, or records its own leftovers in its place. A
-  recorded file edited since counts as someone's edit, so fix a rejected
-  journal and commit it yourself, or delete it. A file that was clean before the pass and edited by
-  you or a sync client while the pass ran cannot be told apart from the pass's own writing. A
-  journal, a promotion report or a note the pass created is committed under the pass's trailer. A
-  long-tier note that was there before the pass counts as the pass changing it, so the pass is
-  refused and the note restored, and your edit is in the quarantine copy the log names. That copy
-  exists only when the pass wrote nowhere outside its areas and changed no steering surface, and
-  the note was in a commit under its name on disk and was neither committed during the pass nor
-  changed again after it ended; otherwise the log says which, and the note is left as it is.
-  Avoid editing today's
-  journal, or a long-tier note, during a scheduled pass. In Obsidian that includes creating a note
-  in the long tier. An empty new note there fails the check, so the promotion pass puts back every
-  note it wrote and moves the new note to the quarantine while it is still open.
+The **in-flight marker** (`.claude/logs/runner-inflight`, also copied to the state directory) is
+written just before the agent starts and removed only once containment has checked the pass, or
+once the tripwire is written for a pass whose runner's own folder was changed while it ran (exit
+78), when the tripwire does the marker's job. A pass that never gets there, because the
+scheduler ended the task, the machine stopped, or a signal arrived, leaves the marker behind. The next runner reads the state-directory copy first, because
+the pass cannot reach it, and sets the tripwire instead of adopting the unknown state as its
+baseline. The tripwire quotes that copy. That tripwire, and the one a signal sets before
+containment (`INTERRUPTED before containment. Tripwire set.`, exit 129, 130 or 143), are in the
+uncontained shape: "Nothing was moved or restored, because containment did not run.", then the
+advice the 78 row of the exit table gives, to check the steering surfaces without git before any
+git command, and to list the links in `.claude/logs` or at `.claude`, which are in neither the
+backup nor git, and remove any you did not make. On 1.4.1 both said that changed files were
+moved to the
+quarantine and restored, and sent the owner to `git reflog` (measured), which honours the
+`core.pager` of a `.git/config` the pass may have changed, as `git status` runs its
+`core.fsmonitor` (reasoned). A marker found only in the
+vault still sets the tripwire, but is not quoted, because a pass or a process a stop left could
+have written it. A runner checks
+for the marker only while it holds the run lock, when no other pass can
+be running, so a marker whose pid now belongs to another process still counts. If that tripwire cannot
+be written, it exits **70** and keeps the marker. A runner that cannot write the marker's
+state-directory copy refuses to start with exit 1. A copy of the pre-pass backup,
+`inflight-backup.tar`, is kept in the state directory while a pass runs, and after a pass whose
+runner's own folder was changed it stays there for the review until the next pass replaces it.
+The next pass removes a backup an earlier pass kept before it copies its own, and a copy that
+fails, or leaves something other than a regular file, refuses the pass with exit 1 before the
+in-flight marker and the agent: `ERROR: could not copy the pre-pass backup of the steering
+surfaces to the state directory as <path>. Refusing to run.` That covers a link already at that
+name, which is removed before the copy, and a copy that succeeds leaving a link, or nothing,
+there. On 1.4.1 the copy was unchecked: the agent ran after a failed copy (measured), and an
+older backup left there could be named as the pass's own (reasoned); a link already at the name
+was followed and the file it named overwritten, and a copy that left a link or nothing was taken
+and the agent ran (measured).
+
+The state directory is `%LOCALAPPDATA%\claude-memory-vault\<id>\` on Windows and
+`${XDG_STATE_HOME:-~/.local/state}/claude-memory-vault/<id>/` elsewhere, where `<id>` is a checksum
+of the vault's resolved path. Symlinks and `..` are resolved, Windows short names are expanded,
+and on Windows and macOS ASCII case is ignored, so those spellings of one vault's path find the
+same state directory. A `subst` or mapped drive letter, and on macOS a differently normalized
+Unicode folder name, count as another path. On a case-sensitive macOS volume, two vaults whose
+paths differ only in case share one state directory, and so block each other's runs.
+`VAULT_STATE_DIR` overrides it, and a Windows path such as `C:/Users/Some One/vault-state` is
+accepted. A value inside the vault, a relative one, or one containing `..` is never used. A
+value that does not exist yet is judged by where it would be created, so a symlink into the
+vault does not get past the check. The runner logs a warning and uses a directory under the
+system temp folder instead. Set `VAULT_STATE_DIR` the same way for both runners and for the
+shells where you run `vault-check.sh`, or they look for the tripwire in different places, and
+give each vault its own value. The runner resolves the state directory's path first, checks the
+directory it resolves to, and uses that directory for the rest of the run, so a symlink pointed
+elsewhere after the check changes nothing. It refuses to start with exit 1, and logs which check
+failed, when the state directory cannot be created, resolves into the vault (a symlink planted
+at the temp-folder fallback, for example), is a symlink in a folder every account can write, sits
+inside a folder every account can write that has no sticky bit, or on Linux and macOS is not
+owned and writable by the runner's account or is writable by every account. Another account
+could otherwise plant a forged tripwire there, or rename the directory and put its own in its
+place. A folder above it that another account owns is not checked, so keep the state directory
+under your own home folder or the default location, or on Windows in a folder with an ASCII name
+you made yourself directly under `C:\` and made private (`docs/setup.md`, Troubleshooting, has
+the commands); check another drive's root with `icacls` first, since one that gives every account
+full control lets them rename your folder, and a folder deeper down is only as safe as the
+folders above it. A group-writable
+directory is allowed, because many Linux systems give each user a private group. Git Bash
+reports every file as the current user's and its mode bits are not Windows permissions, so on
+Windows only the check against the vault applies. `vault-check.sh` prints a warning when it
+cannot work out the state directory, since it then checks only the tripwire in the vault. A
+runner that cannot take the backup, for example because `tar` is missing, refuses to start with
+exit 1. A backup that cannot be restored is listed in the tripwire as a containment error.
+Ordinary notes are not contained. A human may be editing one at the same moment, and git already
+shows their diff.
+
+###### Known limits
+
+- Claude Code 2.1.287 reads an empty or invalid `--settings` file as if there were none, with exit
+  0 and nothing on stderr, so the memory grant outside the vault comes back (measured on 2.1.287;
+  not re-run on a later version). The runner reads `pass-settings.json` back byte for byte before
+  it starts the agent, but a change between that read and Claude Code's is not seen, nor one
+  Claude Code might read later in the pass (whether it re-reads the file is unmeasured). The file
+  lies in the runner's own folder for the pass under `TMPDIR` (or `/tmp`; on macOS in the per-user
+  temporary folder, where Apple's `mktemp` makes it even when `TMPDIR` names another folder),
+  which `mktemp -d` makes private off Windows and which must pass the state directory's checks and
+  an identity check of its own. The file is written, checked and handed to Claude Code through the
+  folder's resolved path, the folder above it resolved as `mktemp -d` resolved it, so a link in
+  `TMPDIR`'s spelling, or a `..` after one, cannot be pointed at another folder after the checks;
+  a link inside the vault that leads to the folder, or to one above it, is not seen, and may put
+  the file within the agent's reach (unmeasured). As for the state directory, a group-writable
+  folder above it is allowed, and a member of that group could rename the folder and put their own
+  in its place; so is a folder above it that another account owns, whose owner could do the same;
+  and the checks read mode bits only, so an access control list that lets another account change
+  the folder is not seen: keep `TMPDIR`, and every folder above it, owned by your account or by
+  root, and writable by no other account unless it has the sticky bit, as `/tmp` has. On Windows
+  it carries the temporary folder's permissions and the runner cannot read them, so schedule the
+  task as your own account, and leave `TMPDIR` unset there unless the `//?/` limit below needs a
+  shorter folder: unset, the folder is made in Git Bash's `/tmp`, this account's temporary folder,
+  which only the account, SYSTEM and Administrators can change (measured; on the one host
+  measured, setting `TEMP` and `TMP` for the `.cmd` did not move `/tmp`). A Git Bash login shell,
+  as a Git Bash terminal starts one, sets `TMPDIR` from `TMP`, spelled `C:/...`, and a pass
+  started from it fails at its steering backup, as in 1.4.0, because `tar` reads `C:` as a host
+  name (measured on 1.4.0 and this release): start passes with the `.cmd` wrappers, or unset
+  `TMPDIR` first, and never spell `TMPDIR` in that form. That advice assumes the task runs as your
+  own account, whose `TEMP` is a folder of its own: a task run as SYSTEM gets `C:\Windows\Temp`
+  instead (unmeasured), whose permissions the per-user default does not describe. The same folder
+  has held the pass's snapshots, its steering backup and the folder git takes hooks from since
+  1.4.0, reached through `TMPDIR` as spelled through 1.4.2. Name the folder with no `..` and no
+  part ending in a dot in its spelling all the same: git on Windows reads such a spelling as text,
+  a `..` after a junction and a dropped dot leading it to another folder than the one `mktemp`
+  made, so the 1.4.2 spelling checks still refuse it before the folder is resolved. A link above
+  the folder is resolved and accepted; one at the folder itself is refused. On Windows, or
+  wherever a `cygpath` is found on `PATH`, every runner, the retention runner included, refuses a
+  `..`, a part ending in a dot or a colon that is not a drive letter's in every mode, before its
+  first git call, and on every
+  platform it refuses a folder that is not an absolute path, as a relative `TMPDIR` or one
+  starting with `~` gives (a drive path counts only under Git Bash, MSYS or Cygwin). The retention
+  pass takes `TMPDIR` only when it starts with `/`, and otherwise uses `/tmp`, for its temporary
+  files too, and it has no last-resort folder. Those checks read the spelling only, so they do not
+  see a link. From 1.5.0 every runner, in either mode, then resolves the folder once (the folder
+  above it resolved physically, with `cd -P` and `pwd -P`, its own name kept) and checks the
+  result before its first git call, with the checks the memory override runs on it: that it is
+  the folder `mktemp` made, compared by identity; the state directory's checks of its owner and
+  that it is not writable by every account; and that it does not lie inside the vault, by file
+  identity and, on Windows or wherever a `cygpath` is found, walked as a drive path too. There it
+  must also convert to a drive path that maps back to it, and off Windows it must also
+  be open to no other account, with no permission bit for its group or for others, which the
+  state directory's checks do not ask (`mktemp -d` makes it 0700, measured on Linux, and on macOS
+  in CI's bash 3.2 job, where a pass ran through this check). A folder that fails refuses the
+  run (1) before any git call, and no agent starts. From then on the snapshots, the steering
+  backup, git's hooks folder, the settings file and the record of the folder use the resolved
+  path, so a link above the folder, as a `TMPDIR` spelled through a link gives, still runs, and
+  git and Claude Code are handed the resolved path. On 1.4.2 only a claude-mode pass checked the
+  folder itself, inside the override and after the runner's first git calls, and command mode
+  did not check it at all. The retention runner gives the folder for its own copy of the log, made
+  before its run lock, the same check before it writes anything there, and puts the copy into
+  exactly the path the check passed, never one resolved again. A folder that fails costs the run
+  only that copy: each of the check's lines is logged as `WARNING: (the folder for this run's copy
+  of its log) …`, ending `So this run keeps no copy of its log, which goes to the log alone.`, and
+  the run goes on; a check that prints nothing gives one line, `WARNING: the folder for this run's
+  copy of its log could not be checked, so this run keeps no copy of its log, which goes to the
+  log alone.` The checks share
+  the limits above: a group-writable folder above, one another account owns, and an access control
+  list are not seen. The settings file adds a file there that Claude Code reads at every
+  claude-mode pass, whether or not the vault is a git repository: the runner's own file turns
+  hooks off, but anyone who can change the folder can swap it for one naming hooks, which Claude
+  Code would run as your account.
+- The runner's folder for the pass also holds the pass's "before" snapshot. A folder that is gone
+  when the runner checks it before its first git call, or when the override is written, is
+  refused (exit 1), and so is a link put in its place before the checks resolve it, but one
+  emptied, or removed and made again, before then by another process of
+  your account, by root, or on Windows by any account that can change the temporary folder, is not
+  seen (reasoned), nor, off Windows, another folder of yours moved into its place by an account
+  that can rename entries in `TMPDIR`, nor one replaced once the checks have resolved it and
+  before Claude Code has read the settings file, which is then written into, or read from,
+  whatever took its place (both reasoned). One removed while the agent runs takes the snapshot
+  with it, and on 1.4.1 the fence then compared the pass with nothing: writes the agent made
+  under `90-auto-memory/` and to `AGENTS.md` stayed in the vault and no tripwire was set
+  (measured on 1.4.0 and 1.4.1 with a stand-in agent). Each runner now records the folder before
+  the agent starts and again as soon as it returns, before writing anything there, so a folder
+  removed or changed in between ends the pass with exit 78, the tripwire set in a shape that says
+  nothing was moved or restored, and the pre-pass backup and the folder kept; when no tripwire
+  can be written it exits 70 instead, with a `TRIPWIRE-ERROR:` line in place of the
+  `UNVERIFIED:` one, and keeps the in-flight marker. The record holds each file's digest and
+  whether it has one link or more, and refuses a name outside letters, digits, dot, underscore and
+  hyphen. Folders in it are recorded as empty or not, never entered, and one that cannot be listed
+  fails the record: on Linux a hooks folder made searchable but not readable (`chmod 100`) listed
+  as empty while a hook in it still ran through its search bit (measured on Linux; on Windows
+  `chmod` does not stop a listing, measured in Git Bash), so such a folder refuses the pass with
+  exit 1 before the agent starts (reasoned), and ends it with 78 after. The library clears
+  `GLOBIGNORE` as it loads, because set before then it would hide names from both records, which
+  would then agree
+  (bash 5.3 does not take it from the environment, measured in Git Bash and on Linux; bash 3.2 is
+  unmeasured). The record does not see a change undone before the agent returns, or one made
+  after the check by a process still running, and where the runner falls back to `cksum` (it logs
+  a `WARNING:`), any of the accounts above that can write the folder can forge a match. Keep
+  anything that cleans the temporary folder from removing a pass's folder while it runs.
+- The runner removes the settings file with its folder when the pass ends. After a stop that
+  leaves Claude Code running (`KILL_FAILED`, which sets the tripwire), the file is gone while the
+  process may still be at work; whether Claude Code would then grant its default memory folder
+  again is unmeasured, so when you review such a pass, look in its default memory folder too:
+  `~/.claude/projects/<the vault's path, with each character but a letter or digit turned into
+  a ->/memory/`.
+- The override assumes the runner and Claude Code see paths alike. A runner started outside Git
+  Bash (in WSL, say) whose Claude Code is Windows' `claude.exe` would pass Linux paths a Windows
+  program reads as folders under its drive root, so such a pass refuses to start. That check runs
+  only where no `cygpath` is found: with a stray `cygpath` on `PATH` the runner converts the paths
+  instead, and they must pass the conversion checks. The check
+  looks the name up as the runner will start it and reads the file it resolves to, through any
+  link, for a `.exe` ending or the `MZ` header every Windows program starts with; a file it
+  cannot read, and a name that is no file (an exported shell function), refuse too. A wrapper
+  script that starts a Windows Claude Code is not recognised, and the name is looked up again
+  when Claude Code starts, so a `PATH` folder or link changed in between by someone who can
+  write it is not seen.
+- On Windows the override names the vault as the runner was started with it, so a vault reached
+  through an 8.3 short name (a profile folder such as `RUNNER~1`) is named that way, and the
+  settings file by its folder's resolved path, in which Git Bash expands such a name. A folder
+  under Git Bash's `/tmp` keeps that spelling only where the temporary folder's path holds no 8.3
+  name; on CI's Windows image, whose `TEMP` is spelled `RUNNER~1`, it resolves to the long drive
+  path (`/c/Users/runneradmin/...`), while a vault there under `/tmp`, as the suite's are, is
+  named with `RUNNER~1` (reasoned: `TEMP`'s spelling was seen on CI, and that `cygpath -m` keeps an
+  8.3 name was measured on a development host, with another short name; no CI log prints either
+  path). The suite's claude-mode passes, whose vaults lie there, pass the identity checks on CI;
+  real Claude Code has not been measured with a short-name value.
+- On Windows, `cygpath -m` gives a `//?/` device path for a path of about 260 characters or more
+  (254 converted normally, 309 did not, measured), so a vault, or a temporary folder, that deep is
+  refused with `which is not a Windows drive path`. Move the vault nearer a drive root, or point
+  `TMPDIR` at a shorter folder outside the vault that only your account can change; the runner
+  cannot read its permissions on Windows, so make it private yourself, as for a state directory
+  (`docs/setup.md`, Troubleshooting).
+- On a volume where Git Bash gets no file IDs (FAT32, exFAT, some network shares), it builds a
+  file's identity from its spelled path, so the identity checks the runner's folder for the pass
+  gets could take one folder spelled two ways (an 8.3 name and its long name, say) for two: they
+  could refuse a pass whose `TMPDIR` lies there spelled otherwise than `pwd -P` spells it, and
+  could miss a vault spelled with an 8.3 name that holds such a folder (reasoned; no such volume
+  was measured).
+- On Windows a vault on a network path is refused with `which is not a Windows drive path`. For
+  one reached as `//localhost/c$/...` (this host's own administrative share) or
+  `//wsl.localhost/...` and started from Git Bash, Claude Code 2.1.289 and 2.1.292 ignored the
+  settings file and kept granting the default memory folder outside the vault (measured; a share
+  on another server is unmeasured, and refused all the same). The `.cmd` wrappers cannot start
+  such a vault at all (`CMD does not support UNC paths as current directories`). A mapped drive
+  gives a drive path and runs: for
+  one drive mapped to the measuring host's own administrative share (`\\localhost\c$`), a Write to
+  the default folder was refused with the file (2.1.289 and 2.1.292, measured through
+  `dream-pass.cmd`). A drive mapped to another server is unmeasured, and where that server reports
+  no file IDs the runner's identity checks could refuse it (reasoned). For the vault, any other
+  drive letter whose target is a network path is accepted too and unmeasured: DFS, WebDAV and
+  other redirectors, a local link to a share, `subst` onto one, and a drive mapped to
+  `\\wsl.localhost\...`. The temporary folder is taken by its resolved path, so one reached
+  through a local link to a share should be refused as a network path (reasoned; not measured).
+- When `VAULT_STATE_DIR` is rejected, or there is no per-user state folder to use, the state
+  directory falls back to `${TMPDIR:-/tmp}/claude-memory-vault-state-<id>`. On Linux and macOS
+  the checks above still apply to it; on Windows a `TMPDIR` other accounts can write would hold
+  the state, as it holds the settings file on every pass, so leave `TMPDIR` at its private
+  default there.
+- A vault in a folder other accounts can write, such as one made directly under `C:\` or on a
+  data drive, is open to them before and during every pass: they can change its `.claude/`
+  settings, swap `90-auto-memory` for a link after the checks, or plant memory there. Keep the
+  vault in your profile, or make its folder private as for the state directory.
+- The override covers Claude Code's auto memory only. An agent definition's own `memory:` key
+  would grant a folder such as `~/.claude/agent-memory/`, outside the vault; the template's agents
+  set none. In claude mode the runner does not check that `.claude/agents/<name>.md` exists, so
+  without it `--agent` may resolve to a user-level definition of the same name (unmeasured).
+- Only the Write tool was probed under the memory override. Edit is granted the same folder by
+  the same setting, and was not measured.
+- On Windows the state directory's path, and the path keys that compare vault and repository
+  paths, are still converted with `cygpath` under the runners' `C` locale, as in 1.4.0, apart from
+  the claude-mode check of the runner's folder for the pass, which runs under `C.UTF-8`. That
+  double-encodes a non-ASCII name: with the default `%LOCALAPPDATA%` base, an account whose name
+  is not ASCII gets a state directory beside its profile that it cannot create, so every pass
+  exits 1 until `VAULT_STATE_DIR` names a folder it owns. A non-ASCII `VAULT_STATE_DIR` is used
+  under its double-encoded name, a folder the runner makes itself beside the one named, which
+  takes its parent's permissions rather than that folder's: directly under `C:\` every signed-in
+  account can then change the state it holds (measured), and where the account cannot make
+  folders, as in `C:\Users`, every pass exits 1. Use an ASCII path for it on Windows. Two vaults
+  whose paths differ only at or after their first character outside the ANSI code page can get the
+  same state directory id, and so block each other's runs. The same coarse comparison decides
+  whether a vault is a repository of its own, so a vault folder inside a larger repository whose
+  paths agree up to that point could be taken for the repository's top (reasoned, not measured).
+- The watchdog stops a pass's process tree only when it times out or stalls. A pass that exits
+  on its own but leaves a background process running, such as a server a hook started, is not
+  stopped, and that process can write after the second snapshot. A process that leaves the
+  process group with `setsid`, or on Windows starts without the session id on its command line
+  after its parent exited, is not found by the stop either. The output check still catches one
+  that keeps writing to the run's output.
+- Outside Windows the agent runs in a process group of its own. A scheduler that ends a job by
+  signalling the runner's group, as launchd does when a job's process exits, no longer reaches
+  the agent. If the runner itself is killed with `KILL`, or dies before its signal handler
+  runs, the agent keeps running until it ends on its own, and the in-flight marker makes the
+  next run set the tripwire.
+- A directory symlink that existed before the pass, other than `.obsidian` or `.git` itself, is
+  fenced as a link, not by what it points to. A write through a link such as
+  `.claude/skills -> ~/shared-skills` is not seen. Retargeting or replacing the link is.
+- Rebasing, pulling with rebase, or switching branches while a pass runs moves HEAD in a way the
+  runner cannot tell apart from a rewrite, so it sets the tripwire. That fails closed. Avoid it
+  during a scheduled pass, or clear the tripwire after checking `git reflog`.
+- Adding, removing or pruning a linked worktree while a pass runs (`git worktree add`, `remove`
+  or `prune`, including the prune inside `git gc --auto`) changes the fenced files under
+  `.git/worktrees/` and sets the tripwire. A new worktree's `commondir` is moved to the
+  quarantine, so git fails in that worktree until you copy the file back from the quarantine
+  path the tripwire names. A removed one leaves a `.git/worktrees/<name>/` folder holding only
+  the restored files, which `git worktree prune` clears. When the vault is itself a linked
+  worktree, those files sit in the shared git directory and appear under `.git-common/`, which
+  the runner reports but never moves or restores. Avoid worktree commands during a scheduled
+  pass.
+- Git activity inside a nested repository while a pass runs, such as a `git clone` into
+  `40-llm-wiki/raw/`, `git submodule update --init`, or `git remote add` in an embedded
+  repository, changes its gitlink, config or hooks and sets the tripwire. The new files are moved
+  to the quarantine, so the clone loses its config or the submodule checkout loses its `.git`
+  file until you copy them back from the quarantine path the tripwire names. Avoid these
+  commands during a scheduled pass.
+- A submodule whose own path contains `refs/heads`, `refs/tags`, `refs/remotes`,
+  `refs/prefetch`, `refs/notes` or `refs/rewritten`, such as `vendor/refs/tags/lib`, has its git
+  directory's config and hooks left out of the fence, as a ref of that name would be. Nothing in
+  a path tells where a submodule's name ends and its refs begin.
+- Some plugins run code that lives in ordinary notes or vault folders. DataviewJS runs
+  JavaScript blocks from any note, and Templater, QuickAdd and CustomJS load user scripts from a
+  folder you choose. A pass that writes such a note or script outside its allowed areas is
+  reported as a VIOLATION but not contained, and one inside them (a script folder under
+  `31-standards/`, for example) is not reported at all. Keep script folders outside the areas a
+  pass may write, and leave DataviewJS and inline JavaScript queries off unless you need them.
+
+##### Script integrity
+
+Each runner's body is a function called on the script's last lines, so an
+edit made to the script while it runs is never executed by that run. Every git command a runner
+issues runs with no hooks, no fsmonitor, no signature checks and no prompts (`core.hooksPath`
+set to an empty temporary directory), the journal commit below included. On Windows git is handed
+that folder converted to a drive path, because the library clears `MSYS_NO_PATHCONV`,
+`MSYS2_ARG_CONV_EXCL` and `MSYS2_ENV_CONV_EXCL` as it loads: with an inherited
+`MSYS2_ARG_CONV_EXCL` covering `core.`, `git.exe` looked for its hooks in a folder under the
+drive root, which another account could make (measured in Git Bash on 1.4.0 and 1.4.1's code),
+and an account-wide `MSYS_NO_PATHCONV=1`, which made every pass fail at its first git step, now
+lets the pass run. Each path a runner names is
+taken literally (`GIT_LITERAL_PATHSPECS=1`), because git otherwise also reads a path as a
+pattern, and a journal named `dream-[x].md` would then stage someone's `dream-x.md`. Git's other
+pathspec settings are turned off for those commands, because git refuses to combine them with
+the literal one. That is not a sandbox. A filter declared in `.gitattributes` can still run on
+a command that reads the work tree, which is why the runners call git on the vault only while
+its config is known to be the pre-pass one.
+
+##### Artifact assertion
+
+A pass that exits 0 but left no evidence it ran exits **1**
+(NO-ARTIFACT). For `dream-pass` a `dream-*.md` journal must have been added or changed during
+this run; matching any date rather than today's keeps a run that crosses midnight valid. For
+`promotion-pass` a week that promotes nothing is legitimate, so it accepts *either* a long-tier
+change *or* a `PROMOTION-SUMMARY: promoted=<n> pending=<n>` line in this run's own output,
+which an error dump does not contain. In command mode the line must start a line of the output.
+In claude mode it counts only in the text of the stream's result event, at the start of that text
+or of one of its lines, so a summary quoted in a sentence or found in another field does not.
+
+##### Git preflight and files already being edited
+
+Before the agent starts, a runner exits
+**1** when the vault has a `.git` git cannot read (for example git's "dubious ownership" refusal
+under another account), because a real repository must not pass as none. A vault that is only a
+folder inside a larger repository, such as a home folder kept in git, is noted and never
+committed, because that repository's config and hooks are outside the fence. In a vault that is
+its own repository, the runner exits **75** when a merge, rebase, cherry-pick, revert or bisect is
+in progress, or HEAD is detached, and records every file `git status` reports as modified,
+staged, untracked or conflicted, both sides of a rename included. After the pass, a file the pass
+owns (a dream journal, or for the promotion pass a long-tier note or promotion report) that
+changed and was on that list exits **2**, and the runner commits none of them. Every other dirty
+or staged file is left as the runner found it.
+
+##### The long tier is create-only
+
+A promotion pass may add notes to `31-standards/` and
+`40-llm-wiki/wiki/` but never change one that was there before it started, whoever wrote it. A
+note was there when the commit HEAD pointed at before the pass holds it, or when it was on disk
+before the pass, a note git ignores included, unless it is an earlier promotion pass's own
+uncommitted note that this run adopted (below). A new name that differs from such a note only in
+ASCII case counts as that note, adopted or not, because on Windows and macOS it is one. A pass
+during which one changed exits **2**, logs the notes under `VIOLATION: long-tier notes that were
+there before the pass started changed during it`, commits nothing and puts back every note it
+changed, whether the agent succeeded, failed, timed out or gave no summary. The notes are listed
+under that line even when the pass also wrote into a note someone was editing, or removed one,
+and that refusal is logged too. A note the snapshot alone knows is marked `in no commit under
+this name`, and a case twin says so. When the commit from before the pass cannot be listed, the
+pass is refused under `VIOLATION: the runner could not list the commit from before the pass`,
+because the runner cannot say whether a note that was there changed. The runner cannot tell the pass's
+change from one you or a sync client made while it ran, so either refuses the pass. A change a
+sync client *commits* while the pass runs stays committed: the runner logs it as committed while
+the pass ran and cannot undo it, so read that commit with `git show` and revert it yourself when
+it holds the pass's change, and pause any auto-commit around the scheduled pass. The check comes
+before vault-check, so such a pass exits 2 even when a note of its own would fail the check. A
+pass that also wrote outside the areas it may write, or changed a steering surface, is refused
+for that first, and that refusal puts none of the pass's notes back and copies none of them to
+the quarantine (below). The log then names each long-tier note that was there before the pass
+and is no longer as it was, under `Long-tier notes that were there before the pass changed
+during it, and this exit puts none of them back`, leaving out one that already had uncommitted
+changes, which the dirty-note line names. The runner cannot tell who changed them, so read each
+with `git diff <commit> -- <path>`, the commit from before the pass that the line names, which
+also shows a change a sync client has committed since, before you restore it with
+`git restore --source=<commit> -- <path>`, which would discard an edit of yours along with the
+pass's. When that commit cannot be listed, the log names every note the pass owns that changed,
+under a line that says so. A note git ignores, or one whose name on disk differs only
+in case from the name a commit holds it under (a case-only rename, such as one made in
+Obsidian, that git has not recorded), is in no commit under its name on disk, so it is refused
+but left as the pass wrote it, and the log says so. `git status` shows the second kind's change
+under its committed name and later sessions read it from disk, so read it with `git diff` and
+restore what the pass wrote before anything commits it, because there is no quarantine copy and
+`git restore` also discards an edit of yours. A note the pass itself wrote under a new case is
+put back (below). A freshness
+stamp, a supersession or a correction of an existing note reaches you as a proposal in the
+pass's promotion report instead, and applying it is yours. A promotion report is not in the long
+tier, so a pass may still change one. Like the commit and the put-back, the check needs a vault
+that is its own git repository, and a pass in any other vault is not checked for it. Case that
+differs outside ASCII, and names that differ only in Unicode normalization, are not caught.
+
+##### Runner commit
+
+A successful pass has the files it changed in the areas it owns committed by
+its runner, and nothing else. For the dream pass those are its journals. For the promotion pass
+they are its new long-tier notes and its promotion report. The runner records their blob ids, runs
+`vault-check.sh` on exactly those files and exits **5** (CHECK-FAILED) when any fails. It then
+runs `git add -- <files>` and `git commit --only -- <files>` with `core.hooksPath` pointed at an
+empty folder (on Windows handed to git as a drive path, as under Script integrity), each step
+under the watchdog with `RUNNER_GIT_TIMEOUT`, so a signing prompt cannot
+stall the run. The commit runs no hooks because hook managers such as pre-commit or husky read
+their configuration from ordinary files a pass can write, and the check on the files takes the
+commit gate's place. Signing still applies. A staged blob that differs from the checked one (the
+file changed while it was checked), or a failed or stopped step, exits **4** (COMMIT-FAILED). The
+runner then takes the files back out of the index, says in the log when it could not, and names
+a leftover `index.lock`. Exit 4 also covers a commit that was made but whose trailers do not
+match what HEAD holds, and the log says so. The commit message carries `Vault-Pass: dream` or
+`Vault-Pass: promotion` and one `Vault-Pass-Blob: <blob id> <path>` per file. A file git
+ignores, or one HEAD already holds because something else committed it during the pass, is noted
+and passes.
+
+On exit 5 the passes differ. The dream pass leaves the rejected journal in place, uncommitted,
+for you to fix or delete. The promotion pass puts back the notes it changed, because the long
+tier steers later sessions, and logs each under `REVERTED`. It does the same on exit 2 when a
+note the pass changed was already being edited, or is no longer a regular file, or was a
+long-tier note that was there before the pass, whether the agent succeeded, failed, timed out or
+gave no summary, so a pass that deletes or edits one note cannot keep its other notes in place. A dream pass in that state exits 2 too, and records nothing for
+the next run. A note someone was already editing is never put back, because its pre-pass bytes
+are in no commit.
+- A note that was in the commit HEAD pointed at before the pass is first copied to a quarantine
+  folder ending in `-rejected` in the state directory, and then restored from that commit. The
+  log names the copy, which keeps an edit you made to that note while the pass ran. When the
+  copy fails, the note is not restored.
+- A deleted note is restored the same way, and so is a note the pass replaced with a folder,
+  once the files in that folder are in the quarantine and the empty folder is removed. A folder
+  that still holds something the pass did not leave there is logged and left.
+- A new note is moved to that quarantine folder, and a folder the move leaves empty is removed
+  unless it held other files before the pass. The tier folders themselves are never removed.
+- A note git ignores that existed before the pass is in no commit, so there is nothing to
+  restore, and it is left as the pass wrote it.
+- A new note that is the same file as one that was there before the pass, under a name that
+  differs only in case, is that note renamed by a writer that replaces files on a filesystem that
+  folds case. Moving it out would take the note out of the vault, so it is copied to the
+  quarantine and the note restored under its own name instead, unless no commit holds that name,
+  someone was already editing it or it was committed while the pass ran, when it is left as it
+  is, or the copy or the restore failed. The log says which, and what was done. A link, or a
+  second name for the same file, is never taken for such a note.
+- A note that is no longer exactly as the pass left it (changed again, removed, or now a folder
+  or a link) is someone else's since, and is left as it is.
+- A note whose content in HEAD changed while the pass ran, because you or a sync plugin committed
+  it, is left as it is, because restoring the older commit would undo that commit in the work
+  tree.
+
+Every note left as it is gets its own line in the log, and the runner still exits 5 or 2. So
+"put back" means every note except the ones the log lists.
+
+Files the runner could not commit are recorded with their exact bytes in the state directory.
+That covers exit 124, exit 125, exit 4, the agent's own failure, a promotion pass's NO-ARTIFACT exit 1,
+and a dream pass's exit 5 for the journals that pass the check on their own, after a pass that
+wrote only where it may. A file someone was already editing is never recorded, and neither is
+one that is no longer as the pass left it, such as a note edited while the commit ran. Each
+record line is the blob id, a tab and the path, so a name that ends in a space stays its own
+name. A record that cannot be written in full is logged, and the earlier record is kept.
+
+A pass stopped by a signal before containment has run records nothing, because it sets the
+tripwire and its files are left for you to review. A signal that arrives later, while the
+runner commits or puts back the pass's notes, stops the runner with no tripwire and no record.
+The notes it had not committed or put back yet stay in the vault, uncommitted and possibly still
+staged, and the next run takes them for someone's edit. Check `git status` after stopping a
+runner by hand.
+
+The next run of the same pass checks each recorded file that nobody has changed since, on its
+own, before its agent starts. One that fails is logged under `LEFTOVER-REJECTED` with
+vault-check's output. So is a promotion leftover that changes a long-tier note the last commit
+already holds, with a `create-only:` line, because the long tier is create-only and it would
+otherwise take the run's own notes down with it. The promotion pass puts it back then, into a quarantine folder ending in
+`-leftover`, and the dream pass leaves it in place for review. Either way it cannot make that
+run's own files fail with it. The rest are logged under `ADOPTED` and join the files that run
+checks, whether or not the run touches them, and are committed with its changes or put back
+like them. The promotion pass lists them for its agent in the git state file. The record stays
+until a run commits or puts back its files, or records its own leftovers in its place. A
+recorded file edited since counts as someone's edit, so fix a rejected
+journal and commit it yourself, or delete it. A file that was clean before the pass and edited by
+you or a sync client while the pass ran cannot be told apart from the pass's own writing. A
+journal, a promotion report or a note the pass created is committed under the pass's trailer. A
+long-tier note that was there before the pass counts as the pass changing it, so the pass is
+refused and the note restored, and your edit is in the quarantine copy the log names. That copy
+exists only when the pass wrote nowhere outside its areas and changed no steering surface, and
+the note was in a commit under its name on disk and was neither committed during the pass nor
+changed again after it ended; otherwise the log says which, and the note is left as it is.
+Avoid editing today's
+journal, or a long-tier note, during a scheduled pass. In Obsidian that includes creating a note
+in the long tier. An empty new note there fails the check, so the promotion pass puts back every
+note it wrote and moves the new note to the quarantine while it is still open.
+
+#### The history each agent reads, and which vault and repository a runner uses
 
 Neither agent is given a shell, so each runner writes the history its agent reads before the run.
 `dream-pass.sh` writes `git log --oneline -5` and `git status --short` to
@@ -2243,19 +2278,60 @@ Known limits, each failing in the quiet direction:
 | Exit | Meaning (`vault-retention.sh`) |
 | --- | --- |
 | `0` | OK: the moves were committed, nothing was eligible, this was a dry run, or there is no `20-projects/_logs` folder. Its last printed line, and the log, say which |
-| `1` | setup failure, a `sha256sum`, `shasum` or `cksum` that `PATH` finds in the vault or that leads there through a link, or no `cksum` (from 1.7.5; `cksum` names the state directory), a library without `fence_tools_pin`, `20-projects/_logs` cannot be listed or entered, git cannot read the vault, the vault is not the top of its own repository, a shallow clone, `info/grafts`, or a sparse checkout, or, on Windows or wherever a `cygpath` is found on `PATH`, the vault's path holds a part ending in a dot, a colon that is not a drive letter's or a last part ending in a space ("the vault, ..., is spelled with a part that ends in a dot", before the state directory, the run lock or any git call), or the run's temporary folder is spelled with a `..` or a part ending in a dot, which git there would read as another folder ("is spelled with .. or with a part that ends in a dot", before any git call). Also, before any git call, when neither `$TMPDIR` nor `/tmp` can hold the run's folder ("could not create a temporary directory"; there is no last-resort folder), when that folder is not an absolute path ("is not an absolute path, so it was made inside the vault", which this runner cannot meet through `TMPDIR`, since it uses `TMPDIR` only when it starts with `/`), or when, on Windows or wherever a `cygpath` is found, it holds a colon that is not a drive letter's ("is spelled with a colon that is not a drive letter's"). Also, before any git call, when the run's folder, resolved, fails the checks every runner runs on it from 1.5.0 (§ 4.3, Known limits): the state directory's checks, inside the vault by file identity, or not the path it resolves to ("the runner's folder for the pass", then the check, then "and the runner keeps the pass's snapshots, its backup and git's hooks folder there"), not there as a folder, a folder above it that cannot be reached, a resolution that led to another folder, a walk that gave no answer or a vault that cannot be resolved; off Windows, a permission bit for its group or for others ("is open to other accounts (its mode is not 0700)") or a `find` that could not check it ("could not run (find failed)"); and, on Windows or wherever a `cygpath` is found, a `cygpath` that cannot convert the folder ("cygpath could not convert the runner's temporary folder"), gives a path that is not a drive path ("for the runner's temporary folder, which is not a Windows drive path") or gives another folder ("which is not the same folder"). The folder for the run's own copy of its log gets the same checks, and the copy goes into exactly the path they passed, but one that fails them is not a refusal: each line is logged as `WARNING: (the folder for this run's copy of its log) …`, ending "So this run keeps no copy of its log, which goes to the log alone.", or, when the check prints nothing, as "WARNING: the folder for this run's copy of its log could not be checked, …", and the run goes on. With 1.4.2's `lib/runner-common.sh` a 1.5.0 runner exits 1 before its first git call with `runner_folder_checked: command not found` on stderr, not in its log, and 1.4.2's runner with 1.5.0's library runs as 1.4.2 did, without the new checks (both reasoned, not measured). With 1.4.1's `lib/runner-common.sh` a 1.4.2 runner exits 1 with `git_env_warning: command not found` and `vault_root_spelling_ok: command not found` on stderr, not in its log, and with 1.4.0's a 1.4.1 runner exits 1 with `temp_dir_spelling_ok: command not found` there (both measured on Linux; older libraries are unmeasured). Also the script failing in itself, such as on an unset variable, which bash ends with `1`. A folder that cannot be listed is never read as an empty one, which is a clean `0` |
+| `1` | setup failure, a `sha256sum`, `shasum` or `cksum` that `PATH` finds in the vault or that leads there through a link, or no `cksum` (from 1.7.5; `cksum` names the state directory), a library without `fence_tools_pin`, `20-projects/_logs` cannot be listed or entered, git cannot read the vault, the vault is not the top of its own repository, a shallow clone, `info/grafts`, or a sparse checkout, or, on Windows or wherever a `cygpath` is found on `PATH`, the vault's path holds a part ending in a dot, a colon that is not a drive letter's or a last part ending in a space ("the vault, ..., is spelled with a part that ends in a dot", before the state directory, the run lock or any git call), or the run's temporary folder is spelled with a `..` or a part ending in a dot, which git there would read as another folder ("is spelled with .. or with a part that ends in a dot", before any git call). [More below the table](#retention-exit-1-continued) |
 | `2` | REPORT-REFUSED: the `--adopt-legacy` report was not written by this runner, or its list has changed since. Nothing moved |
 | `3` | PARTIAL: a move, or the check after the moves, failed, and every file was put back. Nothing is committed. Since 1.7.1 this holds also when HEAD moved meanwhile to a commit that descends from where the run started and touched no file this run moves; any other moved HEAD leaves a recovery record and 71 instead. Also when the archive folders could not be made, or one turned out to be a link or not a folder just as the move was about to use it (the log says `ERROR:` or `PATH-BLOCKED:`), where nothing had moved to put back |
 | `4` | COMMIT-FAILED: the commit was not made and the moves were put back. Either HEAD did not move, or it moved to a commit that descends from where the run started and touched no file this run moves (every try lost the swap, a branch was switched or a git operation started meanwhile). The log carries the first lines git gave as its reason, such as a missing identity or a signature gpg could not make (1.7.1) |
 | `6` | PATH-BLOCKED: `20-projects`, `20-projects/_logs` or one of the archive folders is a link, a junction, not a folder, or another entry differs from it only in case. Checked before anything is judged, so nothing moved |
 | `64` | usage error: an unknown option, or a report file that is missing or unreadable |
 | `70` | TRIPWIRE-ERROR, the same meaning as for the other runners |
-| `71` | RECOVERY-NEEDED: a put-back failed, or what a commit did cannot be determined, or (1.7.1) HEAD moved mid-run to a commit that changed a file this run moves or does not descend from where the run started, such as an amend, or this run's commit landed on a branch other than the one it started on because the branch was switched at the swap, or (1.7.1) this run's commit is on some other branch because the branch was switched away just before the swap and back just after, or a git command of the run (a `git mv`, the check after the moves, or a read the commit made) was stopped and may still be running, in which case nothing is put back at all because whatever that git does next would land on top of the put-back; when the stopped git is the put-back's own check of HEAD afterwards, the files are already back and the run says it could not check them. A branch switched only after the commit landed on the branch the run started on is not this: that is exit 0 with a `NOTE:` saying which branch HEAD names now. Also when HEAD could not be read to check a put-back, where the run says only that it cannot tell either way. `retention-inflight` in the state directory says what should be where, and later runs refuse until it checks out |
+| `71` | RECOVERY-NEEDED: a put-back failed, or what a commit did cannot be determined, or (1.7.1) HEAD moved mid-run to a commit that changed a file this run moves or does not descend from where the run started, such as an amend, or this run's commit landed on a branch other than the one it started on because the branch was switched at the swap, or (1.7.1) this run's commit is on some other branch because the branch was switched away just before the swap and back just after, or a git command of the run (a `git mv`, the check after the moves, or a read the commit made) was stopped and may still be running, in which case nothing is put back at all because whatever that git does next would land on top of the put-back; when the stopped git is the put-back's own check of HEAD afterwards, the files are already back and the run says it could not check them. [More below the table](#retention-exit-71-continued) |
 | `75` | LOCKED: another runner's lock, git's `index.lock`, a git operation in progress, a detached HEAD, unmerged index entries, a git read that did not finish within `RUNNER_GIT_TIMEOUT`, or (1.7.1) the branch HEAD names changed while the run was starting |
 | `78` | TRIPWIRE ([`setup.md`, A tripwire is set](setup.md#a-tripwire-is-set)), or a recovery file from an earlier run that does not check out |
 | `127` | `vault-retention.cmd` found no Git Bash, so the runner never ran. The `.cmd` writes that to the log |
 | `129`, `130`, `143` | stopped by HUP, INT or TERM. Moves in flight are settled first, exactly as a failure is. A run stopped after its `OK: … committed as <sha>.` line keeps that commit |
 | `128` + N | ended by signal N, one the runner does not catch, such as `USR1`. Nothing is settled, and a move in flight leaves `retention-inflight` for the next run to check |
+
+##### Retention exit `1`, continued
+
+Also, before any git call, when neither `$TMPDIR` nor `/tmp` can hold the run's folder ("could not
+create a temporary directory"; there is no last-resort folder), when that folder is not an absolute
+path ("is not an absolute path, so it was made inside the vault", which this runner cannot meet
+through `TMPDIR`, since it uses `TMPDIR` only when it starts with `/`), or when, on Windows or
+wherever a `cygpath` is found, it holds a colon that is not a drive letter's ("is spelled with a
+colon that is not a drive letter's"). Also, before any git call, when the run's folder, resolved,
+fails the checks every runner runs on it from 1.5.0 (§ 4.3, Known limits): the state directory's
+checks, inside the vault by file identity, or not the path it resolves to ("the runner's folder for
+the pass", then the check, then "and the runner keeps the pass's snapshots, its backup and git's
+hooks folder there"), not there as a folder, a folder above it that cannot be reached, a resolution
+that led to another folder, a walk that gave no answer or a vault that cannot be resolved; off
+Windows, a permission bit for its group or for others ("is open to other accounts (its mode is not
+0700)") or a `find` that could not check it ("could not run (find failed)"); and, on Windows or
+wherever a `cygpath` is found, a `cygpath` that cannot convert the folder ("cygpath could not
+convert the runner's temporary folder"), gives a path that is not a drive path ("for the runner's
+temporary folder, which is not a Windows drive path") or gives another folder ("which is not the
+same folder"). The folder for the run's own copy of its log gets the same checks, and the copy goes
+into exactly the path they passed, but one that fails them is not a refusal: each line is logged as
+`WARNING: (the folder for this run's copy of its log) …`, ending "So this run keeps no copy of its
+log, which goes to the log alone.", or, when the check prints nothing, as "WARNING: the folder for
+this run's copy of its log could not be checked, …", and the run goes on. With 1.4.2's
+`lib/runner-common.sh` a 1.5.0 runner exits 1 before its first git call with `runner_folder_checked:
+command not found` on stderr, not in its log, and 1.4.2's runner with 1.5.0's library runs as 1.4.2
+did, without the new checks (both reasoned, not measured). With 1.4.1's `lib/runner-common.sh` a
+1.4.2 runner exits 1 with `git_env_warning: command not found` and `vault_root_spelling_ok: command
+not found` on stderr, not in its log, and with 1.4.0's a 1.4.1 runner exits 1 with
+`temp_dir_spelling_ok: command not found` there (both measured on Linux; older libraries are
+unmeasured). Also the script failing in itself, such as on an unset variable, which bash ends with
+`1`. A folder that cannot be listed is never read as an empty one, which is a clean `0`.
+
+##### Retention exit `71`, continued
+
+A branch switched only after the commit landed on the branch the run started on is not this: that is
+exit 0 with a `NOTE:` saying which branch HEAD names now. Also when HEAD could not be read to check
+a put-back, where the run says only that it cannot tell either way. `retention-inflight` in the
+state directory says what should be where, and later runs refuse until it checks out.
+
+#### Exit codes of the dream and promotion runners
 
 | Exit | Meaning (dream and promotion runners) |
 | --- | --- |
@@ -2277,6 +2353,8 @@ Known limits, each failing in the quiet direction:
 | `79` | AGENT-STATUS: the agent or wrapper itself left with one of the codes in this table other than 0 and 1 (2, 3, 4, 5, 64, 70, 75, 78, 79, 124, 125, 126, 127, 129, 130 or 143), so the runner does not repeat a code that would mean something it did not do: a tripwire nobody set, a lock nobody held, or a remap the agent did not get. A wrapper that was gone when the runner came to start it stays 127, which keeps its meaning, not found. That is judged before the agent starts (since 1.7.3; before, after the pass), so a wrapper that deletes itself and then leaves with 127 leaves as 79. One that is there but cannot start, because its `#!` line names an interpreter that does not exist, leaves with whatever the shell gave and logs no `AGENT-STATUS:` line: 126 from bash 5.3 and 3.2, 127 from bash 5.2, which says `cannot execute: required file not found` (all measured, 5.2 as 5.2.21 on Ubuntu 24.04). So does one whose line is `#!/usr/bin/env <command>` with no such command on `PATH`, which `env` reports as 127 on every platform. Since 1.7.3; before, both 127s left as 79, blaming the agent for a launch that never happened. The runner decides this before the agent starts, from the `#!` line, and only for two shapes: an absolute interpreter that is not an executable file, and `/usr/bin/env` or `/bin/env` followed by a plain command name. Any other 127 is the agent's and leaves as 79, which includes an `env` line with an option such as `-S` or an assignment, an `env` at any other path, a relative interpreter, a `#!` line of 127 bytes or more (where kernels before Linux 5.1 cut it), any `#!` line holding a NUL (bash's `read` drops it where the kernel stops reading, so the line read is not the line run), and any `#!` line holding a carriage return (Git Bash starts a wrapper whose line ends in one and Linux and macOS do not, so the line proves nothing). On Linux `#!/usr/bin/env cmd arg` passes `cmd arg` to `env` as one word, which fails with 127 while the runner reads only `cmd`, so that one launch failure still leaves as 79, and so does a binary whose system loader is missing, which bash 5.2 also reports as 127: these fail the safe way, as the agent's. When a 127 does pass through, the reason is the shell's or `env`'s own message in the run output. From 1.7.5 126 is reserved the same way (until 1.7.4 every 126 passed through as the agent's): a wrapper whose `#!` interpreter is missing or not executable keeps the shell's 126, "cannot execute", and an agent's own 126 leaves as 79. A binary or wrapper that is not executable, or is a folder, never gets that far: the runner refuses it before the pass with 127, because `command -v` does not find it (measured on Linux with bash 5.3.9; on Git Bash 5.3.15 a file needs no exec bit to start). Known limit: the launch failures the `#!` check does not read, listed above for 127, give 126 too on bash 5.3 and 3.2 (a `#!` line holding a carriage return on Linux and macOS, a relative interpreter, a line of 127 bytes or more), and so does a binary built for another machine (exec format error): each reads as the agent's own 126 and leaves as 79, the safe way, and the shell's message is in the run output. The log holds the agent's own status in its `exited with code` line and an `AGENT-STATUS:` line after it. Everything a failing pass does otherwise happens as for any other status: nothing is committed and what the pass wrote is left for the next run to check. Since 1.7.0; before, the runner left with the agent's code, so a wrapper that exited 78 made the runner exit 78 with no tripwire set |
 | other | the agent's own non-zero status, when nothing above applies, passed through as it is. That includes 1, which most failing wrappers and `claude -p` leave with, so a 1 is told from the runner's own only by the log's `exited with code` line |
 
+#### Environment variables
+
 | Environment variable | Default | Used by |
 | --- | --- | --- |
 | `VAULT_AGENT` | `claude` | both runners: `claude` or `command` |
@@ -2296,9 +2374,24 @@ Known limits, each failing in the quiet direction:
 | `RUNNER_RUN_LOG_MAX_BYTES` | `10000000` | both runners: the size above which a pass's run log in `.claude/logs` is cut to its newest part after the pass |
 | `RUNNER_GIT_TIMEOUT` | `120` seconds | all three runners: how long each git step of the runner commit (staging, then the commit and its signing) may take before it is stopped and the run exits 4. In `vault-retention.sh` it bounds the history walk and the move as well, and a step it stops there gives 75 before any move or 71 after one |
 | `VAULT_STATE_DIR` | per-vault directory under `%LOCALAPPDATA%` or `~/.local/state` | all three runners: the run lock, the quarantine, the tripwire and in-flight copies, the pre-pass backup of a running pass, and the retention runner's legacy reports and its `retention-inflight` recovery file, all outside the vault, and `vault-check.sh`, which looks for the tripwire copy there. An absolute path is required, and a Windows path is converted. A relative one, one containing `..`, or one inside the vault is replaced with a directory under the system temp folder, and the runner logs a warning. A state directory the runner's account does not own or cannot write stops the run with exit 1. Give each vault its own value |
-| `TMPDIR` | unset (`/tmp`; for the dream and promotion runners on macOS Apple's `mktemp` takes the per-user temporary folder, whatever `TMPDIR` says) | the dream and promotion runners: where each makes its own folder for the pass with `mktemp -d`, holding the snapshots, the steering backup, git's hooks folder and, in claude mode, `pass-settings.json`, which Claude Code reads as settings, hooks and other commands among them; the retention runner, when it starts with `/`, for its own folders and git's hooks folder, which it names by a template, so macOS honours it too (otherwise `/tmp`, and a `TMPDIR` that does not start with `/` is set to `/tmp` for the whole run, so its temporary files go there too; it has no last-resort folder, so a run where neither can hold its folder refuses). Keep it an absolute path to a folder only your account can change, named with no `..`, no part ending in a dot and no colon but a drive letter's (a link above the folder the runner makes is resolved and accepted, and one at that folder itself is refused; every runner, in every mode and before its first git call, refuses a folder that is not an absolute path, a drive path counting only under Git Bash, MSYS or Cygwin, and, on Windows or wherever a `cygpath` is found on `PATH`, a `..`, a part ending in a dot or a colon that is not a drive letter's, because git there reads the spelling as text; from 1.5.0 each also resolves the folder it made and, before its first git call, refuses one that fails the checks in § 4.3, Known limits, off Windows one its group or others have any permission bit on among them); on Windows schedule the task as your own account, and leave it unset unless a path near 260 characters needs a shorter folder (§ 4.3, Known limits) |
+| `TMPDIR` | unset (`/tmp`; for the dream and promotion runners on macOS Apple's `mktemp` takes the per-user temporary folder, whatever `TMPDIR` says) | the dream and promotion runners: where each makes its own folder for the pass with `mktemp -d`, holding the snapshots, the steering backup, git's hooks folder and, in claude mode, `pass-settings.json`, which Claude Code reads as settings, hooks and other commands among them; the retention runner, when it starts with `/`, for its own folders and git's hooks folder, which it names by a template, so macOS honours it too (otherwise `/tmp`, and a `TMPDIR` that does not start with `/` is set to `/tmp` for the whole run, so its temporary files go there too; it has no last-resort folder, so a run where neither can hold its folder refuses). [More below the table](#tmpdir-continued) |
 | `BASH_EXE` | standard Git for Windows paths | all three `.cmd` wrappers |
 | `VAULT_FORCE_NO_JQ` | unset | `vault-lint.sh` and `postcompact-wrap-up.sh`: take the no-jq branch even when `jq` is installed |
+
+##### `TMPDIR`, continued
+
+Keep it an absolute path to a folder only your account can change, named with no `..`, no part
+ending in a dot and no colon but a drive letter's (a link above the folder the runner makes is
+resolved and accepted, and one at that folder itself is refused; every runner, in every mode and
+before its first git call, refuses a folder that is not an absolute path, a drive path counting only
+under Git Bash, MSYS or Cygwin, and, on Windows or wherever a `cygpath` is found on `PATH`, a `..`,
+a part ending in a dot or a colon that is not a drive letter's, because git there reads the spelling
+as text; from 1.5.0 each also resolves the folder it made and, before its first git call, refuses
+one that fails the checks in § 4.3, Known limits, off Windows one its group or others have any
+permission bit on among them); on Windows schedule the task as your own account, and leave it unset
+unless a path near 260 characters needs a shorter folder (§ 4.3, Known limits).
+
+#### `lib/runner-common.sh` and three Windows traps
 
 `lib/runner-common.sh` holds the shared pieces: `ts` (timestamps), `run_with_watchdog`,
 `snapshot_tree` (the checksum listing), `changed_paths` (the diff of two listings),

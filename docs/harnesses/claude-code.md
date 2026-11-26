@@ -66,7 +66,8 @@ enforced. See `docs/setup.md` § 8. Each claude-mode pass also gets a settings f
 runner's own, passed with `--settings`, that points Claude Code's memory folder at
 `90-auto-memory/.pass-agent/` inside the vault, where the write fence sees it. That was measured
 for the Write tool on Windows only, for a vault on a drive path, on the Claude Code versions
-`docs/reference.md` § 4.3 lists; any other version is unmeasured. Claude Code 2.1.289 and 2.1.292
+[`docs/reference.md` § 4.3, How the agent is started](../reference.md#how-the-agent-is-started)
+lists; any other version is unmeasured. Claude Code 2.1.289 and 2.1.292
 ignored the file for a vault reached as `//localhost/c$/...` (the host's own administrative share)
 or `//wsl.localhost/...`, so on Windows the runner refuses a vault on any `//` network path (a
 share on another server is unmeasured). Managed settings outrank the file, and a pass refuses to
@@ -76,8 +77,8 @@ not an enabled plugin's and not the vault's own (measured on Claude Code 2.1.301
 pass gets no lint advice and writes no compaction stub, and not the account's own user-level
 hooks (reasoned: the probe held none, nor any in an agent's or a skill's frontmatter). MCP
 servers, and the commands a settings file names outside hooks, still start (reasoned), and
-command mode is unchanged. `docs/reference.md` § 4.3, in the dream and promotion
-runners' **Write fence** item, has the limits.
+command mode is unchanged.
+[`docs/reference.md` § 4.3, Write fence](../reference.md#write-fence) has the limits.
 
 ## Sources
 
