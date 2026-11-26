@@ -62,8 +62,9 @@ putting the moved text back gives 1.7.6's file byte for byte.
   anywhere in it gives one conflict holding the whole passage twice, 2,062 lines here, so start
   from the new copy and make your edits again. And *When you have finished copying* says that a
   file the template began shipping after your recorded version, once taken, is listed as already
-  yours from then on and never offered again, even when a later release changes it, so you judge
-  it against the release you took it from; and why that is no reason to run `--adopt`.
+  yours on every later `--check` and never offered again, so `--check` cannot tell you when a
+  later release changed it and you judge it against the release you took it from; and why that is
+  no reason to run `--adopt`.
 
 ### Adopting this
 
@@ -85,9 +86,10 @@ putting the moved text back gives 1.7.6's file byte for byte.
    of indentation, so `git merge-file` gives a single conflict over all of them: one changed line
    in the *Watchdog* paragraph gave one of 2,062 lines, about 1,000 from each side (measured). Take
    the new copy and make your edits again, as the merge recipe in `docs/updating.md` § 3 now says.
-   An edit to one of the three split rows gives a small conflict on that row. An edit to § 4.3's
-   opening paragraph, the `claude` bullet, the paragraph after the nine bullets, § 4.3.1's prose or
-   the exit `79` row merged with no conflict (each measured once).
+   An edit to a split row gave a small conflict on that row (two edits to the retention runner's
+   `71` row, one in the part kept and one in the part moved, measured). An edit to § 4.3's opening
+   paragraph, the `claude` bullet, the paragraph after the nine bullets, § 4.3.1's prose or the
+   exit `79` row merged with no conflict (each measured once).
 4. The shipped files this release touches are `docs/reference.md`, `docs/concepts.md`,
    `docs/setup.md`, `docs/customizing.md`, `docs/harnesses/claude-code.md` and `docs/updating.md`,
    plus `VERSION`, this file and `.claude/template-manifest`.

@@ -235,9 +235,10 @@ evidence of which files you have changed since. So expect `--status` to keep nam
 version, and expect it to report the files you just took as changed here. Neither is a fault. The
 next release's `--check` still works from that record, because it compares against the source you
 point it at rather than against a version number. A file you took that the template began shipping
-after your recorded version is listed from then on as already yours, and now shipped too, because
-the record has never held its path, and so it is never offered as safe to take or as moved
-upstream, even when a later release changes it (both measured). Judge it yourself against the
+after your recorded version is listed on every later `--check` as already yours, and now shipped
+too, and counted in its summary as moved upstream whether or not that release changed it, because
+the record has never held its path. It is never offered as safe to take or for a merge, so
+`--check` cannot tell you when it changed (both measured). Judge it yourself against the
 release you took it from: if your copy is byte for byte that release's, nothing of yours is in it
 and you can take the new one; if not, merge it with that release as the base. That is no reason
 to run `--adopt` either.
