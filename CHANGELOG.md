@@ -25,6 +25,63 @@ bash .claude/scripts/vault-update.sh --check --from ../template-new
 
 ---
 
+## 1.7.7 — 2026-11-26
+
+`docs/reference.md` § 4.3, the scheduled runners, gets places to land. No script, hook, rule or
+control changes, and no fact in `docs/reference.md` changes: taking out the added headings and
+putting the moved text back gives 1.7.6's file byte for byte.
+
+### Changed
+
+- **§ 4.3 has headings.** Its first 1,100 lines held no heading and no table, most of them one
+  bulleted list, so a link into it could land only on the section top, and `docs/concepts.md`
+  named the paragraph it meant in italics after four of its links. The mechanisms a runner adds around the agent are
+  now headings under *Around the agent call*: Run lock, Watchdog, Write fence, Containment with its
+  Known limits, Script integrity, Artifact assertion, Git preflight and files already being edited,
+  The long tier is create-only, and Runner commit. How the agent is started, the two details of
+  claude mode, and the history each agent reads with which vault and repository a runner uses have
+  headings too. The order and the words are unchanged.
+- **What sat under § 4.3.1 without being about the retention runner has its own heading.** The
+  dream and promotion runners' exit table, the environment variables of all three runners, and
+  `lib/runner-common.sh` with the three Windows traps followed the retention runner's exit table
+  under the `4.3.1 vault-retention.sh` heading, so `docs/setup.md`'s pointer to "the full table"
+  left a reader in the retention runner's section. The `4.3.1` heading and its anchor are unchanged.
+- **Four long table cells keep their first sentence.** Exits `1` and `71` of the retention runner,
+  exit `79` of the dream and promotion runners, and the `TMPDIR` row each keep the sentence that
+  defines them and link to a note directly under their table that holds the rest, in order and word
+  for word. Exits `1` and `78` of the dream and promotion runners stay whole, because `AGENTS.md`,
+  `docs/setup.md` and `docs/reference.md` itself point at what those cells say. The long cells of
+  § 10 and § 10.1 are not touched.
+- **Links into § 4.3 land on what they mean.** Five in `docs/concepts.md`; in `docs/setup.md` the
+  exit-table pointers, the tripwire background and the § 4.3.1 recovery link, two of which named
+  the file with no anchor at all; and one each in `docs/customizing.md` and
+  `docs/harnesses/claude-code.md`, the latter in place of a "Write fence item" that is now a
+  heading.
+
+### Adopting this
+
+1. **Nothing a pass, a hook or the commit gate does changes.** Take the documents if you have not
+   edited them, as `--check` lists them.
+2. **No anchor was removed.** `#43-scheduled-runners` and
+   `#431-vault-retentionsh--the-retention-mover` still name their sections. The anchors added in
+   `docs/reference.md` are `#how-the-agent-is-started`, `#two-details-of-claude-mode`,
+   `#around-the-agent-call`, `#run-lock`, `#watchdog`, `#write-fence`, `#containment`,
+   `#known-limits`, `#script-integrity`, `#artifact-assertion`,
+   `#git-preflight-and-files-already-being-edited`, `#the-long-tier-is-create-only`,
+   `#runner-commit`,
+   `#the-history-each-agent-reads-and-which-vault-and-repository-a-runner-uses`,
+   `#exit-codes-of-the-dream-and-promotion-runners`, `#environment-variables`,
+   `#librunner-commonsh-and-three-windows-traps`, `#retention-exit-1-continued`,
+   `#retention-exit-71-continued`, `#exit-79-continued` and `#tmpdir-continued`.
+3. **If you edited § 4.3 of your copy of `docs/reference.md`, expect a merge.** Every line that was
+   inside one of its bullets lost two spaces of indentation, so the merge recipe in
+   `docs/updating.md` § 3 meets a conflict at each line you changed there.
+4. The shipped files this release touches are `docs/reference.md`, `docs/concepts.md`,
+   `docs/setup.md`, `docs/customizing.md` and `docs/harnesses/claude-code.md`, plus `VERSION`, this
+   file and `.claude/template-manifest`.
+
+---
+
 ## 1.7.6 — 2026-11-22
 
 The documentation half of the work planned after 1.7.2's review, split from 1.7.5 so that it could
