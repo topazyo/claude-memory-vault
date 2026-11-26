@@ -612,14 +612,14 @@ template updates. Each entry says what the thing is; the link after it is where 
 The runner's check that a pass wrote only where it may. It checksums every file in the vault before
 and after the pass, and fails the pass with exit 2 when anything outside the pass's allowed folders
 changed. It sees files inside the vault only, not a shell command or the network.
-([`reference.md` § 4.3](reference.md#43-scheduled-runners), *Write fence*)
+([`reference.md` § 4.3, Write fence](reference.md#write-fence))
 
 ### Steering surface
 
 A file that decides what an agent or a harness does the next time something opens the vault: the
 instruction files such as `CLAUDE.md` and `AGENTS.md` and what they import, `.claude/` apart from
 its logs, harness configuration, memory, Obsidian plugins, and git's config and hooks. No pass may
-change one. ([`reference.md` § 4.3](reference.md#43-scheduled-runners), *Containment*)
+change one. ([`reference.md` § 4.3, Containment](reference.md#containment))
 
 ### Containment
 
@@ -627,7 +627,7 @@ What a runner does when the fence finds a changed steering surface, before it ev
 agent's exit code: it puts the surface back from its backup, moves what the pass wrote into a
 quarantine outside the vault, and sets the tripwire. The pass exits 2, or 70 when no tripwire could
 be written.
-([`reference.md` § 4.3](reference.md#43-scheduled-runners), *Containment*)
+([`reference.md` § 4.3, Containment](reference.md#containment))
 
 ### Tripwire
 
@@ -644,7 +644,7 @@ the steps in [`setup.md`, A tripwire is set](setup.md#a-tripwire-is-set).
 The folder `run.lock` in the state directory, which a runner takes before the pass starts so that
 two passes never overlap. A run that cannot take it within `RUN_LOCK_WAIT` exits 75, and a lock
 marked `KILL_FAILED` stays until the owner removes it.
-([`reference.md` § 4.3](reference.md#43-scheduled-runners), *Run lock*)
+([`reference.md` § 4.3, Run lock](reference.md#run-lock))
 
 ### In-flight marker
 
@@ -658,7 +658,7 @@ The folder outside the vault where the runners keep what a pass must not be able
 run lock, the second copies of the tripwire and the in-flight marker, backups and quarantines. It is
 `%LOCALAPPDATA%\claude-memory-vault\<id>\` on Windows and
 `${XDG_STATE_HOME:-~/.local/state}/claude-memory-vault/<id>/` elsewhere, one per vault;
-`VAULT_STATE_DIR` sets it. ([`reference.md` § 4.3](reference.md#43-scheduled-runners))
+`VAULT_STATE_DIR` sets it. ([`reference.md` § 4.3, Containment](reference.md#containment))
 
 ### Owned
 

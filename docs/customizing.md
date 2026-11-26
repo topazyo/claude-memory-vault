@@ -358,8 +358,8 @@ or one whose stream stops (exit 125), with everything it started,
 fail a pass that wrote outside its allowed folders (exit 2), contain a change to a steering or
 execution surface (restore, quarantine, tripwire), and carry an **artifact assertion** (if the
 pass exits 0 having produced no artifact, the runner exits 1), so a silent no-op cannot
-masquerade as a green run. Roll your own and you lose all four; `docs/reference.md` § 4.3 has the
-details. If you add a harness whose configuration lives somewhere new, add that path to
+masquerade as a green run. Roll your own and you lose all four;
+[`reference.md` § 4.3, Around the agent call](reference.md#around-the-agent-call) has the details. If you add a harness whose configuration lives somewhere new, add that path to
 `steering_filter` in `.claude/scripts/lib/runner-common.sh`, or a pass could change it without
 being contained. The fence, the pre-pass backup and containment all read that one filter. If you
 install an Obsidian plugin that runs code or commands named in its settings, add its id (the

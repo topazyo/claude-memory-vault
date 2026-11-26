@@ -454,7 +454,9 @@ binary that a scheduler's minimal PATH cannot see, log to `.claude/logs/`, kill 
 fail a pass that writes outside its allowed folders, and (the part that matters) assert that the
 pass actually produced something. Exit codes are `0` OK, `1` no artifact, `2` a write outside the
 [fence](concepts.md#fence) or another refusal (`docs/reference.md` § 4.3), `3` refused (see below), `64` unknown `VAULT_AGENT`, `124` timeout, `125` stalled, `127` no
-`claude` or wrapper. `docs/reference.md` § 4.3 has the full table.
+`claude` or wrapper.
+[`reference.md` § 4.3, Exit codes of the dream and promotion runners](reference.md#exit-codes-of-the-dream-and-promotion-runners)
+has the full table.
 
 `vault-retention.sh` uses some of the same numbers for different things, so read its codes against
 its own table in `docs/reference.md` § 4.3.1 rather than the list above. It has no `124` or `125`,
@@ -899,11 +901,12 @@ A scheduled pass sets the **tripwire** when it changed a [steering or execution 
 before its changes were checked, or may have left a process running. While it is set, the dream,
 promotion and retention runners and `vault-check.sh` all exit **78** and do nothing else, until
 you have done the steps below. Nothing clears it on its own. The background is in
-[`reference.md` §4.3](reference.md).
+[`reference.md` §4.3, Containment](reference.md#containment).
 
 Not this section: a retention run whose 78 comes with a log line that says `TRIPWIRE:` and names
 `retention-inflight` in the state directory. That is the retention runner's own recovery record,
-not a tripwire; follow "When a move goes wrong" in [`reference.md` §4.3.1](reference.md).
+not a tripwire; follow "When a move goes wrong" in
+[`reference.md` §4.3.1](reference.md#431-vault-retentionsh--the-retention-mover).
 
 1. **Leave the vault alone until step 6.** Do not open it in Obsidian or in an agent session, and
    run no `git` command and no script from it, `vault-check.sh` included. When the pass was not
@@ -988,7 +991,8 @@ not a tripwire; follow "When a move goes wrong" in [`reference.md` §4.3.1](refe
      Then, in a git vault,
      `git -c core.fsmonitor=false --no-pager status --ignore-submodules=all` shows the rest. The
      `78` row of the dream and promotion runners' exit table in
-     [`reference.md` §4.3](reference.md) gives each of these in full.
+     [`reference.md` §4.3](reference.md#exit-codes-of-the-dream-and-promotion-runners) gives each
+     of these in full.
    - **It says a process of the stopped pass may still be running** (`KILL_FAILED`). If it says
      "what it writes after containment is unchecked", containment ran and that process could have
      written after it; if it says only "what it writes is unchecked", containment did not run. In
