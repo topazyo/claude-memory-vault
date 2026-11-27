@@ -16,7 +16,7 @@ name. It is unrelated to Inflection AI's Pi assistant.
 | `.claude/adapters/pi/vault.js` | The extension, kept outside `.pi/extensions/` so Pi does not load it by itself. Once loaded it refuses a `read`, `write`, `edit`, `grep`, `find` or `ls` call whose path names `.env` or `.env.*`, or passes through or ends at a part named `secrets` at any depth, and a `grep` whose glob names one of them; runs `vault-lint.sh` after each successful `write` and `edit` and adds what it reports to the tool's result; runs `postcompact-wrap-up.sh` on `session_compact` |
 | `.agents/skills/*/SKILL.md` | The five skills. Pi reads them once the project is trusted. It never reads `.claude/skills/`, so each skill is listed once |
 
-Live record: not run live; documentation and source checked 2026-09-25 to 2026-09-26, at Pi v0.87.1.
+Live record: not run live; docs checked 2026-09-25 to 2026-09-26 (Pi v0.87.1's documentation and source).
 
 At the vault root Pi reads `AGENTS.md` and not `CLAUDE.md`, because in each folder it loads only
 the first of `AGENTS.override.md`, `AGENTS.md` and `CLAUDE.md` that exists. Little is lost:

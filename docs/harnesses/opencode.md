@@ -28,13 +28,15 @@ guides ask before running project hooks; OpenCode's documentation describes no s
 plugin ships where OpenCode does not look, and you copy it in once you have read it.
 
 OpenCode already denies reading `*.env` files by default. The plugin adds `.env.*` and `secrets/`,
-the rest of the set `.claude/rules/security.md` names.
+the rest of the set `.claude/rules/security.md` names, if your OpenCode still loads V1 plugins (see
+the note at the top).
 
 ## Enforced, and guidance
 
 - **Enforced without the plugin:** the rules are loaded, and OpenCode's default deny covers
   `*.env`.
-- **Enforced once the plugin is enabled:** the lint runs after the three edit tools, compactions
+- **Enforced once the plugin is enabled, if your OpenCode still loads V1 plugins (see the note at
+  the top):** the lint runs after the three edit tools, compactions
   are recorded, and the read tool refuses `.env.*` and `secrets/` too, in any letter case.
 - **Not covered:** the `bash` tool can still `cat` a secret, and a file written from `bash` is not
   linted. The rule is the control for the first, and the commit gate catches the second.

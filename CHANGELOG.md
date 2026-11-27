@@ -38,8 +38,8 @@ live. No hook, runner, rule or checker changes what it does.
   script named and the harness running nothing, and nine sections of the suite passed each such
   break. `harness-wiring` reads a table of every event the Codex, Gemini CLI, Cursor, Copilot and
   Windsurf configs wire (its matcher, the field that runs the hook, and the script), plus
-  `opencode.json`'s `instructions`, Gemini CLI's `context.fileName` and the `version` of the Cursor
-  and Copilot files. It fails when a config no longer holds a row. Template only,
+  `opencode.json`'s `instructions`, Gemini CLI's `context.fileName`, the `version` of the Cursor
+  and Copilot files and Codex's `[features] hooks`. It fails when a config no longer holds a row. Template only,
   `tmpl-harness-wiring-pinned` also fails an event with no row, a matcher that is not exact, and
   a row whose guide does not name its event beside the source it cites.
 - **The OpenCode plugin's after-hook and compaction handler are driven.** `opencode-plugin-after-hook`
@@ -48,16 +48,19 @@ live. No hook, runner, rule or checker changes what it does.
   `session.compacted` event. Until now only its read hook was tested.
 - **A tier for each harness.** `docs/harnesses/README.md`'s support table has a Tier column, and
   `AGENTS.md` § 8 a Tier row pointing at it. Claude Code is Core. Codex, Gemini CLI, Cursor,
-  Copilot, Windsurf, Pi and Oh My Pi are Held: a one-line break of any event name, matcher or
-  handler fails a control required on every OS. For the five configs and the OpenCode plugin that
-  is 67 one-line mutants, each failing the control that holds it first, plus 11 mutants of the
+  Copilot, Windsurf, Pi and Oh My Pi are Held: a one-line break of any event name, matcher,
+  handler, or the field that runs a hook and the script it names, fails a control required on every
+  OS the harness runs on. The interpreter and path a command puts before the script are not held.
+  For the five configs and the OpenCode plugin that
+  is 69 one-line mutants, each failing the control that holds it first, plus 16 mutants of the
   new checks themselves, all killed (on Windows, Git Bash). Pi's and Oh My Pi's eight handlers
   were already held by their drivers. OpenCode is **Held (V1 plugin API)**, see below. Aider and Hermes Agent are
   Documented. `CONTRIBUTING.md` says what a new harness is held to.
 - **Each guide has a `Live record:` line**, saying which version was run live, on which OS and
-  when, or that the harness was not run live and when its documentation was checked. Claude Code
-  and Oh My Pi have been run live, and Copilot has one behaviour measured. The rest have not been
-  run live. `tmpl-harness-guides-live-line` fails a guide without exactly one such line.
+  when, or that the harness was not run live and when its documentation was checked. Oh My Pi has
+  been run live with the vault's extension. Claude Code's record is a hook probe and a dream pass on
+  2.1.301, not a run of its lint and compaction hooks, and Copilot has one behaviour measured. The
+  rest have not been run live. `tmpl-harness-guides-live-line` fails a guide without exactly one such line.
 
 ### Changed
 
@@ -68,7 +71,7 @@ live. No hook, runner, rule or checker changes what it does.
   `AGENTS.md` § 8, in the support table, in `docs/reference.md` and in the plugin's own header. The
   plugin's code is unchanged; a port is a later release. `opencode.json`'s `instructions` key is
   still documented and is not affected.
-- **Copilot's and OpenCode's guides cite pages read 2026-11-27**: GitHub's hooks reference for the
+- **Copilot's and OpenCode's guides cite pages read 2026-11-27**: GitHub's hooks configuration page for the
   `PostToolUse` name, and OpenCode's configuration and V1 migration pages.
 
 ### Adopting this
@@ -83,8 +86,11 @@ live. No hook, runner, rule or checker changes what it does.
    config no longer wires an event, matcher, handler field or script as the table in
    `run-tests.sh` says. That is a hook you have lost, unless you changed it on purpose. A matcher
    you widened by adding alternatives (`Edit|Write|MultiEdit`) still passes. A matcher written as
-   `.*`, `*` or with anchors, or removed, fails, as does a config you rewired on purpose. JSON
-   with comments is read. Without Node the new controls skip by name, and the two
+   `.*`, `*` or with anchors, or removed, fails, as does a config you rewired on purpose. A config
+   you deleted fails too, as the suite's hook-reference check already did: restore it, or expect
+   that FAIL. Comments are read only in `opencode.json`, which OpenCode documents as JSONC. A
+   comment in any other hook config fails, because no source says that harness reads one, and
+   the harness may refuse the file. Codex's `[features] hooks = false` fails as well. Without Node the new controls skip by name, and the two
    `tmpl-` controls skip in any vault.
 4. **`README.md` is classed `seed`**, so merge its one changed line (the OpenCode plugin's comment
    in the repository layout) by hand if you want it.

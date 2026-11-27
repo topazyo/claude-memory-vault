@@ -2579,8 +2579,17 @@ function $(strings, ...values) {
   }
   return chain
 }
-const mod = await import(pathToFileURL(file).href)
-const hooks = await mod.VaultPlugin({ $, worktree: "/v", directory: "/v" })
+// worktree and directory differ, so a plugin that took the wrong one runs
+// its hooks from the wrong folder and is caught by the cwd check.
+let hooks
+try {
+  const mod = await import(pathToFileURL(file).href)
+  hooks = await mod.VaultPlugin({ $, worktree: "/v", directory: "/d" })
+  if (!hooks || typeof hooks !== "object") throw new Error(`VaultPlugin returned ${JSON.stringify(hooks)}`)
+} catch (e) {
+  process.stdout.write(`after-bad plugin: ${String(e && e.message ? e.message : e).split("\n")[0]}\ncases 0\n`)
+  process.exit(0)
+}
 // The command each handler builds is `bash ${hooks}/<script> <rest>${value}`.
 function wrong(c, script, rest) {
   if (c.strings.length !== 3) return `the command has ${c.strings.length - 1} values, not 2`
@@ -2866,7 +2875,9 @@ fi
 # nine sections of this suite (spike D5). This table holds what makes each
 # shipped config call its hook. Columns, separated by blanks:
 #   kind     hook: an event under "hooks"; list: a key holding the target as a
-#            string or as an array element; value: a scalar; adapter: a name
+#            string or as an array element; value: a scalar; toml: a TOML flag
+#            that fails only when set to anything but the target (absent is
+#            the harness's default, hooks on for Codex); adapter: a name
 #            the OpenCode plugin uses, pinned only (its driver in the read-guard
 #            section holds it)
 #   config   the file, from the vault root
@@ -2885,7 +2896,10 @@ fi
 # event of a tabled config to have a row, each matcher exact, and each row's
 # guide to name its key in backticks on the line holding its source URL, so
 # an event name is tied to the page that documents it. The table is a quoted
-# heredoc read by node, so no row ever meets word splitting or a glob.
+# heredoc read by node, so the checker never word-splits a row or expands a
+# glob in one. The positive controls build their fixtures from the canned
+# copies below, never from the vault's own configs, so a vault that widened a
+# matcher or reformatted a file is judged by harness-wiring alone.
 WIRING_TABLE="$TMP/wiring-table.txt"
 cat > "$WIRING_TABLE" <<'WIRING_TABLE_EOF'
 # kind   config                             key              matcher             handler                        target                  guide          source
@@ -2896,6 +2910,7 @@ hook     .gemini/settings.json              PreCompress      -                  
 list     .gemini/settings.json              context.fileName -                   -                              AGENTS.md               gemini-cli.md  https://geminicli.com/docs/cli/gemini-md/
 hook     .cursor/hooks.json                 afterFileEdit    -                   ./command                      vault-lint.sh           cursor.md      https://cursor.com/docs/agent/hooks
 hook     .cursor/hooks.json                 preCompact       -                   ./command                      postcompact-wrap-up.sh  cursor.md      https://cursor.com/docs/agent/hooks
+toml     .codex/config.toml                 features.hooks   -                   -                              true                    -              -
 value    .cursor/hooks.json                 version          -                   -                              1                       -              -
 hook     .github/hooks/vault.json           PostToolUse      Edit|Write          ./type=command,bash            vault-lint.sh           copilot.md     https://docs.github.com/en/copilot/reference/hooks-configuration
 value    .github/hooks/vault.json           version          -                   -                              1                       -              -
@@ -2940,18 +2955,41 @@ function stripComments(t) {
   }
   return o
 }
+// Comments are read only where the harness documents them: OpenCode reads
+// JSON and JSONC (opencode.ai/docs/config, read 2026-11-27). No source says the
+// other harnesses read a comment in their hook config, so one there fails
+// rather than passing a file the harness may refuse to load.
+const COMMENTED = new Set(["opencode.json"])
 const loaded = new Map()
 function load(config) {
   if (!loaded.has(config)) {
     let text
     try { text = readFileSync(`${root}/${config}`, "utf8") } catch { loaded.set(config, { error: "is missing" }); return loaded.get(config) }
+    if (config.endsWith(".toml")) { loaded.set(config, { text }); return loaded.get(config) }
     let json
     try { json = JSON.parse(text) } catch {
+      if (!COMMENTED.has(config)) { loaded.set(config, { error: "does not parse as JSON (this harness is not documented to read comments)" }); return loaded.get(config) }
       try { json = JSON.parse(stripComments(text)) } catch { loaded.set(config, { error: "does not parse as JSON or JSON with comments" }); return loaded.get(config) }
     }
     loaded.set(config, { json })
   }
   return loaded.get(config)
+}
+// A TOML key read by line: the value of <key> under [<section>], or undefined
+// when the section or the key is absent. Enough for one flag; not a parser.
+function tomlValue(text, dotted) {
+  const [section, key] = dotted.split(".")
+  let where = "top", value
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.replace(/#.*$/, "").trim()
+    const head = /^\[([^\]]+)\]$/.exec(line)
+    if (head) { where = head[1].trim() === section ? "section" : "other"; continue }
+    // [features] hooks = x, or features.hooks = x before any section.
+    const kv = (where === "section" && new RegExp(`^${key}\\s*=\\s*(.+)$`).exec(line))
+      || (where === "top" && new RegExp(`^${section}\\.${key}\\s*=\\s*(.+)$`).exec(line))
+    if (kv) value = kv[1].trim()
+  }
+  return value
 }
 const getPath = (obj, dotted) => dotted.split(".").reduce((o, k) => (o && typeof o === "object" && Object.prototype.hasOwnProperty.call(o, k) ? o[k] : undefined), obj)
 // A string runs the script when it names .claude/hooks/<script> and no
@@ -2993,6 +3031,11 @@ function handlerWhy(entry, r) {
 function checkRow(r) {
   const c = load(r.config)
   if (c.error) return c.error
+  if (r.kind === "toml") {
+    // Absent is the harness's default (Codex: hooks on), so only another value fails.
+    const v = tomlValue(c.text, r.key)
+    return v === undefined || v === r.target ? "" : `${r.key} is ${v}, not ${r.target}`
+  }
   if (r.kind === "list") {
     const v = getPath(c.json, r.key)
     if (v === undefined) return `no ${r.key}`
@@ -3062,8 +3105,8 @@ wiring_rows_want=$(awk '/^[ \t]*#/ || /^[ \t]*$/ { next } $1 != "adapter" { n++ 
 wiring_pins_want=$(awk '/^[ \t]*#/ || /^[ \t]*$/ { next } $7 != "-" { n++ } END { print n + 0 }' "$WIRING_TABLE")
 wiring_verdict() {  # wiring_verdict <output> <count-word> <expected> - prints PASS, or what failed
   local n
-  n=$(printf '%s\n' "$1" | awk -v w="$2" '$1 == w && $2 ~ /^[0-9]+$/ && NF == 2 { print $2 }')
-  if [ -z "$n" ]; then echo "no $2 line"; return; fi
+  n=$(printf '%s\n' "$1" | awk -v w="$2" '$1 == w && $2 ~ /^[0-9]+$/ && NF == 2 { c++; v = $2 } END { if (c == 1) print v }')
+  case "$n" in ''|*[!0-9]*) echo "not exactly one $2 line"; return ;; esac
   if [ "$n" -eq 0 ] || [ "$n" -ne "$3" ]; then echo "$2 $n, the table holds $3"; return; fi
   if printf '%s\n' "$1" | grep -qE '^(unwired|untabled|inexact|unpinned|badrow|badmode) '; then
     printf '%s\n' "$1" | grep -E '^(unwired|untabled|inexact|unpinned|badrow|badmode) ' | tr '\n' ';' | cut -c1-600
@@ -3072,14 +3115,134 @@ wiring_verdict() {  # wiring_verdict <output> <count-word> <expected> - prints P
   fi
   echo PASS
 }
-wiring_fx() {  # wiring_fx <dir> - a copy of every config the table names and of the guides
-  local f
+# Canned copies of the configs the table names, as the template shipped them in
+# 1.7.8. The positive controls edit these, never the vault's own files, so
+# what they prove does not depend on how a vault formatted or changed its
+# configs. A change to a shipped config does not need to reach them unless the
+# table's rows change too.
+WIRING_CANNED="$TMP/wiring-canned"
+mkdir -p "$WIRING_CANNED/.codex" "$WIRING_CANNED/.gemini" "$WIRING_CANNED/.cursor" \
+         "$WIRING_CANNED/.github/hooks" "$WIRING_CANNED/.windsurf"
+cat > "$WIRING_CANNED/.codex/hooks.json" <<'WIRING_CODEX_EOF'
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "apply_patch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$(git rev-parse --show-toplevel)/.claude/hooks/vault-lint.sh\"",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "PostCompact": [
+      {
+        "matcher": "manual|auto",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$(git rev-parse --show-toplevel)/.claude/hooks/postcompact-wrap-up.sh\"",
+            "timeout": 60
+          }
+        ]
+      }
+    ]
+  }
+}
+WIRING_CODEX_EOF
+printf '[features]\nhooks = true\n' > "$WIRING_CANNED/.codex/config.toml"
+cat > "$WIRING_CANNED/.gemini/settings.json" <<'WIRING_GEMINI_EOF'
+{
+  "context": {
+    "fileName": ["AGENTS.md"]
+  },
+  "hooks": {
+    "AfterTool": [
+      {
+        "matcher": "write_file|replace",
+        "hooks": [
+          {
+            "name": "vault-lint",
+            "type": "command",
+            "command": "bash \"$GEMINI_PROJECT_DIR/.claude/hooks/vault-lint.sh\"",
+            "timeout": 15000
+          }
+        ]
+      }
+    ],
+    "PreCompress": [
+      {
+        "hooks": [
+          {
+            "name": "vault-compaction-stub",
+            "type": "command",
+            "command": "bash \"$GEMINI_PROJECT_DIR/.claude/hooks/postcompact-wrap-up.sh\"",
+            "timeout": 60000
+          }
+        ]
+      }
+    ]
+  }
+}
+WIRING_GEMINI_EOF
+cat > "$WIRING_CANNED/.cursor/hooks.json" <<'WIRING_CURSOR_EOF'
+{
+  "version": 1,
+  "hooks": {
+    "afterFileEdit": [
+      {
+        "command": "bash .claude/hooks/vault-lint.sh"
+      }
+    ],
+    "preCompact": [
+      {
+        "command": "bash .claude/hooks/postcompact-wrap-up.sh"
+      }
+    ]
+  }
+}
+WIRING_CURSOR_EOF
+cat > "$WIRING_CANNED/.github/hooks/vault.json" <<'WIRING_COPILOT_EOF'
+{
+  "version": 1,
+  "hooks": {
+    "PostToolUse": [
+      {
+        "type": "command",
+        "matcher": "Edit|Write",
+        "bash": "bash \"$(git rev-parse --show-toplevel)/.claude/hooks/vault-lint.sh\"",
+        "timeoutSec": 15
+      }
+    ]
+  }
+}
+WIRING_COPILOT_EOF
+cat > "$WIRING_CANNED/.windsurf/hooks.json" <<'WIRING_WINDSURF_EOF'
+{
+  "hooks": {
+    "pre_read_code": [
+      {
+        "command": "bash .claude/hooks/read-guard.sh",
+        "powershell": "& \"$env:ProgramFiles\\Git\\bin\\bash.exe\" .claude/hooks/read-guard.sh"
+      }
+    ],
+    "post_write_code": [
+      {
+        "command": "bash .claude/hooks/vault-lint.sh",
+        "powershell": "& \"$env:ProgramFiles\\Git\\bin\\bash.exe\" .claude/hooks/vault-lint.sh"
+      }
+    ]
+  }
+}
+WIRING_WINDSURF_EOF
+printf '{\n  "$schema": "https://opencode.ai/config.json",\n  "instructions": [".claude/rules/*.md"]\n}\n' > "$WIRING_CANNED/opencode.json"
+wiring_fx() {  # wiring_fx <dir> - the canned configs, and (for the pin cases) the guides
   rm -rf "$1"
   mkdir -p "$1/docs/harnesses"
-  for f in $(awk '/^[ \t]*#/ || /^[ \t]*$/ { next } $1 != "adapter" { print $2 }' "$WIRING_TABLE" | sort -u); do
-    mkdir -p "$1/$(dirname "$f")"
-    cp "$ROOT/$f" "$1/$f"
-  done
+  cp -R "$WIRING_CANNED/." "$1/"
   cp "$ROOT"/docs/harnesses/*.md "$1/docs/harnesses/"
 }
 wiring_edit() {  # wiring_edit <file> <awk program> - rewrites the file through awk
@@ -3095,7 +3258,20 @@ wiring_case() {
     if cmp -s "$fx/$2" "$fx/$2.orig"; then wiring_case_bad="$wiring_case_bad $1:fixture-unchanged"; return; fi
   fi
   got=$(node "$TMP/wiring.mjs" "$WIRING_TABLE" "$fx" "$4" 2>&1)
-  printf '%s\n' "$got" | grep -qxF "$5" || wiring_case_bad="$wiring_case_bad $1:[$(printf '%s' "$got" | grep -E '^(unwired|untabled|inexact|unpinned) ' | tr '\n' ';' | cut -c1-200)]"
+  if ! printf '%s\n' "$got" | grep -qxF "$5"; then
+    local shown
+    shown=$(printf '%s\n' "$got" | grep -E '^(unwired|untabled|inexact|unpinned|badrow|badmode) ' | tr '\n' ';' | cut -c1-200)
+    [ -n "$shown" ] || shown=$(printf '%s\n' "$got" | head -n 1 | cut -c1-200)
+    wiring_case_bad="$wiring_case_bad $1:[$shown]"
+  fi
+}
+# The canned fixtures are what the template ships, so they must pass first:
+# a canned copy that no longer matches the table would make every case below
+# prove nothing.
+wiring_canned_ok() {
+  local fx="$TMP/wiring-fx"
+  wiring_fx "$fx"
+  [ "$(wiring_verdict "$(node "$TMP/wiring.mjs" "$WIRING_TABLE" "$fx" rows 2>&1)" rows "$wiring_rows_want")" = PASS ]
 }
 
 if ! command -v node >/dev/null 2>&1; then
@@ -3125,6 +3301,7 @@ else
   fi
 
   wiring_case_bad=''
+  wiring_canned_ok || wiring_case_bad=' canned:the-canned-configs-fail-the-table'
   wiring_case event .codex/hooks.json '!d && sub(/"PostToolUse"/, "\"PostToolUsx\"") { d = 1 } 1' rows \
     'unwired .codex/hooks.json PostToolUse: no hooks.PostToolUse'
   wiring_case matcher .codex/hooks.json '!d && sub(/"apply_patch"/, "\"apply_patcx\"") { d = 1 } 1' rows \
@@ -3141,15 +3318,22 @@ else
     'unwired opencode.json instructions: instructions lacks .claude/rules/*.md'
   wiring_case value .cursor/hooks.json '!d && sub(/"version": 1/, "\"version\": 2") { d = 1 } 1' rows \
     'unwired .cursor/hooks.json version: version is 2, not 1'
-  wiring_case jsonc .codex/hooks.json 'NR == 1 { print "{"; print "  \"$schema\": \"https://example.com//x.json\", // a line comment"; print "  /* a block comment */"; next } 1' rows \
-    'wired .codex/hooks.json PostCompact'
-  wiring_case broken .codex/hooks.json 'NR == 1 { print "{ ,"; next } 1' rows \
-    'unwired .codex/hooks.json PostToolUse: does not parse as JSON or JSON with comments'
+  wiring_case toml .codex/config.toml '{ sub(/^hooks = true/, "hooks = false") } 1' rows \
+    'unwired .codex/config.toml features.hooks: features.hooks is false, not true'
+  wiring_case toml-dotted .codex/config.toml '$0 == "[features]" { next } { sub(/^hooks = true/, "features.hooks = false") } 1' rows \
+    'unwired .codex/config.toml features.hooks: features.hooks is false, not true'
+  wiring_case jsonc opencode.json 'NR == 1 { print "// a line comment"; print "{ /* a block comment */"; next } 1' rows \
+    'wired opencode.json instructions'
+  wiring_case comment .codex/hooks.json 'NR == 1 { print "{ // a comment"; next } 1' rows \
+    'unwired .codex/hooks.json PostToolUse: does not parse as JSON (this harness is not documented to read comments)'
+  wiring_case broken opencode.json 'NR == 1 { print "{ ,"; next } 1' rows \
+    'unwired opencode.json instructions: does not parse as JSON or JSON with comments'
   wiring_case widened .github/hooks/vault.json '{ sub(/"Edit[|]Write"/, "\"Edit|Write|MultiEdit\"") } 1' rows \
     'wired .github/hooks/vault.json PostToolUse'
   if [ "$(wiring_verdict 'rows 0' rows 0)" = PASS ]; then wiring_case_bad="$wiring_case_bad vacuous:rows-0-passed"; fi
+  if [ "$(wiring_verdict "$(printf 'rows 13\nrows 13')" rows 13)" = PASS ]; then wiring_case_bad="$wiring_case_bad vacuous:two-rows-lines-passed"; fi
   if [ -z "$wiring_case_bad" ]; then
-    ok "positive control: a renamed event, matcher or handler field, a swapped script, one of Windsurf's two commands, a dropped list value, a changed version and a config that does not parse each leave their row unwired, JSON with comments is read, a widened matcher stays wired and an empty table fails"
+    ok "positive control: a renamed event, matcher or handler field, a swapped script, one of Windsurf's two commands, a dropped list value, a changed version, Codex hooks switched off, a comment where the harness reads none and a config that does not parse each leave their row unwired, opencode.json's comments are read, a widened matcher stays wired and an empty table fails"
   else
     bad "positive control: the wiring table missed a break --$wiring_case_bad"
   fi
@@ -3178,7 +3362,7 @@ fi
 live_line_bad() {  # live_line_bad <guide> - prints why the guide's Live record line is wrong, or nothing
   local all good
   all=$(grep -c '^Live record:' "$1" 2>/dev/null)
-  good=$(grep -cE '^Live record: (run live: .+, .+, 20[0-9]{2}-[0-9]{2}-[0-9]{2}|not run live; )' "$1" 2>/dev/null)
+  good=$(grep -cE '^Live record: (run live: .+, .+, |not run live; .*)20[0-9]{2}-[0-9]{2}-[0-9]{2}' "$1" 2>/dev/null)
   if [ "${all:-0}" != 1 ] || [ "${good:-0}" != 1 ]; then echo " $(basename "$1"):${all:-0}-lines-${good:-0}-well-formed"; fi
 }
 if [ "$SUITE_IS_TEMPLATE" != 1 ]; then
@@ -3187,9 +3371,13 @@ else
   printf '# G\n\nno record here\n' > "$TMP/live-none.md"
   printf '# G\n\nLive record: not run live; docs checked 2026-01-01.\nLive record: run live: X 1.0, Linux, 2026-01-02.\n' > "$TMP/live-two.md"
   printf '# G\n\nLive record: run live: X 1.0, 2026-01-02.\n' > "$TMP/live-short.md"
+  printf '# G\n\nLive record: not run live; docs checked recently.\n' > "$TMP/live-undated.md"
+  printf '# G\n\nLive record: not run live; docs checked 2026-01-01.\n' > "$TMP/live-ok-not.md"
+  printf '# G\n\nLive record: run live: X 1.0, Linux, 2026-01-02 (a note).\n' > "$TMP/live-ok-run.md"
   if [ -n "$(live_line_bad "$TMP/live-none.md")" ] && [ -n "$(live_line_bad "$TMP/live-two.md")" ] \
-     && [ -n "$(live_line_bad "$TMP/live-short.md")" ]; then
-    ok "positive control: a guide with no Live record line, with two, or with a run-live line that leaves out the OS is caught"
+     && [ -n "$(live_line_bad "$TMP/live-short.md")" ] && [ -n "$(live_line_bad "$TMP/live-undated.md")" ] \
+     && [ -z "$(live_line_bad "$TMP/live-ok-not.md")" ] && [ -z "$(live_line_bad "$TMP/live-ok-run.md")" ]; then
+    ok "positive control: a guide with no Live record line, with two, with a run-live line that leaves out the OS or a line with no date is caught, and a well-formed line of either kind is not"
   else
     bad "positive control: a guide's missing, doubled or short Live record line went unnoticed"
   fi

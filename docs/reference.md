@@ -518,15 +518,21 @@ a lint that does nothing and a lint that found nothing wrong print the same thin
   copy of the agent with one name swapped and a copy of the fence with one name added.
 - **Harness wiring** (1.7.8) — with Node 18 or later, `harness-wiring` reads a table of each
   shipped hook config's event key, matcher, handler field and the script that field runs, plus
-  `opencode.json`'s `instructions`, Gemini CLI's `context.fileName` and the `version` of the
-  Cursor and Copilot files. It fails when a config no longer holds a row, in a vault too. A
-  matcher may hold more alternatives than the row's, and a file with comments is read. A matcher
+  `opencode.json`'s `instructions`, Gemini CLI's `context.fileName`, the `version` of the Cursor
+  and Copilot files, and Codex's `[features] hooks`, which fails only when set to anything but
+  `true` (absent, Codex's default is on). It fails when a config no longer holds a row, in a vault too, and when
+  a config is missing (as the hook-reference check above already did). A
+  matcher may hold more alternatives than the row's. Comments are read only in `opencode.json`,
+  because OpenCode documents JSONC; a comment in another hook config fails, because no source
+  says that harness reads one. The positive controls edit canned copies of the configs held in
+  the suite, not the vault's own, so a vault's formatting does not decide them. A matcher
   written as `.*`, `*` or with anchors, or removed, fails. Template only,
   `tmpl-harness-wiring-pinned` also fails an event with no row, a matcher that is not exact, and
   a row whose guide does not name its key beside the source it cites. `tmpl-harness-guides-live-line`
-  fails a guide without exactly one dated `Live record:` line. Not held: Codex's and Gemini CLI's
-  `timeout`, Gemini CLI's hook `name` and Copilot's `timeoutSec` (Gemini CLI's timeout units have
-  their own control).
+  fails a guide without exactly one dated `Live record:` line. Not held: what a command runs
+  before the script (the interpreter, `git rev-parse`, `$GEMINI_PROJECT_DIR`, Windsurf's
+  `bash.exe` path), Codex's and Gemini CLI's `timeout`, Gemini CLI's hook `name` and Copilot's
+  `timeoutSec` (Gemini CLI's timeout units have their own control).
 - **OpenCode plugin** — with Node 18 or later, `.claude/adapters/opencode/vault.js` (written for
   OpenCode's V1 plugin API) is loaded twice. `c10-opencode-normalised` puts fourteen secret-path
   spellings to its read hook. `opencode-plugin-after-hook` passes it a stand-in `$` that records

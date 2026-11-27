@@ -10,8 +10,8 @@ and all three load hooks from `.github/hooks/`.
 | `.github/hooks/vault.json` | `PostToolUse` on `Edit|Write` runs `vault-lint.sh` |
 | `.agents/skills/` and `.claude/skills/` | Copilot reads both. The copies are identical, so a skill may be listed twice |
 
-Live record: not run live; docs checked 2026-09-13 to 2026-11-27. One behaviour was measured live:
-Copilot CLI 1.0.86 runs the vault's repository hooks in `-p` mode in a folder it trusts (Windows,
+Live record: not run live; docs checked 2026-09-13 to 2026-11-27. One behaviour was measured on a
+running Copilot CLI 1.0.86: it runs the vault's repository hooks in `-p` mode in a folder it trusts (Windows,
 2026-10-18).
 
 The hook uses the PascalCase event name `PostToolUse`, which selects Copilot's VS Code-compatible
@@ -109,7 +109,7 @@ the vault. Only then set `VAULT_ALLOW_UNENFORCED_TOOLS=1`.
 - The cloud agent runs hooks in its own Linux sandbox, and its writes reach the vault only through
   a pull request. If you kept `.github/workflows/ci.yml`, that pull request runs `vault-check.sh`.
 
-## Sources (checked 2026-09-13)
+## Sources (checked 2026-09-13; the hooks configuration page read again 2026-11-27)
 
 - Repository instructions and AGENTS.md: <https://docs.github.com/en/copilot/how-tos/configure-custom-instructions/add-repository-instructions>
 - Hooks (file format, `bash`/`powershell`, payload formats, matchers; the `PostToolUse` alias and the PascalCase names that select the VS Code-compatible payload, read 2026-11-27): <https://docs.github.com/en/copilot/how-tos/use-copilot-agents/coding-agent/use-hooks> and <https://docs.github.com/en/copilot/reference/hooks-configuration>

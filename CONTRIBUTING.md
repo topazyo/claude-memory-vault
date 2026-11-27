@@ -199,7 +199,7 @@ each harness a tier by what a test holds, on top of the opt-in rule and the clos
 | Tier | A test must | Live record |
 | --- | --- | --- |
 | Core (Claude Code) | fail on a one-line break of its wiring, on every OS | the version measured, in each release that changes `.claude/settings.json` or `CLAUDE.md` |
-| Held | fail on a one-line break of every event name, matcher or handler, required on every OS it runs on: a static config through the wiring table, an adapter through a driver | a dated line, run live or not; recorded, not required |
+| Held | fail on a one-line break of every event name, matcher, handler, and field that runs a hook with the script it names, required on every OS it runs on: a static config through the wiring table, an adapter through a driver | a dated line, run live or not; recorded, not required |
 | Documented | hold whatever it ships (Aider's two git flags) | a dated line |
 
 A new harness is accepted when:
@@ -209,7 +209,8 @@ A new harness is accepted when:
 2. It reuses `vault-lint.sh` and `postcompact-wrap-up.sh`, and adds its payload shape to
    the list of where each harness names the written file in `vault-lint.sh`, to the parsing
    beside it, and to the lint section, under both parsers.
-3. Its wiring is held: a one-line mutant of each event name, matcher or handler fails a control.
+3. Its wiring is held: a one-line mutant of each event name, matcher, handler, and field that runs
+   a hook with the script it names fails a control.
    Whoever adds it runs those mutants and records the kills in the pull request.
 4. Its guide carries the `Live record:` line: `run live: <version>, <OS>, <date>`, or
    `not run live; docs checked <dates>`.

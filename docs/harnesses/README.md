@@ -36,8 +36,9 @@ says that in its `Live record:` line.
 
 - **Core:** a one-line break of the wiring fails a control on every OS. A release that changes
   `.claude/settings.json` or `CLAUDE.md` records the Claude Code version it was run on.
-- **Held:** a one-line break of any event name, matcher or handler fails a control required on
-  every OS. A static config is held through the suite's wiring table, an adapter through a driver
+- **Held:** a one-line break of any event name, matcher, handler, or the field that runs a hook
+  and the script it names, fails a control required on every OS the harness runs on. What a
+  command runs before the script (the interpreter, a path variable) is not held. A static config is held through the suite's wiring table, an adapter through a driver
   that stands in for the harness's API. **Held (V1 plugin API)** means the OpenCode plugin's wiring
   is held against the V1 plugin API it was written for. OpenCode's documentation now describes a
   V2 API and says V1 implementations do not run in V2. Whether a current OpenCode loads this plugin
