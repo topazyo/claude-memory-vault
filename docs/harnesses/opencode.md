@@ -4,13 +4,22 @@ OpenCode reads `AGENTS.md` on its own. The template ships a config that loads th
 automatically, and a plugin, **off until you enable it**, that lints written notes, records
 compactions, and denies reads of the secret paths.
 
+> **The plugin is written for OpenCode's V1 plugin API, which current OpenCode may not load.**
+> OpenCode's documentation, read 2026-11-27, describes a V2 plugin API and says "V1 plugin
+> implementations do not run in V2." Whether a current OpenCode still loads a V1-only plugin such
+> as this one was not checked, and the plugin has not been run live. Until it is ported, treat its
+> lint, compaction stub and read deny as unproven on your OpenCode. The suite holds its wiring
+> against the V1 API it was written for. The `opencode.json` instructions are not affected.
+
 ## What ships
 
 | File | What it does |
 | --- | --- |
 | `opencode.json` | `"instructions": [".claude/rules/*.md"]` loads all four rules files into every session |
-| `.claude/adapters/opencode/vault.js` | The plugin, kept outside `.opencode/plugins/` so it does not load. Once enabled it denies `read` on `.env`, `.env.*` and anything under `secrets/`; runs `vault-lint.sh` after `write`, `edit` and `apply_patch`; runs `postcompact-wrap-up.sh` on `session.compacted` |
+| `.claude/adapters/opencode/vault.js` | The plugin (V1 plugin API, see the note above), kept outside `.opencode/plugins/` so it does not load. Once enabled it denies `read` on `.env`, `.env.*` and anything under `secrets/`; runs `vault-lint.sh` after `write`, `edit` and `apply_patch`; runs `postcompact-wrap-up.sh` on `session.compacted` |
 | `.agents/skills/` and `.claude/skills/` | OpenCode reads both. The copies are identical, and whether OpenCode lists a same-named skill once or twice was not documented |
+
+Live record: not run live; docs checked 2026-09-13 to 2026-11-27.
 
 **Why the plugin is opt-in.** OpenCode loads every file in `.opencode/plugins/` at startup and runs
 it, with no trust prompt. A plugin shipped there would run code from any clone of a vault the
@@ -144,12 +153,13 @@ before a later run loads it.
   If it differs, patch edits go unlinted and the commit gate still catches them.
 - `bash` tool reads and writes bypass the plugin.
 
-## Sources (checked 2026-09-13; config, plugins and custom tools read again 2026-10-18)
+## Sources (checked 2026-09-13; config, plugins and custom tools read again 2026-10-18; config and plugins read again 2026-11-27)
 
 - Rules, AGENTS.md and Claude Code compatibility: <https://opencode.ai/docs/rules/>
-- Config (`instructions`; singular folder names and JSONC, read 2026-10-18): <https://opencode.ai/docs/config/>
+- Config (`instructions`; singular folder names and JSONC, read 2026-10-18; `instructions` read again 2026-11-27): <https://opencode.ai/docs/config/>
 - Permissions (keys, default `.env` deny): <https://opencode.ai/docs/permissions/> and <https://opencode.ai/docs/agents/>
-- Plugins (`.opencode/plugins/`, `tool.execute.before`, `$`, `session.compacted`; the `plugin` option and load order, read 2026-10-18): <https://opencode.ai/docs/plugins/>
+- Plugins (`.opencode/plugins/`, `tool.execute.before`, `$`, `session.compacted`; the `plugin` option and load order, read 2026-10-18; on 2026-11-27 this page named none of those hooks, `$` or `session.compacted`): <https://opencode.ai/docs/plugins/>
+- V1 to V2 plugin migration (the V1 hooks `tool.execute.before`, `tool.execute.after` and `event` and what replaces each in V2; "V1 plugin implementations do not run in V2"; no current page names `session.compacted`; read 2026-11-27): <https://opencode.ai/docs/build/plugins/migrate-v1>
 - Custom tools (`.opencode/tools/`), read 2026-10-18: <https://opencode.ai/docs/custom-tools/>
 - Skills (discovery paths): <https://opencode.ai/docs/skills/>
 - CLI (`opencode run`, `--auto`, `--dir`, `--agent`): <https://opencode.ai/docs/cli/>

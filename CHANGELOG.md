@@ -25,6 +25,76 @@ bash .claude/scripts/vault-update.sh --check --from ../template-new
 
 ---
 
+## 1.7.8 — 2026-11-27
+
+Each harness now has a tier saying what the control suite holds for it. Two new controls hold the
+wiring that makes a harness call its hook, and each guide says whether that harness has been run
+live. No hook, runner, rule or checker changes what it does.
+
+### Added
+
+- **The wiring table.** Until now the suite proved that a hook script a config names exists, and
+  not that the harness would call it. A renamed event key, matcher or handler field left the
+  script named and the harness running nothing, and nine sections of the suite passed each such
+  break. `harness-wiring` reads a table of every event the Codex, Gemini CLI, Cursor, Copilot and
+  Windsurf configs wire (its matcher, the field that runs the hook, and the script), plus
+  `opencode.json`'s `instructions`, Gemini CLI's `context.fileName` and the `version` of the Cursor
+  and Copilot files. It fails when a config no longer holds a row. Template only,
+  `tmpl-harness-wiring-pinned` also fails an event with no row, a matcher that is not exact, and
+  a row whose guide does not name its event beside the source it cites.
+- **The OpenCode plugin's after-hook and compaction handler are driven.** `opencode-plugin-after-hook`
+  loads the plugin with a stand-in for OpenCode's `$` and drives a write, an edit, an
+  `apply_patch` whose `patchText` adds, updates and moves files, a read, a shell call, and the
+  `session.compacted` event. Until now only its read hook was tested.
+- **A tier for each harness.** `docs/harnesses/README.md`'s support table has a Tier column, and
+  `AGENTS.md` § 8 a Tier row pointing at it. Claude Code is Core. Codex, Gemini CLI, Cursor,
+  Copilot, Windsurf, Pi and Oh My Pi are Held: a one-line break of any event name, matcher or
+  handler fails a control required on every OS. For the five configs and the OpenCode plugin that
+  is 67 one-line mutants, each failing the control that holds it first, plus 11 mutants of the
+  new checks themselves, all killed (on Windows, Git Bash). Pi's and Oh My Pi's eight handlers
+  were already held by their drivers. OpenCode is **Held (V1 plugin API)**, see below. Aider and Hermes Agent are
+  Documented. `CONTRIBUTING.md` says what a new harness is held to.
+- **Each guide has a `Live record:` line**, saying which version was run live, on which OS and
+  when, or that the harness was not run live and when its documentation was checked. Claude Code
+  and Oh My Pi have been run live, and Copilot has one behaviour measured. The rest have not been
+  run live. `tmpl-harness-guides-live-line` fails a guide without exactly one such line.
+
+### Changed
+
+- **The OpenCode plugin is marked as written for OpenCode's V1 plugin API.** OpenCode's
+  documentation, read 2026-11-27, describes a V2 plugin API and says V1 implementations do not run
+  in V2. Whether a current OpenCode still loads this plugin was not checked. Its lint, compaction
+  stub and read deny are now described as unproven on current OpenCode in its guide, in
+  `AGENTS.md` § 8, in the support table, in `docs/reference.md` and in the plugin's own header. The
+  plugin's code is unchanged; a port is a later release. `opencode.json`'s `instructions` key is
+  still documented and is not affected.
+- **Copilot's and OpenCode's guides cite pages read 2026-11-27**: GitHub's hooks reference for the
+  `PostToolUse` name, and OpenCode's configuration and V1 migration pages.
+
+### Adopting this
+
+1. **Nothing a pass, a hook, the lint or the commit gate does changes.**
+2. **If you enabled the OpenCode plugin by copying it to `.opencode/plugins/vault.js`, copy it
+   again.** Its header gained four comment lines, so the suite's check that your enabled copy
+   matches the reviewed adapter fails until the copy is the new file. Read
+   `docs/harnesses/opencode.md`'s note first: on a current OpenCode the plugin may not load at
+   all.
+3. **`harness-wiring` runs in your vault too, with Node 18 or later.** It fails if a shipped hook
+   config no longer wires an event, matcher, handler field or script as the table in
+   `run-tests.sh` says. That is a hook you have lost, unless you changed it on purpose. A matcher
+   you widened by adding alternatives (`Edit|Write|MultiEdit`) still passes. A matcher written as
+   `.*`, `*` or with anchors, or removed, fails, as does a config you rewired on purpose. JSON
+   with comments is read. Without Node the new controls skip by name, and the two
+   `tmpl-` controls skip in any vault.
+4. **`README.md` is classed `seed`**, so merge its one changed line (the OpenCode plugin's comment
+   in the repository layout) by hand if you want it.
+5. The shipped files this release touches are `.claude/scripts/run-tests.sh`,
+   `.claude/adapters/opencode/vault.js`, `AGENTS.md`, `README.md`, `docs/reference.md`,
+   `docs/harnesses/README.md` and all eleven guides under `docs/harnesses/`, plus `VERSION`, this
+   file and `.claude/template-manifest`.
+
+---
+
 ## 1.7.7 — 2026-11-26
 
 `docs/reference.md` § 4.3, the scheduled runners, gets places to land. No script, hook, rule or

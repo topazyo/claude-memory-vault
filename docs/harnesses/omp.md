@@ -25,6 +25,8 @@ the control suite.
 | `.claude/adapters/omp/vault.js` | The extension, kept outside `.omp/extensions/` so omp does not load it by itself. Once loaded it refuses a file-tool call whose path names `.env` or `.env.*`, or passes through or ends at a part named `secrets` at any depth; runs `vault-lint.sh` after each successful `write`, `edit` and applied `ast_edit` and adds what it reports to the tool's result; runs `postcompact-wrap-up.sh` on each compaction, as `manual` or `auto` |
 | `.claude/skills/*/SKILL.md`, `.agents/skills/*/SKILL.md` | The five skills. omp reads both folders and keeps one copy of a skill whose two copies are byte-identical, the `.claude/skills/` one. The suite keeps the two folders identical, so each skill is listed once |
 
+Live record: run live: omp 18.18.9, Windows, 2026-11-12.
+
 At the vault root omp loads `AGENTS.md` and not `CLAUDE.md`. It keeps one instruction file per
 folder, and `AGENTS.md` comes first there. `CLAUDE.md` is Claude Code's bridge to `AGENTS.md`, so
 the instructions load once. omp also walks up from the vault past its git root to just below your

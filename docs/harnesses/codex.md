@@ -11,6 +11,8 @@ after edits and the compaction stub. Codex loads that config only once you trust
 | `.codex/hooks.json` | `PostToolUse` on `apply_patch` runs `vault-lint.sh`; `PostCompact` runs `postcompact-wrap-up.sh` |
 | `.agents/skills/*/SKILL.md` | The five skills, where Codex looks for repository skills |
 
+Live record: not run live; docs checked 2026-09-13 to 2026-10-17.
+
 Codex edits files through `apply_patch`, and its hook receives the patch text rather than a file
 path (`tool_input.command`). `vault-lint.sh` reads every `*** Add File:`, `*** Update File:` and
 `*** Move to:` header in that text and lints each named file, resolving a relative path against

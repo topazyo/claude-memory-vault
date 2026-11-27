@@ -15,6 +15,8 @@ instead, and add hooks for the lint and the compaction stub.
 | `.geminiignore` | Lists `.env`, `.env.*`, `secrets/` |
 | `.agents/skills/*/SKILL.md` | The five skills, in the folder Gemini CLI reads for workspace skills |
 
+Live record: not run live; docs checked 2026-09-13.
+
 The hook commands use `$GEMINI_PROJECT_DIR`, which Gemini CLI sets for every hook. It also sets
 `CLAUDE_PROJECT_DIR` as an alias, and the scripts use that to find the vault.
 

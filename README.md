@@ -157,7 +157,7 @@ claude-memory-vault/
 ├── .claude/                         # shared tooling; only settings.json and one hook are Claude-only
 │   ├── settings.json                # Claude Code: registers the three hooks; denies reads of .env and secrets/
 │   ├── githooks/pre-commit          # opt-in commit gate for any harness: runs vault-check.sh
-│   ├── adapters/opencode/vault.js   # OpenCode plugin, opt-in: copy to .opencode/plugins/ to enable
+│   ├── adapters/opencode/vault.js   # OpenCode plugin (V1 API), opt-in: copy to .opencode/plugins/ to enable
 │   ├── adapters/pi/vault.js         # Pi extension, opt-in: load with pi -e, or copy to .pi/extensions/
 │   ├── adapters/omp/vault.js        # Oh My Pi extension, opt-in: load with omp -e, or copy to .omp/extensions/
 │   ├── agents/

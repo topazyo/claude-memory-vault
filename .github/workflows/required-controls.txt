@@ -226,6 +226,7 @@ h2-import-promotion ubuntu macos windows
 h2-imports-unreadable ubuntu macos windows
 h8a-dot-steering windows
 h8a-dot-tier windows
+harness-wiring ubuntu macos windows
 head-holds-unknown ubuntu macos windows
 hup-dream-pass ubuntu macos windows
 hup-group-dream-pass ubuntu
@@ -290,6 +291,7 @@ mem-override-work-unreachable ubuntu macos
 msys-conv-pass windows
 noncesweep windows
 omp-extension-behaviour ubuntu macos windows
+opencode-plugin-after-hook ubuntu macos windows
 pi-extension-behaviour ubuntu macos windows
 pi-extension-dirlink ubuntu macos windows
 pi-extension-symlink ubuntu macos windows
@@ -377,6 +379,8 @@ tmpl-fixtures-built ubuntu macos windows
 tmpl-generate-guarded ubuntu macos windows
 tmpl-generate-needs-a-version ubuntu macos windows
 tmpl-generate-under-tripwire ubuntu macos windows
+tmpl-harness-guides-live-line ubuntu macos windows
+tmpl-harness-wiring-pinned ubuntu macos windows
 tmpl-hash-count ubuntu macos
 tmpl-hash-tool-misbehaves ubuntu macos windows
 tmpl-hash-tool-named ubuntu macos windows

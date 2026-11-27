@@ -10,6 +10,8 @@ the template ships workspace hooks for the lint and for a secrets read guard.
 | --- | --- |
 | `.windsurf/hooks.json` | `pre_read_code` runs `read-guard.sh`, which blocks reads of `.env`, `.env.*` and `secrets/`; `post_write_code` runs `vault-lint.sh` |
 
+Live record: not run live; docs checked 2026-09-13 to 2026-11-12.
+
 Hooks run from the workspace root. Each hook has a `command` for macOS and Linux (run with
 `bash -c`) and a `powershell` entry for Windows that calls Git Bash at
 `%ProgramFiles%\Git\bin\bash.exe`, rather than a bare `bash` that could resolve to WSL.

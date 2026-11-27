@@ -1,6 +1,10 @@
 // .claude/adapters/opencode/vault.js
 // OpenCode adapter for this vault. Setup and verification: docs/harnesses/opencode.md.
 //
+// Written for OpenCode's V1 plugin API. OpenCode's documentation (read
+// 2026-11-27) describes a V2 API and says V1 implementations do not run in V2;
+// whether a current OpenCode still loads this file was not checked.
+//
 // OPT-IN. OpenCode runs every file in .opencode/plugins/ at startup without
 // asking, so this plugin ships outside that folder. Copy it to
 // .opencode/plugins/vault.js once you have read it.
