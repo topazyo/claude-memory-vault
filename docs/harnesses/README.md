@@ -31,19 +31,35 @@ different date.
 "Guidance" means nothing mechanical stops the agent: the rule in `.claude/rules/` is the control,
 and the agent must follow it.
 
-| Harness | Instructions | Rules | Lint after a write | Compaction stub | `.env` / `secrets/` reads | Skills | Scheduled passes | Auto memory into the vault |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Claude Code | `CLAUDE.md` imports `AGENTS.md` | Loaded automatically | Hook | Hook | Denied (`settings.json`) | `.claude/skills/` | Default mode, allowlists enforced | Yes (`autoMemoryDirectory`) |
-| Codex CLI | `AGENTS.md` natively | Via `AGENTS.md` | Hook (trusted project) | Hook | Guidance | `.agents/skills/` | Command mode | No: moves only with `CODEX_HOME` |
-| Gemini CLI | `.gemini/settings.json` | Via `AGENTS.md` | Hook | Hook | Hidden from search only | `.agents/skills/` | Command mode | No: moves only with `GEMINI_CLI_HOME` |
-| Cursor | `AGENTS.md` natively | Via `AGENTS.md` | Hook | Hook | Blocked except terminal and MCP | Both skill folders | Command mode | Unverified |
-| GitHub Copilot | `AGENTS.md` natively | VS Code loads them; elsewhere via `AGENTS.md` | Hook | None | Guidance | Both skill folders | Command mode | No: kept by GitHub |
-| OpenCode | `AGENTS.md` natively | `opencode.json` loads them | Plugin (opt-in) | Plugin (opt-in) | `*.env` denied by default; the rest by the opt-in plugin | Both skill folders | Command mode | None |
-| Windsurf / Devin Desktop | `AGENTS.md` natively | Via `AGENTS.md` | Hook | None | Denied (read hook) | Follow `SKILL.md` | Not covered | No setting found |
-| Aider | `.aider.conf.yml` | `.aider.conf.yml` | Commit gate only | None | Guidance | Follow `SKILL.md` | Not recommended | None |
-| Hermes Agent | `AGENTS.md` natively | Via `AGENTS.md` | Hook (user config) | None | Guidance | `.agents/skills/` (after trust) | Command mode, in a container | No: moves only with `HERMES_HOME` |
-| Pi | `AGENTS.md` natively | Via `AGENTS.md` | Extension (opt-in) | Extension (opt-in) | Denied by the opt-in extension when a file tool names them | `.agents/skills/` (after trust) | Command mode, in a container | None |
-| Oh My Pi (omp) | `AGENTS.md` natively | Via `AGENTS.md` | Extension (opt-in) | Extension (opt-in) | Denied by the opt-in extension when a file tool names them | Both skill folders (one copy kept) | Command mode, in a container | Partly: off by default; the `mnemopi` backend's database moves on its own (`mnemopi.dbPath`), the default backend only with omp's agent folder |
+The **Tier** says what the control suite holds, not whether anybody has run the harness. Each guide
+says that in its `Live record:` line.
+
+- **Core:** a one-line break of the wiring fails a control on every OS. A release that changes
+  `.claude/settings.json` or `CLAUDE.md` records the Claude Code version it was run on.
+- **Held:** a one-line break of any event name, matcher, handler, or the field that runs a hook
+  and the script it names, fails a control required on every OS the harness runs on. What a
+  command runs before the script (the interpreter, a path variable) is not held. A static config is held through the suite's wiring table, an adapter through a driver
+  that stands in for the harness's API. **Held (V1 plugin API)** means the OpenCode plugin's wiring
+  is held against the V1 plugin API it was written for. OpenCode's documentation now describes a
+  V2 API and says V1 implementations do not run in V2. Whether a current OpenCode loads this plugin
+  is not known: see [`opencode.md`](opencode.md).
+- **Documented:** the template ships no hook wiring for the harness, and the suite holds what
+  there is: Aider's two git settings, and for Hermes, which ships nothing in the box, the lint's
+  `--ack-json` reply that its user-config snippet relies on.
+
+| Harness | Tier | Instructions | Rules | Lint after a write | Compaction stub | `.env` / `secrets/` reads | Skills | Scheduled passes | Auto memory into the vault |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Claude Code | Core | `CLAUDE.md` imports `AGENTS.md` | Loaded automatically | Hook | Hook | Denied (`settings.json`) | `.claude/skills/` | Default mode, allowlists enforced | Yes (`autoMemoryDirectory`) |
+| Codex CLI | Held | `AGENTS.md` natively | Via `AGENTS.md` | Hook (trusted project) | Hook | Guidance | `.agents/skills/` | Command mode | No: moves only with `CODEX_HOME` |
+| Gemini CLI | Held | `.gemini/settings.json` | Via `AGENTS.md` | Hook | Hook | Hidden from search only | `.agents/skills/` | Command mode | No: moves only with `GEMINI_CLI_HOME` |
+| Cursor | Held | `AGENTS.md` natively | Via `AGENTS.md` | Hook | Hook | Blocked except terminal and MCP | Both skill folders | Command mode | Unverified |
+| GitHub Copilot | Held | `AGENTS.md` natively | VS Code loads them; elsewhere via `AGENTS.md` | Hook | None | Guidance | Both skill folders | Command mode | No: kept by GitHub |
+| OpenCode | Held (V1 plugin API) | `AGENTS.md` natively | `opencode.json` loads them | Plugin (opt-in, V1 API) | Plugin (opt-in, V1 API) | `*.env` denied by default; the rest by the opt-in V1 plugin | Both skill folders | Command mode | None |
+| Windsurf / Devin Desktop | Held | `AGENTS.md` natively | Via `AGENTS.md` | Hook | None | Denied (read hook) | Follow `SKILL.md` | Not covered | No setting found |
+| Aider | Documented | `.aider.conf.yml` | `.aider.conf.yml` | Commit gate only | None | Guidance | Follow `SKILL.md` | Not recommended | None |
+| Hermes Agent | Documented | `AGENTS.md` natively | Via `AGENTS.md` | Hook (user config) | None | Guidance | `.agents/skills/` (after trust) | Command mode, in a container | No: moves only with `HERMES_HOME` |
+| Pi | Held | `AGENTS.md` natively | Via `AGENTS.md` | Extension (opt-in) | Extension (opt-in) | Denied by the opt-in extension when a file tool names them | `.agents/skills/` (after trust) | Command mode, in a container | None |
+| Oh My Pi (omp) | Held | `AGENTS.md` natively | Via `AGENTS.md` | Extension (opt-in) | Extension (opt-in) | Denied by the opt-in extension when a file tool names them | Both skill folders (one copy kept) | Command mode, in a container | Partly: off by default; the `mnemopi` backend's database moves on its own (`mnemopi.dbPath`), the default backend only with omp's agent folder |
 
 "Both skill folders" means the harness reads `.claude/skills/` and `.agents/skills/`. The two
 copies are byte-identical (the control suite fails if they drift). omp keeps one copy of a skill

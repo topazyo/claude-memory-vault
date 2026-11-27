@@ -10,6 +10,8 @@ commits pass through the commit gate.
 | --- | --- |
 | `.aider.conf.yml` | `read:` loads `AGENTS.md` and the four rules files as read-only context; `git-commit-verify: true`; `gitignore: false` |
 
+Live record: not run live; docs checked 2026-09-13 to 2026-10-18.
+
 Aider commits with `--no-verify` by default (`git-commit-verify: false`), which skips git hooks.
 Without the shipped setting, the commit gate would never see a note Aider wrote. `.gitignore`
 carries an exception so this file stays tracked despite the `.aider*` pattern.

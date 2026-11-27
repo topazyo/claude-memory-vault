@@ -12,6 +12,8 @@ gives the snippet, and the onboarding prompt has the agent propose it for your a
 | `.agents/skills/*/SKILL.md` | The five skills, in Hermes's cross-tool project skills folder |
 | `vault-lint.sh --ack-json` | The lint prints `{}` on stdout, because Hermes reads a hook's stdout back as JSON |
 
+Live record: not run live; docs checked 2026-09-13 to 2026-11-11.
+
 ## Enforced, and guidance
 
 - **Enforced, once you add the snippet:** the lint after `write_file` and `patch`. Hermes asks you

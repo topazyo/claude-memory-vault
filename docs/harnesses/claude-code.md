@@ -13,6 +13,10 @@ already works when you start Claude Code from the vault root.
 | `.claude/skills/*/SKILL.md` | The five skills, as slash commands |
 | `.claude/agents/*.md` | `dream-agent` and `promotion-agent`, with `tools:` allowlists |
 
+Live record: run live: Claude Code 2.1.301, Windows, 2026-11-10 (the date of the 1.4.2 changelog
+entry, which records a hook probe and a dream pass in `-p` mode; the run itself is not dated there,
+and the vault's lint and compaction hooks were not what it tested).
+
 ## Enforced, and guidance
 
 - **Enforced:** the lint after every Write or Edit and the compaction stub, outside claude-mode

@@ -185,6 +185,39 @@ adapter for omp only because the adapter was already planned.
   that its own control is what fails.
 - In `.claude/scripts/vault-update.sh`, add to `MACHINERY_ROOTS` or `MACHINERY_FILES` when the
   template starts shipping into a folder or file it did not ship before.
+- A static hook config needs a row in `run-tests.sh`'s wiring table (the `harness-configs`
+  section) for every event it wires, with its matcher, handler field and script. The guide's
+  Sources bullet must name each event in backticks beside the URL the row cites, or
+  `tmpl-harness-wiring-pinned` fails. An adapter needs a driver through a stand-in of the
+  harness's declared API, as the Pi, omp and OpenCode sections have.
+- The guide needs one `Live record:` line after its "What ships" table, or
+  `tmpl-harness-guides-live-line` fails.
+
+**What a harness is held to (the tiers, decided 2026-11-27).** `docs/harnesses/README.md` gives
+each harness a tier by what a test holds, on top of the opt-in rule and the closed lists above:
+
+| Tier | A test must | Live record |
+| --- | --- | --- |
+| Core (Claude Code) | fail on a one-line break of its wiring, on every OS | the version measured, in each release that changes `.claude/settings.json` or `CLAUDE.md` |
+| Held | fail on a one-line break of every event name, matcher, handler, and field that runs a hook with the script it names, required on every OS it runs on: a static config through the wiring table, an adapter through a driver | a dated line, run live or not; recorded, not required |
+| Documented | hold whatever it ships (Aider's two git flags) | a dated line |
+
+A new harness is accepted when:
+
+1. It enters at Held, or at Documented if it ships no wiring. (Shape-held, where six harnesses sat
+   until 1.7.8 built the wiring table and the OpenCode driver, is no way in.)
+2. It reuses `vault-lint.sh` and `postcompact-wrap-up.sh`, and adds its payload shape to
+   the list of where each harness names the written file in `vault-lint.sh`, to the parsing
+   beside it, and to the lint section, under both parsers.
+3. Its wiring is held: a one-line mutant of each event name, matcher, handler, and field that runs
+   a hook with the script it names fails a control.
+   Whoever adds it runs those mutants and records the kills in the pull request.
+4. Its guide carries the `Live record:` line: `run live: <version>, <OS>, <date>`, or
+   `not run live; docs checked <dates>`.
+5. The pull request states its cost against the two harnesses added so far (about 1,750 to 1,920
+   insertions across 16 to 19 files) and lists each place above as done, because most of them
+   have no test.
+6. A harness that ships nothing, as Hermes Agent does, still owes rule 4 and the fence places.
 
 Pin every claim about the harness to its source, either a URL or a repository path, line and commit,
 with the date you read it. Harnesses change their file names between releases.

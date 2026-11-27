@@ -264,7 +264,7 @@ the next session those passes' output as if it were the work.
 | Logs | `.claude/logs/read-guard.log` |
 
 Claude Code does not use it: `.claude/settings.json` denies the same paths natively. OpenCode's
-plugin applies the same test in JavaScript, the per-part stripping included (1.7.1). Short names
+plugin (V1 plugin API; may not load on current OpenCode, see its guide) applies the same test in JavaScript, the per-part stripping included (1.7.1). Short names
 are not resolved in general: `ENV~1` is caught by name, but a short name of a longer folder is
 not, and stays a known limit. Pi's opt-in extension applies its own, which first
 reads a path the way Pi's file tools will open it (a leading `@`, `~`, `file://` URLs, Windows
@@ -516,6 +516,33 @@ a lint that does nothing and a lint that found nothing wrong print the same thin
   to give a note or folder are the any-depth file names and the folder names `steering_filter`
   contains, compared both ways, above a floor for each list, after the comparison has failed on a
   copy of the agent with one name swapped and a copy of the fence with one name added.
+- **Harness wiring** (1.7.8) — with Node 18 or later, `harness-wiring` reads a table of each
+  shipped hook config's event key, matcher, handler field and the script that field runs, plus
+  `opencode.json`'s `instructions`, Gemini CLI's `context.fileName`, the `version` of the Cursor
+  and Copilot files, and Codex's `hooks` flag, which fails when it is set to anything but `true`
+  under `[features]`, as `features.hooks` or in an inline `features` table, with its keys bare or
+  quoted either way (absent, Codex's
+  default is on; a profile's own `features` table is not read). It fails when a config no longer
+  holds a row, in a vault too, and when a config is missing (as the hook-reference check above
+  already did). A matcher may hold more alternatives than the row's. Comments are read only in
+  `opencode.json`, because OpenCode documents JSONC; a comment in another JSON hook config fails,
+  because no guide records that harness reading one. The positive controls edit canned copies of the configs held in
+  the suite, not the vault's own, so a vault's formatting does not decide them. A matcher
+  written as `.*`, `*` or with anchors, or removed, fails. Template only,
+  `tmpl-harness-wiring-pinned` also fails an event with no row, a matcher that is not exact, and
+  a row whose guide does not name its key beside the source it cites. `tmpl-harness-guides-live-line`
+  fails a guide without exactly one dated `Live record:` line. Not held: what a command runs
+  before the script (the interpreter, `git rev-parse`, `$GEMINI_PROJECT_DIR`, Windsurf's
+  `bash.exe` path), Codex's and Gemini CLI's `timeout`, Gemini CLI's hook `name` and Copilot's
+  `timeoutSec` (Gemini CLI's timeout units have their own control).
+- **OpenCode plugin** — with Node 18 or later, `.claude/adapters/opencode/vault.js` (written for
+  OpenCode's V1 plugin API) is loaded twice. `c10-opencode-normalised` puts fourteen secret-path
+  spellings to its read hook. `opencode-plugin-after-hook` passes it a stand-in `$` that records
+  each call, and drives `tool.execute.after` after a write, an edit and an
+  `apply_patch` (its `patchText` headers), a read, a shell call and an unmatched call, and the
+  `event` handler with `session.compacted` and another event. Each lint or stub call must name
+  its hook, carry the files or the session id, run in the vault root and be quiet, non-throwing
+  and awaited.
 - **Pi extension** — with Node 18 or later, `.claude/adapters/pi/vault.js` is loaded with a
   stand-in for Pi's extension API and fake vaults whose hook scripts record what they get. Each of
   these is refused: `@.env`, `.ENV`, `.env.`, `.env ` and a trailing no-break space, an NTFS

@@ -19,9 +19,10 @@ your own knowledge.
 **It works with any harness.** The contract, the checker, the rules and the skills are plain
 Markdown and bash, and `AGENTS.md` is the entry point every agent reads. Claude Code gets the
 most automation, because the template ships hooks, subagents and a Read deny for it in `.claude/`.
-The template also ships working config for Codex CLI, Gemini CLI, Cursor, GitHub Copilot, OpenCode,
+The template also ships config for Codex CLI, Gemini CLI, Cursor, GitHub Copilot, OpenCode,
 Windsurf / Devin Desktop and Aider, plus opt-in extensions for Pi and Oh My Pi and a setup snippet
-for Hermes Agent. Each gets hooks, a plugin or an extension for the lint where the harness supports one, and
+for Hermes Agent. Each gets hooks, a plugin or an extension for the lint where the harness supports one
+(OpenCode's plugin is written for its V1 plugin API, which current OpenCode may not load), and
 every harness gets an opt-in git
 pre-commit gate. [`docs/harnesses/`](docs/harnesses/README.md) has a guide for each, with a prompt
 that has the agent onboard the vault and prove the wiring works, and the
@@ -157,7 +158,7 @@ claude-memory-vault/
 ├── .claude/                         # shared tooling; only settings.json and one hook are Claude-only
 │   ├── settings.json                # Claude Code: registers the three hooks; denies reads of .env and secrets/
 │   ├── githooks/pre-commit          # opt-in commit gate for any harness: runs vault-check.sh
-│   ├── adapters/opencode/vault.js   # OpenCode plugin, opt-in: copy to .opencode/plugins/ to enable
+│   ├── adapters/opencode/vault.js   # OpenCode plugin (V1 API), opt-in: copy to .opencode/plugins/ to enable
 │   ├── adapters/pi/vault.js         # Pi extension, opt-in: load with pi -e, or copy to .pi/extensions/
 │   ├── adapters/omp/vault.js        # Oh My Pi extension, opt-in: load with omp -e, or copy to .omp/extensions/
 │   ├── agents/

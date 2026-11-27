@@ -11,6 +11,8 @@ compaction stub, and an ignore file for the secret paths.
 | `.cursorignore` | Blocks Agent, Tab and @-mention access to `.env`, `.env.*`, `secrets/` |
 | `.agents/skills/` and `.claude/skills/` | Cursor reads both. The copies are identical, so a skill may be listed twice |
 
+Live record: not run live; docs checked 2026-09-13 to 2026-10-23.
+
 Project hooks run from the project root, which is why the commands use relative paths. Cursor's
 `preCompact` input carries no session id, so the stub is keyed on `conversation_id`.
 
