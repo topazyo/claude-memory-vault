@@ -2581,14 +2581,15 @@ function $(strings, ...values) {
 }
 // worktree and directory differ, so a plugin that took the wrong one runs
 // its hooks from the wrong folder and is caught by the cwd check.
-let hooks
+// A plugin that cannot be loaded is reported as a line and the cases are
+// skipped; the script then ends on its own, so no output is lost to exit.
+let hooks, loadFailed = ""
 try {
   const mod = await import(pathToFileURL(file).href)
   hooks = await mod.VaultPlugin({ $, worktree: "/v", directory: "/d" })
   if (!hooks || typeof hooks !== "object") throw new Error(`VaultPlugin returned ${JSON.stringify(hooks)}`)
 } catch (e) {
-  process.stdout.write(`after-bad plugin: ${String(e && e.message ? e.message : e).split("\n")[0]}\ncases 0\n`)
-  process.exit(0)
+  loadFailed = String(e && e.message ? e.message : e).split("\n")[0]
 }
 // The command each handler builds is `bash ${hooks}/<script> <rest>${value}`.
 function wrong(c, script, rest) {
@@ -2629,7 +2630,8 @@ const cases = [
   }],
   ["other-event", async () => { await hooks.event({ event: { type: "session.idle", properties: { sessionID: "s1" } } }) }, none],
 ]
-for (const [name, run, check] of cases) {
+if (loadFailed) process.stdout.write(`after-bad plugin: ${loadFailed}\n`)
+for (const [name, run, check] of loadFailed ? [] : cases) {
   calls.length = 0
   let why = ""
   for (const k of ["tool.execute.before", "tool.execute.after", "event"]) {
@@ -2979,14 +2981,20 @@ function load(config) {
 // when the section or the key is absent. Enough for one flag; not a parser.
 function tomlValue(text, dotted) {
   const [section, key] = dotted.split(".")
+  const k = `"?${key}"?`, s = `"?${section}"?`
   let where = "top", value
   for (const raw of text.split(/\r?\n/)) {
     const line = raw.replace(/#.*$/, "").trim()
+    // [[x]] is an array of tables: another section, whatever its name.
+    if (/^\[\[.*\]\]$/.test(line)) { where = "other"; continue }
     const head = /^\[([^\]]+)\]$/.exec(line)
-    if (head) { where = head[1].trim() === section ? "section" : "other"; continue }
-    // [features] hooks = x, or features.hooks = x before any section.
-    const kv = (where === "section" && new RegExp(`^${key}\\s*=\\s*(.+)$`).exec(line))
-      || (where === "top" && new RegExp(`^${section}\\.${key}\\s*=\\s*(.+)$`).exec(line))
+    if (head) { where = head[1].trim().replace(/"/g, "") === section ? "section" : "other"; continue }
+    // [features] hooks = x, features.hooks = x before any section, or an
+    // inline table features = { hooks = x }; keys may be quoted.
+    let kv = (where === "section" && new RegExp(`^${k}\\s*=\\s*(.+)$`).exec(line))
+      || (where === "top" && new RegExp(`^${s}\\s*\\.\\s*${k}\\s*=\\s*(.+)$`).exec(line))
+    const inline = where === "top" && new RegExp(`^${s}\\s*=\\s*\\{(.*)\\}$`).exec(line)
+    if (inline) kv = new RegExp(`(?:^|,)\\s*${k}\\s*=\\s*([^,]+)`).exec(inline[1])
     if (kv) value = kv[1].trim()
   }
   return value
@@ -3261,6 +3269,7 @@ wiring_case() {
   if ! printf '%s\n' "$got" | grep -qxF "$5"; then
     local shown
     shown=$(printf '%s\n' "$got" | grep -E '^(unwired|untabled|inexact|unpinned|badrow|badmode) ' | tr '\n' ';' | cut -c1-200)
+    [ -n "$shown" ] || shown=$(printf '%s\n' "$got" | grep -F " $2 " | tr '\n' ';' | cut -c1-200)
     [ -n "$shown" ] || shown=$(printf '%s\n' "$got" | head -n 1 | cut -c1-200)
     wiring_case_bad="$wiring_case_bad $1:[$shown]"
   fi
@@ -3298,6 +3307,21 @@ else
     else
       bad "the wiring table is incomplete, inexact or unpinned -- $wiring_tv"
     fi
+    # The canned fixtures must be the shipped configs, or the positive
+    # controls below go on proving the checker against shapes the template
+    # no longer ships. Compared with any CR removed.
+    wiring_drift=''
+    for f in .codex/hooks.json .gemini/settings.json .cursor/hooks.json .github/hooks/vault.json \
+             .windsurf/hooks.json opencode.json; do
+      tr -d '\r' < "$WIRING_CANNED/$f" > "$TMP/wiring-canned-a"
+      tr -d '\r' < "$ROOT/$f" > "$TMP/wiring-canned-b" 2>/dev/null
+      cmp -s "$TMP/wiring-canned-a" "$TMP/wiring-canned-b" || wiring_drift="$wiring_drift $f"
+    done
+    if [ -z "$wiring_drift" ]; then
+      ok "the wiring table's canned fixtures are the shipped configs, byte for byte"
+    else
+      bad "the wiring table's canned fixtures differ from the shipped configs, so its positive controls test old shapes --$wiring_drift"
+    fi
   fi
 
   wiring_case_bad=''
@@ -3322,6 +3346,12 @@ else
     'unwired .codex/config.toml features.hooks: features.hooks is false, not true'
   wiring_case toml-dotted .codex/config.toml '$0 == "[features]" { next } { sub(/^hooks = true/, "features.hooks = false") } 1' rows \
     'unwired .codex/config.toml features.hooks: features.hooks is false, not true'
+  wiring_case toml-inline .codex/config.toml '$0 == "[features]" { next } { sub(/^hooks = true/, "features = { hooks = false }") } 1' rows \
+    'unwired .codex/config.toml features.hooks: features.hooks is false, not true'
+  wiring_case toml-quoted .codex/config.toml '{ sub(/^hooks = true/, "\"hooks\" = false") } 1' rows \
+    'unwired .codex/config.toml features.hooks: features.hooks is false, not true'
+  wiring_case toml-other-table .codex/config.toml '{ print } END { print "[[x]]"; print "hooks = false" }' rows \
+    'wired .codex/config.toml features.hooks'
   wiring_case jsonc opencode.json 'NR == 1 { print "// a line comment"; print "{ /* a block comment */"; next } 1' rows \
     'wired opencode.json instructions'
   wiring_case comment .codex/hooks.json 'NR == 1 { print "{ // a comment"; next } 1' rows \

@@ -519,12 +519,13 @@ a lint that does nothing and a lint that found nothing wrong print the same thin
 - **Harness wiring** (1.7.8) — with Node 18 or later, `harness-wiring` reads a table of each
   shipped hook config's event key, matcher, handler field and the script that field runs, plus
   `opencode.json`'s `instructions`, Gemini CLI's `context.fileName`, the `version` of the Cursor
-  and Copilot files, and Codex's `[features] hooks`, which fails only when set to anything but
-  `true` (absent, Codex's default is on). It fails when a config no longer holds a row, in a vault too, and when
-  a config is missing (as the hook-reference check above already did). A
-  matcher may hold more alternatives than the row's. Comments are read only in `opencode.json`,
-  because OpenCode documents JSONC; a comment in another hook config fails, because no source
-  says that harness reads one. The positive controls edit canned copies of the configs held in
+  and Copilot files, and Codex's `hooks` flag, which fails when it is set to anything but `true`
+  under `[features]`, as `features.hooks` or in an inline `features` table (absent, Codex's
+  default is on; a profile's own `features` table is not read). It fails when a config no longer
+  holds a row, in a vault too, and when a config is missing (as the hook-reference check above
+  already did). A matcher may hold more alternatives than the row's. Comments are read only in
+  `opencode.json`, because OpenCode documents JSONC; a comment in another JSON hook config fails,
+  because no guide records that harness reading one. The positive controls edit canned copies of the configs held in
   the suite, not the vault's own, so a vault's formatting does not decide them. A matcher
   written as `.*`, `*` or with anchors, or removed, fails. Template only,
   `tmpl-harness-wiring-pinned` also fails an event with no row, a matcher that is not exact, and

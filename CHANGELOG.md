@@ -51,9 +51,9 @@ live. No hook, runner, rule or checker changes what it does.
   Copilot, Windsurf, Pi and Oh My Pi are Held: a one-line break of any event name, matcher,
   handler, or the field that runs a hook and the script it names, fails a control required on every
   OS the harness runs on. The interpreter and path a command puts before the script are not held.
-  For the five configs and the OpenCode plugin that
-  is 69 one-line mutants, each failing the control that holds it first, plus 16 mutants of the
-  new checks themselves, all killed (on Windows, Git Bash). Pi's and Oh My Pi's eight handlers
+  For the five harnesses' configs and the OpenCode plugin that
+  is 70 one-line mutants, each failing the control that holds it first, plus 19 mutants of the
+  new checks themselves, all killed (on Windows, Git Bash, and on Ubuntu in GitHub Actions). Pi's and Oh My Pi's eight handlers
   were already held by their drivers. OpenCode is **Held (V1 plugin API)**, see below. Aider and Hermes Agent are
   Documented. `CONTRIBUTING.md` says what a new harness is held to.
 - **Each guide has a `Live record:` line**, saying which version was run live, on which OS and
@@ -89,8 +89,9 @@ live. No hook, runner, rule or checker changes what it does.
    `.*`, `*` or with anchors, or removed, fails, as does a config you rewired on purpose. A config
    you deleted fails too, as the suite's hook-reference check already did: restore it, or expect
    that FAIL. Comments are read only in `opencode.json`, which OpenCode documents as JSONC. A
-   comment in any other hook config fails, because no source says that harness reads one, and
-   the harness may refuse the file. Codex's `[features] hooks = false` fails as well. Without Node the new controls skip by name, and the two
+   comment in any other JSON hook config fails, because no guide records that harness reading
+   one, and the harness may refuse the file. Codex's `hooks = false`, under `[features]`, as
+   `features.hooks` or in an inline `features` table, fails as well. Without Node the new controls skip by name, and the two
    `tmpl-` controls skip in any vault.
 4. **`README.md` is classed `seed`**, so merge its one changed line (the OpenCode plugin's comment
    in the repository layout) by hand if you want it.

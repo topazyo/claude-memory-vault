@@ -158,7 +158,7 @@ before a later run loads it.
 ## Sources (checked 2026-09-13; config, plugins and custom tools read again 2026-10-18; config and plugins read again 2026-11-27)
 
 - Rules, AGENTS.md and Claude Code compatibility: <https://opencode.ai/docs/rules/>
-- Config (`instructions`; singular folder names and JSONC, read 2026-10-18; `instructions` read again 2026-11-27): <https://opencode.ai/docs/config/>
+- Config (`instructions`; singular folder names and JSONC, read 2026-10-18; `instructions` and JSONC read again 2026-11-27): <https://opencode.ai/docs/config/>
 - Permissions (keys, default `.env` deny): <https://opencode.ai/docs/permissions/> and <https://opencode.ai/docs/agents/>
 - Plugins (`.opencode/plugins/`, `tool.execute.before`, `$`, `session.compacted`; the `plugin` option and load order, read 2026-10-18; on 2026-11-27 this page named none of those hooks, `$` or `session.compacted`): <https://opencode.ai/docs/plugins/>
 - V1 to V2 plugin migration (the V1 hooks `tool.execute.before`, `tool.execute.after` and `event` and what replaces each in V2; "V1 plugin implementations do not run in V2"; no current page names `session.compacted`; read 2026-11-27): <https://opencode.ai/docs/build/plugins/migrate-v1>
