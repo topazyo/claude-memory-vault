@@ -520,7 +520,8 @@ a lint that does nothing and a lint that found nothing wrong print the same thin
   shipped hook config's event key, matcher, handler field and the script that field runs, plus
   `opencode.json`'s `instructions`, Gemini CLI's `context.fileName`, the `version` of the Cursor
   and Copilot files, and Codex's `hooks` flag, which fails when it is set to anything but `true`
-  under `[features]`, as `features.hooks` or in an inline `features` table (absent, Codex's
+  under `[features]`, as `features.hooks` or in an inline `features` table, with its keys bare or
+  quoted either way (absent, Codex's
   default is on; a profile's own `features` table is not read). It fails when a config no longer
   holds a row, in a vault too, and when a config is missing (as the hook-reference check above
   already did). A matcher may hold more alternatives than the row's. Comments are read only in

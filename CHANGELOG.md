@@ -52,7 +52,7 @@ live. No hook, runner, rule or checker changes what it does.
   handler, or the field that runs a hook and the script it names, fails a control required on every
   OS the harness runs on. The interpreter and path a command puts before the script are not held.
   For the five harnesses' configs and the OpenCode plugin that
-  is 70 one-line mutants, each failing the control that holds it first, plus 19 mutants of the
+  is 70 one-line mutants, each failing the control that holds it first, plus 20 mutants of the
   new checks themselves, all killed (on Windows, Git Bash, and on Ubuntu in GitHub Actions). Pi's and Oh My Pi's eight handlers
   were already held by their drivers. OpenCode is **Held (V1 plugin API)**, see below. Aider and Hermes Agent are
   Documented. `CONTRIBUTING.md` says what a new harness is held to.

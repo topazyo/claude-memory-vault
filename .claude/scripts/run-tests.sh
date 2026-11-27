@@ -2981,14 +2981,14 @@ function load(config) {
 // when the section or the key is absent. Enough for one flag; not a parser.
 function tomlValue(text, dotted) {
   const [section, key] = dotted.split(".")
-  const k = `"?${key}"?`, s = `"?${section}"?`
+  const k = `["']?${key}["']?`, s = `["']?${section}["']?`
   let where = "top", value
   for (const raw of text.split(/\r?\n/)) {
     const line = raw.replace(/#.*$/, "").trim()
     // [[x]] is an array of tables: another section, whatever its name.
     if (/^\[\[.*\]\]$/.test(line)) { where = "other"; continue }
     const head = /^\[([^\]]+)\]$/.exec(line)
-    if (head) { where = head[1].trim().replace(/"/g, "") === section ? "section" : "other"; continue }
+    if (head) { where = head[1].trim().replace(/["']/g, "") === section ? "section" : "other"; continue }
     // [features] hooks = x, features.hooks = x before any section, or an
     // inline table features = { hooks = x }; keys may be quoted.
     let kv = (where === "section" && new RegExp(`^${k}\\s*=\\s*(.+)$`).exec(line))
@@ -3313,8 +3313,9 @@ else
     wiring_drift=''
     for f in .codex/hooks.json .gemini/settings.json .cursor/hooks.json .github/hooks/vault.json \
              .windsurf/hooks.json opencode.json; do
+      if [ ! -f "$ROOT/$f" ]; then wiring_drift="$wiring_drift $f(missing)"; continue; fi
       tr -d '\r' < "$WIRING_CANNED/$f" > "$TMP/wiring-canned-a"
-      tr -d '\r' < "$ROOT/$f" > "$TMP/wiring-canned-b" 2>/dev/null
+      tr -d '\r' < "$ROOT/$f" > "$TMP/wiring-canned-b"
       cmp -s "$TMP/wiring-canned-a" "$TMP/wiring-canned-b" || wiring_drift="$wiring_drift $f"
     done
     if [ -z "$wiring_drift" ]; then
@@ -3349,6 +3350,8 @@ else
   wiring_case toml-inline .codex/config.toml '$0 == "[features]" { next } { sub(/^hooks = true/, "features = { hooks = false }") } 1' rows \
     'unwired .codex/config.toml features.hooks: features.hooks is false, not true'
   wiring_case toml-quoted .codex/config.toml '{ sub(/^hooks = true/, "\"hooks\" = false") } 1' rows \
+    'unwired .codex/config.toml features.hooks: features.hooks is false, not true'
+  wiring_case toml-literal .codex/config.toml '{ sub(/^\[features\]/, "[\047features\047]"); sub(/^hooks = true/, "\047hooks\047 = false") } 1' rows \
     'unwired .codex/config.toml features.hooks: features.hooks is false, not true'
   wiring_case toml-other-table .codex/config.toml '{ print } END { print "[[x]]"; print "hooks = false" }' rows \
     'wired .codex/config.toml features.hooks'
