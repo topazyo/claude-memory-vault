@@ -93,7 +93,7 @@ own notes and any file you added, which only you can list.
 | `AGENTS.md` | The tier table, the promotion rules, and every prose path reference. Change every folder name mentioned. |
 | `CLAUDE.md` | The `@`-import path of `30-knowledge/moc/ARCH-INDEX.md`. |
 | `.claude/hooks/vault-lint.sh` | The path match that decides which written files get linted. Update the folder prefixes it tests against. |
-| `.claude/scripts/vault-check.sh` | Its `TIERS=` line — the directories it walks for the C1–C5 frontmatter invariants. Update the scan roots. Also `folder_tier()`, the table of which tier each folder's notes carry: a folder it does not name draws no tier-of-folder or long-tier-wikilink warning. And the `type` list in `check_note()`, beside the `is not one of` warning, if you add or rename a type. If you rename `20-projects/_logs/`, also its three literals: the compaction-stub prune in both `find` lines and the stub test in `link_target_ok()`, or every stub is scanned and a link to one is no longer refused. |
+| `.claude/scripts/vault-check.sh` | Its `TIERS=` line — the directories it walks for the C1–C9 frontmatter invariants. Update the scan roots. Also `folder_tier()`, the table of which tier each folder's notes carry: a note in a folder it does not name is held to neither the folder's tier (C6) nor a long-tier wikilink (C8). And the `type` list in `check_note()`, beside the `is not one of` violation (C7), if you add or rename a type, or every note of that type fails. If you rename `20-projects/_logs/`, also its three literals: the compaction-stub prune in both `find` lines and the stub test in `link_target_ok()`, or every stub is scanned and a link to one is no longer refused. |
 | `.claude/hooks/postcompact-wrap-up.sh` | The output directory for the compaction stub (`20-projects/_logs/` by default). Update the write target. |
 | `.claude/agents/dream-agent.md` | The read set (which folders it consolidates from) and the single write target for its dated journal. Update both. |
 | `.claude/agents/promotion-agent.md` | Its source tier and its promotion target. |
@@ -180,15 +180,17 @@ Three more optional keys are defined: `contradicts` and `superseded_by` (each a 
 `archived` status, and the types are `project-log` and `wiki-entity`, not `log` and `entity`.
 
 **Adding a key is non-breaking.** Dataview ignores keys that nothing queries, the lint hook only
-asserts that `tier` and `type` are present, and `vault-check.sh` only enforces its own five
+asserts that `tier` and `type` are present, and `vault-check.sh` only enforces its own nine
 invariants (a leading `---` fence, a `tier:` key, a `type:` key, `last_verified >= created` when
-both exist, and `last_verified` not in the future, with both dates in `YYYY-MM-DD` form). Add
-whatever you like. A new **value** of `type` is different: `vault-check.sh` prints a `WARNING` line
-for a type outside its list, and the warnings become violations in release 1.8.0, so add a type
-you mean to keep to the list in `check_note()` (the rename table in section 2 names it).
+both exist, and `last_verified` not in the future, with both dates in `YYYY-MM-DD` form; then the
+values of `tier` and `type`, a long-tier note's wikilink, and how `tier`, `type`, `created` and
+`last_verified` are written). None of them reads a key you add. Add whatever you like. A new
+**value** of `type` is different: since 1.8.0 a type outside the list in `check_note()` is a C7
+violation, so add a type you mean to keep to that list (the rename table in section 2 names it)
+before the first note uses it.
 
 **Removing or renaming `tier` or `type` is breaking.** Both are load-bearing in three places at
-once: `vault-lint.sh` (mandatory-key check), `vault-check.sh` (the C1–C5 invariants), and
+once: `vault-lint.sh` (mandatory-key check), `vault-check.sh` (the C1–C9 invariants), and
 essentially every dashboard query in the vault. If you need different names, treat it
 as a section-2-scale change and use the same verification discipline.
 

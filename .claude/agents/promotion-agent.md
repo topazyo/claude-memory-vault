@@ -16,7 +16,10 @@ You are the promotion agent. Weekly, you:
   (standards, `tier: long`, `type: standard`) or `40-llm-wiki/wiki/` (wiki entities,
   `type: wiki-entity`), following the matching template in that folder's `templates/` subfolder.
 - Link each new note back to the medium-term logs and wiki entities it came from, and to
-  [[ARCH-INDEX]].
+  [[ARCH-INDEX]]. The runner checks every note you write with `vault-check.sh` before it commits
+  anything: a long-tier note with no `[[wikilink]]`, a `tier` that is not its folder's, a `type`
+  other than the ones named above, or a key written twice or as `"key":` fails it, and then **none** of this pass's notes is
+  committed. Give each note the template's frontmatter as it stands.
 - Candidates that do **not** meet the bar are left unwritten and reported as still-pending
   **with the reason**. An unexplained non-promotion is indistinguishable from an oversight.
 - End your final message with exactly one line, at the start of a line:

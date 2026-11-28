@@ -80,10 +80,11 @@ entity. Something reaches `31-standards/` only after it has survived a real proj
 
 Every note opens with a YAML frontmatter block. `tier:` and `type:` are **mandatory and
 machine-checked**; the rest are conventional but keep the Dataview dashboards working. Dates are
-ISO `YYYY-MM-DD`. Their values are checked too: `tier` is the tier of the folder the note is in
-(§3) and `type` one of the values there, and `vault-check.sh` prints a `WARNING` line for one that
-is not, for a long-tier note with no wikilink, and for a key written as `"tier":`, `tier :` or
-`tier:long`, or written twice. The warnings become violations in release 1.8.0.
+ISO `YYYY-MM-DD`. Their values are checked too, and since release 1.8.0 each of these is a
+violation (`vault-check.sh` exits 1): a `tier` that is not the tier of the folder the note is in
+(§3, C6), a `type` that is not one of the values there (C7), a long-tier note with no wikilink
+(C8), and a key written as `"tier":`, `tier :` or `tier:long`, or written twice (C9). From 1.7.0
+to 1.7.9 they were `WARNING` lines that changed neither the count nor the exit code.
 
 ```yaml
 ---
@@ -104,10 +105,12 @@ Optional additive keys: `confidence` (`high`|`medium`|`low`), `last_verified` (I
 `superseded_by` (wikilink), `contradicts` (wikilink). `status` is `active`, `stable`, or
 `superseded`.
 
-Two further requirements the checkers cannot see, and you must satisfy anyway:
+Two further requirements the checkers can see only in part, and you must satisfy anyway:
 
 - **Link out.** Every note links to at least one peer or index; standards and index notes link
-  back to `[[ARCH-INDEX]]`. A note with no links is a defect.
+  back to `[[ARCH-INDEX]]`. A note with no links is a defect. `vault-check.sh` fails a long-tier
+  note with no `[[` at all (C8), and sees no link in any other tier, nor whether a link points at
+  a peer or an index.
 - **Date or source every fact.** Timeless, dated ("as of `YYYY-MM-DD`"), or a pointer to its
   source. For non-trivial claims use `[Source: [[note-or-url]] | YYYY-MM-DD | confidence: high|medium|low]`.
 
@@ -139,7 +142,9 @@ bash .claude/scripts/vault-check.sh
 Run it from the vault root, **unpiped**, because a pipe reports the pager's exit status, not the
 checker's. It is report-only: it never writes to a note, and it exits 1 when any note violates an
 invariant (C1 opening `---` fence, C2 `tier:`, C3 `type:`, C4 `last_verified >= created` and a
-well-formed `created`, C5 `last_verified` well-formed and not in the future).
+well-formed `created`, C5 `last_verified` well-formed and not in the future, and the four of §4:
+C6 the `tier` value and its folder, C7 the `type` value, C8 a long-tier note's wikilink, C9 how
+those keys are written).
 
 **The exit code says which kind of answer you got**, so that "the vault has a problem" and "the
 checker could not run" are never the same number. Those two want opposite responses, and until
@@ -172,10 +177,9 @@ modes, when a link was refused: what it holds was not read, and the exit code is
 violates an invariant, so `0 violation(s) across N` with exit 2 means some notes went unchecked.
 On a full scan only, a `vault-check: N note(s) could not be read` line means the same for notes
 the scan listed and could not open, and a `vault-check: a content-tier folder could not be read in
-full` line for a folder `find` could not read. Then, in both modes, for a vault with notes to warn
-about (§4), `vault-check: WARNING:` lines and a
-`N warning(s)` line, which change neither the count nor the exit code. A scan narrowed with `--`
-prints those and nothing after them.
+full` line for a folder `find` could not read. A scan narrowed with `--` prints nothing after the
+count line except that refused line. The violation lines themselves, C6–C9 among them, come
+before the count line, one `<note> — C<n> — <what>` line each.
 
 `0 violations across 0 files` is not a pass, and the script exits **2** with a `VACUOUS` message
 when it happens. It means the scan matched nothing — wrong working directory, a wrong
@@ -191,7 +195,7 @@ rather than matching its wording. A check that greps for the prefix `evaluated `
 
 | Command | What it does | Passing run |
 | --- | --- | --- |
-| `bash .claude/scripts/vault-check.sh` | Frontmatter invariants C1–C5 over six content tiers, or only the notes named after `--` | `0 violation(s) across N file(s)`, N > 0; exit 0. A violation is exit 1, a scan that could not happen is exit 2 |
+| `bash .claude/scripts/vault-check.sh` | Frontmatter invariants C1–C9 over six content tiers, or only the notes named after `--` | `0 violation(s) across N file(s)`, N > 0; exit 0. A violation is exit 1, a scan that could not happen is exit 2 |
 | `bash .claude/scripts/run-tests.sh` | Control suite for the hooks and runners — known-bad inputs that must be flagged, known-good inputs that must stay silent — in a temp dir | `=== N passed, 0 failed ===`; exit 0 |
 | `bash .claude/scripts/dream-pass.sh` | Nightly consolidation pass (`.cmd` wrapper for Task Scheduler) | One dated journal in `20-projects/_logs/`, committed with a `Vault-Pass: dream` trailer in a git vault; exit 0 |
 | `bash .claude/scripts/promotion-pass.sh` | Weekly medium → long promotion (`.cmd` wrapper) | A `PROMOTION-SUMMARY:` line or long-tier notes, committed with a `Vault-Pass: promotion` trailer in a git vault; exit 0 |

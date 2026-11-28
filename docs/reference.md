@@ -311,7 +311,7 @@ turning it on later. When it is on it reads its three fields with a single `jq` 
 wrappers in §4.3, and `lib/runner-common.sh`, the helpers they share. The runners are
 `dream-pass.sh`, `promotion-pass.sh` and `vault-retention.sh`, each with a `.cmd` beside it.
 
-### 4.1 `vault-check.sh` — frontmatter invariants (C1–C5)
+### 4.1 `vault-check.sh` — frontmatter invariants (C1–C9)
 
 Run it: `bash .claude/scripts/vault-check.sh` — **do not pipe it**. A pipe reports the pager's
 exit status, not the checker's. `bash .claude/scripts/vault-check.sh -- <note>...` checks only the
@@ -367,41 +367,40 @@ files vanishing between the two walks can cancel out such a folder's notes in th
 
 | ID | Invariant | Reported when |
 | --- | --- | --- |
-| **C1** | The first line is a bare `---` fence. | The first line is anything else, or the file is empty. C2–C5 are then skipped for that file — with no opening fence there is no frontmatter, and inspecting the body would report nonsense. |
+| **C1** | The first line is a bare `---` fence. | The first line is anything else, or the file is empty. C2–C9 are then skipped for that file — with no opening fence there is no frontmatter, and inspecting the body would report nonsense. |
 | **C2** | Frontmatter contains a `tier:` key. | No `tier:` key in the block. |
 | **C3** | Frontmatter contains a `type:` key. | No `type:` key in the block. |
 | **C4** | If both `created:` and `last_verified:` exist, `last_verified >= created`. | `last_verified` is earlier than `created`, or a non-empty `created` is not a `YYYY-MM-DD` date. An empty value counts as absent, so `last_verified: ""` never triggers this. |
 | **C5** | `last_verified:` is not later than today. | A future stamp, or a non-empty `last_verified` that is not a `YYYY-MM-DD` date. Without the format check a value like `Jan 5` would compare as text and switch C4 and C5 off silently. |
+| **C6** | The `tier:` value is `short`, `medium` or `long`, and the tier of the folder the note is in. | Any other value, an empty one included, or a tier that is not its folder's: `01-inbox/`, `10-daily/` and `40-llm-wiki/raw/` short, `20-projects/` medium, `30-knowledge/`, `31-standards/` and `40-llm-wiki/wiki/` long. A note in a folder that list does not name, such as `40-llm-wiki/` itself, is held to the value only. |
+| **C7** | The `type:` value is one of `reference`, `daily`, `project-log`, `moc`, `standard`, `wiki-entity`. | Any other value. |
+| **C8** | A note in a long-tier folder holds a `[[wikilink]]`. | A note in `30-knowledge/`, `31-standards/` or `40-llm-wiki/wiki/` with no `[[` anywhere in it. Any `[[` counts, in the frontmatter or in a code block (a shell `[[ -f x ]]`) as much as a link, and where it points is not read. |
+| **C9** | `tier`, `type`, `created` and `last_verified` are each written once, as `key: value`. | One of them is also written as `"key":`, `'key':` or `key :`, or with its value straight after the colon, or appears more than once. |
 
-**That list is exhaustive.** C1–C5 are everything the script reports as a violation. In particular
-there is *no* check that a long-tier note carries a `last_verified` at all. Freshness pressure
-comes from the dashboard queries and the dream-agent's trust sweep, which are prompts and views,
-not gates.
+**That list is exhaustive.** C1–C9 are everything the script reports as a violation, each as a
+`<note> — C<n> — <what>` line before the count line. In particular there is *no* check that a
+long-tier note carries a `last_verified` at all. Freshness pressure comes from the dashboard
+queries and the dream-agent's trust sweep, which are prompts and views, not gates.
 
-**Advisory lines (since 1.7.0).** What the keys say is reported as `vault-check: WARNING: <note> —
-<what>` lines, printed after the count line, with a closing `vault-check: N warning(s).` line.
-They change neither the count line nor the exit code in this release, and release 1.8.0 makes
-them violations, so fix each note by hand (AGENTS.md §9: no bulk edit to quiet a checker). A
-vault with nothing to warn about prints none of them. Each one names a note where:
+**C6–C9 since 1.8.0.** From 1.7.0 to 1.7.9 they were `vault-check: WARNING: <note> — <what>`
+lines after the count line, with a closing `vault-check: N warning(s).` line, and changed neither
+the count nor the exit code. Since 1.8.0 each is a violation like C1–C5, so a vault that printed
+a `WARNING` line under 1.7.x fails under 1.8.0: fix each note by hand (AGENTS.md §9, no bulk edit
+to quiet a checker). The commit gate refuses such a commit, and a dream or promotion pass that
+writes such a note ends `CHECK-FAILED` (exit 5). What C9 looks for, in detail:
 
-- `tier` is not `short`, `medium` or `long`, an empty value included;
-- `tier` is not the tier of the folder the note is in (`01-inbox/`, `10-daily/` and
-  `40-llm-wiki/raw/` short, `20-projects/` medium, `30-knowledge/`, `31-standards/` and
-  `40-llm-wiki/wiki/` long);
-- `type` is not one of `reference`, `daily`, `project-log`, `moc`, `standard`, `wiki-entity`;
-- a note in a long-tier folder holds no `[[wikilink]]`;
-- `tier`, `type`, `created` or `last_verified` is also written as `"key":`, `'key':` or `key :`,
-  which C2–C5 do not read and a YAML reader does, or appears more than once, where C4 and C5 read
-  the first and a YAML reader the last. Either way a future `last_verified` passed C5. Rarer YAML
-  spellings are not looked for: an explicit `? key` entry, a flow mapping `{key: ...}`, or an
-  escaped key such as `"last_verified"`;
-- one of those keys has its value straight after the colon, `tier:long`, which C2–C5 read as the
-  key and a YAML reader takes for a line of text, or, among other keys, rejects the whole block
-  with every key in it, so the two disagree about whether the note has a tier at all (since
-  1.7.2). An empty value, `tier:`, and a tab after the colon are no such line.
+- a key also written as `"key":`, `'key':` or `key :`, which C2–C5 do not read and a YAML reader
+  does, or one that appears more than once, where C4 and C5 read the first and a YAML reader the
+  last. Either way a future `last_verified` passed C5. Rarer YAML spellings are not looked for: an
+  explicit `? key` entry, a flow mapping `{key: ...}`, or an escaped key such as
+  `"last_verified"`;
+- a key with its value straight after the colon, `tier:long`, which C2–C5 read as the key and a
+  YAML reader takes for a line of text, or, among other keys, rejects the whole block with every
+  key in it, so the two disagree about whether the note has a tier at all (since 1.7.2). An empty
+  value, `tier:`, and a tab after the colon are no such line.
 
 An inline comment, `tier: long   # short | medium | long` as [`customizing.md`](customizing.md)
-writes one, is no part of the value for these lines.
+writes one, is no part of the value for C6 and C7.
 
 Dates are compared as strings: ISO `YYYY-MM-DD` sorts lexicographically, so there is no date
 parsing and no locale dependency.
@@ -480,7 +479,7 @@ a lint that does nothing and a lint that found nothing wrong print the same thin
 - **vault-lint.sh** — a real `U+200B` and a real `U+202E` are detected; a fully conformant note
   produces **silence**; missing `tier`, missing `type`, and an absent frontmatter fence are each
   reported; a Windows backslash path normalizes to the same verdict; the audit log is written.
-- **vault-check.sh** — C1 through C5 each fire on a purpose-built fixture; a malformed
+- **vault-check.sh** — C1 through C9 each fire on a purpose-built fixture; a malformed
   `last_verified` is reported; a note whose filename contains spaces is still scanned; the
   conformant note is *not* reported; `templates/` and `compaction-*.md` are pruned even though
   those fixtures are malformed; the run exits non-zero; a scan of zero notes exits non-zero and
@@ -489,7 +488,9 @@ a lint that does nothing and a lint that found nothing wrong print the same thin
   folder, note or folder linked elsewhere, into a templates folder, to a stub or to a file that is
   no note, or a dangling link, exits 2 (with links where the platform can make them, and with
   junctions on Windows); each
-  advisory `WARNING` prints after an unchanged count line, and a clean vault prints none.
+  C6–C9 finding is a violation line before the count line with exit 1 and no `WARNING` line,
+  and a clean vault reports none; a pass that writes a note failing only C8 ends `CHECK-FAILED`,
+  and the commit gate refuses such a note.
 - **Vacuity guard** — the suite fails if the checker reports `across 0 file`.
 - **Lint argument mode** — every named file is linted, a conformant file after `--` stays silent,
   stdin is ignored when arguments are present, and hook JSON with a top-level `file_path` is read.
@@ -2736,7 +2737,7 @@ state rather than a fault. Every query excludes `templates/` folders. The first 
 working queues; the rest are conformance and decay detectors.
 
 Query folder scopes are written per query and are *not* the same set `vault-check.sh` scans, so a
-note can satisfy C1–C5 and still be invisible to a dashboard, or vice versa.
+note can satisfy C1–C9 and still be invisible to a dashboard, or vice versa.
 
 | # | Query heading in VAULT-INDEX.md | Surfaces |
 | --- | --- | --- |

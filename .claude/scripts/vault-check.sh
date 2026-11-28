@@ -16,6 +16,13 @@
 #       (a non-empty `created:` that is not a YYYY-MM-DD date is also a C4 violation)
 #   C5  if `last_verified:` exists, it is not later than today
 #       (a non-empty `last_verified:` that is not a YYYY-MM-DD date is also a C5 violation)
+#   C6  the `tier:` value is short, medium or long, and the tier of the folder
+#       the note is in where folder_tier() names one (an empty value fails)
+#   C7  the `type:` value is one of reference, daily, project-log, moc,
+#       standard, wiki-entity
+#   C8  a note in a long-tier folder holds a [[wikilink]]
+#   C9  tier, type, created and last_verified are each written as `key: value`
+#       once: not as "key":, 'key':, key : or key:value, and not twice
 #
 # Exit:   0  at least one note scanned and no violations
 #         1  the vault has a problem. A note violates an invariant.
@@ -30,12 +37,9 @@
 #            human has to look first. The three runners use 78 for the same
 #            thing, so one number means one thing across all four.
 #
-# Advisory (since 1.7.0): WARNING lines after the count line for a tier value
-# that is not short, medium or long or not the folder's tier, a type outside
-# the allowed set, a long-tier note with no wikilink, and a tier, type,
-# created or last_verified key a YAML reader would read differently. They
-# change neither the count nor the exit code; release 1.8.0 makes them
-# violations.
+# C6-C9 were advisory WARNING lines, printed after the count line and
+# changing neither the count nor the exit code, from 1.7.0 to 1.7.9. Release
+# 1.8.0 made them violations, as those releases said it would.
 #
 # These used to be a single 1, which meant a caller could not tell "the vault
 # has a problem" from "the checker could not run", and those want opposite
@@ -159,22 +163,22 @@ fi
 #             created and last_verified
 #   r_<key>   the first such line's value with a trailing CR and trailing
 #             spaces removed, quotes and any inline comment still on it, for
-#             yaml_scalar to read (C4, C5 and the advisory checks)
-#   spell     one advisory finding about how one of those keys is written
+#             yaml_scalar to read (C4-C7)
+#   spell     one C9 finding about how one of those keys is written
 # The frontmatter is the lines after an opening fence on line 1, up to the next
 # fence line, the same anchored pattern vault-lint.sh uses. Before 1.7.0 this
 # took six processes a note (the fence, the frontmatter, two counts, two
-# values); the advisory checks would have made it twelve.
+# values); the checks C6-C9 would have made it twelve.
 #
 # The apostrophe and the separator are built with sprintf rather than written
 # as \047 or \037, because the awk macOS ships does not read an octal escape in
 # a string the way gawk and mawk do. That difference has already cost this
 # repository two silent wrong answers, both of which took a CI run to see.
 #
-# Spellings: a key a YAML reader would also find written as "tier":, 'tier':
-# or tier :, which C2-C5 do not read, or one that appears more than once, where
-# C4 and C5 read the first and a YAML reader the last. A future last_verified
-# written either way passed C5.
+# Spellings (C9): a key a YAML reader would also find written as "tier":,
+# 'tier': or tier :, which C2-C5 do not read, or one that appears more than
+# once, where C4 and C5 read the first and a YAML reader the last. A future
+# last_verified written either way passed C5, so it fails C9 instead.
 note_facts() {
   LC_ALL=C awk '
     BEGIN {
@@ -259,8 +263,6 @@ is_iso_date() {
 
 violations=0
 files=0
-warnings=0
-WARN_LINES=""
 
 report() {
   local shown_rel
@@ -268,18 +270,6 @@ report() {
   show "$3"
   printf '%s — %s — %s\n' "$shown_rel" "$2" "$SHOWN"
   violations=$((violations + 1))
-}
-
-# warn <rel> <text> - an advisory finding (1.7.0). Kept, and printed after the
-# count line, so the count line and the exit code stay what callers parse;
-# release 1.8.0 makes these violations.
-warn() {
-  local shown_rel
-  show "$1"; shown_rel="$SHOWN"
-  show "$2"
-  WARN_LINES+="vault-check: WARNING: $shown_rel — $SHOWN
-"
-  warnings=$((warnings + 1))
 }
 
 # folder_tier <rel> - sets FOLDER_TIER to the tier the folder a note sits in
@@ -513,9 +503,8 @@ check_note() {
   [ "$n_tier" -eq 0 ] && report "$rel" "C2" "frontmatter has no 'tier:' key"
   [ "$n_type" -eq 0 ] && report "$rel" "C3" "frontmatter has no 'type:' key"
 
-  # What the two keys say, not only that they are there (D3, 1.7.0). Advisory
-  # for one release, because an existing vault may newly fail, and a WARNING
-  # changes neither the count line nor the exit code.
+  # What the keys say, not only that they are there (C6-C9). Advisory WARNING
+  # lines from 1.7.0 to 1.7.9, violations since 1.8.0.
   folder_tier "$rel"
   if [ "$n_tier" -gt 0 ]; then
     yaml_scalar "$r_tier"
@@ -523,10 +512,10 @@ check_note() {
     case "$tierv" in
       short|medium|long)
         if [ -n "$FOLDER_TIER" ] && [ "$tierv" != "$FOLDER_TIER" ]; then
-          warn "$rel" "tier is $tierv, but the folder it is in holds $FOLDER_TIER-tier notes"
+          report "$rel" "C6" "tier is $tierv, but the folder it is in holds $FOLDER_TIER-tier notes"
         fi
         ;;
-      *) warn "$rel" "tier '$tierv' is not short, medium or long" ;;
+      *) report "$rel" "C6" "tier '$tierv' is not short, medium or long" ;;
     esac
   fi
   if [ "$n_type" -gt 0 ]; then
@@ -534,14 +523,14 @@ check_note() {
     typev="$SCALAR"
     case "$typev" in
       reference|daily|project-log|moc|standard|wiki-entity) ;;
-      *) warn "$rel" "type '$typev' is not one of reference, daily, project-log, moc, standard, wiki-entity" ;;
+      *) report "$rel" "C7" "type '$typev' is not one of reference, daily, project-log, moc, standard, wiki-entity" ;;
     esac
   fi
   if [ "$FOLDER_TIER" = long ] && [ "$haslink" != 1 ]; then
-    warn "$rel" "a long-tier note with no [[wikilink]] to a peer or an index"
+    report "$rel" "C8" "a long-tier note with no [[wikilink]] to a peer or an index"
   fi
   while [ -n "$spells" ]; do
-    warn "$rel" "${spells%%$'\n'*}"
+    report "$rel" "C9" "${spells%%$'\n'*}"
     spells="${spells#*$'\n'}"
   done
 
@@ -598,7 +587,7 @@ if [ "${#NAMED[@]}" -gt 0 ]; then
     # reads it, so the two modes agree about the same note. Inside a tier is
     # decided by identity, not spelling, so ./31-standards/x.md or the other
     # Windows spelling of the root count too, and the path from the root is
-    # what the advisory checks read. A note named anywhere else is checked as
+    # what C6 and C8 read. A note named anywhere else is checked as
     # it always was.
     if named_tier_rel "$file"; then
       # Backslashes as slashes for the link walk, which splits on /: Windows
@@ -612,7 +601,7 @@ if [ "${#NAMED[@]}" -gt 0 ]; then
         continue
       fi
       # Through an accepted link, the folder the note really is in decides its
-      # tier for the advisory checks, as it does in the full scan.
+      # tier for C6 and C8, as it does in the full scan.
       check_note "$file" "${LINK_REL:-$NAMED_REL}"
     else
       check_note "$file"
@@ -748,14 +737,6 @@ fi
 # the same reason (1.7.1).
 if [ "$UNREAD_WALK" -eq 1 ]; then
   printf 'vault-check: a content-tier folder could not be read in full, so the notes in it were not checked; stderr says which, and the exit code is 2 unless a note violates an invariant.\n'
-fi
-
-# The advisory findings, after the count line and apart from it, so a caller
-# that reads the count line's numbers, or the exit code, sees what it always
-# saw. Nothing is printed for a vault with none.
-if [ "$warnings" -gt 0 ]; then
-  printf '%s' "$WARN_LINES"
-  printf 'vault-check: %s warning(s). They change neither the count above nor the exit code in this release; release 1.8.0 makes them violations, so fix each note by hand.\n' "$warnings"
 fi
 
 # A scan that examined nothing proves nothing. Fail it, so a caller that only
