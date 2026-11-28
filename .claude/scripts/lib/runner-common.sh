@@ -714,7 +714,9 @@ relabel() {
 # Any other link is fenced as a link, not by its target's contents, so a write
 # through it would not be seen. From 1.7.9 the runners refuse to start while the
 # vault holds one (vault_links), so a link the agent could write through was
-# made or changed after the runner's snapshot, which changes its line here.
+# made or changed after the runner's snapshot. Where this snapshot reads, that
+# changes a line here; in the parts of .obsidian and .git it never reads, it
+# does not.
 CODE_PLUGINS="dataview templater-obsidian obsidian-shellcommands quickadd customjs obsidian-git execute-code terminal"
 
 # code_plugin_dirs
@@ -1035,10 +1037,10 @@ snapshot_paths() {
 #
 # A walk that reports an error is run once more, because a file that vanishes
 # while find reads it fails it too, and only a second error gives 2 (as
-# vault-check.sh does). An empty snapshot, or one without the runner's own
-# script, gives 2 before any walk, since a snapshot that read nothing would
-# list no links. Hard links are not looked for (docs/reference.md, Known
-# limits).
+# vault-check.sh does). A list the runner could not write gives 2. When no
+# link is found, an empty snapshot, or one without the runner's own script,
+# gives 2, since a snapshot that read nothing would list no links. Hard links
+# are not looked for (docs/reference.md, Known limits).
 VAULT_LINKS_PROBLEM=
 VAULT_LINKS_NAMEBREAK="<a name with a line break>"
 
@@ -1059,38 +1061,36 @@ vault_links_walk() {
 }
 
 # vault_links_read <list> <prefix> <paths-out> <breaks-out>
-# Prints the walk's status. Appends each path to <paths-out> as
-# <prefix><path without ./> and one line per name with a line break to
-# <breaks-out>.
+# Prints the walk's status, or "write" when it could not write its own
+# answer. Writes each path to <paths-out> as <prefix><path without ./> and
+# one line per name with a line break to <breaks-out>, both made afresh.
 vault_links_read() {
   local list="$1" prefix="$2" paths="$3" breaks="$4" p st=missing
+  { : > "$paths" && : > "$breaks"; } 2>/dev/null || { printf 'write'; return 0; }
   [ -f "$list" ] && [ -r "$list" ] || { printf '%s' "$st"; return 0; }
   while IFS= read -r -d '' p; do
     case "$p" in
       //find-status=*) st="${p#//find-status=}" ;;
-      *"$RUNNER_NL"*) printf 'x\n' >> "$breaks" ;;
+      *"$RUNNER_NL"*) printf 'x\n' >> "$breaks" 2>/dev/null || { printf 'write'; return 0; } ;;
       .) ;;
-      *) printf '%s%s\n' "$prefix" "${p#./}" >> "$paths" ;;
+      *) printf '%s%s\n' "$prefix" "${p#./}" >> "$paths" 2>/dev/null || { printf 'write'; return 0; } ;;
     esac
   done < "$list"
   printf '%s' "$st"
 }
 
 vault_links() {
-  local root="$1" snap="$2" runner="$3" out="$4" sub prefix st st2 tmp n
+  local root="$1" snap="$2" runner="$3" out="$4" sub prefix st st2 tmp n w
   VAULT_LINKS_PROBLEM=
   tmp="$out.work"
   rm -rf "$tmp" 2>/dev/null
-  if ! : > "$out" 2>/dev/null || ! mkdir "$tmp" 2>/dev/null; then
+  if ! { : > "$out" && mkdir "$tmp" && : > "$tmp/paths" && : > "$tmp/breaks"; } 2>/dev/null; then
     VAULT_LINKS_PROBLEM="the runner could not write its list of links"
+    rm -rf "$tmp" 2>/dev/null
     return 2
   fi
-  : > "$tmp/paths"; : > "$tmp/breaks"
-  if [ ! -f "$snap" ] || [ ! -s "$snap" ] \
-     || ! VL_WANT="./.claude/scripts/$runner.sh" LC_ALL=C awk '
-          { p = $0; if (sub(/^[^ ]* [^ ]* /, "", p) && p == ENVIRON["VL_WANT"]) { found = 1; exit } }
-          END { exit !found }' "$snap"; then
-    VAULT_LINKS_PROBLEM="the fence's snapshot of the vault is empty or does not hold the runner itself"
+  if [ ! -f "$snap" ] || [ ! -r "$snap" ]; then
+    VAULT_LINKS_PROBLEM="the fence's snapshot of the vault could not be read"
     rm -rf "$tmp" 2>/dev/null
     return 2
   fi
@@ -1101,28 +1101,59 @@ vault_links() {
     else
       prefix="./"
     fi
+    # Each walk is read into files of its own, and only the one that finished
+    # is kept, so a retried walk adds nothing twice.
     vault_links_walk "$root" "$sub" "$tmp/walk1" "$tmp/err1"
-    st="$(vault_links_read "$tmp/walk1" "$prefix" "$tmp/paths" "$tmp/breaks")"
-    if [ "$st" != 0 ]; then
+    st="$(vault_links_read "$tmp/walk1" "$prefix" "$tmp/p1" "$tmp/b1")"
+    w=1
+    if [ "$st" != 0 ] && [ "$st" != write ]; then
       vault_links_walk "$root" "$sub" "$tmp/walk2" "$tmp/err2"
-      st2="$(vault_links_read "$tmp/walk2" "$prefix" "$tmp/paths" "$tmp/breaks")"
-      if [ "$st2" != 0 ]; then
+      st2="$(vault_links_read "$tmp/walk2" "$prefix" "$tmp/p2" "$tmp/b2")"
+      w=2
+      if [ "$st2" != 0 ] && [ "$st2" != write ]; then
         VAULT_LINKS_PROBLEM="find could not walk ${prefix%/} twice (status $st, then $st2): $(shown_name "$(head -n 1 "$tmp/err2" 2>/dev/null)")"
         rm -rf "$tmp" 2>/dev/null
         return 2
       fi
+      st="$st2"
+    fi
+    if [ "$st" = write ] || ! { cat "$tmp/p$w" >> "$tmp/paths" && cat "$tmp/b$w" >> "$tmp/breaks"; } 2>/dev/null; then
+      VAULT_LINKS_PROBLEM="the runner could not write its list of links"
+      rm -rf "$tmp" 2>/dev/null
+      return 2
     fi
   done
-  # The snapshot's link lines: field three onward, so a name with spaces survives.
-  LC_ALL=C awk 'substr($0, 1, 1) == "L" { sub(/^[^ ]* [^ ]* /, ""); print }' "$snap" >> "$tmp/paths"
-  LC_ALL=C sort -u "$tmp/paths" | LC_ALL=C awk '$0 != "./.obsidian" && $0 != "./.git"' > "$out"
-  n="$(LC_ALL=C awk 'END { print NR + 0 }' "$tmp/breaks")"
+  # The snapshot's link lines: field three onward, so a name with spaces
+  # survives. Every step writes a file of its own and is checked, so a full
+  # disk or a failing tool gives 2, never an empty list read as no links.
+  if ! LC_ALL=C awk 'substr($0, 1, 1) == "L" { sub(/^[^ ]* [^ ]* /, ""); print }' "$snap" >> "$tmp/paths" 2>/dev/null \
+     || ! LC_ALL=C sort -u "$tmp/paths" > "$tmp/sorted" 2>/dev/null \
+     || ! LC_ALL=C awk '$0 != "./.obsidian" && $0 != "./.git"' "$tmp/sorted" > "$out" 2>/dev/null \
+     || ! n="$(LC_ALL=C awk 'END { print NR + 0 }' "$tmp/breaks" 2>/dev/null)" || [ -z "$n" ]; then
+    VAULT_LINKS_PROBLEM="the runner could not write its list of links"
+    rm -rf "$tmp" 2>/dev/null
+    return 2
+  fi
   while [ "$n" -gt 0 ]; do
-    printf '%s\n' "$VAULT_LINKS_NAMEBREAK" >> "$out"
+    if ! printf '%s\n' "$VAULT_LINKS_NAMEBREAK" >> "$out" 2>/dev/null; then
+      VAULT_LINKS_PROBLEM="the runner could not write its list of links"
+      rm -rf "$tmp" 2>/dev/null
+      return 2
+    fi
     n=$((n - 1))
   done
   rm -rf "$tmp" 2>/dev/null
   [ -s "$out" ] && return 1
+  # No link was found. Only now is the snapshot asked whether it read the
+  # vault at all, because one that read nothing lists no links either. Asked
+  # last, a linked .claude or .claude/scripts, which leaves the runner out of
+  # the snapshot, is refused by name above rather than as an empty snapshot.
+  if [ ! -s "$snap" ] || ! VL_WANT="./.claude/scripts/$runner.sh" LC_ALL=C awk '
+       { p = $0; if (sub(/^[^ ]* [^ ]* /, "", p) && p == ENVIRON["VL_WANT"]) { found = 1; exit } }
+       END { exit !found }' "$snap"; then
+    VAULT_LINKS_PROBLEM="the fence's snapshot of the vault is empty or does not hold the runner itself"
+    return 2
+  fi
   return 0
 }
 

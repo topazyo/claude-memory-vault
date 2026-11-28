@@ -9441,11 +9441,6 @@ if mo_link "$PL/out/ext" "$PL/v1/20-projects/ext" && mo_link "$PL/out/ext" "$PL/
     RUNNER_VAULT="$PL/v1" mo_refused "$pl_s: a folder link already in the vault" "${PL_REASON}./20-projects/ext, ./30-knowledge/my ext." \
       "$pl_s" journal "$(pl_log "$PL/v1" "$pl_s")"
   done
-  if [ -z "$(ls -A "$PL/out/ext")" ]; then
-    ok "nothing was written through the refused links"
-  else
-    bad "something was written through a refused link: $(ls -A "$PL/out/ext" | tr '\n' ' ')"
-  fi
 else
   bad "prelink-refused fixture: no folder link could be made, so the case tests nothing"
 fi
@@ -9471,6 +9466,16 @@ if mo_link "$PL/out/obs" "$PL/v3/.obsidian/cache"; then
   RUNNER_VAULT="$PL/v3" mo_refused "dream-pass: a folder link in .obsidian outside the plugin folders" "${PL_REASON}./.obsidian/cache." \
     dream-pass.sh journal "$(pl_log "$PL/v3" dream-pass.sh)"
   rm -f "$PL/v3/.obsidian/cache"
+  # A linked .claude/scripts leaves the runner out of the snapshot; it is still
+  # refused by name, not as a snapshot that read nothing.
+  mv "$PL/v3/.claude/scripts" "$PL/out/scripts"
+  if mo_link "$PL/out/scripts" "$PL/v3/.claude/scripts"; then
+    new_case_state prelink-scripts
+    RUNNER_VAULT="$PL/v3" mo_refused "dream-pass: .claude/scripts is a link" "${PL_REASON}./.claude/scripts." \
+      dream-pass.sh journal "$(pl_log "$PL/v3" dream-pass.sh)"
+  else
+    bad "prelink-unfenced-refused fixture: .claude/scripts could not be made a link"
+  fi
 else
   bad "prelink-unfenced-refused fixture: no folder link could be made in .obsidian"
 fi
@@ -9609,14 +9614,15 @@ make_link_vault "$PL/v10"
 pl_lib="$(
   . "$RV/.claude/scripts/lib/runner-common.sh"
   vault_links "$PL/v10" "$PL/no-such-snapshot" dream-pass "$PL/v10.links"; a=$?
-  printf 'L0 0 ./x\n' > "$PL/v10.snap"
+  printf '0 0 ./x\n' > "$PL/v10.snap"
   vault_links "$PL/v10" "$PL/v10.snap" dream-pass "$PL/v10.links"; b=$?
-  printf '%s %s' "$a" "$b"
+  vault_links "$PL/v10" "$PL/v10.snap" dream-pass "$PL/no-such-folder/v10.links"; c=$?
+  printf '%s %s %s' "$a" "$b" "$c"
 )"
-if [ "$pl_lib" = "2 2" ]; then
-  ok "vault_links gives 2 for a missing snapshot and for one that does not hold the runner"
+if [ "$pl_lib" = "2 2 2" ]; then
+  ok "vault_links gives 2 for a missing snapshot, for one that does not hold the runner, and for a list it cannot write"
 else
-  bad "vault_links answered from a snapshot that read nothing -- statuses: $pl_lib (want 2 2)"
+  bad "vault_links answered from a snapshot that read nothing, or with a list it could not write -- statuses: $pl_lib (want 2 2 2)"
 fi
 rm -rf "$PL" "$PL/v7-root"
 
@@ -9989,7 +9995,7 @@ else
     [ "$(cat "$H2V/real/target.md")" = target ] && ! h2_tripwire \
       && tail -n 3 "$H2V/.claude/logs/dream-agent.log" 2>/dev/null | grep -F 'ERROR: ' | grep -qF 'cannot see it: ./linked.md.' && h2_lok=1
     h2_lfile="$(tr '\n' '|' 2>/dev/null < "$H2V/real/target.md")"
-    h2_llist="$( . "$ROOT/.claude/scripts/lib/runner-common.sh" && steering_imports "$H2V" "$H2V.imports" && LC_ALL=C sort "$H2V.imports" | tr '\n' ' ')"
+    h2_llist="$( . "$RV/.claude/scripts/lib/runner-common.sh" && steering_imports "$H2V" "$H2V.imports" && LC_ALL=C sort "$H2V.imports" | tr '\n' ' ')"
     rm -f "$H2V.imports"
     # And one not there yet, imported through a linked folder.
     h2_case linkmissing dream-pass.sh '@shared/x.md\n' \

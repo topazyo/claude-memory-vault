@@ -26,10 +26,9 @@ order — later steps reference the slug and paths the earlier ones fix.
    The folder is deliberately out of scope for `vault-check.sh` and for the frontmatter contract,
    so do not add tiered frontmatter to anything you put there. Durable knowledge belongs in the
    long tier, never here. Make it a plain folder inside `90-auto-memory/`, never a link to any
-   harness's own memory folder: a pass does not refuse a link there, and a write through it would
-   leave the vault where the fence sees only the link. Leave `90-auto-memory` a plain folder too: a
-   claude-mode dream or promotion pass refuses to start while `90-auto-memory` is a symlink or
-   junction.
+   harness's own memory folder: from 1.7.9 any link in the vault, but `.obsidian` and `.git`
+   themselves, stops every dream and promotion pass (exit 1), because the fence would see a write
+   through it only as the link. Leave `90-auto-memory` a plain folder too, for the same reason.
 
 4. **Write the first medium-term log.** Copy
    `20-projects/_logs/templates/medium-term-project-log.md` to
