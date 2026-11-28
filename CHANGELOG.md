@@ -73,11 +73,12 @@ passes**: read the adopting note before you take it.
    find . -type l ! -path ./.obsidian ! -path ./.git
    ```
    and, where `.obsidian` or `.git` is itself a link, the same command started at `./.obsidian/`
-   or `./.git/`. In a vault that is a git worktree (its `.git` is a file), a link in the git
-   folder that file names refuses too, named under `.git-common/` in the log;
-   `find "$(git rev-parse --git-common-dir)" -type l` lists those. On Windows use Git Bash, which
-   the runners need anyway: PowerShell's `Get-ChildItem` does not walk the vault as the runner
-   does. **Every path it prints will stop your dream and promotion passes** until you replace the
+   or `./.git/`. In a vault that is a git worktree (its `.git` is a file), a link in the parts of
+   that git folder the fence reads (its `hooks/` and config, for example) refuses too, named
+   under `.git-common/` in the log; `find "$(git rev-parse --git-common-dir)" -type l` lists
+   every link there, a superset. On Windows use Git Bash, which the runners need anyway:
+   PowerShell's `Get-ChildItem` does not walk the vault as the runner does. **Every path the
+   first `find` prints will stop your dream and promotion passes** until you replace the
    link with the folder or file it points to, or remove it, even a link that points to another
    folder inside the vault. Likely ones: a linked `templates/` folder (which `vault-check.sh`
    skips), a tier folder linked or junctioned to a synced folder outside the vault (which
