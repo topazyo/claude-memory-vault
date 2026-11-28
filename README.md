@@ -388,8 +388,9 @@ rest are contract, enforced by review and by you.
 The checker implements exactly nine invariants, and nothing beyond them: **C1** the file opens
 with a bare `---` fence; **C2** frontmatter has a `tier:` key; **C3** it has a `type:` key; **C4**
 if both `created:` and `last_verified:` exist, `last_verified >= created`; **C5** `last_verified`
-is never in the future; **C6** the `tier` value is `short`, `medium` or `long` and, in a folder
-the tier table of `AGENTS.md` §3 names, that folder's tier; **C7** the `type` value is one in the table above; **C8** a note in a long-tier
+is never in the future; **C6** the `tier` value is `short`, `medium` or `long` and its folder's
+tier (`short` in `01-inbox/`, `10-daily/` and `40-llm-wiki/raw/`, `medium` in `20-projects/`,
+`long` in `30-knowledge/`, `31-standards/` and `40-llm-wiki/wiki/`); **C7** the `type` value is one in the table above; **C8** a note in a long-tier
 folder holds a `[[wikilink]]`; **C9** `tier`, `type`, `created` and `last_verified` are each
 written once as `key: value`. C4 also flags a `created` that is not a `YYYY-MM-DD` date, and C5 a
 `last_verified` that is not. C4 and C5 exist because a bad date is the quietest way to poison a

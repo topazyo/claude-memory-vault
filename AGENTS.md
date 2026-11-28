@@ -177,8 +177,8 @@ modes, when a link was refused: what it holds was not read, and the exit code is
 violates an invariant, so `0 violation(s) across N` with exit 2 means some notes went unchecked.
 On a full scan only, a `vault-check: N note(s) could not be read` line means the same for notes
 the scan listed and could not open, and a `vault-check: a content-tier folder could not be read in
-full` line for a folder `find` could not read. A scan narrowed with `--` prints nothing after the
-count line except that refused line. The violation lines themselves, C6–C9 among them, come
+full` line for a folder `find` could not read. A scan narrowed with `--` prints nothing on stdout
+after the count line except that refused line. The violation lines themselves, C6–C9 among them, come
 before the count line, one `<note> — C<n> — <what>` line each.
 
 `0 violations across 0 files` is not a pass, and the script exits **2** with a `VACUOUS` message

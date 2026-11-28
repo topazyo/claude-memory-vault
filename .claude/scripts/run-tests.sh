@@ -1544,6 +1544,14 @@ C3F_EOF
     # stopped being a WARNING line after the refused line).
     mkdir -p "$C3L/20-projects/_logs/compaction-y.md"
     ln -s ../no-such-note.md "$C3L/20-projects/_logs/compaction-y.md/gone.md"
+    # Alone, the refused link makes the run exit 2.
+    CLAUDE_PROJECT_DIR="$C3L" bash "$CHECK" >/dev/null 2>&1
+    c3_rc_alone=$?
+    if [ "$c3_rc_alone" -eq 2 ]; then
+      ok "a dangling link in a _logs folder named like a stub, with every note conformant, exits 2"
+    else
+      bad "a dangling link in a compaction-y.md folder on its own -- expected exit 2, got $c3_rc_alone"
+    fi
     printf -- '---\ntier: short\ntype: standard\n---\n\nSee [[ARCH-INDEX]].\n' > "$C3L/31-standards/w-short.md"
     c3_out="$(CLAUDE_PROJECT_DIR="$C3L" bash "$CHECK" 2>/dev/null)"
     c3_rc_v=$?
@@ -17192,17 +17200,27 @@ ret_dream_commit() {  # ret_dream_commit <vault> <name>... - commits journals th
 # ret_dream_commit_17x <vault> <name>... - a dream commit as a 1.7.x runner made
 # it, when C6-C9 were WARNING lines and a journal with a tier other than medium
 # could be committed. Since 1.8.0 commit_owned's vault-check refuses one, and the
-# retention runner still has to judge such journals in a vault's history, so the
-# vault's checker is set aside for this one commit (exit 0) and put back, with
-# its bytes checked, before anything else runs.
+# retention runner still has to judge such journals in a vault's history. So for
+# this one commit the vault's checker is set aside behind a stand-in that runs it
+# and refuses what 1.7.x refused, a C1-C5 line or a run that could not happen
+# (2), and passes a C6-C9 line; then it is put back and its bytes checked.
 ret_dream_commit_17x() {
   local v="$1" c="$1/.claude/scripts/vault-check.sh" rc
-  mv -f "$c" "$c.ret-aside" || return 1
-  printf '#!/usr/bin/env bash\nexit 0\n' > "$c"
+  mv -f "$c" "$c.ret-aside" || { bad "retention fixture: the vault's checker could not be set aside for the 1.7.x dream commit"; return 1; }
+  cat > "$c" <<'RET17X'
+#!/usr/bin/env bash
+out="$(bash "$0.ret-aside" "$@" 2>&1)"
+rc=$?
+printf '%s\n' "$out"
+[ "$rc" -eq 2 ] && exit 2
+printf '%s\n' "$out" | grep -q ' — C[1-5] — ' && exit 1
+exit 0
+RET17X
   ret_dream_commit "$@"
   rc=$?
-  mv -f "$c.ret-aside" "$c" || return 1
-  cmp -s "$c" "$ROOT/.claude/scripts/vault-check.sh" || { printf 'run-tests: the retention fixture did not get its vault-check back\n' >&2; return 1; }
+  mv -f "$c.ret-aside" "$c" || { bad "retention fixture: the vault's checker was not put back after the 1.7.x dream commit"; return 1; }
+  cmp -s "$c" "$ROOT/.claude/scripts/vault-check.sh" || { bad "retention fixture: the vault's checker differs from the template's after the 1.7.x dream commit"; return 1; }
+  [ "$rc" -eq 0 ] || bad "retention fixture: the 1.7.x dream commit failed ($rc), so the classification controls below test a vault it did not build"
   return "$rc"
 }
 ret_human_commit() {  # ret_human_commit <vault> <message> <relative path>... - a plain commit

@@ -490,7 +490,9 @@ Nine checks, and that is the entire list:
 - **C5** — if `last_verified:` is present, it is not later than today; a `last_verified` that is
   not a `YYYY-MM-DD` date is reported too.
 - **C6** — the `tier:` value is `short`, `medium` or `long`, and the tier of the folder the note
-  is in, where the tier table names that folder.
+  is in: `short` in `01-inbox/`, `10-daily/` and `40-llm-wiki/raw/`, `medium` anywhere in
+  `20-projects/`, `long` anywhere in `30-knowledge/` and `31-standards/` and in
+  `40-llm-wiki/wiki/`. A note elsewhere, such as `40-llm-wiki/` itself, is held to the value only.
 - **C7** — the `type:` value is one of the six types.
 - **C8** — a note in a long-tier folder holds at least one `[[wikilink]]`.
 - **C9** — `tier`, `type`, `created` and `last_verified` are each written once, as `key: value`,
