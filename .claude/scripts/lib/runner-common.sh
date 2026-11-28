@@ -711,8 +711,10 @@ relabel() {
 # A .obsidian or .git that is itself a symlink is fenced as a link, and the files
 # above are still fenced through it, so swapping or retargeting it is a change.
 #
-# Known limit: any other directory symlink that existed before the pass is fenced
-# as a link, not by its target's contents, so a write through it is not seen.
+# Any other link is fenced as a link, not by its target's contents, so a write
+# through it would not be seen. From 1.7.9 the runners refuse to start while the
+# vault holds one (vault_links), so a link the agent could write through was
+# made or changed after the runner's snapshot, which changes its line here.
 CODE_PLUGINS="dataview templater-obsidian obsidian-shellcommands quickadd customjs obsidian-git execute-code terminal"
 
 # code_plugin_dirs
@@ -1007,6 +1009,135 @@ changed_paths() {
 # since 1.7.1, its cksum and its SHA-256.
 snapshot_paths() {
   cut -d' ' -f3- "$1" | sed 's|^\./||' | LC_ALL=C sort -u
+}
+
+# vault_links <root> <before-snapshot> <runner> <out-file>
+#
+# Known limit 16 until 1.7.9: the fence records a link, not what it points to,
+# so a write through a link that was already in the vault landed outside it
+# unseen, and the pass committed with exit 0 (measured with a junction on
+# Windows and a directory and a file symlink on WSL). From 1.7.9 the runners
+# refuse to start while the vault holds any link other than .obsidian and .git
+# themselves, which the fence reads through.
+#
+# Writes the links found to <out-file>, one per line, sorted, each spelled
+# ./<path>, and returns 0 when there are none, 1 when there are some, and 2
+# when it could not tell, with VAULT_LINKS_PROBLEM saying why. Three sources:
+#   1. a walk of the whole vault, from inside it, so a vault reached through a
+#      link of its own is walked too (find does not descend a start point that
+#      is a link);
+#   2. a walk inside .obsidian and .git where either is a link, because the
+#      first walk lists the link and does not descend it;
+#   3. the snapshot's link lines, which add the links in a worktree vault's git
+#      folders, which lie outside the vault (.git-common/...).
+# A link whose name, or a folder above it, holds a line break is listed as
+# "<a name with a line break>", once for each, after the sort.
+#
+# A walk that reports an error is run once more, because a file that vanishes
+# while find reads it fails it too, and only a second error gives 2 (as
+# vault-check.sh does). An empty snapshot, or one without the runner's own
+# script, gives 2 before any walk, since a snapshot that read nothing would
+# list no links. Hard links are not looked for (docs/reference.md, Known
+# limits).
+VAULT_LINKS_PROBLEM=
+VAULT_LINKS_NAMEBREAK="<a name with a line break>"
+
+# vault_links_walk <root> <sub> <list> <err>
+# One walk of <root>/<sub> (the vault itself when <sub> is empty), NUL
+# separated, ending with a //find-status=<rc> record. Returns 0.
+vault_links_walk() {
+  local root="$1" sub="$2" list="$3" err="$4"
+  (
+    if cd "$root${sub:+/$sub}" 2>"$err"; then
+      LC_ALL=C find . -type l -print0 2>"$err"
+      printf '//find-status=%s\0' "$?"
+    else
+      printf '//find-status=cd\0'
+    fi
+  ) > "$list" 2>/dev/null
+  return 0
+}
+
+# vault_links_read <list> <prefix> <paths-out> <breaks-out>
+# Prints the walk's status. Appends each path to <paths-out> as
+# <prefix><path without ./> and one line per name with a line break to
+# <breaks-out>.
+vault_links_read() {
+  local list="$1" prefix="$2" paths="$3" breaks="$4" p st=missing
+  [ -f "$list" ] && [ -r "$list" ] || { printf '%s' "$st"; return 0; }
+  while IFS= read -r -d '' p; do
+    case "$p" in
+      //find-status=*) st="${p#//find-status=}" ;;
+      *"$RUNNER_NL"*) printf 'x\n' >> "$breaks" ;;
+      .) ;;
+      *) printf '%s%s\n' "$prefix" "${p#./}" >> "$paths" ;;
+    esac
+  done < "$list"
+  printf '%s' "$st"
+}
+
+vault_links() {
+  local root="$1" snap="$2" runner="$3" out="$4" sub prefix st st2 tmp n
+  VAULT_LINKS_PROBLEM=
+  tmp="$out.work"
+  rm -rf "$tmp" 2>/dev/null
+  if ! : > "$out" 2>/dev/null || ! mkdir "$tmp" 2>/dev/null; then
+    VAULT_LINKS_PROBLEM="the runner could not write its list of links"
+    return 2
+  fi
+  : > "$tmp/paths"; : > "$tmp/breaks"
+  if [ ! -f "$snap" ] || [ ! -s "$snap" ] \
+     || ! VL_WANT="./.claude/scripts/$runner.sh" LC_ALL=C awk '
+          { p = $0; if (sub(/^[^ ]* [^ ]* /, "", p) && p == ENVIRON["VL_WANT"]) { found = 1; exit } }
+          END { exit !found }' "$snap"; then
+    VAULT_LINKS_PROBLEM="the fence's snapshot of the vault is empty or does not hold the runner itself"
+    rm -rf "$tmp" 2>/dev/null
+    return 2
+  fi
+  for sub in "" .obsidian .git; do
+    if [ -n "$sub" ]; then
+      [ -L "$root/$sub" ] || continue
+      prefix="./$sub/"
+    else
+      prefix="./"
+    fi
+    vault_links_walk "$root" "$sub" "$tmp/walk1" "$tmp/err1"
+    st="$(vault_links_read "$tmp/walk1" "$prefix" "$tmp/paths" "$tmp/breaks")"
+    if [ "$st" != 0 ]; then
+      vault_links_walk "$root" "$sub" "$tmp/walk2" "$tmp/err2"
+      st2="$(vault_links_read "$tmp/walk2" "$prefix" "$tmp/paths" "$tmp/breaks")"
+      if [ "$st2" != 0 ]; then
+        VAULT_LINKS_PROBLEM="find could not walk ${prefix%/} twice (status $st, then $st2): $(shown_name "$(head -n 1 "$tmp/err2" 2>/dev/null)")"
+        rm -rf "$tmp" 2>/dev/null
+        return 2
+      fi
+    fi
+  done
+  # The snapshot's link lines: field three onward, so a name with spaces survives.
+  LC_ALL=C awk 'substr($0, 1, 1) == "L" { sub(/^[^ ]* [^ ]* /, ""); print }' "$snap" >> "$tmp/paths"
+  LC_ALL=C sort -u "$tmp/paths" | LC_ALL=C awk '$0 != "./.obsidian" && $0 != "./.git"' > "$out"
+  n="$(LC_ALL=C awk 'END { print NR + 0 }' "$tmp/breaks")"
+  while [ "$n" -gt 0 ]; do
+    printf '%s\n' "$VAULT_LINKS_NAMEBREAK" >> "$out"
+    n=$((n - 1))
+  done
+  rm -rf "$tmp" 2>/dev/null
+  [ -s "$out" ] && return 1
+  return 0
+}
+
+# links_refusal_text <links-file>
+# The refusal sentence for vault_links' rc 1: the count, at most ten of the
+# links through shown_name, and how many more.
+links_refusal_text() {
+  local f="$1" n shown="" i=0 p
+  n="$(LC_ALL=C awk 'END { print NR + 0 }' "$f")"
+  while IFS= read -r p && [ "$i" -lt 10 ]; do
+    shown="$shown${shown:+, }$(shown_name "$p")"
+    i=$((i + 1))
+  done < "$f"
+  [ "$n" -gt 10 ] && shown="$shown, and $((n - 10)) more"
+  printf 'the vault holds %s link(s), and a pass could write through one where the runner cannot see it: %s. Replace each with the folder or file it points to, or remove it (one under .git-common/ is in the git folder the vault'"'"'s .git file names). .obsidian and .git themselves may be links.' "$n" "$shown"
 }
 
 # ---------------------------------------------------------------------------

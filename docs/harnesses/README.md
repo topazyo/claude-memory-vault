@@ -541,7 +541,9 @@ vault is, from the copy's root and in the environment the schedule uses:
    step does not look for these, which stay open (reasoned; carried to a later release): (1) a link
    or junction inside the vault or the copy, outside their `.git` and `.claude/`, whose target lies
    at or above an item this step requires outside both, or at or under their `.git` or `.claude/`,
-   or, for a link or junction in the copy, at or under the vault's own folder (reasoned);
+   or, for a link or junction in the copy, at or under the vault's own folder (reasoned; from
+   1.7.9 such a link inside the vault, as any link there but `.obsidian` and `.git` themselves,
+   refuses every pass before its agent starts, and one in the copy is still not looked for);
    (2) a link inside a folder copy the container definition mounts read-only that leads, in the
    container, into a folder a pass can write (the vault's writable mount or the container's own
    filesystem); (3) a mount or drive that the schedule's own process or session sees and your shell

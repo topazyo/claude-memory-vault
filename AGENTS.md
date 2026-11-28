@@ -221,7 +221,9 @@ the log. In
 claude mode they refuse to start (exit 1) when they cannot point Claude Code's memory inside the
 vault; the log's `ERROR:` line says why (the run log's, when the runner and its library come
 from different releases), and the dream and promotion runners' exit-code table in
-`docs/reference.md` lists the lines under exit `1`.
+`docs/reference.md` lists the lines under exit `1`. From 1.7.9 they also refuse to start (exit 1),
+in either mode, while the vault holds a symlink or junction anywhere but `.obsidian` and `.git`
+themselves, because a pass could write through it unseen.
 
 The retention pass is the third scheduled thing and it is not an agent, so `VAULT_AGENT` does not
 reach it and it has no stall detection. Its own refusals are 2 REPORT-REFUSED, 3 PARTIAL,

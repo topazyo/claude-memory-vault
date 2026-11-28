@@ -393,9 +393,10 @@ already uses `**/*.md`, so nested logs are covered once you uncomment it.
 `90-auto-memory/` also grows per-project subdirectories when a harness keeps its auto-memory there
 (Claude Code's does, once pointed at it), but those are maintained by the harness, not by hand: nothing in there is linted or checked
 (`vault-check.sh` excludes the folder deliberately), so durable knowledge belongs in the long tier,
-never there. Keep `90-auto-memory` itself a plain folder, not a symlink or junction: a claude-mode
-dream or promotion pass refuses to start while it is a link, because the fence would see writes
-through it only as the link.
+never there. Keep `90-auto-memory` itself a plain folder, not a symlink or junction: from 1.7.9 a
+dream or promotion pass refuses to start, in either mode, while it or any other folder or file in
+the vault but `.obsidian` and `.git` is a link, because the fence would see writes through it only
+as the link (`docs/reference.md` § 4.3, Known limits).
 
 **Keep `PROJECT-INDEX.md` as the register.** It is the one place listing which codebases this
 vault covers, where each one's logs live, and what its slug is. A project is onboarded when it
