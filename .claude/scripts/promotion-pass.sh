@@ -218,7 +218,7 @@ main() {
   # earlier release has none, and the traps below would name functions that do
   # not exist, so the run lock would never be released. Refused before any trap,
   # lock or state.
-  for lib_fn in runner_on_exit runner_on_signal runner_record_session_once fence_tools_pin steering_imports; do
+  for lib_fn in runner_on_exit runner_on_signal runner_record_session_once fence_tools_pin steering_imports vault_links links_refusal_text; do
     declare -F "$lib_fn" >/dev/null && continue
     printf '[%s] ERROR: lib/runner-common.sh has no %s, so this runner and the library come from different releases. Take runner-common.sh, dream-pass.sh, promotion-pass.sh and vault-retention.sh together. Refusing to run.\n' "$(ts)" "$lib_fn" >> "$LOG"
     exit 1
@@ -394,6 +394,21 @@ main() {
   fi
 
   snapshot_tree "$ROOT" "$SNAP_DIR/before"
+  # The fence records a link, not what it points to, so a pass could write
+  # through one unseen (known limit 16 until 1.7.9). Any link but .obsidian and
+  # .git themselves refuses the pass before the agent starts. The log goes to
+  # the state directory first if a link is on its path (log_outside_links).
+  vault_links "$ROOT" "$SNAP_DIR/before" "$RUNNER" "$SNAP_DIR/links"
+  links_rc=$?
+  if [ "$links_rc" -ne 0 ]; then
+    log_outside_links "$ROOT" "$STATE" "$RUNNER"
+    if [ "$links_rc" -eq 1 ]; then
+      printf '[%s] ERROR: %s Refusing to run.\n' "$(ts)" "$(links_refusal_text "$SNAP_DIR/links")" >> "$LOG"
+    else
+      printf '[%s] ERROR: could not list the links in the vault (%s), so a pass could write through one unseen. Refusing to run.\n' "$(ts)" "$VAULT_LINKS_PROBLEM" >> "$LOG"
+    fi
+    exit 1
+  fi
   # What the vault's instruction files import loads into every session, so it
   # is steering too (H2, 1.7.5): listed once, from the vault as it is now, into
   # the runner's own folder, and held for the whole run.

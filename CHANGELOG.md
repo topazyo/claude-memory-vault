@@ -25,6 +25,84 @@ bash .claude/scripts/vault-update.sh --check --from ../template-new
 
 ---
 
+## 1.7.9 — 2026-11-28
+
+The dream and promotion runners now refuse to start while the vault holds a link. Until now the
+fence recorded a link and not what it points to, so a write through a link already in the vault
+landed outside it unseen and the pass committed with exit 0. This closes the known limit in
+`docs/reference.md` § 4.3 that a link was fenced only as a link, and **it can stop your scheduled
+passes**: read the adopting note before you take it.
+
+### Changed
+
+- **A link in the vault refuses a pass (exit 1), before the agent starts.** A symlink or a
+  junction, to a folder or a file, anywhere in the vault, other than `.obsidian` and `.git`
+  themselves, which the fence reads through. The runner does not tell a link that points into
+  the vault from one that points out of it. The log names up to ten of them and counts the
+  rest: `ERROR: the vault holds N link(s), and a pass could write through one where the runner
+  cannot see it: ...`. Measured before the change on 1.7.8: a write through a junction on
+  Windows, and through a folder symlink and a file symlink on WSL, each committed with exit 0 and
+  the file outside the vault changed; after it, each pass is refused and nothing outside changes.
+  The check walks the whole vault, inside a `.obsidian` or `.git` that is a link too, and reads
+  the fence's own link lines for a worktree vault's common git folder. A walk that fails twice
+  (a folder `find` cannot read, for one), a snapshot that read nothing, or a list that could not
+  be written refuses with `could not list the links in the vault`, never a silent "no links".
+  With `.claude/logs` linked, the refusal is written to the state directory's
+  `dream-pass.uncontained.log` (or `promotion-pass.uncontained.log`), not through the link.
+- `memory_override`'s own refusals of a linked or unlistable memory folder, and the import
+  list's handling of links, stay for a link made after the runner's snapshot; a whole pass now
+  meets the general refusal first.
+
+### Known limits
+
+- Hard links are not looked for. A write through one is seen, but after containment puts back
+  the file's name in the vault its other name keeps what the pass wrote, and an allowed write
+  (a journal the pass appends to) changes the other name too.
+- A link a person or a sync tool adds after the runner's snapshot is seen when the pass ends
+  (exit 2; on a steering surface it is also contained), but what the pass wrote through it
+  outside the vault is not undone; in the parts of `.obsidian` and `.git` the fence never
+  reads it is not seen at all. A link swapped and put back within the pass is not seen.
+- Whether Git Bash reports Windows reparse points other than junctions and symlinks, such as
+  OneDrive cloud-file placeholders, as links was not measured. Where it does, the vault is refused.
+
+### Adopting this
+
+1. **Before you take this, list the links in your vault.** From the vault root, in Git Bash,
+   WSL, Linux or macOS:
+   ```bash
+   find . -type l ! -path ./.obsidian ! -path ./.git
+   ```
+   and, where `.obsidian` or `.git` is itself a link, the same command started at `./.obsidian/`
+   or `./.git/`. In a vault that is a git worktree (its `.git` is a file), a link in the parts of
+   that git folder the fence reads (its `hooks/` and config, for example) refuses too, named
+   under `.git-common/` in the log; `find "$(git rev-parse --git-common-dir)" -type l` lists
+   every link there, a superset. On Windows use Git Bash, which the runners need anyway:
+   PowerShell's `Get-ChildItem` does not walk the vault as the runner does. **Every path the
+   first `find` prints will stop your dream and promotion passes** until you replace the
+   link with the folder or file it points to, or remove it, even a link that points to another
+   folder inside the vault. Likely ones: a linked `templates/` folder (which `vault-check.sh`
+   skips), a tier folder linked or junctioned to a synced folder outside the vault (which
+   `vault-check.sh` already refuses, exit 2), `.claude/skills` or another `.claude/` folder linked
+   to a shared copy, a plugin build linked into `.obsidian/plugins/`, `90-auto-memory` linked
+   elsewhere, `node_modules/.bin`, a Python `.venv/bin`, and anything under a `.claude/worktrees/`
+   you keep in the vault. There is no setting that allows a link.
+2. **A folder in the vault that `find` cannot read now stops both passes too**, with `could not
+   list the links in the vault`, as does a `.obsidian` or `.git` link whose target is gone. The
+   command above names such a folder on stderr. Before, the fence passed over it silently.
+3. **If the command prints nothing, nothing changes for you.** `.obsidian` or `.git` kept as a
+   link still works as before.
+4. Take `.claude/scripts/lib/runner-common.sh`, `dream-pass.sh` and `promotion-pass.sh` together.
+   A 1.7.9 runner refuses a library from 1.7.5 to 1.7.8 (exit 1,
+   `lib/runner-common.sh has no vault_links`); a 1.7.8 runner with the 1.7.9 library runs without
+   the check (reasoned, not run).
+5. The shipped files this release touches are `.claude/scripts/lib/runner-common.sh`,
+   `.claude/scripts/dream-pass.sh`, `.claude/scripts/promotion-pass.sh`,
+   `.claude/scripts/run-tests.sh`, `.claude/skills/onboard-project/SKILL.md` and its copy in
+   `.agents/skills/`, `AGENTS.md`, `docs/reference.md`, `docs/setup.md`, `docs/customizing.md` and
+   `docs/harnesses/README.md`, plus `VERSION`, this file and `.claude/template-manifest`.
+
+---
+
 ## 1.7.8 — 2026-11-27
 
 Each harness now has a tier saying what the control suite holds for it. Two new controls hold the

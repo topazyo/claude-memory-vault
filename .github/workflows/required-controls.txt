@@ -121,6 +121,13 @@
 # the same kind of reason retention-unlistable is off Windows. It runs on a
 # Windows machine whose account is not elevated, and skips by name elsewhere;
 # ci.yml's NOT_REQUIRED names it, as an id the suite records on no list.
+#
+# The prelink-* controls (1.7.9, known limit 16) use junctions on Windows
+# and run there, except prelink-file-refused (a file link, which Git Bash
+# makes only with a privilege and MSYS=winsymlinks set, as for
+# mem-override-sink-filelink), prelink-linebreak-refused (Windows has no
+# name with a line break) and prelink-walk-error (chmod 000 does not stop a
+# listing there).
 agent-status-badinterp ubuntu macos windows
 agent-status-badinterp-127 ubuntu macos windows
 agent-status-dir-126 ubuntu macos windows
@@ -295,6 +302,17 @@ opencode-plugin-after-hook ubuntu macos windows
 pi-extension-behaviour ubuntu macos windows
 pi-extension-dirlink ubuntu macos windows
 pi-extension-symlink ubuntu macos windows
+prelink-common-hooks-refused ubuntu macos windows
+prelink-count-capped ubuntu macos windows
+prelink-file-refused ubuntu macos
+prelink-hooks-refused ubuntu macos windows
+prelink-inside-linked-obsidian ubuntu macos windows
+prelink-linebreak-refused ubuntu macos
+prelink-linked-root ubuntu macos windows
+prelink-logs-link ubuntu macos windows
+prelink-refused ubuntu macos windows
+prelink-unfenced-refused ubuntu macos windows
+prelink-walk-error ubuntu macos
 promo-create-only-arms ubuntu macos windows
 promo-create-only-casetwin ubuntu macos windows
 promo-create-only-contained ubuntu macos windows
