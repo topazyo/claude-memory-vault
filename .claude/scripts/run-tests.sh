@@ -17212,10 +17212,18 @@ ret_dream_commit_17x() {
 out="$(bash "$0.ret-aside" "$@" 2>&1)"
 rc=$?
 printf '%s\n' "$out"
-[ "$rc" -eq 2 ] && exit 2
-printf '%s\n' "$out" | grep -q ' — C[1-5] — ' && exit 1
+case "$rc" in
+  0) ;;
+  1) printf '%s\n' "$out" | grep -q ' — C[1-5] — ' && exit 1 ;;
+  *) exit "$rc" ;;
+esac
 exit 0
 RET17X
+  # The stand-in still refuses what 1.7.x refused: a note with no fence (C1).
+  printf 'no fence\n' > "$RET/ret17x-c1.md"
+  CLAUDE_PROJECT_DIR="$v" bash "$c" -- "$RET/ret17x-c1.md" >/dev/null 2>&1
+  [ "$?" -eq 1 ] || bad "retention fixture: the 1.7.x stand-in checker did not refuse a note with no fence"
+  rm -f "$RET/ret17x-c1.md"
   ret_dream_commit "$@"
   rc=$?
   mv -f "$c.ret-aside" "$c" || { bad "retention fixture: the vault's checker was not put back after the 1.7.x dream commit"; return 1; }

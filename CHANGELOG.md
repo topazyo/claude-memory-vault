@@ -65,8 +65,9 @@ before you take it.
    `bash .claude/scripts/vault-check.sh` from the vault root, unpiped, prints a
    `vault-check: WARNING:` line for each one, and **if it prints none, nothing changes for you.** An older vault prints fewer of them (1.6.x none, and
    the `tier:long` kind only since 1.7.2), and a customized one is judged by its own lists, so
-   there take `vault-check.sh` first (step 1) and run it, or run the one in the copy you fetched
-   against your vault, which reads and never writes:
+   there take `vault-check.sh` first (step 1) and run it, or, once step 1's changes are carried
+   into it (none if you customized nothing), run the one in the copy you fetched against your
+   vault, which reads and never writes:
    ```bash
    CLAUDE_PROJECT_DIR="$PWD" bash ../template-new/.claude/scripts/vault-check.sh
    ```

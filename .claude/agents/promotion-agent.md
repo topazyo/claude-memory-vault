@@ -74,8 +74,8 @@ Per `.claude/rules/verification.md`:
 - **The runner keeps the history, not you.** Before you start, it records the vault's recent
   history in `.claude/logs/promotion-pass.git-state.txt`, with the long-tier changes committed
   since the last promotion pass kept apart from the ones nobody has committed yet. Read that file
-  for what changed. After you finish, it checks every note you wrote and records them in history
-  with a `Vault-Pass: promotion` trailer. If any note fails the check, the notes you wrote are put
+  for what changed. After you finish, in a vault that is a git repository, it checks every note
+  you wrote and records them in history with a `Vault-Pass: promotion` trailer. If any note fails the check, the notes you wrote are put
   back as they were before the pass and none is recorded. You have no shell and need none.
 - A note that shows uncommitted changes in that file may be someone's work in progress, so do not
   build on it as settled; report a candidate that depends on it as pending with that reason. A
