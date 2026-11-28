@@ -175,7 +175,7 @@ claude-memory-vault/
 │   │   ├── untrusted-captures.md    # prompt-injection boundary for captures (path-scoped)
 │   │   └── security.md              # global safety rules; no paths:, always loads
 │   ├── scripts/
-│   │   ├── vault-check.sh           # report-only invariant checker (C1–C5); 1 = a note is wrong, 2 = it could not run
+│   │   ├── vault-check.sh           # report-only invariant checker (C1–C9); 1 = a note is wrong, 2 = it could not run
 │   │   ├── run-tests.sh             # control suite for the hooks; positive AND negative controls
 │   │   ├── dream-pass.sh / .cmd     # scheduled runner (cron/launchd; .cmd wraps it for Task Scheduler)
 │   │   ├── promotion-pass.sh / .cmd # ditto, for the weekly promotion pass
@@ -321,7 +321,7 @@ Code gets the most automation), and (strongly recommended) `jq`. See [Requiremen
 5. **Verify the checker reads your notes.** From the vault root:
 
    ```bash
-   bash .claude/scripts/vault-check.sh   # frontmatter invariants C1–C5
+   bash .claude/scripts/vault-check.sh   # frontmatter invariants C1–C9
    ```
 
    On a fresh clone the correct output is `0 violation(s) across 9 file(s) checked`. If you see
@@ -364,15 +364,16 @@ Code gets the most automation), and (strongly recommended) `jq`. See [Requiremen
 
 Every note carries YAML frontmatter. `tier` and `type` are the two keys the machinery
 reads: the lint hook flags their absence on write, and `vault-check.sh` fails the vault without
-them. Since 1.7.0 it also prints a `WARNING` line for a value outside the lists below, a `tier`
-that is not its folder's, and a long-tier note with no wikilink; the warnings become violations
-in release 1.8.0. The rest are contract, enforced by review and by you.
+them. Since 1.8.0 it also fails a note for a value outside the lists below, a `tier` that is not
+its folder's, a long-tier note with no wikilink, and one of those keys written so a YAML reader
+reads it differently (1.7.0 to 1.7.9 printed these as `WARNING` lines and passed the note). The
+rest are contract, enforced by review and by you.
 
 | Key | Status | Meaning |
 | --- | --- | --- |
 | `title` | contract | Human-readable title; may differ from the filename |
-| `tier` | **machine-checked (C2; its value advisory)** | `short`, `medium`, or `long` — declares the note's expected lifetime |
-| `type` | **machine-checked (C3; its value advisory)** | `daily`, `project-log`, `standard`, `wiki-entity`, `moc`, `reference` |
+| `tier` | **machine-checked (C2; its value C6)** | `short`, `medium`, or `long` — declares the note's expected lifetime, and must match the note's folder |
+| `type` | **machine-checked (C3; its value C7)** | `daily`, `project-log`, `standard`, `wiki-entity`, `moc`, `reference` |
 | `tags` | contract | Flat tag list; the Dataview dashboards group on these |
 | `status` | contract | `active`, `stable`, `superseded` |
 | `created` | contract | ISO date the note was first written; never edited afterwards |
@@ -384,12 +385,17 @@ in release 1.8.0. The rest are contract, enforced by review and by you.
 | `contradicts` | optional | Wikilink(s) to notes that disagree with this one. Both still stand |
 | `superseded_by` | optional | Wikilink to the note that replaced this one. Set with `status: superseded` |
 
-The checker implements exactly five invariants, and nothing beyond them: **C1** the file opens
+The checker implements exactly nine invariants, and nothing beyond them: **C1** the file opens
 with a bare `---` fence; **C2** frontmatter has a `tier:` key; **C3** it has a `type:` key; **C4**
 if both `created:` and `last_verified:` exist, `last_verified >= created`; **C5** `last_verified`
-is never in the future. C4 also flags a `created` that is not a `YYYY-MM-DD` date, and C5 a
+is never in the future; **C6** the `tier` value is `short`, `medium` or `long` and its folder's
+tier (`short` in `01-inbox/`, `10-daily/` and `40-llm-wiki/raw/`, `medium` in `20-projects/`,
+`long` in `30-knowledge/`, `31-standards/` and `40-llm-wiki/wiki/`); **C7** the `type` value is one in the table above; **C8** a note in a long-tier
+folder holds a `[[wikilink]]`; **C9** `tier`, `type`, `created` and `last_verified` are each
+written once as `key: value`. C4 also flags a `created` that is not a `YYYY-MM-DD` date, and C5 a
 `last_verified` that is not. C4 and C5 exist because a bad date is the quietest way to poison a
-freshness signal. There is deliberately **no** check that a long-tier note carries
+freshness signal, and C9 because a key a YAML reader reads differently from these checks once let
+a future `last_verified` pass C5. There is deliberately **no** check that a long-tier note carries
 `last_verified` at all. That judgement stays with you. The scan covers the six content tiers
 (`01-inbox`, `10-daily`, `20-projects`, `30-knowledge`, `31-standards`, `40-llm-wiki`), skipping
 a `templates/` folder inside a tier and the `compaction-*.md` stubs directly in
@@ -580,7 +586,7 @@ against. Watch this repository's releases to be told when there is something to 
 | [`docs/why.md`](docs/why.md) | Why this exists instead of an existing memory system: requirements, the researched landscape by category, what was borrowed, known weaknesses, and when to choose something else |
 | [`docs/setup.md`](docs/setup.md) | Longer-form setup walkthrough, graph and template configuration, scheduling on cron, launchd, and Task Scheduler, and removing it all again |
 | [`docs/concepts.md`](docs/concepts.md) | The tier model, the promotion path, and why each boundary sits where it does |
-| [`docs/reference.md`](docs/reference.md) | Full reference: frontmatter keys, the C1–C5 invariants, the hooks, the skills, and the agents |
+| [`docs/reference.md`](docs/reference.md) | Full reference: frontmatter keys, the C1–C9 invariants, the hooks, the skills, and the agents |
 | [`docs/customizing.md`](docs/customizing.md) | Renaming tiers, adding a tier, changing the frontmatter contract |
 | [`docs/updating.md`](docs/updating.md) | Finding out when this template moves, seeing which files changed and which of those you touched, and what none of it protects against |
 | [`CHANGELOG.md`](CHANGELOG.md) | What changed in each version, and an *Adopting this* note per entry saying what a vault has to do about it |

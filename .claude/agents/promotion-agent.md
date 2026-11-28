@@ -16,7 +16,11 @@ You are the promotion agent. Weekly, you:
   (standards, `tier: long`, `type: standard`) or `40-llm-wiki/wiki/` (wiki entities,
   `type: wiki-entity`), following the matching template in that folder's `templates/` subfolder.
 - Link each new note back to the medium-term logs and wiki entities it came from, and to
-  [[ARCH-INDEX]].
+  [[ARCH-INDEX]]. In a vault that is a git repository the runner checks every note you write with
+  `vault-check.sh` before it commits anything: a long-tier note with no `[[wikilink]]`, a `tier`
+  that is not its folder's, a `type` outside the six in `AGENTS.md` §3, or one of `tier`, `type`,
+  `created` and `last_verified` written twice or not as `key: value` fails it, and then **none**
+  of this pass's notes is committed. Give each note the template's frontmatter as it stands.
 - Candidates that do **not** meet the bar are left unwritten and reported as still-pending
   **with the reason**. An unexplained non-promotion is indistinguishable from an oversight.
 - End your final message with exactly one line, at the start of a line:
@@ -70,8 +74,8 @@ Per `.claude/rules/verification.md`:
 - **The runner keeps the history, not you.** Before you start, it records the vault's recent
   history in `.claude/logs/promotion-pass.git-state.txt`, with the long-tier changes committed
   since the last promotion pass kept apart from the ones nobody has committed yet. Read that file
-  for what changed. After you finish, it checks every note you wrote and records them in history
-  with a `Vault-Pass: promotion` trailer. If any note fails the check, the notes you wrote are put
+  for what changed. After you finish, in a vault that is a git repository, it checks every note
+  you wrote and records them in history with a `Vault-Pass: promotion` trailer. If any note fails the check, the notes you wrote are put
   back as they were before the pass and none is recorded. You have no shell and need none.
 - A note that shows uncommitted changes in that file may be someone's work in progress, so do not
   build on it as settled; report a candidate that depends on it as pending with that reason. A

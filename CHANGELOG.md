@@ -25,6 +25,75 @@ bash .claude/scripts/vault-update.sh --check --from ../template-new
 
 ---
 
+## 1.8.0 — 2026-11-28
+
+`vault-check.sh`'s four `WARNING` kinds are now violations, as `AGENTS.md` §4 and the 1.7.x
+releases said they would be. A note that drew a `WARNING` line under 1.7.x fails the check (exit 1)
+under 1.8.0, so **it can refuse your commits and your scheduled passes**: read the adopting note
+before you take it.
+
+### Changed
+
+- **Four new invariants, C6 to C9, each a violation with exit 1.** C1 to C5 keep their meaning.
+  - **C6**: the `tier:` value is `short`, `medium` or `long`, an empty value failing, and the
+    tier of the folder the note is in (`01-inbox/`, `10-daily/` and `40-llm-wiki/raw/` short,
+    `20-projects/` medium, `30-knowledge/`, `31-standards/` and `40-llm-wiki/wiki/` long).
+  - **C7**: the `type:` value is one of `reference`, `daily`, `project-log`, `moc`, `standard`,
+    `wiki-entity`.
+  - **C8**: a note in a long-tier folder holds a `[[wikilink]]`.
+  - **C9**: `tier`, `type`, `created` and `last_verified` are each written once, as `key: value`:
+    not as `"key":`, `'key':` or `key :`, not with the value straight after the colon, and not
+    twice. A future `last_verified` written one of those ways passed C5.
+- Each prints as `<note> — C<n> — <what>` before the count line, in both modes, and counts in
+  `N violation(s)`. The text after the ID is the 1.7.x warning's text. The `vault-check: WARNING:`
+  lines and the closing `vault-check: N warning(s).` line are gone.
+- The commit gate (`.claude/githooks/pre-commit`) refuses a commit over such a note, and in a vault
+  that is a git repository a dream or promotion pass that writes one ends `CHECK-FAILED` (exit 5)
+  with the C6–C9 line in its log.
+  New controls hold both, with a note that fails C8 and nothing else.
+- CI's two "the shipped tree draws a warning" steps are gone: the exit code holds the shipped
+  notes to C6–C9 now.
+
+### Adopting this
+
+1. **First, if you customized `vault-check.sh`'s lists** (`docs/customizing.md` §2), carry each
+   change into the new file before you read its findings, or it fails notes that are right for
+   your vault: the `type` list in `check_note()` decides C7, the `short|medium|long` case beside
+   it decides C6's values, and `folder_tier()` decides C6's folders and which folders C8 holds to
+   a wikilink. A type or tier you added and did not carry fails every note that uses it.
+2. **Find the notes 1.8.0 fails.** On 1.7.9 with the stock lists,
+   `bash .claude/scripts/vault-check.sh` from the vault root, unpiped, prints a
+   `vault-check: WARNING:` line for each one, and **if it prints none, nothing changes for you.** An older vault prints fewer of them (1.6.x none, and
+   the `tier:long` kind only since 1.7.2), and a customized one is judged by its own lists, so
+   there take `vault-check.sh` first (step 1) and run it, or, once step 1's changes are carried
+   into it (none if you customized nothing), run the one in the copy you fetched against your
+   vault, which reads and never writes:
+   ```bash
+   CLAUDE_PROJECT_DIR="$PWD" bash ../template-new/.claude/scripts/vault-check.sh
+   ```
+   Fix each note it names by hand, never by a sweep that stamps keys across many notes
+   (`AGENTS.md` §9): its folder's `tier`, a `type` from the list, a `[[wikilink]]` to a peer or an
+   index if it is long-tier, and each key written once as `key: value`. Or move it out of the
+   content-tier folders until you can.
+3. **There is no switch that keeps them advisory.** A pass checks the notes it writes and the ones
+   an earlier pass left uncommitted, so an old note of yours that fails C6–C9 does not stop your
+   passes, but with the commit gate on (`git config core.hooksPath .claude/githooks`) it refuses
+   every commit until it is fixed.
+4. **A note an earlier pass left uncommitted is checked again on the first 1.8.0 run**, before the
+   agent starts. One that fails C6–C9 is put back on its own: into the state directory's
+   quarantine by the promotion pass, and left in place, uncommitted, by the dream pass, as for
+   C1–C5. A note the promotion pass itself writes that fails C6–C9 puts back every note that pass
+   wrote, not only that one.
+5. A note that violates C6–C9 now makes a run that also refused a link exit 1, not 2, as a C1–C5
+   violation always did. A script of your own that read the `WARNING` lines finds none; read the
+   violation lines, or the count line's numbers and the exit code.
+6. The shipped files this release touches are `.claude/scripts/vault-check.sh`,
+   `.claude/scripts/run-tests.sh`, `.claude/agents/promotion-agent.md`, `AGENTS.md`, `README.md`,
+   `docs/concepts.md`, `docs/customizing.md`, `docs/reference.md` and `docs/setup.md`, plus
+   `VERSION`, this file and `.claude/template-manifest`.
+
+---
+
 ## 1.7.9 — 2026-11-28
 
 The dream and promotion runners now refuse to start while the vault holds a link. Until now the

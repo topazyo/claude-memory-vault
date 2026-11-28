@@ -480,7 +480,7 @@ how many notes sit in `99-archive/` and what the last retention pass moved, whic
 the same spirit — it judges neither, and changes no count and no exit code, but without it a note
 the retention pass archived would leave no trace in anything this script prints.
 
-Five checks, and that is the entire list:
+Nine checks, and that is the entire list:
 
 - **C1** — the first line of the file is a bare `---` fence.
 - **C2** — the frontmatter contains a `tier:` key.
@@ -489,11 +489,23 @@ Five checks, and that is the entire list:
   than `created`; a `created` that is not a `YYYY-MM-DD` date is reported too.
 - **C5** — if `last_verified:` is present, it is not later than today; a `last_verified` that is
   not a `YYYY-MM-DD` date is reported too.
+- **C6** — the `tier:` value is `short`, `medium` or `long`, and the tier of the folder the note
+  is in: `short` in `01-inbox/`, `10-daily/` and `40-llm-wiki/raw/`, `medium` anywhere in
+  `20-projects/`, `long` anywhere in `30-knowledge/` and `31-standards/` and in
+  `40-llm-wiki/wiki/`. A note elsewhere, such as `40-llm-wiki/` itself, is held to the value only.
+- **C7** — the `type:` value is one of the six types.
+- **C8** — a note in a long-tier folder holds at least one `[[wikilink]]`.
+- **C9** — `tier`, `type`, `created` and `last_verified` are each written once, as `key: value`,
+  not quoted, not with a space before the colon or none after it.
+
+C6 to C9 were `WARNING` lines that failed nothing from 1.7.0 to 1.7.9, and are violations since
+1.8.0.
 
 Notice what is *not* there. Nothing requires a long-tier note to have a `last_verified` date at
 all, and nothing reads the `Sources / Verification` section. The discipline in sections 3 and 6
 is a human contract. The checker catches only the cases where the metadata is structurally
-absent or internally impossible.
+absent, internally impossible or outside the vault's own vocabulary, and a long-tier note that
+links to nothing.
 
 That narrowness looks like a missing feature. It is the point, and so is the refusal to repair.
 

@@ -156,9 +156,10 @@ jobs:
       # needed. The 2 rather than a 1 is the point of the code, since it says
       # the checker could not run rather than that a note in this repository is
       # wrong, and those two would want different things done about them.
-      # The warnings change neither the count nor the exit code, so the shipped
-      # tree is held to printing none here: a template note a vault copies must
-      # not teach the shape the checker warns about.
+      # Since 1.8.0 C6-C9 are violations, so the exit code alone holds the
+      # shipped tree to them: a template note a vault copies must not teach a
+      # shape the checker refuses. (1.7.0-1.7.9 grepped for WARNING lines here,
+      # which changed neither the count nor the exit code then.)
       - name: Frontmatter invariants
         shell: bash
         run: |
@@ -166,10 +167,6 @@ jobs:
           out="$(bash .claude/scripts/vault-check.sh)" || rc=$?
           printf '%s\n' "$out"
           [ "$rc" -eq 0 ] || exit "$rc"
-          if printf '%s\n' "$out" | grep -q '^vault-check: WARNING'; then
-            echo "::error title=The shipped tree draws a warning::vault-check printed a WARNING line for a note this template ships."
-            exit 1
-          fi
 
   bash32:
     name: macOS with system bash 3.2
@@ -219,10 +216,6 @@ jobs:
           out="$(/bin/bash .claude/scripts/vault-check.sh)" || rc=$?
           printf '%s\n' "$out"
           [ "$rc" -eq 0 ] || exit "$rc"
-          if printf '%s\n' "$out" | grep -q '^vault-check: WARNING'; then
-            echo "::error title=The shipped tree draws a warning::vault-check printed a WARNING line under bash 3.2 for a note this template ships."
-            exit 1
-          fi
 
   hygiene:
     name: repository hygiene
